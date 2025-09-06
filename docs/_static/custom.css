@@ -1,0 +1,169 @@
+/* Litestar MCP Theme color definitions */
+:root {
+  --brand-font-size-xl: 6rem;
+  --brand-font-size-lg: 5rem;
+  --brand-font-size-md: 4rem;
+  --brand-font-size-sm: 2.5rem;
+  --brand-font-size-xs: 1.8rem;
+  --brand-font-size-xxs: 1.6rem;
+
+  --brand-letter-spacing-xl: 0.25em;
+  --brand-letter-spacing-lg: 0.2em;
+  --brand-letter-spacing-md: 0.1em;
+  --brand-letter-spacing-sm: 0.05em;
+  --brand-letter-spacing-xs: 0.03em;
+}
+
+html.light {
+  --sl-color-primary: #202235;
+  --sl-color-secondary: #edb641;
+  --sl-color-accent: #ffd480;
+  --sl-color-text-1: var(--sl-color-primary);
+  --sl-color-text-2: var(--sl-color-secondary);
+  --sy-c-foot-background: #f0f0f0;
+  --yue-c-text: #000;
+  --brand-text-glow: 0 0 10px rgba(32, 34, 53, 0.3),
+    0 0 20px rgba(32, 34, 53, 0.2), 0 0 30px rgba(237, 182, 65, 0.1);
+}
+
+html.dark {
+  --sl-color-text-1: var(--sl-color-secondary);
+  --sy-c-foot-background: black;
+  --yue-c-text: #fff;
+  --brand-text-glow: 0 0 10px rgba(237, 182, 65, 0.4),
+    0 0 20px rgba(237, 182, 65, 0.3), 0 0 30px rgba(237, 182, 65, 0.2);
+}
+
+.title-with-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 5rem auto 4rem;
+  width: 100%;
+  padding: 0 2rem;
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+}
+
+html[class] .title-with-logo .brand-text {
+  font-size: var(--brand-font-size-lg);
+  font-weight: 900;
+  letter-spacing: var(--brand-letter-spacing-lg);
+  text-shadow: var(--brand-text-glow);
+  margin: 0;
+  color: var(--sl-color-text-1);
+  text-transform: uppercase;
+}
+
+.title-with-logo .logo {
+  width: 5rem;
+  height: auto;
+  margin-right: 2rem;
+}
+
+/* Responsive design for brand text */
+@media (max-width: 1200px) {
+  html[class] .title-with-logo .brand-text {
+    font-size: var(--brand-font-size-md);
+    letter-spacing: var(--brand-letter-spacing-md);
+  }
+}
+
+@media (max-width: 768px) {
+  html[class] .title-with-logo .brand-text {
+    font-size: var(--brand-font-size-sm);
+    letter-spacing: var(--brand-letter-spacing-sm);
+  }
+  .title-with-logo {
+    flex-direction: column;
+    text-align: center;
+  }
+  .title-with-logo .logo {
+    margin-right: 0;
+    margin-bottom: 1rem;
+    width: 4rem;
+  }
+}
+
+@media (max-width: 480px) {
+  html[class] .title-with-logo .brand-text {
+    font-size: var(--brand-font-size-xs);
+    letter-spacing: var(--brand-letter-spacing-xs);
+  }
+  .title-with-logo .logo {
+    width: 3rem;
+  }
+}
+
+/* MCP-specific styling */
+.mcp-badge {
+  display: inline-block;
+  background: linear-gradient(135deg, var(--sl-color-secondary), var(--sl-color-accent));
+  color: var(--sl-color-primary);
+  padding: 0.25rem 0.75rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-left: 0.5rem;
+}
+
+/* Code block styling for MCP examples */
+.highlight-python .highlight {
+  background: var(--sy-c-code-background);
+  border: 1px solid var(--sl-color-accent);
+  border-radius: 0.5rem;
+}
+
+/* Navigation enhancement */
+.sy-sidebar .toctree-l1 > a {
+  color: var(--sl-color-text-1);
+  font-weight: 500;
+}
+
+.sy-sidebar .toctree-l1 > a:hover {
+  color: var(--sl-color-secondary);
+}
+
+/* Footer styling */
+.sy-footer {
+  background: var(--sy-c-foot-background);
+  border-top: 2px solid var(--sl-color-accent);
+  color: var(--yue-c-text);
+}
+
+/* Custom admonition styling for MCP-specific content */
+.admonition.mcp-tool {
+  border-left: 4px solid #28a745;
+  background-color: rgba(40, 167, 69, 0.1);
+}
+
+.admonition.mcp-resource {
+  border-left: 4px solid #007bff;
+  background-color: rgba(0, 123, 255, 0.1);
+}
+
+.admonition.mcp-tool .admonition-title,
+.admonition.mcp-resource .admonition-title {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Version selector styling */
+.version-selector {
+  background: var(--sl-color-primary);
+  color: var(--sl-color-secondary);
+  border: 1px solid var(--sl-color-accent);
+  border-radius: 0.25rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.875rem;
+}
+
+.version-selector:hover {
+  background: var(--sl-color-secondary);
+  color: var(--sl-color-primary);
+}

@@ -1,0 +1,109 @@
+version: v1
+
+labels:
+  # -- types -------------------------------------------------------------------
+  - label: 'type/feat'
+    sync: true
+    matcher:
+      title: '^feat(\([^)]+\))?!?:'
+
+  - label: 'type/bug'
+    sync: true
+    matcher:
+      title: '^fix(\([^)]+\))?!?:'
+
+  - label: 'type/docs'
+    sync: true
+    matcher:
+      title: '^docs(\([^)]+\))?:'
+
+  - label: 'Breaking 🔨'
+    sync: true
+    matcher:
+      title: '^(feat|fix)(\([^)]+\))?!:'
+
+  # -- distinct areas ----------------------------------------------------------
+
+  - label: 'area/docs'
+    sync: true
+    matcher:
+      files:
+        any: ['docs/*', 'docs/**/*', '**/*.rst', '**/*.md']
+
+  - label: 'area/unit-tests'
+    sync: true
+    matcher:
+      files:
+        any: ['test/unit/*', 'test/unit/**/*', 'tests/*.py', 'tests/fixtures/**/*']
+
+  - label: 'area/integration-tests'
+    sync: true
+    matcher:
+      files:
+        any: ['test/integration/*', 'test/integration/**/*']
+
+  - label: 'area/example-apps'
+    sync: true
+    matcher:
+      files:
+        any: ['docs/examples/**/*', 'examples/**/*']
+
+  - label: 'area/docs'
+    sync: true
+    matcher:
+      files:
+        any: ['docs/*', 'docs/**/*', '**/*.rst', '**/*.md']
+
+  - label: 'area/ci'
+    sync: true
+    matcher:
+      files:
+        any: ['.github/**/*', 'codecov.yml', 'pre-commit-config.yaml', 'sonar-project.properties', '*.yaml', '*.yml']
+
+  - label: 'area/dependencies'
+    sync: true
+    matcher:
+      files:
+        any: ['pyproject.toml', '*.lock']
+
+  - label: 'area/private-api'
+    sync: true
+    matcher:
+      files:
+        any: ['litestar_mcp/_*.py', 'litestar_mcp/*/_*.py', 'litestar_mcp/_*/**/*.py']
+
+  - label: 'area/tools'
+    sync: true
+    matcher:
+      files: ['tools/**/*']
+
+  # -- Size Based Labels -------------------------------------------------------
+  - label: 'size: small'
+    sync: true
+    matcher:
+      files:
+        count:
+          gte: 1
+          lte: 10
+
+  - label: 'size: medium'
+    sync: true
+    matcher:
+      files:
+        count:
+          gte: 10
+          lte: 25
+
+  - label: 'size: large'
+    sync: true
+    matcher:
+      files:
+        count:
+          gte: 26
+
+# -- Merge Checks --------------------------------------------------------------
+checks:
+  - context: 'No Merge check'
+    description: "Disable merging when 'do not merge' label is set"
+    labels:
+      none: ['do not merge']

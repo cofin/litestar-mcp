@@ -1,0 +1,74 @@
+name: Test
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        required: true
+        type: string
+      coverage:
+        required: false
+        type: boolean
+        default: false
+      os:
+        required: false
+        type: string
+        default: "ubuntu-latest"
+      timeout:
+        required: false
+        type: number
+        default: 60
+
+jobs:
+  test:
+    runs-on: ${{ inputs.os }}
+    timeout-minutes: ${{ inputs.timeout }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install Microsoft ODBC Drivers
+        run: sudo ACCEPT_EULA=Y apt-get install msodbcsql18 -y
+
+      - name: Free additional space
+        run: |
+          sudo docker rmi $(docker image ls -aq) >/dev/null 2>&1 || true
+          sudo rm -rf \
+            /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup \
+            /usr/lib/jvm || true
+          sudo apt-get autoremove -y \
+          && sudo apt-get clean -y \
+          && sudo rm -rf /root/.cache \
+          && sudo rm -rf /var/apt/lists/* \
+          && sudo rm -rf /var/cache/apt/* \
+          && sudo apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Set up Python
+        run: uv python install ${{ inputs.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Set PYTHONPATH
+        run: echo "PYTHONPATH=$PWD" >> $GITHUB_ENV
+
+      - name: Test
+        if: ${{ !inputs.coverage }}
+        run: uv run pytest --dist "loadgroup" -m "" tests -n 2
+
+      - name: Test with coverage
+        if: ${{ inputs.coverage }}
+        run: uv run pytest tests --dist "loadgroup" -m "" --cov=advanced_alchemy --cov-report=xml -n 2
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ inputs.coverage }}
+        with:
+          name: coverage-xml
+          path: coverage.xml
