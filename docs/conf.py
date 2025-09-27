@@ -205,7 +205,7 @@ html_theme_options = {
 }
 
 
-def update_html_context(app, pagename, templatename, context, doctree):  # type: ignore[misc]
+def update_html_context(app: Any, pagename: Any, templatename: Any, context: Any, doctree: Any) -> None:  # type: ignore[misc]
     context["READTHEDOCS"] = False
 
 

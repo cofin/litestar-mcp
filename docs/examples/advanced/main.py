@@ -10,6 +10,8 @@ Features:
 - Demonstrates both tools and resources
 """
 
+from __future__ import annotations
+
 from typing import Any
 
 from litestar import Litestar, delete, get, post
@@ -39,7 +41,6 @@ TASKS: dict[int, Task] = {
     2: Task(id=2, title="Integrate MCP", description="Add MCP support to my application", completed=False),
     3: Task(id=3, title="Build API", description="Create a REST API for task management", completed=False),
 }
-TASK_COUNTER = 3
 
 
 # MCP Resources - Read-only data for AI models
@@ -92,17 +93,16 @@ async def get_task(task_id: int) -> Task:
 @post("/tasks", status_code=HTTP_201_CREATED, mcp_tool="create_task")
 async def create_task(data: CreateTaskRequest) -> Task:
     """Create a new task - exposed as MCP tool."""
-    global TASK_COUNTER
-    TASK_COUNTER += 1
+    new_id = max(TASKS.keys(), default=0) + 1
 
     new_task = Task(
-        id=TASK_COUNTER,
+        id=new_id,
         title=data.title,
         description=data.description,
         completed=False,
     )
 
-    TASKS[TASK_COUNTER] = new_task
+    TASKS[new_id] = new_task
     return new_task
 
 
@@ -171,12 +171,16 @@ app = Litestar(
 )
 
 if __name__ == "__main__":
+    import logging
+
     import uvicorn
 
-    print("🚀 Starting Task Management API with MCP integration...")
-    print("📊 API Documentation: http://127.0.0.1:8000/schema/swagger")
-    print("🔧 MCP Server Info: http://127.0.0.1:8000/mcp/")
-    print("📋 MCP Resources: http://127.0.0.1:8000/mcp/resources")
-    print("🛠️ MCP Tools: http://127.0.0.1:8000/mcp/tools")
+    logger = logging.getLogger(__name__)
+
+    logger.info("🚀 Starting Task Management API with MCP integration...")
+    logger.info("📊 API Documentation: http://127.0.0.1:8000/schema/swagger")
+    logger.info("🔧 MCP Server Info: http://127.0.0.1:8000/mcp/")
+    logger.info("📋 MCP Resources: http://127.0.0.1:8000/mcp/resources")
+    logger.info("🛠️ MCP Tools: http://127.0.0.1:8000/mcp/tools")
 
     uvicorn.run(app, host="127.0.0.1", port=8000, reload=True)
