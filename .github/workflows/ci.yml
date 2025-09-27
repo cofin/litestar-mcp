@@ -53,7 +53,7 @@ jobs:
         run: uv sync --all-extras --dev
 
       - name: Run mypy
-        run: uv run mypy
+        run: uv run mypy litestar_mcp tests
 
   pyright:
     runs-on: ubuntu-latest
@@ -70,7 +70,7 @@ jobs:
         run: uv sync --all-extras --dev
 
       - name: Run pyright
-        run: uv run pyright
+        run: uv run pyright litestar_mcp tests
 
   # # TODO(cofin)
   # # AttributeError: 'SuiteRequirements' object has no attribute 'computed_reflects_normally'
