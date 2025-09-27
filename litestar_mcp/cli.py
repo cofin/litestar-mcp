@@ -27,7 +27,7 @@ def _find_mcp_plugin(app: Litestar) -> Optional[LitestarMCP]:
         return mcp_plugin
 
 
-class ToolExecutor(click.MultiCommand):
+class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-ignore]
     """A dynamic click MultiCommand to run discovered MCP tools."""
 
     def __init__(self, **attrs: Any) -> None:
