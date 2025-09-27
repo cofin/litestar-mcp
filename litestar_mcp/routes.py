@@ -9,7 +9,10 @@ from litestar.handlers import BaseRouteHandler
 from litestar.serialization import encode_json
 
 from litestar_mcp.config import MCPConfig
+from litestar_mcp.executor import execute_tool
 from litestar_mcp.schema import MCPResource, MCPTool, ServerCapabilities
+from litestar_mcp.schema_builder import generate_schema_for_handler
+from litestar_mcp.utils import get_handler_function
 
 
 class MCPController(Controller):
@@ -112,20 +115,22 @@ class MCPController(Controller):
         handler = discovered_resources[resource_name]
 
         try:
-            handler_path = (
-                next(iter(handler.paths)) if hasattr(handler, "paths") and handler.paths else f"/{resource_name}"
-            )
-            content = {"message": f"Resource {resource_name} would be fetched from {handler_path}"}
+            # Execute the resource handler using the shared executor
+            # Resources typically have no arguments
+            result = await execute_tool(handler, request.app, tool_args={})
 
+            # Encode the result as JSON text
+            result_text = encode_json(result).decode("utf-8")
+        except Exception as e:
+            raise NotFoundException(detail=f"Failed to fetch resource '{resource_name}': {e!s}") from e
+        else:
             return {
                 "content": {
                     "uri": f"litestar://{resource_name}",
                     "mimeType": "application/json",
-                    "text": encode_json(content).decode("utf-8"),
+                    "text": result_text,
                 }
             }
-        except Exception as e:
-            raise NotFoundException(detail=f"Failed to fetch resource '{resource_name}': {e!s}") from e
 
     @get("/tools", name="list_tools")
     async def list_tools(self, discovered_tools: dict[str, BaseRouteHandler]) -> dict[str, Any]:
@@ -133,9 +138,15 @@ class MCPController(Controller):
         tools = []
 
         for name, handler in discovered_tools.items():
-            description = handler.__doc__ or f"Tool: {name}"
-            input_schema = {"type": "object", "properties": {}, "description": f"Input parameters for {name}"}
-            tools.append(MCPTool(name=name, description=description.strip(), input_schema=input_schema))
+            # Get description from handler function docstring
+            fn = get_handler_function(handler)
+            fn_doc = fn.__doc__
+            description = fn_doc.strip() if fn_doc else f"Tool: {name}"
+
+            # Generate JSON schema from handler signature
+            input_schema = generate_schema_for_handler(handler)
+
+            tools.append(MCPTool(name=name, description=description, input_schema=input_schema))
 
         return {
             "tools": [
@@ -162,31 +173,28 @@ class MCPController(Controller):
             raise NotFoundException(detail=f"Tool '{tool_name}' not found")
 
         handler = discovered_tools[tool_name]
+        tool_args = data.get("arguments", {})
 
         try:
-            arguments = data.get("arguments", {})
+            # Execute the tool using the shared executor
+            result = await execute_tool(handler, request.app, tool_args)
 
-            handler_path = next(iter(handler.paths)) if hasattr(handler, "paths") and handler.paths else f"/{tool_name}"
-            result = {
-                "tool": tool_name,
-                "handler_path": handler_path,
-                "arguments": arguments,
-                "message": f"Tool {tool_name} would be executed with arguments: {arguments}",
-            }
-
-            return {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": encode_json(result).decode("utf-8"),
-                    }
-                ]
-            }
-
+            # The result must be serializable.
+            # We encode it to a JSON string to be safe.
+            result_text = encode_json(result).decode("utf-8")
         except Exception as e:
             return {
                 "error": {
                     "code": -1,
                     "message": f"Tool execution failed: {e!s}",
                 }
+            }
+        else:
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": result_text,
+                    }
+                ]
             }

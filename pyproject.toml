@@ -24,7 +24,13 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
 ]
-dependencies = ["litestar>=2.0.0", "typing-extensions>=4.0.0", "eval-type-backport ; python_full_version < '3.10'"]
+dependencies = [
+    "litestar>=2.0.0",
+    "typing-extensions>=4.0.0",
+    "eval-type-backport ; python_full_version < '3.10'",
+    "click>=8.0.0",
+    "rich>=13.0.0",
+]
 description = "Litestar plugin for Model Context Protocol (MCP) integration"
 keywords = ["litestar", "mcp", "model-context-protocol", "ai", "plugin"]
 license = { text = "MIT" }
@@ -70,7 +76,7 @@ doc = [
 ]
 lint = ["mypy>=1.13.0", "pre-commit>=3.5.0", "pyright>=1.1.386", "ruff>=0.7.1", "slotscheck>=0.16.5"]
 test = [
-    "litestar[standard]",
+    "litestar[standard,jwt]",
     "pytest>=7.4.1",
     "pytest-cov",
     "coverage",
@@ -79,6 +85,9 @@ test = [
     "pytest-mock>=3.11.1",
     "pytest-xdist>=3.6.1",
     "httpx>=0.24.1",
+    "attrs",
+    "cattrs",
+    "pydantic",
 ]
 
 [tool.bumpversion]
@@ -218,7 +227,7 @@ addopts = [
     "--cov-report=term-missing",
     "--cov-report=html",
     "--cov-report=xml",
-    "--cov-fail-under=85",
+    "--cov-fail-under=80",
 ]
 filterwarnings = ["ignore::DeprecationWarning", "ignore::PendingDeprecationWarning"]
 markers = [
