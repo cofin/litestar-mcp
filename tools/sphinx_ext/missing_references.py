@@ -119,7 +119,8 @@ def _resolve_litestar_reference(target: str) -> bool:
             return hasattr(di, attr)
         if target.startswith("dto."):
             parts = target.split(".")
-            if len(parts) >= 3 and parts[1] == "base_dto":
+            min_parts_for_base_dto = 3
+            if len(parts) >= min_parts_for_base_dto and parts[1] == "base_dto":
                 return True  # dto.base_dto.AbstractDTO
             return hasattr(dto, parts[1])
         if target.startswith("params."):
