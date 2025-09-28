@@ -1,20 +1,23 @@
 """Litestar MCP Plugin implementation."""
 
 from collections.abc import Sequence
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from click import Group
 
 from litestar import Router
 from litestar.config.app import AppConfig
 from litestar.di import Provide
 from litestar.handlers import BaseRouteHandler
-from litestar.plugins import InitPluginProtocol
+from litestar.plugins import CLIPlugin, InitPluginProtocol
 
 from litestar_mcp.config import MCPConfig
 from litestar_mcp.routes import MCPController
 from litestar_mcp.utils import get_handler_function, get_mcp_metadata
 
 
-class LitestarMCP(InitPluginProtocol):
+class LitestarMCP(InitPluginProtocol, CLIPlugin):
     """Litestar plugin for Model Context Protocol integration.
 
     This plugin discovers routes marked with 'mcp_tool' or 'mcp_resource' in their
@@ -74,6 +77,16 @@ class LitestarMCP(InitPluginProtocol):
     def discovered_resources(self) -> dict[str, BaseRouteHandler]:
         """Get discovered MCP resources."""
         return self._discovered_resources
+
+    def on_cli_init(self, cli: "Group") -> None:
+        """Configure CLI commands for MCP operations.
+
+        Args:
+            cli: The Click command group to add commands to.
+        """
+        from litestar_mcp.cli import mcp_group
+
+        cli.add_command(mcp_group)
 
     def _discover_mcp_routes(self, route_handlers: Sequence[Any]) -> None:
         """Discover routes marked for MCP exposure via opt attribute or decorators.
