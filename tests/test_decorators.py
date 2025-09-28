@@ -131,7 +131,7 @@ class TestDecorators:
         """Test decorators work correctly with async handlers."""
 
         @mcp_tool(name="async_tool")
-        @post("/async", sync_to_thread=False)
+        @post("/async")
         async def async_tool(data: dict[str, Any]) -> dict[str, Any]:
             """Process data asynchronously."""
             return {"processed": True, "input": data}
