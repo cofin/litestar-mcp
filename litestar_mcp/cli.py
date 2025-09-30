@@ -158,7 +158,6 @@ def mcp_group(ctx: "click.Context") -> None:
 
 
 @mcp_group.command(name="list-tools")  # type: ignore[misc]
-@click.pass_context
 def list_tools(ctx: click.Context) -> None:
     """List all available MCP tools."""
     plugin = ctx.obj["plugin"]  # pragma: no cover
@@ -171,6 +170,27 @@ def list_tools(ctx: click.Context) -> None:
     console.print(f"[bold green]Discovered {len(plugin.discovered_tools)} tools:[/bold green]")  # pragma: no cover
     for name in sorted(plugin.discovered_tools.keys()):  # pragma: no cover
         handler = plugin.discovered_tools[name]  # pragma: no cover
+        # Get the underlying function and its docstring  # pragma: no cover
+        fn = get_handler_function(handler)  # pragma: no cover
+        description = fn.__doc__ or "No description"  # pragma: no cover
+        # Clean up the description - take first line only  # pragma: no cover
+        first_line = description.split("\n")[0].strip()  # pragma: no cover
+        console.print(f"- [bold]{name}[/bold]: {first_line}")  # pragma: no cover
+
+
+@mcp_group.command(name="list-resources")  # type: ignore[misc]
+def list_resources(ctx: click.Context) -> None:
+    """List all available MCP resources."""
+    plugin = ctx.obj["plugin"]  # pragma: no cover
+    console = Console()  # pragma: no cover
+
+    if not plugin.discovered_resources:  # pragma: no cover
+        console.print("[yellow]No MCP resources discovered.[/yellow]")  # pragma: no cover
+        return  # pragma: no cover
+
+    console.print(f"[bold green]Discovered {len(plugin.discovered_resources)} resources:[/bold green]")  # pragma: no cover
+    for name in sorted(plugin.discovered_resources.keys()):  # pragma: no cover
+        handler = plugin.discovered_resources[name]  # pragma: no cover
         # Get the underlying function and its docstring  # pragma: no cover
         fn = get_handler_function(handler)  # pragma: no cover
         description = fn.__doc__ or "No description"  # pragma: no cover
