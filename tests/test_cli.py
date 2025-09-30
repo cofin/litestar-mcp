@@ -27,4 +27,5 @@ class TestCLI:
         assert result.exit_code == 0
         assert "Manage MCP tools and resources" in result.output
         assert "list-tools" in result.output
+        assert "list-resources" in result.output
         assert "run" in result.output
