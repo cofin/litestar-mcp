@@ -177,7 +177,12 @@ cython_debug/
 CLAUDE.md
 .gitignore
 .todos
-.tmp
-!README.md
-!CHANGELOG.md
-*.md
+.tmp 
+
+# Workflow system
+!AGENTS.md
+!.claude/agents/*
+!.claude/commands/*
+!.claude/skills/*
+specs/active/
+specs/archive/
