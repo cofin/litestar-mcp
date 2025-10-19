@@ -1,6 +1,6 @@
 """Utility functions for litestar-mcp to reduce defensive programming."""
 
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 if TYPE_CHECKING:
     from litestar.handlers import BaseRouteHandler
@@ -24,8 +24,10 @@ def get_handler_function(handler: "BaseRouteHandler") -> Callable[..., Any]:
     return getattr(fn, "value", fn)
 
 
-def get_mcp_metadata(obj: Any) -> "dict[str, Any] | None":
+def get_mcp_metadata(obj: Any) -> "Optional[dict[str, Any]]":
     """Get MCP metadata from an object if it exists.
+
+    Checks for _mcp_pending attribute (registry-based approach).
 
     Args:
         obj: Object to check for MCP metadata.
@@ -33,7 +35,7 @@ def get_mcp_metadata(obj: Any) -> "dict[str, Any] | None":
     Returns:
         MCP metadata dictionary or None if not present.
     """
-    return getattr(obj, "_mcp_metadata", None)
+    return getattr(obj, "_mcp_pending", None)
 
 
 __all__ = ("get_handler_function", "get_mcp_metadata")

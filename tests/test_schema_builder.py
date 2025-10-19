@@ -109,7 +109,7 @@ class TestSchemaBuilder:
         # Check types
         assert properties["message"]["type"] == "string"
         assert properties["count"]["type"] == "integer"
-        assert properties["tags"]["type"] == "array"
+        assert properties["tags"]["type"] == ["array", "null"]
 
     def test_generate_schema_with_complex_types(self) -> None:
         """Test schema generation with complex parameter types."""

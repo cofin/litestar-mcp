@@ -17,6 +17,7 @@ class TestLitestarMCP:
         """Test plugin initialization with default values."""
         plugin = LitestarMCP()
         assert plugin.config.base_path == "/mcp"
+        assert plugin.registry is not None  # Test registry property access
 
     def test_plugin_initialization_custom(self) -> None:
         """Test plugin initialization with custom values."""
@@ -281,3 +282,28 @@ class TestLitestarMCP:
         result = json.loads(data["content"]["text"])
         assert result["config"] == "value"
         assert result["enabled"] is True
+
+    def test_setup_server_reregistration(self) -> None:
+        """Test setup_server method for dynamic re-registration."""
+
+        @get("/tool1", opt={"mcp_tool": "tool1"})
+        async def tool1() -> dict[str, str]:
+            return {"result": "tool1"}
+
+        @get("/tool2", opt={"mcp_tool": "tool2"})
+        async def tool2() -> dict[str, str]:
+            return {"result": "tool2"}
+
+        plugin = LitestarMCP()
+        Litestar(plugins=[plugin], route_handlers=[tool1])
+
+        # Initially only tool1
+        assert "tool1" in plugin.discovered_tools
+        assert "tool2" not in plugin.discovered_tools
+
+        # Re-register with tool2
+        added, removed = plugin.setup_server([tool2])
+        assert "tool2" in added
+        assert "tool1" in removed
+        assert "tool2" in plugin.discovered_tools
+        assert "tool1" not in plugin.discovered_tools

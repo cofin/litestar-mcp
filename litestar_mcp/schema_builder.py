@@ -1,10 +1,8 @@
 """Automatic JSON Schema generation for MCP tools."""
 
-from __future__ import annotations
-
 import contextlib
 import inspect
-from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Optional, Union, get_args, get_origin
 
 if TYPE_CHECKING:
     from litestar.handlers import BaseRouteHandler
@@ -19,7 +17,7 @@ from litestar_mcp.typing import (
 from litestar_mcp.utils import get_handler_function
 
 
-def basic_type_to_json_schema(annotation: Any) -> dict[str, Any] | None:
+def basic_type_to_json_schema(annotation: Any) -> "Optional[dict[str, Any]]":
     """Convert basic Python types to JSON Schema format."""
     if annotation is str:
         return {"type": "string"}
@@ -32,7 +30,7 @@ def basic_type_to_json_schema(annotation: Any) -> dict[str, Any] | None:
     return None
 
 
-def collection_type_to_json_schema(annotation: Any) -> dict[str, Any] | None:
+def collection_type_to_json_schema(annotation: Any) -> "Optional[dict[str, Any]]":
     """Convert collection types (list, dict, set) to JSON Schema format."""
     origin = get_origin(annotation)
 
@@ -54,13 +52,13 @@ def collection_type_to_json_schema(annotation: Any) -> dict[str, Any] | None:
     return None
 
 
-def pydantic_to_json_schema(model: Any) -> dict[str, Any]:
+def pydantic_to_json_schema(model: Any) -> "dict[str, Any]":
     """Convert Pydantic model to JSON Schema format."""
     schema: dict[str, Any] = model.model_json_schema()
     return schema
 
 
-def msgspec_to_json_schema(struct_type: Any) -> dict[str, Any]:
+def msgspec_to_json_schema(struct_type: Any) -> "dict[str, Any]":
     """Convert msgspec Struct to JSON Schema format."""
     if not MSGSPEC_INSTALLED:
         return {"type": "object", "description": "msgspec Struct (msgspec not installed)"}
@@ -84,7 +82,7 @@ def msgspec_to_json_schema(struct_type: Any) -> dict[str, Any]:
     return schema
 
 
-def dataclass_to_json_schema(dataclass_type: Any) -> dict[str, Any]:
+def dataclass_to_json_schema(dataclass_type: Any) -> "dict[str, Any]":
     """Convert dataclass to JSON Schema format."""
     from dataclasses import MISSING, fields
 
@@ -103,7 +101,7 @@ def dataclass_to_json_schema(dataclass_type: Any) -> dict[str, Any]:
     return schema
 
 
-def attrs_to_json_schema(attrs_type: Any) -> dict[str, Any]:
+def attrs_to_json_schema(attrs_type: Any) -> "dict[str, Any]":
     """Convert attrs class to JSON Schema format."""
     from litestar_mcp.typing import attrs_fields
 
@@ -122,7 +120,7 @@ def attrs_to_json_schema(attrs_type: Any) -> dict[str, Any]:
     return schema
 
 
-def model_to_json_schema(annotation: Any) -> dict[str, Any] | None:
+def model_to_json_schema(annotation: Any) -> "Optional[dict[str, Any]]":
     """Convert a model class (Pydantic, msgspec, attrs, dataclass) to JSON Schema format.
 
     This is the main entry point for structured type conversion.
@@ -142,32 +140,42 @@ def model_to_json_schema(annotation: Any) -> dict[str, Any] | None:
     return None
 
 
-def union_type_to_json_schema(annotation: Any) -> dict[str, Any] | None:
-    """Convert Union types (including Optional) to JSON Schema format."""
+def union_type_to_json_schema(annotation: Any) -> "Optional[dict[str, Any]]":
+    """Convert Union types (including Optional) to JSON Schema format with nullability."""
     origin = get_origin(annotation)
 
-    if origin is type(None):  # NoneType
+    if origin is type(None):
         return {"type": "null"}
 
-    # Handle Union types, particularly Optional[T] which is Union[T, None]
     if origin is Union:
         args = get_args(annotation)
-        # Check if this is Optional[T] (Union[T, None])
         non_none_args = [arg for arg in args if arg is not type(None)]
-        if len(non_none_args) == 1 and type(None) in args:
-            # This is Optional[T], generate schema for T
-            return type_to_json_schema(non_none_args[0])
-        if len(args) == 1:
-            # Single type in union (shouldn't happen but handle it)
-            return type_to_json_schema(args[0])
-        # Complex union with multiple non-None types
-        # For now, fall back to object type
-        return {"type": "object", "description": f"Union type {annotation}"}
+        has_none = type(None) in args
+
+        if len(non_none_args) == 1:
+            base_schema = type_to_json_schema(non_none_args[0])
+
+            if has_none:
+                if isinstance(base_schema.get("type"), str):
+                    base_schema["type"] = [base_schema["type"], "null"]
+                elif isinstance(base_schema.get("type"), list):
+                    if "null" not in base_schema["type"]:
+                        base_schema["type"].append("null")
+                else:
+                    return {"anyOf": [base_schema, {"type": "null"}]}
+
+            return base_schema
+
+        if len(non_none_args) > 1:
+            schemas = [type_to_json_schema(arg) for arg in non_none_args]
+            if has_none:
+                schemas.append({"type": "null"})
+            return {"anyOf": schemas}
 
     return None
 
 
-def type_to_json_schema(annotation: Any) -> dict[str, Any]:
+def type_to_json_schema(annotation: Any) -> "dict[str, Any]":
     """Convert a Python type annotation to JSON Schema format.
 
     Args:
@@ -199,8 +207,13 @@ def type_to_json_schema(annotation: Any) -> dict[str, Any]:
 
 
 def _resolve_string_annotation(annotation: str) -> Any:
-    """Resolve a string annotation to a Python type."""
-    # Common basic types
+    """Resolve a string annotation to a Python type with support for complex types.
+
+    Uses restricted eval with controlled namespace for type hint resolution.
+    Only typing module and basic Python types are available.
+    """
+    import typing
+
     basic_types = {
         "int": int,
         "str": str,
@@ -209,16 +222,23 @@ def _resolve_string_annotation(annotation: str) -> Any:
         "list": list,
         "dict": dict,
         "set": set,
+        "None": type(None),
     }
 
     if annotation in basic_types:
         return basic_types[annotation]
 
-    # For complex string annotations, return object schema
-    return {"type": "object", "description": f"Parameter of type {annotation}"}
+    try:
+        namespace = {"__builtins__": {}, "typing": typing}
+        namespace.update(typing.__dict__)
+        namespace.update(basic_types)
+        compiled = compile(annotation, "<string>", "eval")
+        return eval(compiled, namespace, {})
+    except (NameError, SyntaxError, TypeError, AttributeError):
+        return {"type": "object", "description": f"Parameter of type {annotation}"}
 
 
-def generate_schema_for_handler(handler: BaseRouteHandler) -> dict[str, Any]:
+def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]":
     """Generate a JSON Schema for an MCP tool handler.
 
     Args:

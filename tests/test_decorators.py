@@ -155,7 +155,7 @@ class TestDecorators:
         from litestar_mcp.utils import get_handler_function, get_mcp_metadata
 
         metadata = get_mcp_metadata(working_function)
-        assert metadata == {"type": "tool", "name": "working_tool"}
+        assert metadata == {"type": "tool", "name": "working_tool", "description": None}
 
         # The underlying function should be accessible
         fn = get_handler_function(working_function)
