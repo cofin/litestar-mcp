@@ -1,7 +1,5 @@
 """Tests for LitestarMCP integration."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from litestar import Litestar, get, post
@@ -17,7 +15,7 @@ class TestLitestarMCP:
         """Test plugin initialization with default values."""
         plugin = LitestarMCP()
         assert plugin.config.base_path == "/mcp"
-        assert plugin.registry is not None  # Test registry property access
+        assert plugin.registry is not None
 
     def test_plugin_initialization_custom(self) -> None:
         """Test plugin initialization with custom values."""
@@ -112,7 +110,6 @@ class TestLitestarMCP:
         data = response.json()
         assert "content" in data
 
-        # Verify we get real execution results, not mock
         import json
 
         result_text = data["content"][0]["text"]
@@ -154,7 +151,6 @@ class TestLitestarMCP:
         app = Litestar(plugins=[LitestarMCP()], route_handlers=[custom_route])
         client = TestClient(app=app)
 
-        # Test successful resource access first
         response = client.get("/mcp/resources/custom_data")
         assert response.status_code == 200
         data = response.json()
@@ -175,7 +171,6 @@ class TestLitestarMCP:
         data = response.json()
         assert data["content"]["uri"] == "litestar://custom_data"
 
-        # Verify we get real resource data, not mock
         import json
 
         result_text = data["content"]["text"]
@@ -187,21 +182,17 @@ class TestLitestarMCP:
     def test_plugin_coverage_gaps(self) -> None:
         """Test remaining coverage gaps in plugin.py."""
 
-        # Test the recursive discovery by manually calling the method with nested structure
         plugin = LitestarMCP()
 
         @get("/nested-tool", opt={"mcp_tool": "nested_tool"})
         async def nested_tool() -> dict[str, Any]:
             return {"result": "nested"}
 
-        # Mock a container with route_handlers attribute
         class MockContainer:
             route_handlers = [nested_tool]
 
-        # Test the recursive discovery
         plugin._discover_mcp_routes([MockContainer()])
 
-        # Should have discovered the nested tool
         assert "nested_tool" in plugin.discovered_tools
 
     def test_automatic_schema_generation(self) -> None:
@@ -219,15 +210,12 @@ class TestLitestarMCP:
         assert response.status_code == 200
         data = response.json()
 
-        # Find our tool
         tool = next(t for t in data["tools"] if t["name"] == "list_users")
 
-        # Verify it has a real schema, not a placeholder
         schema = tool["inputSchema"]
         assert schema["type"] == "object"
         assert "properties" in schema
 
-        # Check properties
         properties = schema["properties"]
         assert "limit" in properties
         assert "active" in properties
@@ -235,7 +223,6 @@ class TestLitestarMCP:
         assert properties["limit"]["type"] == "integer"
         assert properties["active"]["type"] == "boolean"
 
-        # Check required fields (both have defaults, so neither should be required)
         required = schema.get("required", [])
         assert "limit" not in required
         assert "active" not in required
@@ -259,14 +246,11 @@ class TestLitestarMCP:
         plugin = LitestarMCP()
         app = Litestar(plugins=[plugin], route_handlers=[decorator_tool, decorator_resource])
 
-        # Check discovery
         assert "decorator_tool" in plugin.discovered_tools
         assert "decorator_resource" in plugin.discovered_resources
 
-        # Test via HTTP endpoints
         client = TestClient(app=app)
 
-        # Test tool execution
         response = client.post("/mcp/tools/decorator_tool", json={"arguments": {"message": "test"}})
         assert response.status_code == 200
         data = response.json()
@@ -275,13 +259,40 @@ class TestLitestarMCP:
         result = json.loads(data["content"][0]["text"])
         assert result["message"] == "Processed: test"
 
-        # Test resource access
         response = client.get("/mcp/resources/decorator_resource")
         assert response.status_code == 200
         data = response.json()
         result = json.loads(data["content"]["text"])
         assert result["config"] == "value"
         assert result["enabled"] is True
+
+    def test_controller_routes_discovered_on_startup(self) -> None:
+        """Test that controller-defined MCP-marked routes are discovered.
+
+        Controller handlers are materialized after app construction. The plugin
+        performs a startup-time rescan to register those runtime handlers.
+        """
+        from litestar import Controller
+
+        class MyController(Controller):
+            path = "/c"
+
+            @get("/users", mcp_tool="list_users")
+            async def users(self) -> list[dict[str, Any]]:
+                return [{"id": 1, "name": "Alice"}]
+
+        app = Litestar(plugins=[LitestarMCP()], route_handlers=[MyController])
+        client = TestClient(app=app)
+
+        response = client.get("/mcp/tools")
+        assert response.status_code == 200
+        data = response.json()
+        assert any(tool["name"] == "list_users" for tool in data["tools"])
+
+        response = client.get("/mcp/")
+        assert response.status_code == 200
+        info = response.json()
+        assert info["discovered"]["tools"] == 1
 
     def test_setup_server_reregistration(self) -> None:
         """Test setup_server method for dynamic re-registration."""
@@ -297,11 +308,9 @@ class TestLitestarMCP:
         plugin = LitestarMCP()
         Litestar(plugins=[plugin], route_handlers=[tool1])
 
-        # Initially only tool1
         assert "tool1" in plugin.discovered_tools
         assert "tool2" not in plugin.discovered_tools
 
-        # Re-register with tool2
         added, removed = plugin.setup_server([tool2])
         assert "tool2" in added
         assert "tool1" in removed

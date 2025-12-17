@@ -49,7 +49,7 @@ class HandlerSignature:
         """
         fn = get_handler_function(handler)
         methods = tuple(sorted(handler.http_methods))  # type: ignore[attr-defined]
-        path = handler.path if hasattr(handler, "path") else "/"
+        path = getattr(handler, "path", "/")
         qualname = f"{fn.__module__}.{fn.__qualname__}"
 
         return cls(
@@ -216,8 +216,9 @@ class MCPToolRegistry:
                             None,
                         )
 
-            if getattr(handler, "route_handlers", None):
-                added, removed = self._rebuild_unlocked(handler.route_handlers)
+            nested_route_handlers = getattr(handler, "route_handlers", None)
+            if nested_route_handlers:
+                added, removed = self._rebuild_unlocked(nested_route_handlers)
 
         new_names = {meta.name for meta in self._registry.values()}
         added = new_names - old_names

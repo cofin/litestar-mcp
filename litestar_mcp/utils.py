@@ -19,8 +19,6 @@ def get_handler_function(handler: "BaseRouteHandler") -> Callable[..., Any]:
         The underlying callable function.
     """
     fn = handler.fn
-    # AnyCallable has .value, regular functions don't
-    # Check the type instead of using hasattr
     return getattr(fn, "value", fn)
 
 

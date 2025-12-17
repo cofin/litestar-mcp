@@ -154,20 +154,23 @@ class TestEdgeCases:
         assert is_schema_model([]) is False
 
 
-@pytest.mark.parametrize(
-    "guard_func,test_obj,expected",
-    [
-        (is_dict, {}, True),
-        (is_dict, [], False),
-        (is_dataclass, SampleDataclass("test", 25), True),
-        (is_dataclass, {}, False),
-        (is_schema_model, SampleDataclass("test", 25), True),
-        (is_schema_model, {}, False),
-    ],
-    ids=["dict_true", "dict_false", "dataclass_true", "dataclass_false", "schema_true", "schema_false"],
-)
-def test_type_guard_performance(guard_func: Any, test_obj: Any, expected: bool) -> None:
-    """Test type guard performance."""
-    for _ in range(10):  # Reduced iterations for faster tests
-        result = guard_func(test_obj)
-        assert result == expected
+class TestTypeGuardPerformance:
+    """Test performance characteristics of type guard functions."""
+
+    @pytest.mark.parametrize(
+        "guard_func,test_obj,expected",
+        [
+            (is_dict, {}, True),
+            (is_dict, [], False),
+            (is_dataclass, SampleDataclass("test", 25), True),
+            (is_dataclass, {}, False),
+            (is_schema_model, SampleDataclass("test", 25), True),
+            (is_schema_model, {}, False),
+        ],
+        ids=["dict_true", "dict_false", "dataclass_true", "dataclass_false", "schema_true", "schema_false"],
+    )
+    def test_type_guard_performance(self, guard_func: Any, test_obj: Any, expected: bool) -> None:
+        """Test type guard performance."""
+        for _ in range(10):
+            result = guard_func(test_obj)
+            assert result == expected

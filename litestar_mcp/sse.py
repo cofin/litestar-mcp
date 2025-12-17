@@ -57,7 +57,7 @@ async def sse_heartbeat(interval: float = 30) -> AsyncGenerator[str, None]:
 
 async def stream_with_heartbeat(
     data_stream: AsyncGenerator["dict[str, Any]", None],
-    heartbeat_interval: int = 30,
+    heartbeat_interval: float = 30,
 ) -> AsyncGenerator[str, None]:
     """Merge data stream with heartbeat keep-alive messages.
 
@@ -79,27 +79,56 @@ async def stream_with_heartbeat(
         ...     print(event)
     """
     heartbeat_gen = sse_heartbeat(heartbeat_interval)
-    heartbeat_task: Optional[asyncio.Task[str]] = asyncio.create_task(heartbeat_gen.__anext__())
+    data_iter = data_stream.__aiter__()
+
+    async def next_heartbeat() -> str:
+        return await heartbeat_gen.__anext__()
+
+    async def next_data() -> dict[str, Any]:
+        return await data_iter.__anext__()
+
+    heartbeat_task: Optional[asyncio.Task[str]] = asyncio.create_task(next_heartbeat())
+    data_task: Optional[asyncio.Task[dict[str, Any]]] = asyncio.create_task(next_data())
 
     try:
-        async for data in data_stream:
-            yield format_sse_event("result", data)
+        while data_task is not None and heartbeat_task is not None:
+            done, _pending = await asyncio.wait(
+                {data_task, heartbeat_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
 
-            if heartbeat_task and heartbeat_task.done():
+            if data_task in done:
                 try:
-                    heartbeat_msg = heartbeat_task.result()
-                    yield heartbeat_msg
+                    data = data_task.result()
                 except StopAsyncIteration:
-                    pass
-                heartbeat_task = asyncio.create_task(heartbeat_gen.__anext__())
+                    data_task = None
+                else:
+                    yield format_sse_event("result", data)
+                    data_task = asyncio.create_task(next_data())
+
+            if heartbeat_task in done:
+                try:
+                    yield heartbeat_task.result()
+                except StopAsyncIteration:
+                    heartbeat_task = None
+                else:
+                    heartbeat_task = asyncio.create_task(next_heartbeat())
 
         yield format_sse_event("done", {})
 
     finally:
+        if data_task:
+            data_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, StopAsyncIteration):
+                await data_task
         if heartbeat_task:
             heartbeat_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, StopAsyncIteration):
                 await heartbeat_task
+        with contextlib.suppress(Exception):
+            await data_stream.aclose()
+        with contextlib.suppress(Exception):
+            await heartbeat_gen.aclose()
 
 
 async def stream_with_backpressure(

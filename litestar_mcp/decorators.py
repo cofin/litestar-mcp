@@ -1,3 +1,4 @@
+# ruff: noqa: SLF001
 """Decorators for marking MCP tools and resources."""
 
 from typing import Any, Callable, Optional, TypeVar

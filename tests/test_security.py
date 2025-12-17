@@ -15,7 +15,6 @@ if TYPE_CHECKING:
     from litestar.connection import ASGIConnection
     from litestar.security.jwt import JWTAuth, Token
 
-# JWT functionality is optional
 try:
     from litestar.security.jwt import JWTAuth, Token
 
@@ -40,7 +39,6 @@ class TestSecurity:
         app = Litestar(plugins=[plugin], route_handlers=[get_users])
         client = TestClient(app=app)
 
-        # Should work without authentication
         response = client.get("/mcp/tools")
         assert response.status_code == 200
 
@@ -51,13 +49,11 @@ class TestSecurity:
     def test_mcp_endpoints_with_jwt_and_guards(self) -> None:
         """Test MCP endpoints protected with JWT authentication and guards."""
 
-        # Define JWT auth - protect all routes by default
         jwt_auth: JWTAuth[dict[str, Any], Token] = JWTAuth[dict[str, Any], Token](
             token_secret="super-secret-key-for-testing",
             retrieve_user_handler=lambda token, _: token.extras,
         )
 
-        # Define authorization guard
         async def admin_guard(
             connection: "ASGIConnection[Any, Any, Any, Any]", route_handler: BaseRouteHandler
         ) -> None:
@@ -67,7 +63,6 @@ class TestSecurity:
                 msg = "Admin privileges required"
                 raise PermissionDeniedException(msg)
 
-        # Configure MCP with guard
         mcp_config = MCPConfig(guards=[admin_guard])
         plugin = LitestarMCP(config=mcp_config)
 
@@ -84,25 +79,20 @@ class TestSecurity:
 
         client = TestClient(app=app)
 
-        # Test without token - should fail with 401
         response = client.get("/mcp/tools")
         assert response.status_code == 401
 
-        # Test with invalid token - should fail with 401
         response = client.get("/mcp/tools", headers={"Authorization": "Bearer invalid-token"})
         assert response.status_code == 401
 
-        # Test with valid token but wrong role - should fail with 403
         user_token = jwt_auth.create_token(identifier="user", token_extras={"roles": ["user"]})
         response = client.get("/mcp/tools", headers={"Authorization": f"Bearer {user_token}"})
         assert response.status_code == 403
 
-        # Test with valid token and correct role - should succeed
         admin_token = jwt_auth.create_token(identifier="admin", token_extras={"roles": ["admin"]})
         response = client.get("/mcp/tools", headers={"Authorization": f"Bearer {admin_token}"})
         assert response.status_code == 200
 
-        # Test tool execution with proper authentication
         response = client.post(
             "/mcp/tools/list_users",
             json={"arguments": {}},
@@ -135,7 +125,6 @@ class TestSecurity:
                 msg = "MCP read scope required"
                 raise PermissionDeniedException(msg)
 
-        # Configure with multiple guards
         mcp_config = MCPConfig(guards=[role_guard, scope_guard])
         plugin = LitestarMCP(config=mcp_config)
 
@@ -151,19 +140,16 @@ class TestSecurity:
 
         client = TestClient(app=app)
 
-        # Token with wrong role and scope - should fail
         wrong_token = jwt_auth.create_token(identifier="user", token_extras={"roles": ["user"], "scopes": ["read"]})
         response = client.get("/mcp/tools", headers={"Authorization": f"Bearer {wrong_token}"})
         assert response.status_code == 403
 
-        # Token with correct role but wrong scope - should fail
         partial_token = jwt_auth.create_token(
             identifier="user", token_extras={"roles": ["mcp_user"], "scopes": ["read"]}
         )
         response = client.get("/mcp/tools", headers={"Authorization": f"Bearer {partial_token}"})
         assert response.status_code == 403
 
-        # Token with correct role and scope - should succeed
         correct_token = jwt_auth.create_token(
             identifier="user", token_extras={"roles": ["mcp_user"], "scopes": ["mcp:read"]}
         )
@@ -177,7 +163,7 @@ class TestSecurity:
         jwt_auth = JWTAuth[dict[str, Any], Token](
             token_secret="super-secret-key-for-testing",
             retrieve_user_handler=lambda token, _: token.extras,
-            exclude=["/public", "/protected"],  # Exclude routes from JWT auth
+            exclude=["/public", "/protected"],
         )
 
         async def strict_guard(
@@ -206,15 +192,12 @@ class TestSecurity:
 
         client = TestClient(app=app)
 
-        # Public route should still work without authentication
         response = client.get("/public")
         assert response.status_code == 200
 
-        # Direct access to protected route should work (guards don't apply)
         response = client.get("/protected")
         assert response.status_code == 200
 
-        # Access via MCP endpoints should be blocked by guard
         admin_token = jwt_auth.create_token(identifier="admin", token_extras={"roles": ["admin"]})
         response = client.get("/mcp/tools", headers={"Authorization": f"Bearer {admin_token}"})
         assert response.status_code == 403
@@ -252,14 +235,12 @@ class TestSecurity:
 
         client = TestClient(app=app)
 
-        # User from wrong department
         wrong_dept_token = jwt_auth.create_token(
             identifier="user", token_extras={"department": "HR", "roles": ["user"]}
         )
         response = client.get("/mcp/tools", headers={"Authorization": f"Bearer {wrong_dept_token}"})
         assert response.status_code == 403
 
-        # User from correct department
         ai_dept_token = jwt_auth.create_token(identifier="user", token_extras={"department": "AI", "roles": ["user"]})
         response = client.get("/mcp/tools", headers={"Authorization": f"Bearer {ai_dept_token}"})
         assert response.status_code == 200
@@ -271,14 +252,12 @@ class TestSecurity:
         async def simple_tool() -> dict[str, str]:
             return {"result": "success"}
 
-        # Config without guards should work as before
         config_without_guards = MCPConfig(base_path="/api/mcp")
         plugin = LitestarMCP(config=config_without_guards)
 
         app = Litestar(plugins=[plugin], route_handlers=[simple_tool])
         client = TestClient(app=app)
 
-        # Should work without any authentication
         response = client.get("/api/mcp/tools")
         assert response.status_code == 200
 

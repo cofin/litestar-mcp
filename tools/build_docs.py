@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import argparse
 import importlib.metadata
 import json
@@ -9,10 +7,7 @@ import subprocess
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict, cast
-
-if TYPE_CHECKING:
-    from collections.abc import Generator
+from typing import Optional, TypedDict, cast
 
 REDIRECT_TEMPLATE = """
 <!DOCTYPE HTML>
@@ -55,7 +50,7 @@ def load_version_spec() -> VersionSpec:
     return {"versions": [], "latest": ""}
 
 
-def build(output_dir: str, version: str | None) -> None:
+def build(output_dir: str, version: Optional[str]) -> None:
     if version is None:
         version = importlib.metadata.version("litestar-mcp").rsplit(".")[0]
     else:

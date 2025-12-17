@@ -31,14 +31,11 @@ class TestSchemaBuilder:
 
     def test_list_type_mappings(self) -> None:
         """Test mapping of list types to JSON Schema."""
-        # Basic list
         assert type_to_json_schema(list) == {"type": "array"}
 
-        # Typed list
         list_str_schema = type_to_json_schema(list[str])
         assert list_str_schema == {"type": "array", "items": {"type": "string"}}
 
-        # Nested list
         list_int_schema = type_to_json_schema(list[int])
         assert list_int_schema == {"type": "array", "items": {"type": "integer"}}
 
@@ -49,10 +46,8 @@ class TestSchemaBuilder:
 
     def test_set_type_mappings(self) -> None:
         """Test mapping of set types to JSON Schema."""
-        # Basic set
         assert type_to_json_schema(set) == {"type": "array", "uniqueItems": True}
 
-        # Typed set
         set_str_schema = type_to_json_schema(set[str])
         assert set_str_schema == {"type": "array", "items": {"type": "string"}, "uniqueItems": True}
 
@@ -65,6 +60,25 @@ class TestSchemaBuilder:
         schema = type_to_json_schema(CustomClass)
         assert schema["type"] == "object"
         assert "Parameter of type" in schema["description"]
+
+    def test_string_annotation_resolution(self) -> None:
+        """Test resolving stringified annotations without eval()."""
+        assert type_to_json_schema("int") == {"type": "integer"}
+
+        list_schema = type_to_json_schema("list[str]")
+        assert list_schema == {"type": "array", "items": {"type": "string"}}
+
+        optional_list_schema = type_to_json_schema("Optional[list[str]]")
+        assert optional_list_schema["type"] == ["array", "null"]
+        assert optional_list_schema["items"]["type"] == "string"
+
+        union_schema = type_to_json_schema("Union[bool, Literal['warn', 'error']]")
+        assert "anyOf" in union_schema
+        assert {"type": "boolean"} in union_schema["anyOf"]
+
+        unknown_schema = type_to_json_schema("NotAType")
+        assert unknown_schema["type"] == "object"
+        assert "NotAType" in unknown_schema["description"]
 
     def test_generate_schema_for_simple_handler(self) -> None:
         """Test schema generation for a handler with simple parameters."""
@@ -79,13 +93,11 @@ class TestSchemaBuilder:
         assert "properties" in schema
         assert "required" in schema
 
-        # Check properties
         properties = schema["properties"]
         assert properties["name"]["type"] == "string"
         assert properties["age"]["type"] == "integer"
         assert properties["active"]["type"] == "boolean"
 
-        # Check required fields (active has default, so not required)
         assert set(schema["required"]) == {"name", "age"}
 
     def test_generate_schema_for_handler_with_optional_params(self) -> None:
@@ -97,16 +109,13 @@ class TestSchemaBuilder:
         _, handler = create_app_with_handler(handler_with_optional)
         schema = generate_schema_for_handler(handler)
 
-        # Only 'message' should be required
         assert schema["required"] == ["message"]
 
-        # All parameters should be in properties
         properties = schema["properties"]
         assert "message" in properties
         assert "count" in properties
         assert "tags" in properties
 
-        # Check types
         assert properties["message"]["type"] == "string"
         assert properties["count"]["type"] == "integer"
         assert properties["tags"]["type"] == ["array", "null"]
@@ -122,13 +131,11 @@ class TestSchemaBuilder:
 
         properties = schema["properties"]
 
-        # Check complex types
         assert properties["config"]["type"] == "object"
         assert properties["items"]["type"] == "array"
         assert properties["items"]["items"]["type"] == "string"
         assert properties["metadata"]["type"] == "object"
 
-        # All should be required
         assert set(schema["required"]) == {"config", "items", "metadata"}
 
     def test_generate_schema_excludes_di_parameters(self) -> None:
@@ -147,7 +154,6 @@ class TestSchemaBuilder:
 
         schema = generate_schema_for_handler(handler)
 
-        # Only user_id should be in the schema, not config
         assert "user_id" in schema["properties"]
         assert "config" not in schema["properties"]
         assert schema["required"] == ["user_id"]
@@ -209,7 +215,6 @@ class TestSchemaBuilder:
             handler = BaseRouteHandler(fn=pydantic_handler, http_method="GET", path="/test")
             schema = generate_schema_for_handler(handler)
 
-            # Should use Pydantic's schema generation
             user_schema = schema["properties"]["user"]
             assert "properties" in user_schema
             assert "name" in user_schema["properties"]
@@ -230,13 +235,10 @@ class TestSchemaBuilder:
 
         properties = schema["properties"]
 
-        # Any should fallback to object
         assert properties["any_param"]["type"] == "object"
 
-        # Optional[str] should be handled
         assert "union_param" in properties
 
-        # Parameter without annotation should be handled gracefully
         assert "raw_param" in properties
 
     def test_nested_complex_types(self) -> None:
@@ -248,7 +250,6 @@ class TestSchemaBuilder:
         _, handler = create_app_with_handler(nested_handler)
         schema = generate_schema_for_handler(handler)
 
-        # Should handle nested complexity gracefully
         properties = schema["properties"]
         assert properties["nested_data"]["type"] == "object"
 
@@ -353,10 +354,8 @@ class TestDataclassToJsonSchema:
 
         result = dataclass_to_json_schema(TestDataclass)
 
-        # Only required fields should be in required array
         assert result["required"] == ["name"]
 
-        # All fields should be in properties
         properties = result["properties"]
         assert len(properties) == 3
         assert "name" in properties
@@ -396,11 +395,9 @@ class TestMsgspecToJsonSchema:
 
     def test_msgspec_to_json_schema_imports(self) -> None:
         """Test that msgspec import is handled correctly."""
-        # This test verifies the import behavior inside the function
         try:
             import msgspec
 
-            # If msgspec is available, test it
             if hasattr(msgspec, "Struct"):
 
                 class TestStruct(msgspec.Struct):
@@ -411,7 +408,6 @@ class TestMsgspecToJsonSchema:
                 assert result["type"] == "object"
                 assert "properties" in result
         except ImportError:
-            # If msgspec is not available, just pass
             pass
 
 
@@ -452,7 +448,6 @@ class TestTypeToJsonSchemaIntegration:
         """Test complex nested type conversion."""
         result = type_to_json_schema(dict[str, list[int]])
 
-        # Should handle the dict but may not fully parse the value type
         assert result["type"] == "object"
 
     def test_type_to_json_schema_unknown_type(self) -> None:
@@ -474,13 +469,11 @@ class TestEdgeCasesAndErrorHandling:
     def test_generate_schema_handler_with_no_function(self) -> None:
         """Test error handling when handler has no function."""
 
-        # Create a mock handler without fn attribute
         class MockHandler:
             pass
 
         handler = MockHandler()
 
-        # Should handle gracefully and not crash
         import contextlib
 
         with contextlib.suppress(AttributeError):
@@ -490,7 +483,6 @@ class TestEdgeCasesAndErrorHandling:
         """Test type_to_json_schema with None input."""
         result = type_to_json_schema(None)
 
-        # Should handle gracefully
         assert result is not None
         assert result["type"] == "object"
 
@@ -520,10 +512,8 @@ class TestEdgeCasesAndErrorHandling:
         _, handler = create_app_with_handler(handler_with_complex_defaults)
         schema = generate_schema_for_handler(handler)
 
-        # Should only require name parameter
         assert schema["required"] == ["name"]
 
-        # Should include all parameters in properties
         properties = schema["properties"]
         assert "name" in properties
         assert "config" in properties

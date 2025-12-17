@@ -63,7 +63,6 @@ class TestExecutor:
 
         app, handler = create_app_with_handler(request_dependent_handler)
 
-        # Mock the resolve_dependencies to return request as a dependency
         handler.resolve_dependencies = lambda: {"request": AsyncMock()}  # type: ignore[method-assign]
 
         with pytest.raises(NotCallableInCLIContextError) as exc_info:
@@ -81,7 +80,7 @@ class TestExecutor:
         app, handler = create_app_with_handler(handler_with_required_args)
 
         with pytest.raises(ValueError) as exc_info:
-            await execute_tool(handler, app, {"name": "Alice"})  # Missing 'age'
+            await execute_tool(handler, app, {"name": "Alice"})
 
         assert "Missing required arguments: age" in str(exc_info.value)
 
@@ -94,11 +93,9 @@ class TestExecutor:
 
         app, handler = create_app_with_handler(handler_with_optional)
 
-        # Test with optional parameter provided
         result = await execute_tool(handler, app, {"name": "Alice", "greeting": "Hi"})
         assert result == "Hi, Alice!"
 
-        # Test with optional parameter omitted (should use default)
         result = await execute_tool(handler, app, {"name": "Bob"})
         assert result == "Hello, Bob!"
 
@@ -152,7 +149,6 @@ class TestExecutor:
             handler_with_failing_dep, dependencies={"config": Provide(failing_dependency, sync_to_thread=False)}
         )
 
-        # Should raise NotCallableInCLIContextError when dependency resolution fails
         with pytest.raises(NotCallableInCLIContextError):
             await execute_tool(handler, app, {"name": "test"})
 
@@ -183,7 +179,6 @@ class TestExecutor:
 
         app, handler = create_app_with_handler(documented_handler)
 
-        # The docstring should be accessible
         from litestar_mcp.utils import get_handler_function
 
         fn = get_handler_function(handler)
@@ -201,7 +196,6 @@ class TestExecutor:
 
         app, handler = create_app_with_handler(strict_handler)
 
-        # Pass invalid type for count parameter - executor doesn't validate types
         result = await execute_tool(handler, app, {"count": "not_an_integer"})
         assert result == {"count": "not_an_integer"}
 
@@ -214,7 +208,6 @@ class TestExecutor:
 
         app, handler = create_app_with_handler(required_param_handler)
 
-        # Missing required parameter should raise ValueError
         with pytest.raises(ValueError, match="Missing required arguments: name"):
             await execute_tool(handler, app, {})
 
@@ -228,7 +221,6 @@ class TestExecutor:
 
         app, handler = create_app_with_handler(request_dependent_handler)
 
-        # Should raise NotCallableInCLIContextError
         with pytest.raises(NotCallableInCLIContextError):
             await execute_tool(handler, app, {"value": "test"})
 

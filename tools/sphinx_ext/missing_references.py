@@ -1,28 +1,26 @@
 """Sphinx extension for changelog and change directives."""
 
 # ruff: noqa: PLR0911
-from __future__ import annotations
 
 import ast
 import importlib
 import inspect
+from collections.abc import Generator
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional, Union
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
-
     from docutils.nodes import Element, Node
     from sphinx.addnodes import pending_xref
     from sphinx.application import Sphinx
     from sphinx.environment import BuildEnvironment
 
 
-def _get_module_ast(source_file: str) -> ast.AST | ast.Module:
+def _get_module_ast(source_file: str) -> ast.AST:
     return ast.parse(Path(source_file).read_text(encoding="utf-8"))
 
 
-def _get_import_nodes(nodes: list[ast.stmt]) -> Generator[ast.Import | ast.ImportFrom, None, None]:
+def _get_import_nodes(nodes: "list[ast.stmt]") -> "Generator[Union[ast.Import, ast.ImportFrom], None, None]":
     for node in nodes:
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             yield node
@@ -170,7 +168,7 @@ def _resolve_click_reference(target: str) -> bool:
         return False
 
 
-def on_warn_missing_reference(app: Sphinx, domain: str, node: Node) -> bool | None:
+def on_warn_missing_reference(app: "Sphinx", domain: str, node: "Node") -> "Optional[bool]":
     if node.tagname != "pending_xref":  # type: ignore[attr-defined]
         return None
 
@@ -243,7 +241,12 @@ def on_warn_missing_reference(app: Sphinx, domain: str, node: Node) -> bool | No
     return None
 
 
-def on_missing_reference(app: Sphinx, env: BuildEnvironment, node: pending_xref, contnode: Element) -> Element | None:
+def on_missing_reference(
+    app: "Sphinx",
+    env: "BuildEnvironment",
+    node: "pending_xref",
+    contnode: "Element",
+) -> "Optional[Element]":
     """Handle missing references by attempting to resolve them through different methods.
 
     Args:
@@ -253,7 +256,7 @@ def on_missing_reference(app: Sphinx, env: BuildEnvironment, node: pending_xref,
         contnode: The content node
 
     Returns:
-        Element | None: The resolved reference node if found, None otherwise
+        Optional[Element]: The resolved reference node if found, None otherwise
     """
     if not hasattr(node, "attributes"):
         return None
@@ -277,13 +280,13 @@ def on_missing_reference(app: Sphinx, env: BuildEnvironment, node: pending_xref,
     return new_node
 
 
-def on_env_before_read_docs(app: Sphinx, env: BuildEnvironment, docnames: set[str]) -> None:
+def on_env_before_read_docs(app: "Sphinx", env: "BuildEnvironment", docnames: "set[str]") -> None:
     tmp_examples_path = Path.cwd() / "docs/_build/_tmp_examples"
     tmp_examples_path.mkdir(exist_ok=True, parents=True)
     env.tmp_examples_path = tmp_examples_path  # type: ignore[attr-defined] # pyright: ignore[reportAttributeAccessIssue]
 
 
-def setup(app: Sphinx) -> dict[str, bool]:
+def setup(app: "Sphinx") -> "dict[str, bool]":
     app.connect("env-before-read-docs", on_env_before_read_docs)
     app.connect("missing-reference", on_missing_reference)
     app.connect("warn-missing-reference", on_warn_missing_reference)

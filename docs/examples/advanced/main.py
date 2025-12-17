@@ -10,9 +10,7 @@ Features:
 - Demonstrates both tools and resources
 """
 
-from __future__ import annotations
-
-from typing import Any
+from typing import Any, Optional
 
 from litestar import Litestar, delete, get, post
 from litestar.openapi.config import OpenAPIConfig
@@ -74,7 +72,7 @@ async def get_api_info() -> dict[str, Any]:
 
 # MCP Tools - Executable operations for AI models
 @get("/tasks", mcp_tool="list_tasks")
-async def list_tasks(completed: bool | None = None) -> list[Task]:
+async def list_tasks(completed: Optional[bool] = None) -> "list[Task]":
     """List all tasks with optional filtering by completion status - exposed as MCP tool."""
     if completed is None:
         return list(TASKS.values())

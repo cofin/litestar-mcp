@@ -7,6 +7,7 @@ API Reference
 
     config
     plugin
+    registry
     handlers
     types
 

@@ -69,12 +69,10 @@ class TestDecorators:
             route_handlers=[decorator_tool, opt_tool, decorator_resource, opt_resource],
         )
 
-        # Both tools should be discovered
         assert len(plugin.discovered_tools) == 2
         assert "decorator_tool" in plugin.discovered_tools
         assert "opt_tool" in plugin.discovered_tools
 
-        # Both resources should be discovered
         assert len(plugin.discovered_resources) == 2
         assert "decorator_resource" in plugin.discovered_resources
         assert "opt_resource" in plugin.discovered_resources
@@ -90,7 +88,6 @@ class TestDecorators:
         plugin = LitestarMCP()
         Litestar(plugins=[plugin], route_handlers=[conflicting_tool])
 
-        # Should use decorator name, not opt name
         assert "decorator_name" in plugin.discovered_tools
         assert "opt_name" not in plugin.discovered_tools
         assert len(plugin.discovered_tools) == 1
@@ -103,7 +100,6 @@ class TestDecorators:
         def test_function() -> str:
             return "test"
 
-        # Check that metadata is attached
         from litestar_mcp.utils import get_mcp_metadata
 
         metadata = get_mcp_metadata(test_function)
@@ -119,7 +115,6 @@ class TestDecorators:
         def resource_function() -> dict[str, str]:
             return {"data": "test"}
 
-        # Check that metadata is attached
         from litestar_mcp.utils import get_mcp_metadata
 
         metadata = get_mcp_metadata(resource_function)
@@ -151,13 +146,11 @@ class TestDecorators:
             """A function that should work normally."""
             return {"message": f"Processed: {message}"}
 
-        # The decorated object should be a Litestar handler with MCP metadata
         from litestar_mcp.utils import get_handler_function, get_mcp_metadata
 
         metadata = get_mcp_metadata(working_function)
         assert metadata == {"type": "tool", "name": "working_tool", "description": None}
 
-        # The underlying function should be accessible
         fn = get_handler_function(working_function)
         assert fn.__doc__ == "A function that should work normally."
 
@@ -212,7 +205,6 @@ class TestDecorators:
         plugin = LitestarMCP()
         Litestar(plugins=[plugin], route_handlers=[old_style_tool, old_style_resource])
 
-        # Should still discover opt-based tools/resources
         assert "old_tool" in plugin.discovered_tools
         assert "old_resource" in plugin.discovered_resources
 
@@ -227,28 +219,27 @@ class TestDecorators:
         plugin = LitestarMCP()
         Litestar(plugins=[plugin], route_handlers=[empty_name_tool])
 
-        # Should handle empty name gracefully
         assert "" in plugin.discovered_tools
 
     def test_decorator_type_hints_preserved(self) -> None:
-        """Test that type hints are preserved through decoration."""
+        """Test that type hints are preserved through decoration.
+
+        Return annotations are not asserted as they may include complex generic types.
+        """
 
         @mcp_tool(name="typed_tool")
         @get("/typed", sync_to_thread=False)
         def typed_function(count: int, message: str) -> dict[str, Any]:
             return {"count": count, "message": message}
 
-        # Type hints should be preserved in the underlying function
         import inspect
 
-        # Get the underlying function from the Litestar handler
         from litestar_mcp.utils import get_handler_function
 
         fn = get_handler_function(typed_function)
         sig = inspect.signature(fn)
         assert sig.parameters["count"].annotation is int
         assert sig.parameters["message"].annotation is str
-        # Skip the return annotation check as it involves generic types
 
     def test_nested_route_handlers_with_decorators(self) -> None:
         """Test decorators work with nested route handlers."""
@@ -258,7 +249,6 @@ class TestDecorators:
         def nested_tool() -> dict[str, str]:
             return {"location": "nested"}
 
-        # Mock nested structure
         class MockContainer:
             route_handlers = [nested_tool]
 

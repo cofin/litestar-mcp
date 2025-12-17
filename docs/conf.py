@@ -1,5 +1,4 @@
 # Configuration file for the Sphinx documentation builder.
-from __future__ import annotations
 
 import datetime
 import os
@@ -21,7 +20,7 @@ copyright = f"{current_year}, Litestar Organization"
 release = os.getenv("_LITESTAR_MCP_DOCS_BUILD_VERSION", __version__.rsplit(".")[0])
 suppress_warnings = [
     "autosectionlabel.*",
-    "ref.python",  # TODO: remove when https://github.com/sphinx-doc/sphinx/issues/4961 is fixed
+    "ref.python",  # See https://github.com/sphinx-doc/sphinx/issues/4961
 ]
 
 # -- General configuration ---------------------------------------------------

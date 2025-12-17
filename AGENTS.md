@@ -457,6 +457,7 @@ Add new entries when a feature introduces a reusable approach. Put the **full** 
 - Error handling: `specs/guides/error-handling.md`
 - Testing: `specs/guides/testing-patterns.md`
 - Pattern library index: `specs/guides/patterns/README.md`
+- Runtime discovery (controllers): `specs/guides/patterns/runtime-discovery.md`
 
 ---
 

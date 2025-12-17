@@ -68,7 +68,6 @@ def msgspec_to_json_schema(struct_type: Any) -> "dict[str, Any]":
     properties = {}
     required = []
 
-    # Get field information using msgspec.structs.fields()
     fields = msgspec.structs.fields(struct_type)
     for field in fields:
         field_schema = type_to_json_schema(field.type)
@@ -184,17 +183,14 @@ def type_to_json_schema(annotation: Any) -> "dict[str, Any]":
     Returns:
         JSON Schema dictionary for the type.
     """
-    # Handle None/empty annotation
     if annotation is None or annotation == inspect.Parameter.empty:
         return {"type": "object", "description": "No type annotation provided"}
 
-    # Handle stringified annotations (common in forward references)
     if isinstance(annotation, str):
         annotation = _resolve_string_annotation(annotation)
-        if isinstance(annotation, dict):  # If resolution failed
+        if isinstance(annotation, dict):
             return annotation
 
-    # Try type conversions in order of complexity
     if result := basic_type_to_json_schema(annotation):
         return result
     if result := collection_type_to_json_schema(annotation):
@@ -202,19 +198,25 @@ def type_to_json_schema(annotation: Any) -> "dict[str, Any]":
     if result := model_to_json_schema(annotation):
         return result
 
-    # Try union types and fallback
     return union_type_to_json_schema(annotation) or {"type": "object", "description": f"Parameter of type {annotation}"}
 
 
 def _resolve_string_annotation(annotation: str) -> Any:
     """Resolve a string annotation to a Python type with support for complex types.
 
-    Uses restricted eval with controlled namespace for type hint resolution.
-    Only typing module and basic Python types are available.
+    Resolves a restricted subset of Python expressions representing type annotations.
+    This avoids using ``eval()`` while still supporting common typing constructs.
     """
+    import ast
     import typing
 
-    basic_types = {
+    typing_extensions_module: Optional[Any] = None
+    with contextlib.suppress(ImportError):
+        import typing_extensions as _typing_extensions
+
+        typing_extensions_module = _typing_extensions
+
+    basic_types: dict[str, Any] = {
         "int": int,
         "str": str,
         "float": float,
@@ -222,19 +224,48 @@ def _resolve_string_annotation(annotation: str) -> Any:
         "list": list,
         "dict": dict,
         "set": set,
+        "tuple": tuple,
         "None": type(None),
     }
 
-    if annotation in basic_types:
-        return basic_types[annotation]
+    namespace: dict[str, Any] = {}
+    namespace.update(basic_types)
+    namespace.update(typing.__dict__)
+    namespace["typing"] = typing
+    if typing_extensions_module is not None:
+        namespace["typing_extensions"] = typing_extensions_module
+        namespace.update(typing_extensions_module.__dict__)
+
+    def eval_node(node: ast.AST) -> Any:
+        if isinstance(node, ast.Name):
+            return namespace[node.id]
+
+        if isinstance(node, ast.Attribute):
+            base = eval_node(node.value)
+            if base is typing or (typing_extensions_module is not None and base is typing_extensions_module):
+                return getattr(base, node.attr)
+            raise KeyError(node.attr)
+
+        if isinstance(node, ast.Constant):
+            if isinstance(node.value, (str, int, float, bool)) or node.value is None:
+                return node.value
+            raise TypeError
+
+        if isinstance(node, ast.Tuple):
+            return tuple(eval_node(elt) for elt in node.elts)
+
+        if isinstance(node, ast.Subscript):
+            base = eval_node(node.value)
+            slice_node = node.slice
+            args = eval_node(slice_node)
+            return base[args]
+
+        raise TypeError
 
     try:
-        namespace = {"__builtins__": {}, "typing": typing}
-        namespace.update(typing.__dict__)
-        namespace.update(basic_types)
-        compiled = compile(annotation, "<string>", "eval")
-        return eval(compiled, namespace, {})
-    except (NameError, SyntaxError, TypeError, AttributeError):
+        parsed = ast.parse(annotation, mode="eval")
+        return eval_node(parsed.body)
+    except (KeyError, SyntaxError, TypeError, AttributeError):
         return {"type": "object", "description": f"Parameter of type {annotation}"}
 
 
@@ -247,20 +278,16 @@ def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]"
     Returns:
         JSON Schema dictionary describing the tool's input parameters.
     """
-    # Get the actual function to inspect
     try:
         fn = get_handler_function(handler)
     except AttributeError:
-        # Fallback for test cases where handler might be a raw function
         fn = handler
 
     try:
         sig = inspect.signature(fn)
     except (TypeError, ValueError):
-        # Handler has no callable function - return empty schema
         return {"type": "object", "properties": {}}
 
-    # Get dependencies that will be handled by DI, not passed as arguments
     di_params = set()
     with contextlib.suppress(Exception):
         di_params = set(handler.resolve_dependencies().keys())
@@ -269,30 +296,24 @@ def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]"
     required = []
 
     for param_name, param in sig.parameters.items():
-        # Skip dependency injection parameters
         if param_name in di_params:
             continue
 
-        # Generate schema for this parameter
         param_schema = type_to_json_schema(param.annotation)
 
-        # Add description if available from docstring or annotation
         if getattr(param.annotation, "__doc__", None):
             param_schema["description"] = param.annotation.__doc__.strip()
 
         properties[param_name] = param_schema
 
-        # Check if parameter is required (no default value)
         if param.default is inspect.Parameter.empty:
             required.append(param_name)
 
-    # Build the complete schema
     schema = {"type": "object", "properties": properties}
 
     if required:
         schema["required"] = required
 
-    # Add overall description from the function docstring
     fn_name = getattr(fn, "__name__", "unknown_function")
     fn_doc = getattr(fn, "__doc__", None)
     if fn_doc:

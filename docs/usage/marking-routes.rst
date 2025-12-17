@@ -49,6 +49,24 @@ Mark routes as resources using the ``mcp_resource`` kwarg:
 Advanced Handler Patterns
 --------------------------
 
+Controllers
+~~~~~~~~~~~
+
+Controller routes can also be exposed. Note that Litestar materializes controller
+handlers after app construction, so MCP discovery completes during app startup.
+
+.. code-block:: python
+
+    from typing import Any
+    from litestar import Controller, get
+
+    class UsersController(Controller):
+        path = "/users"
+
+        @get("/", mcp_tool="list_users")
+        async def list_users(self) -> list[dict[str, Any]]:
+            return [{"id": 1, "name": "Alice"}]
+
 Dependency Injection
 ~~~~~~~~~~~~~~~~~~~~
 

@@ -1,7 +1,5 @@
 """Tests for /mcp/messages unified MCP endpoint."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from litestar import Litestar, get
@@ -16,7 +14,7 @@ class TestMessagesEndpoint:
     def test_messages_tools_list(self) -> None:
         """Test messages endpoint with tools/list method."""
 
-        @get("/test", opt={"mcp_tool": "test_tool"})
+        @get("/test", opt={"mcp_tool": "test_tool"}, sync_to_thread=False)
         def test_handler(name: str) -> dict[str, str]:
             """Test tool."""
             return {"result": f"Hello, {name}"}
@@ -38,7 +36,7 @@ class TestMessagesEndpoint:
     def test_messages_tools_call(self) -> None:
         """Test messages endpoint with tools/call method."""
 
-        @get("/greet", opt={"mcp_tool": "greeter"})
+        @get("/greet", opt={"mcp_tool": "greeter"}, sync_to_thread=False)
         def greet_handler(name: str) -> dict[str, str]:
             """Greet a user."""
             return {"greeting": f"Hello, {name}!"}
@@ -61,7 +59,7 @@ class TestMessagesEndpoint:
     def test_messages_resources_list(self) -> None:
         """Test messages endpoint with resources/list method."""
 
-        @get("/config", opt={"mcp_resource": "app_config"})
+        @get("/config", opt={"mcp_resource": "app_config"}, sync_to_thread=False)
         def config_handler() -> dict[str, Any]:
             """Application configuration."""
             return {"debug": True}
@@ -84,7 +82,7 @@ class TestMessagesEndpoint:
     def test_messages_resources_read(self) -> None:
         """Test messages endpoint with resources/read method."""
 
-        @get("/status", opt={"mcp_resource": "status"})
+        @get("/status", opt={"mcp_resource": "status"}, sync_to_thread=False)
         def status_handler() -> dict[str, str]:
             """Status resource."""
             return {"status": "running"}

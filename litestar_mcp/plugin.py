@@ -1,5 +1,6 @@
 """Litestar MCP Plugin implementation."""
 
+import threading
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -64,12 +65,41 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         """
         self._config = config or MCPConfig()
         self._registry = MCPToolRegistry()
+        self._runtime_discovery_complete = False
+        self._runtime_discovery_lock = threading.Lock()
         self._http_client = MCPHttpClient(
             headers=self._config.headers,
             timeout=self._config.http_timeout,
             max_connections=self._config.http_max_connections,
             max_keepalive=self._config.http_max_keepalive,
         )
+
+    def _ensure_runtime_discovery(self, app: Any) -> None:
+        """Ensure MCP discovery is performed against runtime route handlers.
+
+        Some Litestar route handler constructs (e.g. Controllers) only materialize
+        concrete route handlers after app construction. This method rebuilds the
+        registry using ``app.routes[*].route_handlers`` exactly once.
+        """
+        with self._runtime_discovery_lock:
+            if self._runtime_discovery_complete:
+                return
+
+            runtime_handlers: list[Any] = []
+
+            for route in getattr(app, "routes", []) or []:
+                route_handlers = getattr(route, "route_handlers", None)
+                if not route_handlers:
+                    continue
+
+                runtime_handlers.extend(
+                    [handler for handler in route_handlers if isinstance(handler, BaseRouteHandler)]
+                )
+
+            if runtime_handlers:
+                self.setup_server(runtime_handlers)
+
+            self._runtime_discovery_complete = True
 
     @property
     def config(self) -> MCPConfig:
@@ -83,12 +113,12 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
 
     @property
     def discovered_tools(self) -> dict[str, BaseRouteHandler]:
-        """Get discovered MCP tools (backward compat)."""
+        """Get discovered MCP tools."""
         return self._registry.list_tools()
 
     @property
     def discovered_resources(self) -> dict[str, BaseRouteHandler]:
-        """Get discovered MCP resources (backward compat)."""
+        """Get discovered MCP resources."""
         return self._registry.list_resources()
 
     def on_cli_init(self, cli: "Group") -> None:
@@ -142,7 +172,6 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                 if not should_include_handler(handler, self._config):
                     continue
 
-                # Check handler first, then function for _mcp_pending
                 pending = getattr(handler, "_mcp_pending", None)
                 if not pending:
                     fn = get_handler_function(handler)
@@ -178,6 +207,16 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         """
         self._discover_mcp_routes(app_config.route_handlers)
 
+        async def rescan_runtime_routes(app: Any) -> None:
+            """Rebuild MCP registry from runtime routes.
+
+            Litestar Controller route handlers are materialized after app construction
+            and are accessible via ``app.routes[*].route_handlers``. A startup-time
+            rescan ensures controller-defined MCP routes are discovered before the
+            app begins serving requests.
+            """
+            self._ensure_runtime_discovery(app)
+
         async def shutdown_http_client() -> None:
             """Shutdown hook to close HTTP client connections."""
             await self._http_client.shutdown()
@@ -185,10 +224,12 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         def provide_mcp_config() -> MCPConfig:
             return self._config
 
-        def provide_discovered_tools() -> dict[str, BaseRouteHandler]:
+        def provide_discovered_tools_with_request(request: Any) -> dict[str, BaseRouteHandler]:
+            self._ensure_runtime_discovery(request.app)
             return self._registry.list_tools()
 
-        def provide_discovered_resources() -> dict[str, BaseRouteHandler]:
+        def provide_discovered_resources_with_request(request: Any) -> dict[str, BaseRouteHandler]:
+            self._ensure_runtime_discovery(request.app)
             return self._registry.list_resources()
 
         def provide_http_client() -> MCPHttpClient:
@@ -201,8 +242,8 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
             "include_in_schema": self._config.include_in_schema,
             "dependencies": {
                 "config": Provide(provide_mcp_config, sync_to_thread=False),
-                "discovered_tools": Provide(provide_discovered_tools, sync_to_thread=False),
-                "discovered_resources": Provide(provide_discovered_resources, sync_to_thread=False),
+                "discovered_tools": Provide(provide_discovered_tools_with_request, sync_to_thread=False),
+                "discovered_resources": Provide(provide_discovered_resources_with_request, sync_to_thread=False),
                 "http_client": Provide(provide_http_client, sync_to_thread=False),
             },
         }
@@ -213,6 +254,9 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         mcp_router = Router(**router_kwargs)
 
         app_config.route_handlers.append(mcp_router)
+
+        app_config.on_startup = list(app_config.on_startup or [])
+        app_config.on_startup.append(rescan_runtime_routes)
 
         app_config.on_shutdown = list(app_config.on_shutdown or [])
         app_config.on_shutdown.append(shutdown_http_client)

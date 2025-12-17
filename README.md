@@ -126,10 +126,13 @@ async def search(query: str, limit: int = 10) -> dict:
 
 ## How It Works
 
-1. **Route Discovery**: At app initialization, the plugin scans all route handlers for the `opt` attribute
+1. **Route Discovery**: During app startup, the plugin scans route handlers for MCP metadata (`mcp_tool` / `mcp_resource`)
 2. **Automatic Exposure**: Routes marked with `mcp_tool` or `mcp_resource` are automatically exposed
 3. **MCP Endpoints**: The plugin adds REST endpoints under the configured base path (default `/mcp`)
 4. **Server Info**: Server name and version are derived from your OpenAPI configuration
+
+> Note: If you define routes in Litestar `Controller` classes, those handlers are materialized after app construction.
+> The plugin performs a startup-time rescan so controller-defined MCP routes appear in `/mcp/tools` and `/mcp/resources`.
 
 ## MCP Endpoints
 

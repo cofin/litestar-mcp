@@ -18,8 +18,9 @@ def collect_route_handlers(route_handlers: "list[Any]") -> "list[BaseRouteHandle
     for item in route_handlers:
         if isinstance(item, BaseRouteHandler):
             handlers.append(item)
-        if hasattr(item, "route_handlers"):
-            handlers.extend(collect_route_handlers(item.route_handlers))
+        nested_route_handlers = getattr(item, "route_handlers", None)
+        if nested_route_handlers:
+            handlers.extend(collect_route_handlers(nested_route_handlers))
     return handlers
 
 
@@ -313,7 +314,7 @@ class TestMCPToolRegistry:
         handler = registry.get_by_name("users_list")
         assert handler is not None
 
-        fn = handler.fn.value if hasattr(handler.fn, "value") else handler.fn
+        fn = getattr(handler.fn, "value", handler.fn)
         assert fn.__name__ == "list_users"
 
     def test_get_by_name_not_found(self) -> None:
@@ -434,7 +435,7 @@ class TestMCPToolRegistry:
         def list_users() -> list[dict[str, Any]]:
             return []
 
-        list_users._mcp_pending = {"type": "tool", "name": "users_tool", "description": "Custom description"}
+        list_users._mcp_pending = {"type": "tool", "name": "users_tool", "description": "Custom description"}  # type: ignore[attr-defined]
 
         decorated = get("/users", sync_to_thread=False)(list_users)
 

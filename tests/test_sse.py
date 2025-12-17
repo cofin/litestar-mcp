@@ -116,6 +116,21 @@ class TestStreamWithHeartbeat:
         assert "event: result\n" in events[0]
         assert '"test":"data"' in events[0] or '"test": "data"' in events[0]
 
+    @pytest.mark.asyncio
+    async def test_stream_with_heartbeat_emits_during_idle(self) -> None:
+        """Test that heartbeats are emitted when the data stream is idle."""
+
+        async def data_gen() -> AsyncGenerator["dict[str, Any]", None]:
+            yield {"value": 1}
+            await asyncio.sleep(0.06)
+            yield {"value": 2}
+
+        events = [event async for event in stream_with_heartbeat(data_gen(), heartbeat_interval=0.02)]
+
+        assert sum(1 for e in events if e == ": heartbeat\n\n") >= 1
+        assert sum(1 for e in events if "event: result\n" in e) == 2
+        assert events[-1] == "event: done\ndata: {}\n\n"
+
 
 class TestStreamWithBackpressure:
     """Tests for stream with backpressure handling."""

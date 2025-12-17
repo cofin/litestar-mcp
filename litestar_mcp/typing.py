@@ -1,5 +1,5 @@
 # pyright: ignore[reportAttributeAccessIssue]
-from typing import TYPE_CHECKING, Any, Protocol, Union
+from typing import TYPE_CHECKING, Any, Optional, Protocol, Union
 
 from typing_extensions import TypeAlias, TypeGuard, TypeVar
 
@@ -94,7 +94,6 @@ def is_dataclass(obj: Any) -> "TypeGuard[DataclassProtocol]":
             return False
         else:
             return True
-    # Check instance
     try:
         _ = type(obj).__dataclass_fields__  # pyright: ignore
     except AttributeError:
@@ -157,7 +156,7 @@ def is_dict(obj: Any) -> "TypeGuard[dict[str, Any]]":
     return isinstance(obj, dict)
 
 
-def schema_dump(data: Any, exclude_unset: bool = True) -> "dict[str, Any] | None":
+def schema_dump(data: Any, exclude_unset: bool = True) -> "Optional[dict[str, Any]]":
     """Dump a data object to a dictionary.
 
     Based on SQLSpec's clean pattern without defensive hasattr checks.
@@ -167,11 +166,11 @@ def schema_dump(data: Any, exclude_unset: bool = True) -> "dict[str, Any] | None
         exclude_unset: :type:`bool` Whether to exclude unset values.
 
     Returns:
-        :type:`dict[str, Any] | None`
+        :type:`Optional[dict[str, Any]]`
     """
     from litestar_mcp._typing import UNSET
 
-    result: Union[dict[str, Any], None] = None
+    result: Optional[dict[str, Any]] = None
 
     if data is None:
         result = None
@@ -189,7 +188,6 @@ def schema_dump(data: Any, exclude_unset: bool = True) -> "dict[str, Any] | None
     elif is_attrs_instance(data):
         result = attrs_asdict(data)
     else:
-        # Try __dict__ as fallback
         try:
             result = data.__dict__
         except AttributeError:

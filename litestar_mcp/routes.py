@@ -120,11 +120,7 @@ class MCPController(Controller):
         handler = discovered_resources[resource_name]
 
         try:
-            # Execute the resource handler using the shared executor
-            # Resources typically have no arguments
             result = await execute_tool(handler, request.app, tool_args={})
-
-            # Encode the result as JSON text
             result_text = encode_json(result).decode("utf-8")
         except Exception as e:
             raise NotFoundException(detail=f"Failed to fetch resource '{resource_name}': {e!s}") from e
@@ -143,12 +139,10 @@ class MCPController(Controller):
         tools = []
 
         for name, handler in discovered_tools.items():
-            # Get description from handler function docstring
             fn = get_handler_function(handler)
             fn_doc = fn.__doc__
             description = fn_doc.strip() if fn_doc else f"Tool: {name}"
 
-            # Generate JSON schema from handler signature
             input_schema = generate_schema_for_handler(handler)
 
             tools.append(MCPTool(name=name, description=description, input_schema=input_schema))
@@ -181,11 +175,8 @@ class MCPController(Controller):
         tool_args = data.get("arguments", {})
 
         try:
-            # Execute the tool using the shared executor
             result = await execute_tool(handler, request.app, tool_args)
 
-            # The result must be serializable.
-            # We encode it to a JSON string to be safe.
             result_text = encode_json(result).decode("utf-8")
         except Exception as e:
             return {
