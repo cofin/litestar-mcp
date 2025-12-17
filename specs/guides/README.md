@@ -33,7 +33,7 @@ These guides are maintained through the automated workflow:
 
 1. **During Implementation**: Expert agent builds features following existing patterns
 2. **During Documentation**: Docs & Vision agent extracts new patterns discovered
-3. **Knowledge Capture**: New patterns added to AGENTS.md with working examples
+3. **Knowledge Capture**: New patterns added to `specs/guides/patterns/` and indexed in `AGENTS.md`
 4. **Guide Updates**: Relevant guides updated with detailed explanations and cross-references
 5. **Re-validation**: Consistency verified across AGENTS.md and all guides
 
@@ -61,7 +61,7 @@ These guides are maintained through the automated workflow:
 
 ## Relationship to AGENTS.md
 
-- **AGENTS.md**: Quick reference with pattern examples (updated automatically)
+- **AGENTS.md**: Workflow + standards + quick pattern index (updated automatically)
 - **specs/guides/**: Detailed explanations with full context (updated automatically)
 
 Both are kept in sync by the Docs & Vision agent's re-validation process.

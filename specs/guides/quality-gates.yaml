@@ -1,0 +1,131 @@
+metadata:
+  version: "2.0"
+  project: "litestar-mcp"
+  adaptive: true
+  description: "Quality gates that adapt to project conventions"
+
+implementation_gates:
+  - name: tests_pass
+    command: "uv run pytest tests/ -v"
+    fallback: "make test"
+    required: true
+    adaptive: true
+    description: "All tests must pass before proceeding"
+
+  - name: linting_clean
+    command: "make lint"
+    fallback: "make ruff-check"
+    required: true
+    description: "Zero linting errors allowed"
+
+  - name: type_checking_pass
+    command: "make type-check"
+    fallback: "uv run mypy litestar_mcp/"
+    required: true
+    adaptive: true
+    description: "Type checking must pass"
+
+testing_gates:
+  - name: coverage_threshold
+    threshold: 85
+    scope: "modified_modules"
+    command: "uv run pytest tests/ --cov=litestar_mcp --cov-report=term-missing"
+    adaptive: true
+    description: "Modified modules must achieve 85% coverage"
+
+  - name: test_isolation
+    required: true
+    description: "Tests must work in parallel execution (pytest-xdist)"
+
+  - name: async_test_coverage
+    type: "pattern"
+    pattern: "async def test_"
+    applicable_when: "async_code"
+    description: "Async code must have async tests"
+
+documentation_gates:
+  - name: sphinx_builds
+    command: "make docs"
+    required: true
+    description: "Documentation must build without errors"
+
+  - name: docstrings_present
+    type: "custom"
+    scope: "public_api"
+    description: "All public functions/classes must have docstrings"
+
+anti_pattern_scan:
+  enabled: true
+  rules:
+    - pattern: "from __future__ import annotations"
+      severity: "error"
+      message: "Use explicit stringification instead - prohibited in litestar-mcp"
+      fix: "Remove import and use stringified hints: \"Optional[str]\""
+
+    - pattern: "\\| None"
+      severity: "error"
+      message: "Use Optional[T] instead of T | None - PEP 604 prohibited"
+      fix: "Replace with Optional[T] from typing"
+
+    - pattern: "\\| \\w+\\]"
+      severity: "error"
+      message: "Use Union[A, B] instead of A | B - PEP 604 prohibited"
+      fix: "Replace with Union[A, B] from typing"
+
+    - pattern: "import json"
+      severity: "warning"
+      message: "Prefer Litestar's encode_json/decode_json"
+      fix: "Use from litestar.serialization import encode_json, decode_json"
+
+    - pattern: "# TODO|# FIXME|# XXX"
+      severity: "warning"
+      message: "Inline comments should be in docstrings"
+      fix: "Move comment to docstring or remove"
+
+    - pattern: "^\\s+#[^!]"
+      severity: "warning"
+      message: "Inline comments discouraged - use docstrings"
+      applicable_when: "not_type_ignore"
+
+pattern_compliance:
+  enabled: true
+  rules:
+    - name: "stringified_type_hints"
+      description: "Non-builtin type hints must be stringified"
+      pattern: "def.*\\) -> [A-Z]\\w+[^\"']"
+      severity: "error"
+
+    - name: "tuple_all_definition"
+      description: "__all__ must be a tuple"
+      pattern: "__all__ = \\["
+      severity: "error"
+      fix: "Use __all__ = (\"Item1\", \"Item2\")"
+
+knowledge_capture_gates:
+  - name: patterns_documented
+    description: "New patterns must be captured in specs/guides/patterns/"
+    required: true
+    applicable_when: "new_pattern_introduced"
+
+  - name: agents_md_updated
+    description: "AGENTS.md updated with new patterns"
+    required: true
+    applicable_when: "new_pattern_introduced"
+
+  - name: guides_consistent
+    description: "specs/guides/ consistent with AGENTS.md"
+    required: true
+    verification: "Cross-reference check"
+
+archive_gates:
+  - name: tmp_cleaned
+    description: "specs/active/{slug}/tmp/ emptied except .gitkeep"
+    required: true
+
+  - name: completion_record
+    description: "COMPLETED.txt created with timestamp"
+    required: true
+
+  - name: moved_to_archive
+    description: "Spec moved from active/ to archive/"
+    required: true

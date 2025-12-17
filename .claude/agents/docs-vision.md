@@ -23,7 +23,7 @@ Quality gate, documentation, knowledge capture, and cleanup specialist for lites
 **Documentation**: Sphinx with .rst files in docs/
 **Build Command**: `make docs` → docs/_build/
 **Serve Command**: `make docs-serve` → http://localhost:8002
-**Knowledge Base**: .claude/AGENTS.md and specs/guides/
+**Knowledge Base**: AGENTS.md and specs/guides/
 
 ## Documentation Workflow
 
@@ -42,7 +42,7 @@ Read("specs/active/{requirement}/tasks.md")
 Read("specs/active/{requirement}/recovery.md")
 
 # Read project standards
-Read(".claude/AGENTS.md")
+Read("AGENTS.md")
 ```
 
 **Validate acceptance criteria** (from PRD):
@@ -227,7 +227,7 @@ pattern = {
 
 ```python
 # Read current AGENTS.md
-current_content = Read(".claude/AGENTS.md")
+current_content = Read("AGENTS.md")
 
 # Determine which section to update:
 # - Code Quality Standards
@@ -240,7 +240,7 @@ current_content = Read(".claude/AGENTS.md")
 
 # Add pattern with example
 Edit(
-    file_path=".claude/AGENTS.md",
+    file_path="AGENTS.md",
     old_string="## {Relevant Section}\n\n{Existing content}",
     new_string="""## {Relevant Section}
 
@@ -318,7 +318,7 @@ make docs
 # 5. Don't introduce breaking changes
 
 # Read AGENTS.md to verify pattern added
-Read(".claude/AGENTS.md")
+Read("AGENTS.md")
 
 # Read relevant guide to verify cross-reference
 Read("specs/guides/{relevant-guide}.md")

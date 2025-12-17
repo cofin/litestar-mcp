@@ -78,7 +78,7 @@ Read("specs/active/{requirement}/recovery.md")
 Glob(pattern="specs/active/{requirement}/research/*.md")
 
 # MANDATORY: Read project patterns
-Read(".claude/AGENTS.md")  # ALL litestar-mcp patterns are here
+Read("AGENTS.md")  # Canonical workflow + standards
 ```
 
 ### Step 2: Research Before Implementation
@@ -261,7 +261,7 @@ You are the Testing agent for litestar-mcp. Create comprehensive tests for the i
 **Context**:
 1. Read specs/active/{requirement}/prd.md for acceptance criteria
 2. Read specs/active/{requirement}/recovery.md for implementation details
-3. Read .claude/AGENTS.md for testing patterns
+3. Read AGENTS.md for testing patterns
 
 **Testing Requirements for litestar-mcp**:
 - Framework: pytest with asyncio support
@@ -333,7 +333,7 @@ You are the Docs & Vision agent for litestar-mcp. Complete documentation, qualit
    - Read specs/active/{requirement}/recovery.md
    - Read implementation files
    - Identify: New error patterns, new testing patterns, new MCP integration patterns
-2. Update .claude/AGENTS.md:
+2. Update AGENTS.md:
    - Add new patterns to relevant sections
    - Include code examples
 3. Update specs/guides/:

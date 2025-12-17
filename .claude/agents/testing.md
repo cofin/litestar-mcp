@@ -39,7 +39,7 @@ Read("specs/active/{requirement}/recovery.md")
 Read("specs/active/{requirement}/tasks.md")
 
 # Read project testing patterns
-Read(".claude/AGENTS.md")
+Read("AGENTS.md")
 ```
 
 ### Step 2: Understand Test Patterns

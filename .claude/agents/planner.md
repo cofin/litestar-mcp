@@ -54,7 +54,7 @@ Strategic planning specialist for litestar-mcp, a Litestar plugin that integrate
 
 ```python
 # Read project coordination guide
-Read(".claude/AGENTS.md")  # MANDATORY - all project patterns here
+Read("AGENTS.md")  # MANDATORY - canonical workflow + standards
 
 # Review existing implementation patterns
 Glob(pattern="litestar_mcp/*.py")
