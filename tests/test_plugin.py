@@ -117,6 +117,26 @@ class TestLitestarMCP:
         assert result["result"] == "analyzed"
         assert result["input"] == test_data
 
+    def test_tool_execution_sse(self) -> None:
+        """Test SSE tool execution on /mcp/tools."""
+        from collections.abc import AsyncGenerator
+
+        @get("/stream", opt={"mcp_tool": "stream_tool"})
+        async def stream_tool() -> AsyncGenerator[dict[str, Any], None]:
+            yield {"content": [{"type": "text", "text": "chunk"}]}
+
+        app = Litestar(plugins=[LitestarMCP()], route_handlers=[stream_tool])
+        client = TestClient(app=app)
+
+        response = client.post(
+            "/mcp/tools/stream_tool",
+            headers={"Accept": "text/event-stream"},
+            json={"arguments": {}},
+        )
+        assert response.status_code == 200
+        assert "event: result" in response.text
+        assert "event: done" in response.text
+
     def test_error_handling(self) -> None:
         """Test error handling for missing resources and tools."""
         app = Litestar(plugins=[LitestarMCP()])
@@ -293,26 +313,3 @@ class TestLitestarMCP:
         assert response.status_code == 200
         info = response.json()
         assert info["discovered"]["tools"] == 1
-
-    def test_setup_server_reregistration(self) -> None:
-        """Test setup_server method for dynamic re-registration."""
-
-        @get("/tool1", opt={"mcp_tool": "tool1"})
-        async def tool1() -> dict[str, str]:
-            return {"result": "tool1"}
-
-        @get("/tool2", opt={"mcp_tool": "tool2"})
-        async def tool2() -> dict[str, str]:
-            return {"result": "tool2"}
-
-        plugin = LitestarMCP()
-        Litestar(plugins=[plugin], route_handlers=[tool1])
-
-        assert "tool1" in plugin.discovered_tools
-        assert "tool2" not in plugin.discovered_tools
-
-        added, removed = plugin.setup_server([tool2])
-        assert "tool2" in added
-        assert "tool1" in removed
-        assert "tool2" in plugin.discovered_tools
-        assert "tool1" not in plugin.discovered_tools

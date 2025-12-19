@@ -56,6 +56,27 @@ class TestMessagesEndpoint:
             assert "result" in data
             assert "content" in data["result"]
 
+    def test_messages_tools_call_streaming(self) -> None:
+        """Test tools/call streaming with SSE."""
+        from collections.abc import AsyncGenerator
+
+        @get("/stream", opt={"mcp_tool": "streamer"}, sync_to_thread=False)
+        async def stream_handler() -> AsyncGenerator[dict[str, Any], None]:
+            yield {"content": [{"type": "text", "text": "chunk-1"}]}
+            yield {"content": [{"type": "text", "text": "chunk-2"}]}
+
+        app = Litestar(route_handlers=[stream_handler], plugins=[LitestarMCP()])
+
+        with TestClient(app=app) as client:
+            response = client.post(
+                "/mcp/messages",
+                headers={"Accept": "text/event-stream"},
+                json={"method": "tools/call", "params": {"name": "streamer", "arguments": {}}},
+            )
+            assert response.status_code == 200
+            assert "event: result" in response.text
+            assert "event: done" in response.text
+
     def test_messages_resources_list(self) -> None:
         """Test messages endpoint with resources/list method."""
 

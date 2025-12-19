@@ -40,6 +40,7 @@ The simplest way to add MCP support to your Litestar application:
 That's it! Your application now has MCP endpoints available at:
 
 - ``/mcp/`` - Server information
+- ``/mcp/messages`` - Unified MCP endpoint (tools + resources, optional SSE)
 - ``/mcp/resources`` - Available resources (includes OpenAPI schema)
 - ``/mcp/tools`` - Available tools (from marked routes)
 
@@ -110,6 +111,30 @@ Resources vs Tools
 - Dynamic queries that need input parameters
 - Any operation that changes state
 
+Streaming Tools (SSE)
+---------------------
+
+Tools that return async generators stream automatically over Server-Sent Events.
+You can also request streaming with an ``Accept: text/event-stream`` header or
+``stream`` flag in the MCP payload.
+
+.. code-block:: python
+
+    from collections.abc import AsyncGenerator
+    from litestar import get
+
+    @get("/stream", mcp_tool="stream_status")
+    async def stream_status() -> AsyncGenerator[dict, None]:
+        yield {"status": "starting"}
+        yield {"status": "running"}
+
+.. code-block:: bash
+
+    curl -H "Accept: text/event-stream" \
+      -X POST http://localhost:8000/mcp/tools/stream_status \
+      -H "Content-Type: application/json" \
+      -d '{"arguments": {}}'
+
 Testing Your Integration
 ------------------------
 
@@ -122,6 +147,7 @@ Start your application and test the MCP endpoints:
 
     # Test the MCP endpoints
     curl http://localhost:8000/mcp/
+    curl http://localhost:8000/mcp/messages -X POST -H "Content-Type: application/json" -d '{"method":"tools/list"}'
     curl http://localhost:8000/mcp/resources
     curl http://localhost:8000/mcp/tools
 

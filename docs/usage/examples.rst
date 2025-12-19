@@ -89,6 +89,7 @@ To run any of the examples:
 Once running, you can access the MCP endpoints at:
 
 - ``http://localhost:8000/mcp/`` - Server info
+- ``http://localhost:8000/mcp/messages`` - Unified MCP endpoint
 - ``http://localhost:8000/mcp/tools`` - Available tools
 - ``http://localhost:8000/mcp/resources`` - Available resources
 
@@ -105,8 +106,10 @@ You can test the MCP endpoints using curl:
     # List available tools
     curl http://localhost:8000/mcp/tools
 
-    # Execute a tool (if it accepts GET requests)
-    curl http://localhost:8000/mcp/tools/say_hello
+    # Execute a tool
+    curl -X POST http://localhost:8000/mcp/tools/say_hello \\
+      -H "Content-Type: application/json" \\
+      -d '{"arguments": {}}'
 
     # List resources
     curl http://localhost:8000/mcp/resources

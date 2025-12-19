@@ -17,14 +17,6 @@ Each guide focuses on a specific aspect of litestar-mcp development with:
 - [Testing Patterns](testing-patterns.md) - pytest, async tests, fixtures, edge cases
 - [Plugin Architecture](plugin-architecture.md) - Litestar plugin integration patterns
 - [CLI Integration](cli-integration.md) - Command-line interface patterns
-- [Schema Generation](schema-generation.md) - Automatic JSON Schema patterns
-
-### MCP Protocol
-- [MCP Integration](mcp-integration.md) - Model Context Protocol implementation patterns
-- [Tool Development](tool-development.md) - Creating MCP tools
-- [Resource Development](resource-development.md) - Creating MCP resources
-
-### Error Handling
 - [Error Handling](error-handling.md) - Exception patterns and error responses
 
 ## Guide Update Process
@@ -81,6 +73,6 @@ Manual pattern updates are discouraged - let the workflow system capture knowled
 
 ---
 
-**Last Updated**: 2025-10-18 (Workflow system installation)
+**Last Updated**: 2025-12-19 (Guide refresh after streaming + CLI updates)
 **Maintained By**: Docs & Vision agent (automatic)
 **Update Frequency**: After each feature implementation

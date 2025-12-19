@@ -33,7 +33,7 @@ A minimal "Hello World" application that demonstrates:
 
     app = Litestar(
         route_handlers=[hello],
-        plugins=[LitestarMCP(MCPConfig(debug_mode=True))]
+        plugins=[LitestarMCP(MCPConfig())]
     )
 
 **Running the example:**
@@ -47,6 +47,7 @@ A minimal "Hello World" application that demonstrates:
 
 - ``http://127.0.0.1:8000/`` - Hello endpoint
 - ``http://127.0.0.1:8000/mcp/`` - MCP server info
+- ``http://127.0.0.1:8000/mcp/messages`` - Unified MCP endpoint
 - ``http://127.0.0.1:8000/mcp/resources`` - Available resources
 - ``http://127.0.0.1:8000/mcp/tools`` - Available tools
 
@@ -55,35 +56,30 @@ Advanced Example
 
 Location: ``examples/advanced/``
 
-A memory utility application that demonstrates:
+A task management application that demonstrates:
 
-- Custom resource handlers
-- Custom tool handlers
-- SQLite integration
-- AI-usable memory system
+- Multiple MCP tools for CRUD operations
+- MCP resources for schema and API info
+- Mixed GET/POST/DELETE routes
+- OpenAPI integration
 
 **Features:**
 
-- Save text memories with tags
-- Retrieve memories by ID
-- Search memories by tags
-- Custom MCP tools for AI interaction
+- Create, list, and update tasks
+- Query task schema as MCP resource
+- Mix of tools and resources
 
 .. code-block:: python
 
-    from litestar_mcp.handlers import CustomResourceHandler, CustomToolHandler
+    from litestar import get, post
 
-    class MemoryResourceHandler(CustomResourceHandler):
-        async def get_content(self, app, resource_name):
-            memories = search_memories(limit=50)
-            return {"memories": [memory.dict() for memory in memories]}
+    @get("/tasks/schema", mcp_resource="task_schema")
+    async def get_task_schema() -> dict:
+        return {"type": "object", "properties": {"id": {"type": "integer"}}}
 
-    class MemoryToolHandler(CustomToolHandler):
-        async def execute(self, app, tool_name, arguments):
-            if tool_name == "save_memory":
-                content = arguments.get("content")
-                memory = save_memory(content)
-                return ToolResult(success=True, data=memory.dict())
+    @post("/tasks", mcp_tool="create_task")
+    async def create_task(data: dict) -> dict:
+        return {"id": 1, "title": data["title"]}
 
 **Running the example:**
 
@@ -92,27 +88,28 @@ A memory utility application that demonstrates:
     cd examples/advanced/
     uv run python main.py
 
-**Custom MCP Tools:**
+**MCP Tools:**
 
-- ``save_memory`` - Save a new memory with optional tags
-- ``get_memory`` - Retrieve a specific memory by ID
-- ``search_memories`` - Search memories by tags or get recent memories
+- ``create_task`` - Create a new task
+- ``list_tasks`` - List tasks
+- ``complete_task`` - Mark task complete
 
-**Custom MCP Resources:**
+**MCP Resources:**
 
-- ``memories`` - Access all stored memories
+- ``task_schema`` - Task schema
+- ``api_info`` - API metadata
 
-**Testing the Memory System:**
+**Testing the Task System:**
 
 .. code-block:: bash
 
-    # Save a memory via MCP tool
-    curl -X POST http://127.0.0.1:8000/mcp/tools/save_memory \\
+    # Create a task via MCP tool
+    curl -X POST http://127.0.0.1:8000/mcp/tools/create_task \\
       -H 'Content-Type: application/json' \\
-      -d '{"content": "Important meeting note", "tags": "work,meeting"}'
+      -d '{"arguments": {"data": {"title": "Write MCP docs", "description": "Update examples"}}}'
 
-    # Get all memories via MCP resource
-    curl http://127.0.0.1:8000/mcp/resources/memories
+    # Get schema via MCP resource
+    curl http://127.0.0.1:8000/mcp/resources/task_schema
 
 Example Use Cases
 =================

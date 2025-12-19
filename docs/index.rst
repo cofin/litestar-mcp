@@ -33,7 +33,7 @@ Features
 
 ✨ **Simple Integration**: Mark routes with kwargs to expose them via MCP
 🔧 **Lightweight**: Minimal configuration and dependencies
-🚀 **REST-Based**: No special transport protocols required
+🚀 **HTTP + SSE**: REST endpoints with native streaming support
 📊 **OpenAPI Integration**: Automatic OpenAPI schema exposure
 🎯 **Type Safe**: Full type hints with dataclasses
 
@@ -105,6 +105,7 @@ How It Works
 3. **Plugin Discovery**: The plugin scans route handlers' opt dictionaries for MCP markers at app startup
 4. **MCP Exposure**: Marked routes become available through MCP REST endpoints
 5. **AI Interaction**: AI models can discover and interact with your marked routes
+6. **Streaming**: Async generator tools stream over SSE automatically
 
 Kwargs to Opt Mechanism
 -----------------------
@@ -128,6 +129,7 @@ Available Endpoints
 Once configured, your application exposes:
 
 - ``/mcp/`` - Server information and capabilities
+- ``/mcp/messages`` - Unified MCP endpoint (tools + resources, optional SSE)
 - ``/mcp/resources`` - List available resources (including OpenAPI schema)
 - ``/mcp/resources/{name}`` - Get specific resource content
 - ``/mcp/tools`` - List available tools from marked routes

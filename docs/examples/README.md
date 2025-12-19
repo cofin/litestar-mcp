@@ -170,8 +170,9 @@ uv add litestar uvicorn
 ### Getting Help
 
 1. **Check MCP endpoints**: Visit `http://127.0.0.1:8000/mcp/` to see server info
-2. **Test resources**: Visit `http://127.0.0.1:8000/mcp/resources` to see available resources
-3. **Test tools**: Visit `http://127.0.0.1:8000/mcp/tools` to see available tools
+2. **Unified MCP endpoint**: POST to `http://127.0.0.1:8000/mcp/messages` for tools/resources
+3. **Test resources**: Visit `http://127.0.0.1:8000/mcp/resources` to see available resources
+4. **Test tools**: Visit `http://127.0.0.1:8000/mcp/tools` to see available tools
 4. **Main documentation**: See the main README.md in the repository root
 
 ## Configuration Options

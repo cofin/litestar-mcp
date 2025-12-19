@@ -4,38 +4,32 @@ Patterns for error handling in litestar-mcp following Litestar conventions.
 
 ## Overview
 
-litestar-mcp uses Litestar's exception hierarchy for consistent error handling across HTTP endpoints and CLI commands.
+litestar-mcp relies on Litestar's exception hierarchy so errors behave consistently in HTTP handlers and CLI commands.
 
-## Custom Exception Pattern
+## Framework Exception Pattern
 
-**Pattern**: Inherit from Litestar exceptions for framework integration.
+**Pattern**: Use Litestar exceptions directly for MCP errors.
 
 **Example**:
 ```python
-from litestar.exceptions import ImproperlyConfiguredException
+from litestar.exceptions import NotFoundException, ValidationException
 
-class NotCallableInCLIContextError(ImproperlyConfiguredException):
-    """Raised when tool cannot be called from CLI context."""
+def require_tool(name: str, tools: "dict[str, BaseRouteHandler]") -> "BaseRouteHandler":
+    if name not in tools:
+        raise NotFoundException(detail=f"Tool '{name}' not found")
+    return tools[name]
 
-    def __init__(self, handler_name: str, parameter_name: str) -> None:
-        """Initialize error.
-
-        Args:
-            handler_name: Name of handler that cannot be called.
-            parameter_name: Name of parameter causing issue.
-        """
-        super().__init__(
-            f"Tool '{handler_name}' cannot be called from CLI because it depends on "
-            f"request-scoped dependency '{parameter_name}', not available in CLI context."
-        )
+def validate_arguments(data: dict) -> None:
+    if "arguments" not in data:
+        raise ValidationException("Missing 'arguments' in MCP payload")
 ```
 
-**When to use**: For custom errors specific to litestar-mcp functionality.
+**When to use**: Prefer Litestar’s built-in exceptions unless a plugin-specific error is needed.
 
-**Common base exceptions**:
-- `ImproperlyConfiguredException` - Configuration or setup issues
+**Common exceptions**:
 - `NotFoundException` - Resource not found (404)
-- `ValidationException` - Input validation failures
+- `ValidationException` - Input validation failures (422)
+- `HTTPException` - Explicit HTTP status and message
 - `InternalServerException` - Unexpected errors (500)
 
 ## HTTP Error Handling Pattern
@@ -46,6 +40,7 @@ class NotCallableInCLIContextError(ImproperlyConfiguredException):
 ```python
 from litestar import post
 from litestar.exceptions import NotFoundException
+from litestar.serialization import encode_json
 
 @post("/tools/{tool_name:str}")
 async def call_tool(
@@ -78,6 +73,7 @@ async def call_tool(
 
 **Example**:
 ```python
+from litestar.exceptions import ValidationException
 from rich.console import Console
 import click
 
@@ -90,10 +86,7 @@ def run_tool(ctx: click.Context, **kwargs: Any) -> None:
     try:
         result = asyncio.run(execute_tool(handler, app, kwargs))
         console.print(JSON.from_data(result))
-    except NotCallableInCLIContextError as e:
-        console.print(f"[bold red]Error:[/bold red] {e}")
-        ctx.exit(1)
-    except ValueError as e:
+    except ValidationException as e:
         console.print(f"[bold red]Invalid arguments:[/bold red] {e}")
         ctx.exit(1)
     except Exception as e:
@@ -109,6 +102,8 @@ def run_tool(ctx: click.Context, **kwargs: Any) -> None:
 
 **Example**:
 ```python
+from litestar.exceptions import ValidationException
+
 def validate_tool_arguments(handler: BaseRouteHandler, tool_args: "dict[str, Any]") -> None:
     """Validate tool arguments match handler signature.
 
@@ -117,9 +112,9 @@ def validate_tool_arguments(handler: BaseRouteHandler, tool_args: "dict[str, Any
         tool_args: Arguments to validate.
 
     Raises:
-        ValueError: If required arguments are missing.
+        ValidationException: If required arguments are missing.
     """
-    sig = inspect.signature(handler.fn.value)
+    sig = inspect.signature(handler.fn)
     required_params = {
         name for name, param in sig.parameters.items()
         if param.default is inspect.Parameter.empty
@@ -128,7 +123,7 @@ def validate_tool_arguments(handler: BaseRouteHandler, tool_args: "dict[str, Any
     missing = required_params - set(tool_args.keys())
     if missing:
         missing_args = ", ".join(sorted(missing))
-        raise ValueError(f"Missing required arguments: {missing_args}")
+        raise ValidationException(f"Missing required arguments: {missing_args}")
 ```
 
 **When to use**: Before executing operations to provide clear error messages.

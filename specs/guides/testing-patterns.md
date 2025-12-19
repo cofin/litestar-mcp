@@ -126,10 +126,10 @@ class TestMCPEdgeCases:
         data = response.json()
         assert "error" in data or "detail" in data
 
-    async def test_cli_context_limitation(self) -> None:
-        """Test that request-dependent tools fail in CLI context."""
-        from litestar_mcp.executor import NotCallableInCLIContextError, execute_tool
-        from litestar import Litestar, get, Request
+    async def test_cli_context_request_injection(self) -> None:
+        """Test that request-dependent tools execute with synthesized Request."""
+        from litestar import Litestar, Request, get
+        from litestar_mcp.executor import execute_tool
 
         @get("/needs-request")
         async def handler_with_request(request: Request) -> dict:
@@ -138,8 +138,8 @@ class TestMCPEdgeCases:
 
         app = Litestar(route_handlers=[handler_with_request])
 
-        with pytest.raises(NotCallableInCLIContextError):
-            await execute_tool(handler_with_request, app, {})
+        result = await execute_tool(handler_with_request, app, {})
+        assert result["path"] == "/needs-request"
 ```
 
 **When to use**: Always. Edge cases are where bugs hide.

@@ -4,7 +4,7 @@ Implements precedence-based filtering to control which handlers are exposed
 via MCP protocol, with parity to fastapi-mcp filtering semantics.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     from litestar.handlers import BaseRouteHandler
@@ -13,6 +13,39 @@ from litestar_mcp.config import MCPConfig
 from litestar_mcp.utils import get_handler_function
 
 __all__ = ("should_include_handler",)
+
+
+def _normalize_path_components(path_template: str) -> "list[str]":
+    components: list[str] = []
+    for part in path_template.strip("/").split("/"):
+        if not part:
+            continue
+        if part.startswith("{") and part.endswith("}"):
+            name = part[1:-1].split(":", 1)[0]
+            components.append(name)
+        else:
+            components.append(part)
+    return components
+
+
+def _resolve_operation_id(handler: "BaseRouteHandler") -> Optional[str]:
+    operation_id = getattr(handler, "operation_id", None)
+    if isinstance(operation_id, str):
+        return operation_id
+
+    if callable(operation_id):
+        try:
+            http_method = next(iter(handler.http_methods))
+        except Exception:
+            http_method = "GET"
+        path_template = sorted(handler.paths)[0] if getattr(handler, "paths", None) else getattr(handler, "path", "/")
+        path_components = _normalize_path_components(path_template)
+        try:
+            return operation_id(handler, http_method, path_components)
+        except Exception:
+            return getattr(get_handler_function(handler), "__name__", None)
+
+    return getattr(get_handler_function(handler), "__name__", None)
 
 
 def should_include_handler(handler: "BaseRouteHandler", config: MCPConfig) -> bool:
@@ -43,9 +76,7 @@ def should_include_handler(handler: "BaseRouteHandler", config: MCPConfig) -> bo
         >>> should_include_handler(handler, config)
         True
     """
-    fn = get_handler_function(handler)
-
-    operation_id = getattr(fn, "__name__", None)
+    operation_id = _resolve_operation_id(handler)
     handler_tags = set(handler.tags) if handler.tags else set()  # type: ignore[attr-defined]
 
     if config.include_tags is not None:

@@ -15,7 +15,6 @@ from litestar.plugins import CLIPlugin, InitPluginProtocol
 
 from litestar_mcp.config import MCPConfig
 from litestar_mcp.filters import should_include_handler
-from litestar_mcp.http_client import MCPHttpClient
 from litestar_mcp.registry import MCPToolRegistry
 from litestar_mcp.routes import MCPController
 from litestar_mcp.utils import get_handler_function
@@ -67,12 +66,6 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         self._registry = MCPToolRegistry()
         self._runtime_discovery_complete = False
         self._runtime_discovery_lock = threading.Lock()
-        self._http_client = MCPHttpClient(
-            headers=self._config.headers,
-            timeout=self._config.http_timeout,
-            max_connections=self._config.http_max_connections,
-            max_keepalive=self._config.http_max_keepalive,
-        )
 
     def _ensure_runtime_discovery(self, app: Any) -> None:
         """Ensure MCP discovery is performed against runtime route handlers.
@@ -97,7 +90,10 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                 )
 
             if runtime_handlers:
-                self.setup_server(runtime_handlers)
+                filtered_handlers = [
+                    handler for handler in runtime_handlers if should_include_handler(handler, self._config)
+                ]
+                self._registry.rebuild(filtered_handlers)
 
             self._runtime_discovery_complete = True
 
@@ -130,35 +126,6 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         from litestar_mcp.cli import mcp_group
 
         cli.add_command(mcp_group)
-
-    def setup_server(self, route_handlers: Sequence[Any]) -> "tuple[set[str], set[str]]":
-        """Re-register MCP routes (new API for dynamic updates).
-
-        Clears the registry and re-scans all route handlers, applying current
-        filtering configuration.
-
-        Args:
-            route_handlers: Litestar route handlers to scan and register.
-
-        Returns:
-            Tuple of (added_names, removed_names)
-        """
-        old_tools = set(self._registry.list_tools().keys())
-        old_resources = set(self._registry.list_resources().keys())
-        old_names = old_tools | old_resources
-
-        self._registry._registry.clear()  # noqa: SLF001
-
-        self._discover_mcp_routes(route_handlers)
-
-        new_tools = set(self._registry.list_tools().keys())
-        new_resources = set(self._registry.list_resources().keys())
-        new_names = new_tools | new_resources
-
-        added = new_names - old_names
-        removed = old_names - new_names
-
-        return (added, removed)
 
     def _discover_mcp_routes(self, route_handlers: Sequence[Any]) -> None:
         """Discover routes marked for MCP exposure and register with registry.
@@ -217,10 +184,6 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
             """
             self._ensure_runtime_discovery(app)
 
-        async def shutdown_http_client() -> None:
-            """Shutdown hook to close HTTP client connections."""
-            await self._http_client.shutdown()
-
         def provide_mcp_config() -> MCPConfig:
             return self._config
 
@@ -232,9 +195,6 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
             self._ensure_runtime_discovery(request.app)
             return self._registry.list_resources()
 
-        def provide_http_client() -> MCPHttpClient:
-            return self._http_client
-
         router_kwargs: dict[str, Any] = {
             "path": self._config.base_path,
             "route_handlers": [MCPController],
@@ -244,7 +204,6 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                 "config": Provide(provide_mcp_config, sync_to_thread=False),
                 "discovered_tools": Provide(provide_discovered_tools_with_request, sync_to_thread=False),
                 "discovered_resources": Provide(provide_discovered_resources_with_request, sync_to_thread=False),
-                "http_client": Provide(provide_http_client, sync_to_thread=False),
             },
         }
 
@@ -257,8 +216,5 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
 
         app_config.on_startup = list(app_config.on_startup or [])
         app_config.on_startup.append(rescan_runtime_routes)
-
-        app_config.on_shutdown = list(app_config.on_shutdown or [])
-        app_config.on_shutdown.append(shutdown_http_client)
 
         return app_config

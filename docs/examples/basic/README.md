@@ -24,6 +24,7 @@ This is the simplest possible example of integrating the Litestar MCP Plugin wit
 3. **Test the MCP endpoints**:
    - The application will be available at `http://localhost:8000`
    - MCP endpoints are available at `http://localhost:8000/mcp/`
+   - Unified MCP endpoint: `http://localhost:8000/mcp/messages`
 
 ## Available MCP Resources
 
@@ -53,6 +54,9 @@ Test the MCP integration with these endpoints:
 ```bash
 # Get server information
 curl http://localhost:8000/mcp/
+
+# Use unified MCP messages endpoint
+curl http://localhost:8000/mcp/messages -X POST -H "Content-Type: application/json" -d '{"method":"tools/list"}'
 
 # List available resources
 curl http://localhost:8000/mcp/resources

@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 from litestar_mcp.typing import (
     MSGSPEC_INSTALLED,
     is_attrs_instance,
+    is_attrs_schema,
     is_dataclass,
     is_msgspec_struct,
     is_pydantic_model,
@@ -130,7 +131,7 @@ def model_to_json_schema(annotation: Any) -> "Optional[dict[str, Any]]":
     if is_msgspec_struct(annotation):
         return msgspec_to_json_schema(annotation)
 
-    if is_attrs_instance(annotation):
+    if is_attrs_instance(annotation) or is_attrs_schema(annotation):
         return attrs_to_json_schema(annotation)
 
     if is_dataclass(annotation):

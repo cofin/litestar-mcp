@@ -44,7 +44,7 @@ Configuration Options
 ---------------------
 
 .. list-table::
-   :widths: 25 25 50
+   :widths: 30 20 50
    :header-rows: 1
 
    * - Option
@@ -59,6 +59,33 @@ Configuration Options
    * - ``name``
      - ``None``
      - Server name override (uses OpenAPI title if not set)
+   * - ``guards``
+     - ``None``
+     - Optional list of Litestar guards applied to MCP endpoints
+   * - ``include_operations``
+     - ``None``
+     - Limit discovery to specific operation IDs (None means all)
+   * - ``exclude_operations``
+     - ``None``
+     - Operation IDs to exclude from discovery
+   * - ``include_tags``
+     - ``None``
+     - Limit discovery to handlers with matching tags
+   * - ``exclude_tags``
+     - ``None``
+     - Exclude handlers that include any matching tag
+   * - ``sse_heartbeat_interval``
+     - ``30``
+     - Heartbeat interval (seconds) for SSE connections
+   * - ``sse_connection_timeout``
+     - ``300``
+     - Maximum SSE connection duration (seconds)
+   * - ``sse_batch_size``
+     - ``10``
+     - Max events per batch when streaming over SSE
+   * - ``sse_flush_interval``
+     - ``1.0``
+     - Force flush interval (seconds) for SSE batching
 
 Environment Integration
 -----------------------

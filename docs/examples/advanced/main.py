@@ -13,8 +13,9 @@ Features:
 from typing import Any, Optional
 
 from litestar import Litestar, delete, get, post
+from litestar.exceptions import NotFoundException
 from litestar.openapi.config import OpenAPIConfig
-from litestar.status_codes import HTTP_201_CREATED, HTTP_404_NOT_FOUND
+from litestar.status_codes import HTTP_201_CREATED
 from pydantic import BaseModel
 
 from litestar_mcp import LitestarMCP, MCPConfig
@@ -84,7 +85,7 @@ async def list_tasks(completed: Optional[bool] = None) -> "list[Task]":
 async def get_task(task_id: int) -> Task:
     """Get a specific task by ID - exposed as MCP tool."""
     if task_id not in TASKS:
-        raise HTTP_404_NOT_FOUND
+        raise NotFoundException(detail="Task not found")
     return TASKS[task_id]
 
 
@@ -108,7 +109,7 @@ async def create_task(data: CreateTaskRequest) -> Task:
 async def complete_task(task_id: int) -> Task:
     """Mark a task as completed - exposed as MCP tool."""
     if task_id not in TASKS:
-        raise HTTP_404_NOT_FOUND
+        raise NotFoundException(detail="Task not found")
 
     TASKS[task_id].completed = True
     return TASKS[task_id]
@@ -118,7 +119,7 @@ async def complete_task(task_id: int) -> Task:
 async def delete_task(task_id: int) -> dict[str, str]:
     """Delete a task by ID - exposed as MCP tool."""
     if task_id not in TASKS:
-        raise HTTP_404_NOT_FOUND
+        raise NotFoundException(detail="Task not found")
 
     del TASKS[task_id]
     return {"message": f"Task {task_id} deleted successfully"}

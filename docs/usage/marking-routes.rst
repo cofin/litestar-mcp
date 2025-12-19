@@ -28,6 +28,9 @@ Mark routes as tools using the ``mcp_tool`` kwarg:
         """Create a new user - exposed as MCP tool."""
         return {"id": 2, "name": data["name"]}
 
+When invoking tools, pass arguments by parameter name. For body parameters,
+include the payload under the parameter key (commonly ``data``).
+
 Resources (Read-only Data)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -74,7 +77,6 @@ MCP-marked routes can use Litestar's dependency injection system:
 
 .. code-block:: python
 
-    from litestar import Provide
     from litestar.di import Provide
 
     async def get_database():
@@ -104,6 +106,25 @@ Access request context in MCP-exposed routes:
             "url": str(request.url),
             "headers": dict(request.headers)
         }
+
+Streaming Tools
+~~~~~~~~~~~~~~~
+
+Tools can stream results by returning an async generator. The MCP endpoints
+automatically switch to SSE when streaming is requested or detected.
+
+.. code-block:: python
+
+    from collections.abc import AsyncGenerator
+    from litestar import get
+
+    @get("/progress", mcp_tool="progress_stream")
+    async def progress_stream() -> AsyncGenerator[dict, None]:
+        """Stream progress updates."""
+        yield {"step": "start"}
+        yield {"step": "finish"}
+
+Request SSE with ``Accept: text/event-stream`` or set ``stream`` in the MCP payload.
 
 Error Handling
 --------------

@@ -12,8 +12,9 @@ This plugin automatically discovers routes marked with the `opt` attribute and e
 
 ## Features
 
-- 🚀 **Zero Dependencies** - Only requires Litestar
+- 🚀 **No Extra Framework Dependencies** - Only requires Litestar
 - 📡 **REST API Endpoints** - No stdio transport or MCP libraries needed
+- 🌊 **SSE Streaming** - Stream tool output over Server-Sent Events
 - 🔧 **Simple Route Marking** - Use Litestar's `opt` attribute pattern
 - 🛡️ **Type Safe** - Full type hints with dataclasses
 - 📊 **Automatic Discovery** - Routes are discovered at app initialization
@@ -143,10 +144,47 @@ Once configured, your application exposes these MCP-compatible endpoints:
 - `GET /mcp/resources/{name}` - Get specific resource content
 - `GET /mcp/tools` - List available tools
 - `POST /mcp/tools/{name}` - Execute a tool
+- `POST /mcp/messages` - Unified MCP messages endpoint (supports streaming)
 
 **Built-in Resources:**
 
 - `openapi` - Your application's OpenAPI schema (always available)
+
+## Streaming Tools (SSE)
+
+Tools can stream results over Server-Sent Events. Streaming is enabled when the handler returns an async generator
+or when the client requests SSE.
+
+**Enable streaming via header:**
+
+```bash
+curl -N \\
+  -H "Accept: text/event-stream" \\
+  -X POST http://localhost:8000/mcp/tools/list_users \\
+  -d '{"arguments": {}}'
+```
+
+**Enable streaming via request payload:**
+
+```json
+{
+  "arguments": {},
+  "stream": true
+}
+```
+
+**Enable streaming via MCP messages:**
+
+```json
+{
+  "method": "tools/call",
+  "params": {
+    "name": "list_users",
+    "arguments": {},
+    "stream": true
+  }
+}
+```
 
 ## Configuration
 
@@ -164,7 +202,16 @@ config = MCPConfig()
 |--------|------|---------|-------------|
 | `base_path` | `str` | `"/mcp"` | Base path for MCP API endpoints |
 | `include_in_schema` | `bool` | `False` | Whether to include MCP routes in OpenAPI schema |
-| `name` | `str \| None` | `None` | Override server name. If None, uses OpenAPI title |
+| `name` | `Optional[str]` | `None` | Override server name (defaults to OpenAPI title) |
+| `guards` | `Optional[list[Any]]` | `None` | Guards applied to MCP endpoints |
+| `include_operations` | `Optional[list[str]]` | `None` | Operation IDs to include |
+| `exclude_operations` | `Optional[list[str]]` | `None` | Operation IDs to exclude |
+| `include_tags` | `Optional[list[str]]` | `None` | Tags to include |
+| `exclude_tags` | `Optional[list[str]]` | `None` | Tags to exclude |
+| `sse_heartbeat_interval` | `int` | `30` | SSE heartbeat interval (seconds) |
+| `sse_connection_timeout` | `int` | `300` | Maximum SSE connection duration (seconds) |
+| `sse_batch_size` | `int` | `10` | Max events per SSE batch |
+| `sse_flush_interval` | `float` | `1.0` | SSE batch flush interval (seconds) |
 
 ## Complete Example
 

@@ -9,13 +9,13 @@ from litestar import Controller, Request, Response, get, post
 from litestar.exceptions import NotFoundException
 from litestar.handlers import BaseRouteHandler
 from litestar.response import Stream
-from litestar.serialization import encode_json
+from litestar.serialization import decode_json, encode_json
 
 from litestar_mcp.config import MCPConfig
 from litestar_mcp.executor import execute_tool
 from litestar_mcp.schema import MCPResource, MCPTool, ServerCapabilities
 from litestar_mcp.schema_builder import generate_schema_for_handler
-from litestar_mcp.sse import format_sse_event
+from litestar_mcp.sse import stream_sse_events
 from litestar_mcp.utils import get_handler_function
 
 
@@ -29,7 +29,7 @@ class MCPController(Controller):
         config: MCPConfig,
         discovered_tools: dict[str, BaseRouteHandler],
         discovered_resources: dict[str, BaseRouteHandler],
-    ) -> dict[str, Any]:
+    ) -> "Union[dict[str, Any], Response[Any]]":
         """Get MCP server information and capabilities."""
         capabilities = ServerCapabilities(
             resources={
@@ -79,7 +79,8 @@ class MCPController(Controller):
         )
 
         for name, handler in discovered_resources.items():
-            description = handler.__doc__ or f"Resource: {name}"
+            fn = get_handler_function(handler)
+            description = fn.__doc__ or f"Resource: {name}"
             resources.append(
                 MCPResource(
                     uri=f"litestar://{name}", name=name, description=description.strip(), mime_type="application/json"
@@ -120,7 +121,7 @@ class MCPController(Controller):
         handler = discovered_resources[resource_name]
 
         try:
-            result = await execute_tool(handler, request.app, tool_args={})
+            result = await execute_tool(handler, request.app, tool_args={}, base_request=request)
             result_text = encode_json(result).decode("utf-8")
         except Exception as e:
             raise NotFoundException(detail=f"Failed to fetch resource '{resource_name}': {e!s}") from e
@@ -164,8 +165,9 @@ class MCPController(Controller):
         tool_name: str,
         data: dict[str, Any],
         request: Request[Any, Any, Any],
+        config: MCPConfig,
         discovered_tools: dict[str, BaseRouteHandler],
-    ) -> dict[str, Any]:
+    ) -> "Union[dict[str, Any], Response[Any]]":
         """Execute an MCP tool."""
 
         if tool_name not in discovered_tools:
@@ -173,9 +175,13 @@ class MCPController(Controller):
 
         handler = discovered_tools[tool_name]
         tool_args = data.get("arguments", {})
+        stream_requested = bool(data.get("stream")) or self._wants_sse(request)
+
+        if stream_requested or self._should_stream_tool(handler):
+            return self._stream_tool_response(handler, request, config, tool_args)
 
         try:
-            result = await execute_tool(handler, request.app, tool_args)
+            result = await execute_tool(handler, request.app, tool_args, base_request=request)
 
             result_text = encode_json(result).decode("utf-8")
         except Exception as e:
@@ -200,6 +206,7 @@ class MCPController(Controller):
         self,
         data: "dict[str, Any]",
         request: Request[Any, Any, Any],
+        config: MCPConfig,
         discovered_tools: dict[str, BaseRouteHandler],
         discovered_resources: dict[str, BaseRouteHandler],
     ) -> "Union[dict[str, Any], Response[Any]]":
@@ -259,36 +266,10 @@ class MCPController(Controller):
 
             handler = discovered_tools[tool_name]
 
-            if self._should_stream_tool(handler):
-
-                async def tool_stream() -> AsyncGenerator[str, None]:
-                    try:
-                        result = await execute_tool(handler, request.app, tool_args)
-
-                        if inspect.isasyncgen(result):
-                            async for chunk in result:
-                                yield format_sse_event("result", chunk)
-                        else:
-                            yield format_sse_event(
-                                "result", {"content": [{"type": "text", "text": encode_json(result).decode()}]}
-                            )
-
-                        yield format_sse_event("done", {})
-
-                    except Exception as e:
-                        yield format_sse_event("error", {"code": -1, "message": f"Tool execution failed: {e!s}"})
-
-                return Stream(
-                    tool_stream(),
-                    media_type="text/event-stream",
-                    headers={
-                        "Cache-Control": "no-cache",
-                        "Connection": "keep-alive",
-                        "X-Accel-Buffering": "no",
-                    },
-                )
+            if self._should_stream_tool(handler) or params.get("stream") or self._wants_sse(request):
+                return self._stream_tool_response(handler, request, config, tool_args)
             try:
-                result = await execute_tool(handler, request.app, tool_args)
+                result = await execute_tool(handler, request.app, tool_args, base_request=request)
                 result_text = encode_json(result).decode("utf-8")
                 return {  # noqa: TRY300
                     "result": {
@@ -323,7 +304,8 @@ class MCPController(Controller):
             )
 
             for name, handler in discovered_resources.items():
-                description = handler.__doc__ or f"Resource: {name}"
+                fn = get_handler_function(handler)
+                description = fn.__doc__ or f"Resource: {name}"
                 resources.append(
                     MCPResource(
                         uri=f"litestar://{name}",
@@ -373,7 +355,7 @@ class MCPController(Controller):
             handler = discovered_resources[resource_name]
 
             try:
-                result = await execute_tool(handler, request.app, tool_args={})
+                result = await execute_tool(handler, request.app, tool_args={}, base_request=request)
                 result_text = encode_json(result).decode("utf-8")
                 return {  # noqa: TRY300
                     "result": {
@@ -412,3 +394,52 @@ class MCPController(Controller):
 
         origin = getattr(return_annotation, "__origin__", None)
         return origin is AsyncGenerator or "AsyncGenerator" in str(return_annotation)
+
+    @staticmethod
+    def _wants_sse(request: Request[Any, Any, Any]) -> bool:
+        accept = request.headers.get("accept", "")
+        return "text/event-stream" in accept.lower()
+
+    def _format_stream_payload(self, payload: Any) -> dict[str, Any]:
+        if isinstance(payload, dict):
+            return payload
+        if isinstance(payload, bytes):
+            try:
+                payload = decode_json(payload)
+            except Exception:
+                payload = payload.decode("utf-8", errors="replace")
+        return {"content": [{"type": "text", "text": encode_json(payload).decode("utf-8")}]}  # noqa: TRY300
+
+    def _stream_tool_response(
+        self,
+        handler: BaseRouteHandler,
+        request: Request[Any, Any, Any],
+        config: MCPConfig,
+        tool_args: dict[str, Any],
+    ) -> Response[Any]:
+        async def tool_data_stream() -> AsyncGenerator[dict[str, Any], None]:
+            try:
+                result = await execute_tool(handler, request.app, tool_args, base_request=request)
+                if inspect.isasyncgen(result):
+                    async for chunk in result:
+                        yield self._format_stream_payload(chunk)
+                else:
+                    yield self._format_stream_payload(result)
+            except Exception as e:
+                yield {"event": "error", "data": {"code": -1, "message": f"Tool execution failed: {e!s}"}}
+
+        return Stream(
+            stream_sse_events(
+                tool_data_stream(),
+                heartbeat_interval=config.sse_heartbeat_interval,
+                batch_size=max(config.sse_batch_size, 1),
+                flush_interval=config.sse_flush_interval,
+                connection_timeout=config.sse_connection_timeout,
+            ),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )

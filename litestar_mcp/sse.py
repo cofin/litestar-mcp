@@ -11,7 +11,13 @@ from typing import Any, Optional
 
 from litestar.serialization import encode_json
 
-__all__ = ("format_sse_event", "sse_heartbeat", "stream_with_backpressure", "stream_with_heartbeat")
+__all__ = (
+    "format_sse_event",
+    "sse_heartbeat",
+    "stream_sse_events",
+    "stream_with_backpressure",
+    "stream_with_heartbeat",
+)
 
 
 def format_sse_event(event_type: str, data: "dict[str, Any]") -> str:
@@ -178,3 +184,122 @@ async def stream_with_backpressure(
 
     finally:
         batch.clear()
+
+
+async def stream_sse_events(
+    data_stream: AsyncGenerator["dict[str, Any]", None],
+    heartbeat_interval: float = 30,
+    batch_size: int = 1,
+    flush_interval: float = 1.0,
+    connection_timeout: Optional[float] = None,
+    event_type: str = "result",
+) -> AsyncGenerator[str, None]:
+    """Stream SSE events with optional heartbeat, batching, and timeout controls."""
+    loop = asyncio.get_event_loop()
+    start_time = loop.time()
+    last_flush = start_time
+    batch: list[dict[str, Any]] = []
+
+    heartbeat_gen = sse_heartbeat(heartbeat_interval) if heartbeat_interval > 0 else None
+    data_iter = data_stream.__aiter__()
+
+    async def next_heartbeat() -> str:
+        return await heartbeat_gen.__anext__()  # type: ignore[union-attr]
+
+    async def next_data() -> dict[str, Any]:
+        return await data_iter.__anext__()
+
+    heartbeat_task: Optional[asyncio.Task[str]] = None
+    if heartbeat_gen is not None:
+        heartbeat_task = asyncio.create_task(next_heartbeat())
+    data_task: Optional[asyncio.Task[dict[str, Any]]] = asyncio.create_task(next_data())
+
+    async def flush_batch(now: float) -> AsyncGenerator[str, None]:
+        nonlocal last_flush
+        if not batch:
+            return
+        if batch_size > 1:
+            yield format_sse_event(event_type, {"items": list(batch)})
+            batch.clear()
+            last_flush = now
+            return
+        for item in batch:
+            yield format_sse_event(event_type, item)
+        batch.clear()
+        last_flush = now
+
+    try:
+        while data_task is not None or heartbeat_task is not None:
+            now = loop.time()
+            if connection_timeout is not None and now - start_time >= connection_timeout:
+                yield format_sse_event("error", {"code": -1, "message": "SSE connection timed out"})
+                break
+
+            timeout: Optional[float] = None
+            if batch and flush_interval > 0:
+                remaining = flush_interval - (now - last_flush)
+                timeout = max(0.0, remaining)
+
+            wait_tasks = {task for task in (data_task, heartbeat_task) if task is not None}
+            if not wait_tasks:
+                break
+
+            done, _pending = await asyncio.wait(wait_tasks, return_when=asyncio.FIRST_COMPLETED, timeout=timeout)
+
+            if not done:
+                async for event in flush_batch(loop.time()):
+                    yield event
+                continue
+
+            if data_task in done:
+                try:
+                    data = data_task.result()
+                except StopAsyncIteration:
+                    data_task = None
+                else:
+                    event_override = data.get("event") if isinstance(data, dict) else None
+                    if event_override:
+                        async for event in flush_batch(loop.time()):
+                            yield event
+                        payload = data.get("data", {})
+                        yield format_sse_event(event_override, payload)
+                    else:
+                        batch.append(data)
+                        if batch_size <= 1:
+                            async for event in flush_batch(loop.time()):
+                                yield event
+                    data_task = asyncio.create_task(next_data())
+
+            if heartbeat_task in done:
+                try:
+                    yield heartbeat_task.result()
+                except StopAsyncIteration:
+                    heartbeat_task = None
+                else:
+                    heartbeat_task = asyncio.create_task(next_heartbeat())
+
+            now = loop.time()
+            if batch_size > 1 and batch and len(batch) >= batch_size:
+                async for event in flush_batch(now):
+                    yield event
+
+        if batch:
+            async for event in flush_batch(loop.time()):
+                yield event
+
+        yield format_sse_event("done", {})
+
+    finally:
+        if data_task:
+            data_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, StopAsyncIteration):
+                await data_task
+        if heartbeat_task:
+            heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, StopAsyncIteration):
+                await heartbeat_task
+        with contextlib.suppress(Exception):
+            await data_stream.aclose()
+        if heartbeat_gen is not None:
+            with contextlib.suppress(Exception):
+                await heartbeat_gen.aclose()

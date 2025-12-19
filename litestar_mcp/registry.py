@@ -185,6 +185,17 @@ class MCPToolRegistry:
         old_names = {meta.name for meta in self._registry.values()}
         self._registry.clear()
 
+        self._scan_handlers(route_handlers)
+
+        new_names = {meta.name for meta in self._registry.values()}
+        added = new_names - old_names
+        removed = old_names - new_names
+
+        return (added, removed)
+
+    def _scan_handlers(self, route_handlers: "list[Any]") -> None:
+        from litestar.handlers import BaseRouteHandler
+
         for handler in route_handlers:
             if isinstance(handler, BaseRouteHandler):
                 fn = get_handler_function(handler)
@@ -218,13 +229,7 @@ class MCPToolRegistry:
 
             nested_route_handlers = getattr(handler, "route_handlers", None)
             if nested_route_handlers:
-                added, removed = self._rebuild_unlocked(nested_route_handlers)
-
-        new_names = {meta.name for meta in self._registry.values()}
-        added = new_names - old_names
-        removed = old_names - new_names
-
-        return (added, removed)
+                self._scan_handlers(nested_route_handlers)
 
     def list_tools(self) -> "dict[str, BaseRouteHandler]":
         """Get all registered tools.

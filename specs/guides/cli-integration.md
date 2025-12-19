@@ -90,22 +90,20 @@ mcp_group.add_command(ToolExecutor(name="run"))
 
 **When to use**: For dynamic command generation based on discovered routes.
 
-## CLI Context Limitations Pattern
+## Request Context Pattern
 
-**Pattern**: Handle request-scoped dependency errors gracefully.
+**Pattern**: CLI execution synthesizes a minimal `Request` so route handlers can depend on request context.
 
 **Example**:
 ```python
-from litestar_mcp.executor import NotCallableInCLIContextError
-
 try:
     result = await execute_tool(handler, app, tool_args)
-except NotCallableInCLIContextError as e:
+except Exception as e:
     console.print(f"[red]Error:[/red] {e}")
     ctx.exit(1)
 ```
 
-**When to use**: When executing tools from CLI that may require request-scoped dependencies.
+**When to use**: When CLI tools expect Litestar injection (request, dependencies, guards). The CLI context will not include real client headers, so avoid using `Request` for authentication decisions when running via CLI.
 
 ## Related Patterns
 

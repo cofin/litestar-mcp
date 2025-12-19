@@ -1,12 +1,13 @@
 """Tests for the executor module."""
 
 from typing import Any
-from unittest.mock import AsyncMock
 
 import pytest
 from litestar.di import Provide
 
-from litestar_mcp.executor import NotCallableInCLIContextError, execute_tool
+from litestar.exceptions import ValidationException
+
+from litestar_mcp.executor import execute_tool
 from tests.conftest import create_app_with_handler
 
 
@@ -55,20 +56,16 @@ class TestExecutor:
         assert result == {"user_id": 123, "db": "sqlite:///:memory:"}
 
     @pytest.mark.asyncio
-    async def test_cli_context_limitation_request_dependency(self) -> None:
-        """Test that handlers requiring request-scoped dependencies fail in CLI context."""
+    async def test_cli_context_supports_request_dependency(self) -> None:
+        """Test that handlers can access request-scoped dependencies."""
 
         def request_dependent_handler(request: Any, user_id: int) -> dict[str, Any]:
             return {"user_id": user_id, "path": request.url.path}
 
         app, handler = create_app_with_handler(request_dependent_handler)
 
-        handler.resolve_dependencies = lambda: {"request": AsyncMock()}  # type: ignore[method-assign]
-
-        with pytest.raises(NotCallableInCLIContextError) as exc_info:
-            await execute_tool(handler, app, {"user_id": 123})
-
-        assert "request-scoped dependency 'request'" in str(exc_info.value)
+        result = await execute_tool(handler, app, {"user_id": 123})
+        assert result["user_id"] == 123
 
     @pytest.mark.asyncio
     async def test_missing_required_arguments(self) -> None:
@@ -79,10 +76,8 @@ class TestExecutor:
 
         app, handler = create_app_with_handler(handler_with_required_args)
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValidationException):
             await execute_tool(handler, app, {"name": "Alice"})
-
-        assert "Missing required arguments: age" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_optional_parameters_handling(self) -> None:
@@ -149,7 +144,7 @@ class TestExecutor:
             handler_with_failing_dep, dependencies={"config": Provide(failing_dependency, sync_to_thread=False)}
         )
 
-        with pytest.raises(NotCallableInCLIContextError):
+        with pytest.raises(RuntimeError):
             await execute_tool(handler, app, {"name": "test"})
 
     @pytest.mark.asyncio
@@ -196,8 +191,8 @@ class TestExecutor:
 
         app, handler = create_app_with_handler(strict_handler)
 
-        result = await execute_tool(handler, app, {"count": "not_an_integer"})
-        assert result == {"count": "not_an_integer"}
+        with pytest.raises(ValidationException):
+            await execute_tool(handler, app, {"count": "not_an_integer"})
 
     @pytest.mark.asyncio
     async def test_execute_tool_missing_required_parameter(self) -> None:
@@ -208,7 +203,7 @@ class TestExecutor:
 
         app, handler = create_app_with_handler(required_param_handler)
 
-        with pytest.raises(ValueError, match="Missing required arguments: name"):
+        with pytest.raises(ValidationException):
             await execute_tool(handler, app, {})
 
     @pytest.mark.asyncio
@@ -221,8 +216,8 @@ class TestExecutor:
 
         app, handler = create_app_with_handler(request_dependent_handler)
 
-        with pytest.raises(NotCallableInCLIContextError):
-            await execute_tool(handler, app, {"value": "test"})
+        result = await execute_tool(handler, app, {"value": "test"})
+        assert result["value"] == "test"
 
     @pytest.mark.asyncio
     async def test_execute_tool_with_complex_json_parameters(self) -> None:
@@ -240,30 +235,3 @@ class TestExecutor:
         assert result["items"] == complex_args["items"]
         assert result["count"] == 3
 
-
-class TestNotCallableInCLIContextError:
-    """Test suite for NotCallableInCLIContextError exception."""
-
-    def test_not_callable_in_cli_context_error_creation(self) -> None:
-        """Test creation of NotCallableInCLIContextError."""
-        param_name = "request"
-        param_type = "Request"
-
-        error = NotCallableInCLIContextError(param_name, param_type)
-
-        assert param_name in str(error)
-        assert param_type in str(error)
-        assert "CLI context" in str(error)
-
-    def test_not_callable_in_cli_context_error_with_different_types(self) -> None:
-        """Test NotCallableInCLIContextError with different parameter types."""
-        test_cases = [
-            ("connection", "ASGIConnection"),
-            ("response", "Response"),
-            ("websocket", "WebSocket"),
-        ]
-
-        for param_name, param_type in test_cases:
-            error = NotCallableInCLIContextError(param_name, param_type)
-            assert param_name in str(error)
-            assert param_type in str(error)

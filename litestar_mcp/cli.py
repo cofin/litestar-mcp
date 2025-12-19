@@ -11,7 +11,7 @@ from litestar.cli._utils import LitestarGroup
 from rich.console import Console
 from rich.json import JSON
 
-from litestar_mcp.executor import NotCallableInCLIContextError, execute_tool
+from litestar_mcp.executor import execute_tool
 from litestar_mcp.utils import get_handler_function
 
 if TYPE_CHECKING:
@@ -115,10 +115,6 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
             try:
                 result = asyncio.run(execute_tool(handler, app, parsed_kwargs))
                 _display_result(self._console, result)
-            except (NotCallableInCLIContextError, ValueError) as e:
-                self._console.print(f"[bold red]Error executing tool '{cmd_name}':[/bold red]")
-                self._console.print(str(e))
-                ctx.exit(1)
             except Exception as e:  # noqa: BLE001
                 self._console.print(f"[bold red]Unexpected error executing tool '{cmd_name}':[/bold red]")
                 self._console.print(str(e))
