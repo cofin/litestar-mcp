@@ -3,10 +3,7 @@
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Optional
 
-if TYPE_CHECKING:
-    from click import Group
-
-from litestar import Router
+from litestar import Litestar, Router
 from litestar.config.app import AppConfig
 from litestar.di import Provide
 from litestar.handlers import BaseRouteHandler
@@ -19,11 +16,14 @@ from litestar_mcp.routes import MCPController
 from litestar_mcp.sse import SSEManager
 from litestar_mcp.utils import get_handler_function
 
+if TYPE_CHECKING:
+    from click import Group
+
 
 class LitestarMCP(InitPluginProtocol, CLIPlugin):
     """Litestar plugin for Model Context Protocol integration.
 
-    This plugin discovers routes marked for MCP exposure and exposes them through 
+    This plugin discovers routes marked for MCP exposure and exposes them through
     MCP-compatible REST API endpoints.
     """
 
@@ -79,6 +79,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         or 'mcp_resource' in their opt dictionary or via @mcp_tool/@mcp_resource decorators.
         """
         import logging
+
         logger = logging.getLogger(__name__)
 
         for handler in route_handlers:
@@ -165,18 +166,22 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
 
         return app_config
 
-    def on_startup(self, app: "Litestar") -> None:
+    def on_startup(self, app: Litestar) -> None:
         """Perform discovery after app is fully initialized and routes are built.
-        
+
         This captures handlers from Controllers and other dynamic sources.
         """
         import logging
+
         logger = logging.getLogger(__name__)
         logger.debug("Running MCP on_startup discovery")
 
         all_handlers: list[BaseRouteHandler] = []
+
+        # Traverse routes deeply
         for route in app.routes:
             all_handlers.extend(route.route_handlers)
+            # If it's a mount/router, it might have nested routes but app.routes is flattened usually
 
-        logger.debug("Found %d total handlers in app.routes", len(all_handlers))
+        logger.debug("Found %d total handlers in flattened app.routes", len(all_handlers))
         self._discover_mcp_routes(all_handlers)

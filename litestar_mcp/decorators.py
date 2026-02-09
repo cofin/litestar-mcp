@@ -1,25 +1,26 @@
 """Decorators for marking MCP tools and resources."""
 
-from typing import Any, Callable, Dict, Optional, TypeVar
+from typing import Any, Callable, Optional, TypeVar
 
 F = TypeVar("F", bound=Callable[..., Any])
 
 
 class MetadataRegistry:
     """Singleton registry for MCP metadata using qualnames as keys."""
+
     _instance: Optional["MetadataRegistry"] = None
-    
+
     def __new__(cls) -> "MetadataRegistry":
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            cls._instance._data = {}
+            cls._instance._data = {}  # noqa: SLF001
         return cls._instance
 
-    def set(self, obj: Any, value: Dict[str, Any]) -> None:
+    def set(self, obj: Any, value: dict[str, Any]) -> None:
         key = self._get_key(obj)
         self._data[key] = value
 
-    def get(self, obj: Any) -> Optional[Dict[str, Any]]:
+    def get(self, obj: Any) -> Optional[dict[str, Any]]:
         key = self._get_key(obj)
         return self._data.get(key)
 
@@ -30,10 +31,10 @@ class MetadataRegistry:
             target = obj.fn
             if hasattr(target, "value"):
                 target = target.value
-        
+
         if hasattr(target, "__func__"):
             target = target.__func__
-            
+
         if hasattr(target, "__wrapped__"):
             target = target.__wrapped__
 
@@ -41,6 +42,7 @@ class MetadataRegistry:
         module = getattr(target, "__module__", "unknown")
         qualname = getattr(target, "__qualname__", "unknown")
         return f"{module}.{qualname}"
+
 
 _REGISTRY = MetadataRegistry()
 
@@ -95,7 +97,7 @@ def mcp_resource(name: str) -> Callable[[F], F]:
     return decorator
 
 
-def get_mcp_metadata(obj: Any) -> Optional[Dict[str, Any]]:
+def get_mcp_metadata(obj: Any) -> Optional[dict[str, Any]]:
     """Get MCP metadata for an object if it exists.
 
     Args:

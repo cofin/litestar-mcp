@@ -2,7 +2,8 @@
 """MCP-compatible REST API routes for Litestar applications."""
 
 import uuid
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict
+from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING, Any, Dict
 
 from litestar import Controller, Request, get, post
 from litestar.exceptions import NotFoundException
@@ -27,8 +28,8 @@ class MCPController(Controller):
         self,
         request: Request[Any, Any, Any],
         config: MCPConfig,
-        discovered_tools: Dict[str, BaseRouteHandler],
-        discovered_resources: Dict[str, BaseRouteHandler],
+        discovered_tools: dict[str, BaseRouteHandler],
+        discovered_resources: dict[str, BaseRouteHandler],
     ) -> dict[str, Any]:
         """Get MCP server information and capabilities."""
         capabilities = ServerCapabilities(
@@ -88,11 +89,10 @@ class MCPController(Controller):
         # In a full implementation, this would route to execute_tool or other handlers
         # and then enqueue responses back to the client via sse_manager.
         # For now, we just acknowledge receipt as per the test requirement.
-        pass
 
     @get("/resources", name="list_resources")
     async def list_resources(
-        self, request: Request[Any, Any, Any], discovered_resources: Dict[str, BaseRouteHandler]
+        self, request: Request[Any, Any, Any], discovered_resources: dict[str, BaseRouteHandler]
     ) -> dict[str, Any]:
         """List all available MCP resources."""
         resources = []
@@ -132,7 +132,7 @@ class MCPController(Controller):
         self,
         resource_name: str,
         request: Request[Any, Any, Any],
-        discovered_resources: Dict[str, BaseRouteHandler],
+        discovered_resources: dict[str, BaseRouteHandler],
     ) -> dict[str, Any]:
         """Get a specific MCP resource by name."""
 
@@ -170,7 +170,7 @@ class MCPController(Controller):
             }
 
     @get("/tools", name="list_tools")
-    async def list_tools(self, discovered_tools: Dict[str, BaseRouteHandler]) -> dict[str, Any]:
+    async def list_tools(self, discovered_tools: dict[str, BaseRouteHandler]) -> dict[str, Any]:
         """List all available MCP tools."""
         tools = []
 
@@ -202,7 +202,7 @@ class MCPController(Controller):
         tool_name: str,
         data: dict[str, Any],
         request: Request[Any, Any, Any],
-        discovered_tools: Dict[str, BaseRouteHandler],
+        discovered_tools: dict[str, BaseRouteHandler],
     ) -> dict[str, Any]:
         """Execute an MCP tool."""
 
