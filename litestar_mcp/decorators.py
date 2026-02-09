@@ -1,13 +1,48 @@
 """Decorators for marking MCP tools and resources."""
 
 from typing import Any, Callable, Dict, Optional, TypeVar
-from weakref import WeakKeyDictionary
 
 F = TypeVar("F", bound=Callable[..., Any])
 
-# Global registry for metadata to avoid mutating handler objects directly
-# using WeakKeyDictionary to avoid memory leaks
-_METADATA_REGISTRY: WeakKeyDictionary[Any, Dict[str, Any]] = WeakKeyDictionary()
+
+class MetadataRegistry:
+    """Singleton registry for MCP metadata using qualnames as keys."""
+    _instance: Optional["MetadataRegistry"] = None
+    
+    def __new__(cls) -> "MetadataRegistry":
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._data = {}
+        return cls._instance
+
+    def set(self, obj: Any, value: Dict[str, Any]) -> None:
+        key = self._get_key(obj)
+        self._data[key] = value
+
+    def get(self, obj: Any) -> Optional[Dict[str, Any]]:
+        key = self._get_key(obj)
+        return self._data.get(key)
+
+    def _get_key(self, obj: Any) -> str:
+        # Resolve to the underlying function
+        target = obj
+        if hasattr(obj, "fn"):
+            target = obj.fn
+            if hasattr(target, "value"):
+                target = target.value
+        
+        if hasattr(target, "__func__"):
+            target = target.__func__
+            
+        if hasattr(target, "__wrapped__"):
+            target = target.__wrapped__
+
+        # Use qualname and module as key
+        module = getattr(target, "__module__", "unknown")
+        qualname = getattr(target, "__qualname__", "unknown")
+        return f"{module}.{qualname}"
+
+_REGISTRY = MetadataRegistry()
 
 
 def mcp_tool(name: str) -> Callable[[F], F]:
@@ -29,7 +64,7 @@ def mcp_tool(name: str) -> Callable[[F], F]:
     """
 
     def decorator(fn: F) -> F:
-        _METADATA_REGISTRY[fn] = {"type": "tool", "name": name}
+        _REGISTRY.set(fn, {"type": "tool", "name": name})
         return fn
 
     return decorator
@@ -54,7 +89,7 @@ def mcp_resource(name: str) -> Callable[[F], F]:
     """
 
     def decorator(fn: F) -> F:
-        _METADATA_REGISTRY[fn] = {"type": "resource", "name": name}
+        _REGISTRY.set(fn, {"type": "resource", "name": name})
         return fn
 
     return decorator
@@ -69,4 +104,4 @@ def get_mcp_metadata(obj: Any) -> Optional[Dict[str, Any]]:
     Returns:
         MCP metadata dictionary or None if not present.
     """
-    return _METADATA_REGISTRY.get(obj)
+    return _REGISTRY.get(obj)

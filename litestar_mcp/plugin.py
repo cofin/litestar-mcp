@@ -71,6 +71,9 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         Recursively traverses route handlers to find those marked with 'mcp_tool'
         or 'mcp_resource' in their opt dictionary or via @mcp_tool/@mcp_resource decorators.
         """
+        import logging
+        logger = logging.getLogger(__name__)
+
         for handler in route_handlers:
             if isinstance(handler, BaseRouteHandler):
                 # Check for decorator-based metadata first (takes precedence)
@@ -82,6 +85,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                     metadata = get_mcp_metadata(fn)
 
                 if metadata:
+                    logger.debug("Found MCP metadata for %s: %s", handler, metadata)
                     if metadata["type"] == "tool":
                         self._registry.register_tool(metadata["name"], handler)
                     elif metadata["type"] == "resource":
@@ -96,6 +100,8 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                     if "mcp_resource" in handler.opt:
                         resource_name = handler.opt["mcp_resource"]
                         self._registry.register_resource(resource_name, handler)
+            else:
+                logger.debug("Not a BaseRouteHandler: %s (%s)", handler, type(handler))
 
             # Check if this handler has nested route handlers (like routers)
             if getattr(handler, "route_handlers", None):
@@ -143,5 +149,22 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         mcp_router = Router(**router_kwargs)
 
         app_config.route_handlers.append(mcp_router)
+        app_config.on_startup.append(self.on_startup)
 
         return app_config
+
+    def on_startup(self, app: "Litestar") -> None:
+        """Perform discovery after app is fully initialized and routes are built.
+        
+        This captures handlers from Controllers and other dynamic sources.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug("Running MCP on_startup discovery")
+
+        all_handlers: list[BaseRouteHandler] = []
+        for route in app.routes:
+            all_handlers.extend(route.route_handlers)
+
+        logger.debug("Found %d total handlers in app.routes", len(all_handlers))
+        self._discover_mcp_routes(all_handlers)

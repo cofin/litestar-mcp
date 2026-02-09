@@ -18,7 +18,7 @@ class Registry:
         """Initialize the registry."""
         self._tools: Dict[str, "BaseRouteHandler"] = {}
         self._resources: Dict[str, "BaseRouteHandler"] = {}
-        self._metadata: WeakKeyDictionary[Any, Dict[str, Any]] = WeakKeyDictionary()
+        self._metadata: Dict[Any, Dict[str, Any]] = {}
 
     @property
     def tools(self) -> Dict[str, "BaseRouteHandler"]:
