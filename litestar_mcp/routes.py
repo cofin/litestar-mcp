@@ -1,22 +1,8 @@
 # ruff: noqa: BLE001
 """MCP-compatible REST API routes for Litestar applications."""
 
-from typing import Any
-
-from litestar import Controller, Request, get, post
-from litestar.exceptions import NotFoundException
-from litestar.handlers import BaseRouteHandler
-from litestar.serialization import encode_json
-
-from litestar_mcp.config import MCPConfig
-from litestar_mcp.executor import execute_tool
-from litestar_mcp.schema import MCPResource, MCPTool, ServerCapabilities
-from litestar_mcp.schema_builder import generate_schema_for_handler
-from litestar_mcp.utils import get_handler_function
-
-
 import uuid
-from typing import Any, AsyncGenerator
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict
 
 from litestar import Controller, Request, get, post
 from litestar.exceptions import NotFoundException
@@ -41,8 +27,8 @@ class MCPController(Controller):
         self,
         request: Request[Any, Any, Any],
         config: MCPConfig,
-        discovered_tools: dict[str, BaseRouteHandler],
-        discovered_resources: dict[str, BaseRouteHandler],
+        discovered_tools: Dict[str, BaseRouteHandler],
+        discovered_resources: Dict[str, BaseRouteHandler],
     ) -> dict[str, Any]:
         """Get MCP server information and capabilities."""
         capabilities = ServerCapabilities(
@@ -76,15 +62,15 @@ class MCPController(Controller):
         }
 
     @get("/sse", name="mcp_sse")
-    async def sse_handshake(self, request: Request[Any, Any, Any], sse_manager: SSEManager) -> ServerSentEvent:
+    async def sse_handshake(self, request: Request[Any, Any, Any], sse_manager: "SSEManager") -> ServerSentEvent:
         """Establish an SSE connection for MCP notifications."""
         client_id = str(uuid.uuid4())
-        
+
         async def event_generator() -> AsyncGenerator[str, None]:
             # Initial endpoint notification - required by MCP SSE transport
             # It tells the client where to POST messages
             yield f"event: endpoint\ndata: {request.base_url}mcp/messages\n\n"
-            
+
             async for msg in sse_manager.subscribe(client_id):
                 yield f"event: {msg.event}\ndata: {msg.data}\n\n"
 
@@ -95,8 +81,8 @@ class MCPController(Controller):
         self,
         data: dict[str, Any],
         request: Request[Any, Any, Any],
-        sse_manager: SSEManager,
-        discovered_tools: dict[str, BaseRouteHandler],
+        sse_manager: "SSEManager",
+        discovered_tools: "dict[str, BaseRouteHandler]",
     ) -> None:
         """Handle incoming protocol messages over SSE transport."""
         # In a full implementation, this would route to execute_tool or other handlers
@@ -106,7 +92,7 @@ class MCPController(Controller):
 
     @get("/resources", name="list_resources")
     async def list_resources(
-        self, request: Request[Any, Any, Any], discovered_resources: dict[str, BaseRouteHandler]
+        self, request: Request[Any, Any, Any], discovered_resources: Dict[str, BaseRouteHandler]
     ) -> dict[str, Any]:
         """List all available MCP resources."""
         resources = []
@@ -121,7 +107,8 @@ class MCPController(Controller):
         )
 
         for name, handler in discovered_resources.items():
-            description = handler.__doc__ or f"Resource: {name}"
+            fn = get_handler_function(handler)
+            description = fn.__doc__ or f"Resource: {name}"
             resources.append(
                 MCPResource(
                     uri=f"litestar://{name}", name=name, description=description.strip(), mime_type="application/json"
@@ -142,7 +129,10 @@ class MCPController(Controller):
 
     @get("/resources/{resource_name:str}", name="get_resource")
     async def get_resource(
-        self, resource_name: str, request: Request[Any, Any, Any], discovered_resources: dict[str, BaseRouteHandler]
+        self,
+        resource_name: str,
+        request: Request[Any, Any, Any],
+        discovered_resources: Dict[str, BaseRouteHandler],
     ) -> dict[str, Any]:
         """Get a specific MCP resource by name."""
 
@@ -180,7 +170,7 @@ class MCPController(Controller):
             }
 
     @get("/tools", name="list_tools")
-    async def list_tools(self, discovered_tools: dict[str, BaseRouteHandler]) -> dict[str, Any]:
+    async def list_tools(self, discovered_tools: Dict[str, BaseRouteHandler]) -> dict[str, Any]:
         """List all available MCP tools."""
         tools = []
 
@@ -212,7 +202,7 @@ class MCPController(Controller):
         tool_name: str,
         data: dict[str, Any],
         request: Request[Any, Any, Any],
-        discovered_tools: dict[str, BaseRouteHandler],
+        discovered_tools: Dict[str, BaseRouteHandler],
     ) -> dict[str, Any]:
         """Execute an MCP tool."""
 
