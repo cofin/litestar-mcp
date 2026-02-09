@@ -14,6 +14,7 @@ from litestar.plugins import CLIPlugin, InitPluginProtocol
 
 from litestar_mcp.config import MCPConfig
 from litestar_mcp.decorators import get_mcp_metadata
+from litestar_mcp.registry import Registry
 from litestar_mcp.routes import MCPController
 from litestar_mcp.utils import get_handler_function
 
@@ -21,33 +22,8 @@ from litestar_mcp.utils import get_handler_function
 class LitestarMCP(InitPluginProtocol, CLIPlugin):
     """Litestar plugin for Model Context Protocol integration.
 
-    This plugin discovers routes marked with 'mcp_tool' or 'mcp_resource' in their
-    opt dictionary and exposes them through MCP-compatible REST API endpoints.
-
-    Example:
-        .. code-block:: python
-
-            from litestar import Litestar, get, post
-            from litestar.openapi.config import OpenAPIConfig
-            from litestar_mcp import LitestarMCP
-
-            @get("/users", mcp_tool="list_users")
-            async def get_users() -> list[dict]:
-                return [{"id": 1, "name": "Alice"}]
-
-            @post("/analyze", mcp_tool="analyze_data")
-            async def analyze(data: dict) -> dict:
-                return {"result": "analyzed"}
-
-            @get("/config", mcp_resource="app_config")
-            async def get_config() -> dict:
-                return {"debug": True}
-
-            app = Litestar(
-                plugins=[LitestarMCP()],
-                route_handlers=[get_users, analyze, get_config],
-                openapi_config=OpenAPIConfig(title="My API", version="1.0.0")
-            )
+    This plugin discovers routes marked for MCP exposure and exposes them through 
+    MCP-compatible REST API endpoints.
     """
 
     def __init__(self, config: Optional[MCPConfig] = None) -> None:
@@ -55,14 +31,9 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
 
         Args:
             config: Plugin configuration. If not provided, uses default configuration.
-
-        Note:
-            Server name and version are automatically derived from the
-            Litestar application's OpenAPI configuration unless overridden in config.
         """
         self._config = config or MCPConfig()
-        self._discovered_tools: dict[str, BaseRouteHandler] = {}
-        self._discovered_resources: dict[str, BaseRouteHandler] = {}
+        self._registry = Registry()
 
     @property
     def config(self) -> MCPConfig:
@@ -70,14 +41,19 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         return self._config
 
     @property
+    def registry(self) -> Registry:
+        """Get the central registry."""
+        return self._registry
+
+    @property
     def discovered_tools(self) -> dict[str, BaseRouteHandler]:
         """Get discovered MCP tools."""
-        return self._discovered_tools
+        return self._registry.tools
 
     @property
     def discovered_resources(self) -> dict[str, BaseRouteHandler]:
         """Get discovered MCP resources."""
-        return self._discovered_resources
+        return self._registry.resources
 
     def on_cli_init(self, cli: "Group") -> None:
         """Configure CLI commands for MCP operations.
@@ -98,7 +74,6 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         for handler in route_handlers:
             if isinstance(handler, BaseRouteHandler):
                 # Check for decorator-based metadata first (takes precedence)
-                # Metadata can be on the handler object itself or the underlying function
                 metadata = get_mcp_metadata(handler)
 
                 # If not on handler, check the underlying function
@@ -108,19 +83,19 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
 
                 if metadata:
                     if metadata["type"] == "tool":
-                        self._discovered_tools[metadata["name"]] = handler
+                        self._registry.register_tool(metadata["name"], handler)
                     elif metadata["type"] == "resource":
-                        self._discovered_resources[metadata["name"]] = handler
+                        self._registry.register_resource(metadata["name"], handler)
 
                 # Fallback to opt dictionary for backward compatibility
                 elif handler.opt:
                     if "mcp_tool" in handler.opt:
                         tool_name = handler.opt["mcp_tool"]
-                        self._discovered_tools[tool_name] = handler
+                        self._registry.register_tool(tool_name, handler)
 
                     if "mcp_resource" in handler.opt:
                         resource_name = handler.opt["mcp_resource"]
-                        self._discovered_resources[resource_name] = handler
+                        self._registry.register_resource(resource_name, handler)
 
             # Check if this handler has nested route handlers (like routers)
             if getattr(handler, "route_handlers", None):
@@ -143,11 +118,8 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         def provide_mcp_config() -> MCPConfig:
             return self._config
 
-        def provide_discovered_tools() -> dict[str, BaseRouteHandler]:
-            return self._discovered_tools
-
-        def provide_discovered_resources() -> dict[str, BaseRouteHandler]:
-            return self._discovered_resources
+        def provide_registry() -> Registry:
+            return self._registry
 
         # Build router kwargs with conditional guards
         router_kwargs: dict[str, Any] = {
@@ -157,8 +129,10 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
             "include_in_schema": self._config.include_in_schema,
             "dependencies": {
                 "config": Provide(provide_mcp_config, sync_to_thread=False),
-                "discovered_tools": Provide(provide_discovered_tools, sync_to_thread=False),
-                "discovered_resources": Provide(provide_discovered_resources, sync_to_thread=False),
+                "registry": Provide(provide_registry, sync_to_thread=False),
+                # Compatibility for existing controller
+                "discovered_tools": Provide(lambda: self._registry.tools, sync_to_thread=False),
+                "discovered_resources": Provide(lambda: self._registry.resources, sync_to_thread=False),
             },
         }
 
