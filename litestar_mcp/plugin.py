@@ -16,6 +16,7 @@ from litestar_mcp.config import MCPConfig
 from litestar_mcp.decorators import get_mcp_metadata
 from litestar_mcp.registry import Registry
 from litestar_mcp.routes import MCPController
+from litestar_mcp.sse import SSEManager
 from litestar_mcp.utils import get_handler_function
 
 
@@ -34,6 +35,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         """
         self._config = config or MCPConfig()
         self._registry = Registry()
+        self._sse_manager = SSEManager()
 
     @property
     def config(self) -> MCPConfig:
@@ -44,6 +46,11 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
     def registry(self) -> Registry:
         """Get the central registry."""
         return self._registry
+
+    @property
+    def sse_manager(self) -> SSEManager:
+        """Get the SSE manager."""
+        return self._sse_manager
 
     @property
     def discovered_tools(self) -> dict[str, BaseRouteHandler]:
@@ -127,6 +134,9 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         def provide_registry() -> Registry:
             return self._registry
 
+        def provide_sse_manager() -> SSEManager:
+            return self._sse_manager
+
         # Build router kwargs with conditional guards
         router_kwargs: dict[str, Any] = {
             "path": self._config.base_path,
@@ -136,6 +146,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
             "dependencies": {
                 "config": Provide(provide_mcp_config, sync_to_thread=False),
                 "registry": Provide(provide_registry, sync_to_thread=False),
+                "sse_manager": Provide(provide_sse_manager, sync_to_thread=False),
                 # Compatibility for existing controller
                 "discovered_tools": Provide(lambda: self._registry.tools, sync_to_thread=False),
                 "discovered_resources": Provide(lambda: self._registry.resources, sync_to_thread=False),
