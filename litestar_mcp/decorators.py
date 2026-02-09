@@ -1,8 +1,13 @@
 """Decorators for marking MCP tools and resources."""
 
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, Dict, Optional, TypeVar
+from weakref import WeakKeyDictionary
 
 F = TypeVar("F", bound=Callable[..., Any])
+
+# Global registry for metadata to avoid mutating handler objects directly
+# using WeakKeyDictionary to avoid memory leaks
+_METADATA_REGISTRY: WeakKeyDictionary[Any, Dict[str, Any]] = WeakKeyDictionary()
 
 
 def mcp_tool(name: str) -> Callable[[F], F]:
@@ -24,16 +29,7 @@ def mcp_tool(name: str) -> Callable[[F], F]:
     """
 
     def decorator(fn: F) -> F:
-        # Attach MCP metadata directly to the function/handler
-        # This preserves all function properties including async nature
-        metadata = {"type": "tool", "name": name}
-        fn._mcp_metadata = metadata  # type: ignore[attr-defined] # noqa: SLF001
-
-        # If this is already a Litestar handler, also add metadata to it
-        # This handles the case where @mcp_tool is applied after @get/@post
-        if hasattr(fn, "__class__") and "litestar" in str(fn.__class__):
-            fn._mcp_metadata = metadata  # type: ignore[attr-defined] # noqa: SLF001
-
+        _METADATA_REGISTRY[fn] = {"type": "tool", "name": name}
         return fn
 
     return decorator
@@ -58,16 +54,19 @@ def mcp_resource(name: str) -> Callable[[F], F]:
     """
 
     def decorator(fn: F) -> F:
-        # Attach MCP metadata directly to the function/handler
-        # This preserves all function properties including async nature
-        metadata = {"type": "resource", "name": name}
-        fn._mcp_metadata = metadata  # type: ignore[attr-defined] # noqa: SLF001
-
-        # If this is already a Litestar handler, also add metadata to it
-        # This handles the case where @mcp_resource is applied after @get/@post
-        if hasattr(fn, "__class__") and "litestar" in str(fn.__class__):
-            fn._mcp_metadata = metadata  # type: ignore[attr-defined] # noqa: SLF001
-
+        _METADATA_REGISTRY[fn] = {"type": "resource", "name": name}
         return fn
 
     return decorator
+
+
+def get_mcp_metadata(obj: Any) -> Optional[Dict[str, Any]]:
+    """Get MCP metadata for an object if it exists.
+
+    Args:
+        obj: Object to check for MCP metadata.
+
+    Returns:
+        MCP metadata dictionary or None if not present.
+    """
+    return _METADATA_REGISTRY.get(obj)

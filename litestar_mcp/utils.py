@@ -24,16 +24,4 @@ def get_handler_function(handler: "BaseRouteHandler") -> Callable[..., Any]:
     return getattr(fn, "value", fn)
 
 
-def get_mcp_metadata(obj: Any) -> "dict[str, Any] | None":
-    """Get MCP metadata from an object if it exists.
-
-    Args:
-        obj: Object to check for MCP metadata.
-
-    Returns:
-        MCP metadata dictionary or None if not present.
-    """
-    return getattr(obj, "_mcp_metadata", None)
-
-
-__all__ = ("get_handler_function", "get_mcp_metadata")
+__all__ = ("get_handler_function",)

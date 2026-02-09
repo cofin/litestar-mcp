@@ -13,8 +13,9 @@ from litestar.handlers import BaseRouteHandler
 from litestar.plugins import CLIPlugin, InitPluginProtocol
 
 from litestar_mcp.config import MCPConfig
+from litestar_mcp.decorators import get_mcp_metadata
 from litestar_mcp.routes import MCPController
-from litestar_mcp.utils import get_handler_function, get_mcp_metadata
+from litestar_mcp.utils import get_handler_function
 
 
 class LitestarMCP(InitPluginProtocol, CLIPlugin):
