@@ -34,3 +34,24 @@ def test_registry_metadata_storage(registry: Registry) -> None:
     metadata = {"type": "tool", "name": "test"}
     registry.set_metadata(my_handler, metadata)
     assert registry.get_metadata(my_handler) == metadata
+
+@pytest.mark.asyncio
+async def test_registry_notifications(registry: Registry) -> None:
+    from litestar_mcp.sse import SSEManager
+    import json
+    
+    sse_manager = SSEManager()
+    registry.set_sse_manager(sse_manager)
+    
+    # Subscribe a client
+    sse_manager.register_client("client1")
+    stream = sse_manager.subscribe("client1")
+    
+    # Notify
+    await registry.notify_resource_updated("test://res")
+    
+    # Check received
+    msg = await stream.__anext__()
+    data = json.loads(msg.data)
+    assert data["method"] == "notifications/resources/updated"
+    assert data["params"]["uri"] == "test://res"

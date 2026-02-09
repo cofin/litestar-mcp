@@ -127,6 +127,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
             The modified application configuration
         """
         self._discover_mcp_routes(app_config.route_handlers)
+        self._registry.set_sse_manager(self._sse_manager)
 
         def provide_mcp_config() -> MCPConfig:
             return self._config
