@@ -178,6 +178,5 @@ CLAUDE.md
 .gitignore
 .todos
 .tmp
-!README.md
-!CHANGELOG.md
-*.md
+.agent
+specs
