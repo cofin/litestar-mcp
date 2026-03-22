@@ -585,7 +585,7 @@ class TestUnionHandling:
 
     def test_union_single_type(self) -> None:
         # Union[str] collapses to str in Python
-        result = union_type_to_json_schema(Union[str, str])
+        result = union_type_to_json_schema(str)
         # Python collapses Union[str, str] to just str, which isn't a Union
         # So union_type_to_json_schema returns None, and type_to_json_schema handles it
         # Just verify the full pipeline works

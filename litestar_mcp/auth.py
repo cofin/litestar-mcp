@@ -1,7 +1,8 @@
 """MCP OAuth 2.1 authentication and auth bridge."""
 
-from dataclasses import dataclass, field
-from typing import Any, Callable, Coroutine, Optional
+from collections.abc import Coroutine
+from dataclasses import dataclass
+from typing import Any, Callable, Optional
 
 
 @dataclass

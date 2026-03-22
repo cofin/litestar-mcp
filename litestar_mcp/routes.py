@@ -1,4 +1,4 @@
-# ruff: noqa: BLE001
+# ruff: noqa: PLR0911, PLR0915, C901
 """MCP JSON-RPC 2.0 Streamable HTTP transport for Litestar applications."""
 
 import json
@@ -8,9 +8,11 @@ from litestar import Controller, MediaType, Request, Response, delete, post
 from litestar.serialization import encode_json
 from litestar.status_codes import HTTP_200_OK, HTTP_204_NO_CONTENT, HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN
 
-from litestar_mcp.auth import MCPAuthConfig, validate_bearer_token
+from litestar_mcp.auth import validate_bearer_token
 from litestar_mcp.config import MCPConfig
+from litestar_mcp.decorators import get_mcp_metadata
 from litestar_mcp.executor import execute_tool
+from litestar_mcp.filters import should_include_handler
 from litestar_mcp.jsonrpc import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
@@ -22,10 +24,8 @@ from litestar_mcp.jsonrpc import (
     error_response,
     parse_request,
 )
-from litestar_mcp.decorators import get_mcp_metadata
-from litestar_mcp.filters import should_include_handler
-from litestar_mcp.session import MCPSessionManager
 from litestar_mcp.schema_builder import generate_schema_for_handler
+from litestar_mcp.session import MCPSessionManager
 from litestar_mcp.utils import get_handler_function
 
 if TYPE_CHECKING:
@@ -69,7 +69,7 @@ def build_jsonrpc_router(
     discovered_tools: "dict[str, BaseRouteHandler]",
     discovered_resources: "dict[str, BaseRouteHandler]",
     app_ref: Any = None,
-    session_manager: "MCPSessionManager | None" = None,
+    session_manager: "MCPSessionManager | None" = None,  # noqa: ARG001
     user_claims: "dict[str, Any] | None" = None,
 ) -> JSONRPCRouter:
     """Build and return a JSONRPCRouter wired to MCP method handlers.
@@ -80,6 +80,7 @@ def build_jsonrpc_router(
         discovered_resources: Registered resource handlers.
         app_ref: Reference to the Litestar app (for OpenAPI access).
         session_manager: Optional session manager for creating sessions during initialize.
+        user_claims: Optional authenticated user claims for scope enforcement.
 
     Returns:
         A configured JSONRPCRouter.
@@ -87,7 +88,7 @@ def build_jsonrpc_router(
     router = JSONRPCRouter()
 
     # ── initialize ────────────────────────────────────────────────────
-    async def handle_initialize(params: dict[str, Any]) -> dict[str, Any]:
+    async def handle_initialize(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
         server_name = config.name or "Litestar MCP Server"
         server_version = "1.0.0"
 
@@ -115,19 +116,19 @@ def build_jsonrpc_router(
     router.register("initialize", handle_initialize)
 
     # ── notifications/initialized ──────────────────────────────────────
-    async def handle_initialized(params: dict[str, Any]) -> dict[str, Any]:
+    async def handle_initialized(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
         return {}
 
     router.register("notifications/initialized", handle_initialized)
 
     # ── ping ───────────────────────────────────────────────────────────
-    async def handle_ping(params: dict[str, Any]) -> dict[str, Any]:
+    async def handle_ping(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
         return {}
 
     router.register("ping", handle_ping)
 
     # ── tools/list ─────────────────────────────────────────────────────
-    async def handle_tools_list(params: dict[str, Any]) -> dict[str, Any]:
+    async def handle_tools_list(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
         tools = []
         for name, handler in discovered_tools.items():
             # Apply filtering
@@ -207,7 +208,7 @@ def build_jsonrpc_router(
     router.register("tools/call", handle_tools_call)
 
     # ── resources/list ─────────────────────────────────────────────────
-    async def handle_resources_list(params: dict[str, Any]) -> dict[str, Any]:
+    async def handle_resources_list(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
         resources = [
             {
                 "uri": "litestar://openapi",
@@ -333,40 +334,41 @@ class MCPController(Controller):
         # initialize and ping are exempt from session requirements
         session_id = request.headers.get("mcp-session-id")
 
-        if rpc_request.method not in _SESSION_EXEMPT_METHODS:
-            if session_id:
-                if not session_manager.validate_session(session_id):
-                    resp = Response(
-                        content=error_response(
-                            rpc_request.id,
-                            JSONRPCError(code=INVALID_REQUEST, message="Invalid or expired session"),
-                        ),
-                        status_code=HTTP_200_OK,
-                        media_type=MediaType.JSON,
-                    )
-                    return _add_protocol_headers(resp)
+        if (
+            rpc_request.method not in _SESSION_EXEMPT_METHODS
+            and session_id
+            and not session_manager.validate_session(session_id)
+        ):
+            resp = Response(
+                content=error_response(
+                    rpc_request.id,
+                    JSONRPCError(code=INVALID_REQUEST, message="Invalid or expired session"),
+                ),
+                status_code=HTTP_200_OK,
+                media_type=MediaType.JSON,
+            )
+            return _add_protocol_headers(resp)
 
         # ── Auth enforcement ──
-        user_claims: "dict[str, Any] | None" = None
-        if config.auth and config.auth.token_validator:
-            if rpc_request.method not in _AUTH_EXEMPT_METHODS:
-                auth_header = request.headers.get("authorization", "")
-                if not auth_header.startswith("Bearer "):
-                    return Response(
-                        content={"error": "Missing or invalid Authorization header"},
-                        status_code=HTTP_401_UNAUTHORIZED,
-                        media_type=MediaType.JSON,
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
-                token = auth_header[7:]  # Strip "Bearer "
-                user_claims = await validate_bearer_token(token, config.auth)
-                if user_claims is None:
-                    return Response(
-                        content={"error": "Invalid token"},
-                        status_code=HTTP_401_UNAUTHORIZED,
-                        media_type=MediaType.JSON,
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
+        user_claims: dict[str, Any] | None = None
+        if config.auth and config.auth.token_validator and rpc_request.method not in _AUTH_EXEMPT_METHODS:
+            auth_header = request.headers.get("authorization", "")
+            if not auth_header.startswith("Bearer "):
+                return Response(
+                    content={"error": "Missing or invalid Authorization header"},
+                    status_code=HTTP_401_UNAUTHORIZED,
+                    media_type=MediaType.JSON,
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            token = auth_header[7:]  # Strip "Bearer "
+            user_claims = await validate_bearer_token(token, config.auth)
+            if user_claims is None:
+                return Response(
+                    content={"error": "Invalid token"},
+                    status_code=HTTP_401_UNAUTHORIZED,
+                    media_type=MediaType.JSON,
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
 
         # ── Dispatch ──
         router = build_jsonrpc_router(
@@ -381,7 +383,7 @@ class MCPController(Controller):
             return _add_protocol_headers(resp)
 
         # ── Create session on initialize ──
-        new_session_id: "str | None" = None
+        new_session_id: str | None = None
         if rpc_request.method == "initialize" and "result" in result:
             new_session_id = session_manager.create_session(
                 metadata={"client_info": rpc_request.params.get("clientInfo")}

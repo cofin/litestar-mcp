@@ -1,8 +1,9 @@
-# ruff: noqa: BLE001
+# ruff: noqa: N818, PLR0911, BLE001
 """JSON-RPC 2.0 message routing for MCP."""
 
+from collections.abc import Coroutine
 from dataclasses import dataclass, field
-from typing import Any, Callable, Coroutine, Optional
+from typing import Any, Callable, Optional
 
 # Standard JSON-RPC 2.0 error codes
 PARSE_ERROR = -32700

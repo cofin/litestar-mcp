@@ -2,14 +2,12 @@
 
 from typing import Any, Optional
 
-import pytest
 from litestar import Litestar, get
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig
 from litestar_mcp.auth import MCPAuthConfig, validate_bearer_token
 from litestar_mcp.decorators import mcp_tool
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

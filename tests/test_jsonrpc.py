@@ -1,4 +1,3 @@
-# ruff: noqa: BLE001
 """Tests for JSON-RPC 2.0 core implementation."""
 
 from typing import Any
@@ -18,7 +17,6 @@ from litestar_mcp.jsonrpc import (
     JSONRPCRequest,
     JSONRPCRouter,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -128,8 +126,7 @@ class TestJSONRPCRouter:
         assert "test/method" in router.methods
 
     def test_unknown_method_raises(self) -> None:
-        router = JSONRPCRouter()
-        # Dispatching unknown method should be handled at the transport level
+        JSONRPCRouter()  # verify instantiation works
 
 
 # ---------------------------------------------------------------------------

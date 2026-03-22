@@ -2,7 +2,7 @@ default_language_version:
   python: "3"
 repos:
   - repo: https://github.com/compilerla/conventional-pre-commit
-    rev: v4.2.0
+    rev: v4.4.0
     hooks:
       - id: conventional-pre-commit
         stages: [commit-msg]
@@ -17,7 +17,7 @@ repos:
       - id: mixed-line-ending
       - id: trailing-whitespace
   - repo: https://github.com/charliermarsh/ruff-pre-commit
-    rev: "v0.13.2"
+    rev: "v0.15.7"
     hooks:
       # Run the linter.
       - id: ruff
@@ -27,11 +27,11 @@ repos:
       - id: ruff-format
         types_or: [python, pyi]
   - repo: https://github.com/codespell-project/codespell
-    rev: v2.4.1
+    rev: v2.4.2
     hooks:
       - id: codespell
         additional_dependencies: [tomli]
   - repo: https://github.com/sphinx-contrib/sphinx-lint
-    rev: "v1.0.0"
+    rev: "v1.0.2"
     hooks:
       - id: sphinx-lint

@@ -2,14 +2,11 @@
 
 from typing import Any
 
-import pytest
 from litestar import Litestar, get
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig
-from litestar_mcp.decorators import mcp_tool
 from litestar_mcp.filters import should_include_handler
-
 
 # ---------------------------------------------------------------------------
 # Unit tests for should_include_handler

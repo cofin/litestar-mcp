@@ -9,7 +9,6 @@ from litestar.testing import TestClient
 from litestar_mcp import LitestarMCP, MCPConfig
 from litestar_mcp.session import MCPSessionManager
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -46,9 +45,6 @@ def _rpc(
     return client.post("/mcp", json=body, headers=headers or {})
 
 
-# ---------------------------------------------------------------------------
-# MCPSessionManager (unit)
-# ---------------------------------------------------------------------------
 
 
 class TestMCPSessionManager:

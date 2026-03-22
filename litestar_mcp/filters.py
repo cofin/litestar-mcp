@@ -20,21 +20,14 @@ def should_include_handler(name: str, tags: set[str], config: "MCPConfig") -> bo
         True if the handler should be included, False otherwise.
     """
     # ── Tag-level filtering (highest precedence) ──
-    if config.exclude_tags:
-        if tags & set(config.exclude_tags):
-            return False
+    if config.exclude_tags and tags & set(config.exclude_tags):
+        return False
 
-    if config.include_tags:
-        if not (tags & set(config.include_tags)):
-            return False
+    if config.include_tags and not (tags & set(config.include_tags)):
+        return False
 
     # ── Operation-level filtering ──
-    if config.exclude_operations:
-        if name in config.exclude_operations:
-            return False
+    if config.exclude_operations and name in config.exclude_operations:
+        return False
 
-    if config.include_operations:
-        if name not in config.include_operations:
-            return False
-
-    return True
+    return not (config.include_operations and name not in config.include_operations)
