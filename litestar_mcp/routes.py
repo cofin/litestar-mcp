@@ -1,18 +1,19 @@
 # ruff: noqa: BLE001
-"""MCP JSON-RPC 2.0 transport for Litestar applications."""
+"""MCP JSON-RPC 2.0 Streamable HTTP transport for Litestar applications."""
 
 import json
 from typing import TYPE_CHECKING, Any
 
-from litestar import Controller, MediaType, Request, Response, post
+from litestar import Controller, MediaType, Request, Response, delete, post
 from litestar.serialization import encode_json
-from litestar.status_codes import HTTP_200_OK, HTTP_204_NO_CONTENT
+from litestar.status_codes import HTTP_200_OK, HTTP_204_NO_CONTENT, HTTP_403_FORBIDDEN
 
 from litestar_mcp.config import MCPConfig
 from litestar_mcp.executor import execute_tool
 from litestar_mcp.jsonrpc import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
+    INVALID_REQUEST,
     PARSE_ERROR,
     JSONRPCError,
     JSONRPCErrorException,
@@ -20,12 +21,43 @@ from litestar_mcp.jsonrpc import (
     error_response,
     parse_request,
 )
-from litestar_mcp.schema import MCPResource, MCPTool
+from litestar_mcp.session import MCPSessionManager
 from litestar_mcp.schema_builder import generate_schema_for_handler
 from litestar_mcp.utils import get_handler_function
 
 if TYPE_CHECKING:
     from litestar.handlers import BaseRouteHandler
+
+MCP_PROTOCOL_VERSION = "2025-11-25"
+
+# Methods that do not require an active session
+_SESSION_EXEMPT_METHODS = frozenset({"initialize", "ping"})
+
+
+def _validate_origin(request: Request[Any, Any, Any], config: MCPConfig) -> "Response[Any] | None":
+    """Validate the Origin header if allowed_origins is configured.
+
+    Returns a 403 Response if the origin is disallowed, or None if OK.
+    """
+    if not config.allowed_origins:
+        return None
+
+    origin = request.headers.get("origin")
+    if origin and origin not in config.allowed_origins:
+        return Response(
+            content={"error": "Origin not allowed"},
+            status_code=HTTP_403_FORBIDDEN,
+            media_type=MediaType.JSON,
+        )
+    return None
+
+
+def _add_protocol_headers(response: Response[Any], session_id: "str | None" = None) -> Response[Any]:
+    """Add standard MCP protocol headers to a response."""
+    response.headers["mcp-protocol-version"] = MCP_PROTOCOL_VERSION
+    if session_id:
+        response.headers["mcp-session-id"] = session_id
+    return response
 
 
 def build_jsonrpc_router(
@@ -33,6 +65,7 @@ def build_jsonrpc_router(
     discovered_tools: "dict[str, BaseRouteHandler]",
     discovered_resources: "dict[str, BaseRouteHandler]",
     app_ref: Any = None,
+    session_manager: "MCPSessionManager | None" = None,
 ) -> JSONRPCRouter:
     """Build and return a JSONRPCRouter wired to MCP method handlers.
 
@@ -41,6 +74,7 @@ def build_jsonrpc_router(
         discovered_tools: Registered tool handlers.
         discovered_resources: Registered resource handlers.
         app_ref: Reference to the Litestar app (for OpenAPI access).
+        session_manager: Optional session manager for creating sessions during initialize.
 
     Returns:
         A configured JSONRPCRouter.
@@ -58,8 +92,8 @@ def build_jsonrpc_router(
                 server_name = config.name or openapi_config.title
                 server_version = openapi_config.version
 
-        return {
-            "protocolVersion": "2025-11-25",
+        result: dict[str, Any] = {
+            "protocolVersion": MCP_PROTOCOL_VERSION,
             "capabilities": {
                 "tools": {"listChanged": True},
                 "resources": {"subscribe": True, "listChanged": True},
@@ -69,6 +103,9 @@ def build_jsonrpc_router(
                 "version": server_version,
             },
         }
+
+        # Session creation is handled by the controller after dispatch
+        return result
 
     router.register("initialize", handle_initialize)
 
@@ -206,9 +243,9 @@ def build_jsonrpc_router(
 
 
 class MCPController(Controller):
-    """MCP JSON-RPC 2.0 controller.
+    """MCP JSON-RPC 2.0 Streamable HTTP controller.
 
-    All MCP operations are dispatched through a single POST endpoint.
+    Implements the Streamable HTTP transport with session management.
     """
 
     @post("/", name="mcp_jsonrpc", media_type=MediaType.JSON, status_code=HTTP_200_OK)
@@ -218,39 +255,88 @@ class MCPController(Controller):
         config: MCPConfig,
         discovered_tools: dict[str, Any],
         discovered_resources: dict[str, Any],
+        session_manager: MCPSessionManager,
     ) -> Response[Any]:
-        """Handle a JSON-RPC 2.0 request.
+        """Handle a JSON-RPC 2.0 request over Streamable HTTP."""
+        # ── Origin validation ──
+        origin_err = _validate_origin(request, config)
+        if origin_err is not None:
+            return origin_err
 
-        This is the single MCP endpoint. All tool/resource operations arrive here.
-        """
-        # Parse raw body — we handle JSON errors ourselves for proper JSON-RPC error codes
+        # ── Parse body ──
         try:
             raw = json.loads(await request.body())
         except (json.JSONDecodeError, ValueError):
-            return Response(
+            resp = Response(
                 content=error_response(None, JSONRPCError(code=PARSE_ERROR, message="Parse error")),
                 status_code=HTTP_200_OK,
                 media_type=MediaType.JSON,
             )
+            return _add_protocol_headers(resp)
 
-        # Validate JSON-RPC envelope
+        # ── Validate JSON-RPC envelope ──
         try:
             rpc_request = parse_request(raw)
         except JSONRPCErrorException as exc:
-            return Response(
+            resp = Response(
                 content=error_response(raw.get("id") if isinstance(raw, dict) else None, exc.error),
                 status_code=HTTP_200_OK,
                 media_type=MediaType.JSON,
             )
+            return _add_protocol_headers(resp)
 
-        # Build the router (lightweight — just wiring closures)
-        router = build_jsonrpc_router(config, discovered_tools, discovered_resources, app_ref=request.app)
+        # ── Session validation ──
+        # initialize and ping are exempt from session requirements
+        session_id = request.headers.get("mcp-session-id")
 
-        # Dispatch
+        if rpc_request.method not in _SESSION_EXEMPT_METHODS:
+            if session_id:
+                if not session_manager.validate_session(session_id):
+                    resp = Response(
+                        content=error_response(
+                            rpc_request.id,
+                            JSONRPCError(code=INVALID_REQUEST, message="Invalid or expired session"),
+                        ),
+                        status_code=HTTP_200_OK,
+                        media_type=MediaType.JSON,
+                    )
+                    return _add_protocol_headers(resp)
+
+        # ── Dispatch ──
+        router = build_jsonrpc_router(
+            config, discovered_tools, discovered_resources,
+            app_ref=request.app, session_manager=session_manager,
+        )
         result = await router.dispatch(rpc_request)
 
         if result is None:
-            # Notification — no response body
-            return Response(content=None, status_code=HTTP_204_NO_CONTENT)
+            resp = Response(content=None, status_code=HTTP_204_NO_CONTENT)
+            return _add_protocol_headers(resp)
 
-        return Response(content=result, status_code=HTTP_200_OK, media_type=MediaType.JSON)
+        # ── Create session on initialize ──
+        new_session_id: "str | None" = None
+        if rpc_request.method == "initialize" and "result" in result:
+            new_session_id = session_manager.create_session(
+                metadata={"client_info": rpc_request.params.get("clientInfo")}
+            )
+
+        resp = Response(content=result, status_code=HTTP_200_OK, media_type=MediaType.JSON)
+        return _add_protocol_headers(resp, session_id=new_session_id or session_id)
+
+    @delete("/", name="mcp_session_delete", status_code=HTTP_200_OK)
+    async def terminate_session(
+        self,
+        request: Request[Any, Any, Any],
+        config: MCPConfig,
+        session_manager: MCPSessionManager,
+    ) -> Response[Any]:
+        """Terminate an MCP session via DELETE."""
+        origin_err = _validate_origin(request, config)
+        if origin_err is not None:
+            return origin_err
+
+        session_id = request.headers.get("mcp-session-id")
+        if session_id:
+            session_manager.terminate_session(session_id)
+
+        return _add_protocol_headers(Response(content=None, status_code=HTTP_200_OK))

@@ -13,6 +13,7 @@ from litestar_mcp.config import MCPConfig
 from litestar_mcp.decorators import get_mcp_metadata
 from litestar_mcp.registry import Registry
 from litestar_mcp.routes import MCPController
+from litestar_mcp.session import MCPSessionManager
 from litestar_mcp.sse import SSEManager
 from litestar_mcp.utils import get_handler_function
 
@@ -36,6 +37,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         self._config = config or MCPConfig()
         self._registry = Registry()
         self._sse_manager = SSEManager()
+        self._session_manager = MCPSessionManager()
 
     @property
     def config(self) -> MCPConfig:
@@ -139,6 +141,9 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         def provide_sse_manager() -> SSEManager:
             return self._sse_manager
 
+        def provide_session_manager() -> MCPSessionManager:
+            return self._session_manager
+
         # Build router kwargs with conditional guards
         router_kwargs: dict[str, Any] = {
             "path": self._config.base_path,
@@ -149,7 +154,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                 "config": Provide(provide_mcp_config, sync_to_thread=False),
                 "registry": Provide(provide_registry, sync_to_thread=False),
                 "sse_manager": Provide(provide_sse_manager, sync_to_thread=False),
-                # Compatibility for existing controller
+                "session_manager": Provide(provide_session_manager, sync_to_thread=False),
                 "discovered_tools": Provide(lambda: self._registry.tools, sync_to_thread=False),
                 "discovered_resources": Provide(lambda: self._registry.resources, sync_to_thread=False),
             },
