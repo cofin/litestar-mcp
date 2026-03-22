@@ -179,4 +179,5 @@ CLAUDE.md
 .todos
 .tmp
 .agent
-specs
+.geminiignore
+.agents/

@@ -1,8 +1,9 @@
 """Litestar Model Context Protocol Integration Plugin.
 
 A lightweight plugin that exposes Litestar routes as MCP tools and resources
-using the opt attribute pattern. Routes marked with opt={"mcp_tool": "name"} or
-opt={"mcp_resource": "name"} are automatically exposed through MCP endpoints.
+via JSON-RPC 2.0 over Streamable HTTP. Routes marked with opt={"mcp_tool": "name"}
+or opt={"mcp_resource": "name"}, or decorated with @mcp_tool/@mcp_resource, are
+automatically exposed through a single MCP endpoint.
 """
 
 from litestar_mcp import schema

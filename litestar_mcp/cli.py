@@ -188,7 +188,9 @@ def list_resources(ctx: click.Context) -> None:
         console.print("[yellow]No MCP resources discovered.[/yellow]")  # pragma: no cover
         return  # pragma: no cover
 
-    console.print(f"[bold green]Discovered {len(plugin.discovered_resources)} resources:[/bold green]")  # pragma: no cover
+    console.print(
+        f"[bold green]Discovered {len(plugin.discovered_resources)} resources:[/bold green]"
+    )  # pragma: no cover
     for name in sorted(plugin.discovered_resources.keys()):  # pragma: no cover
         handler = plugin.discovered_resources[name]  # pragma: no cover
         # Get the underlying function and its docstring  # pragma: no cover
