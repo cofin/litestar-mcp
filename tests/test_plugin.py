@@ -67,11 +67,15 @@ class TestLitestarMCP:
         client = TestClient(app=app)
 
         # Initialize
-        result = _rpc(client, "initialize", {
-            "protocolVersion": "2025-11-25",
-            "capabilities": {},
-            "clientInfo": {"name": "test", "version": "1.0"},
-        })
+        result = _rpc(
+            client,
+            "initialize",
+            {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "1.0"},
+            },
+        )
         assert "serverInfo" in result["result"]
         assert "capabilities" in result["result"]
 
@@ -124,11 +128,15 @@ class TestLitestarMCP:
         app = Litestar(plugins=[LitestarMCP()], openapi_config=OpenAPIConfig(title="My Custom API", version="2.1.0"))
         client = TestClient(app=app)
 
-        result = _rpc(client, "initialize", {
-            "protocolVersion": "2025-11-25",
-            "capabilities": {},
-            "clientInfo": {"name": "test", "version": "1.0"},
-        })
+        result = _rpc(
+            client,
+            "initialize",
+            {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "1.0"},
+            },
+        )
         server_info = result["result"]["serverInfo"]
         assert server_info["name"] == "My Custom API"
         assert server_info["version"] == "2.1.0"

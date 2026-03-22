@@ -111,7 +111,9 @@ class TestSecurity:
 
         # Tool execution with auth
         resp = _rpc(
-            client, "tools/call", {"name": "list_users", "arguments": {}},
+            client,
+            "tools/call",
+            {"name": "list_users", "arguments": {}},
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 200
@@ -282,7 +284,7 @@ class TestSecurity:
         present a valid JWT to access tools.
         """
 
-        oauth2_auth: OAuth2PasswordBearerAuth[dict[str, Any], Token] = OAuth2PasswordBearerAuth[
+        oauth2_auth: OAuth2PasswordBearerAuth[dict[str, Any], Token] = OAuth2PasswordBearerAuth[  # pyright: ignore[reportPossiblyUnboundVariable]
             dict[str, Any], Token
         ](
             token_secret="super-secret-key-for-testing-32b!",

@@ -59,7 +59,9 @@ def client(jsonrpc_app: Litestar) -> TestClient[Any]:
 # ---------------------------------------------------------------------------
 
 
-def _rpc(client: TestClient[Any], method: str, params: "dict[str, Any] | None" = None, msg_id: int = 1) -> dict[str, Any]:
+def _rpc(
+    client: TestClient[Any], method: str, params: "dict[str, Any] | None" = None, msg_id: int = 1
+) -> dict[str, Any]:
     """Send a JSON-RPC request and return the response body."""
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": msg_id, "method": method}
     if params is not None:
@@ -136,41 +138,57 @@ class TestJSONRPCRouter:
 
 class TestInitialize:
     def test_initialize_returns_capabilities(self, client: TestClient[Any]) -> None:
-        result = _rpc(client, "initialize", {
-            "protocolVersion": "2025-11-25",
-            "capabilities": {},
-            "clientInfo": {"name": "test-client", "version": "1.0"},
-        })
+        result = _rpc(
+            client,
+            "initialize",
+            {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "test-client", "version": "1.0"},
+            },
+        )
         assert "result" in result
         assert result["result"]["protocolVersion"] == "2025-11-25"
         assert "capabilities" in result["result"]
         assert "serverInfo" in result["result"]
 
     def test_initialize_returns_server_info(self, client: TestClient[Any]) -> None:
-        result = _rpc(client, "initialize", {
-            "protocolVersion": "2025-11-25",
-            "capabilities": {},
-            "clientInfo": {"name": "test-client", "version": "1.0"},
-        })
+        result = _rpc(
+            client,
+            "initialize",
+            {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "test-client", "version": "1.0"},
+            },
+        )
         server_info = result["result"]["serverInfo"]
         assert "name" in server_info
         assert "version" in server_info
 
     def test_initialize_capabilities_include_tools(self, client: TestClient[Any]) -> None:
-        result = _rpc(client, "initialize", {
-            "protocolVersion": "2025-11-25",
-            "capabilities": {},
-            "clientInfo": {"name": "test-client", "version": "1.0"},
-        })
+        result = _rpc(
+            client,
+            "initialize",
+            {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "test-client", "version": "1.0"},
+            },
+        )
         caps = result["result"]["capabilities"]
         assert "tools" in caps
 
     def test_initialize_capabilities_include_resources(self, client: TestClient[Any]) -> None:
-        result = _rpc(client, "initialize", {
-            "protocolVersion": "2025-11-25",
-            "capabilities": {},
-            "clientInfo": {"name": "test-client", "version": "1.0"},
-        })
+        result = _rpc(
+            client,
+            "initialize",
+            {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "test-client", "version": "1.0"},
+            },
+        )
         caps = result["result"]["capabilities"]
         assert "resources" in caps
 

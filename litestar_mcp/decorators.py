@@ -10,11 +10,13 @@ class MetadataRegistry:
     """Singleton registry for MCP metadata using qualnames as keys."""
 
     _instance: Optional["MetadataRegistry"] = None
+    _data: dict[str, dict[str, Any]]
 
     def __new__(cls) -> "MetadataRegistry":
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._data = {}  # noqa: SLF001
+            inst = super().__new__(cls)
+            inst._data = {}
+            cls._instance = inst
         return cls._instance
 
     def set(self, obj: Any, value: dict[str, Any]) -> None:
@@ -23,7 +25,7 @@ class MetadataRegistry:
 
     def get(self, obj: Any) -> Optional[dict[str, Any]]:
         key = self._get_key(obj)
-        return self._data.get(key)
+        return self._data.get(key)  # pyright: ignore[reportReturnType]
 
     def _get_key(self, obj: Any) -> str:
         # Resolve to the underlying function

@@ -121,9 +121,7 @@ class TestProtectedResourceMetadata:
 
         from litestar.openapi.config import OpenAPIConfig
 
-        oauth2_auth: OAuth2PasswordBearerAuth[dict[str, Any], Token] = OAuth2PasswordBearerAuth[
-            dict[str, Any], Token
-        ](
+        oauth2_auth: OAuth2PasswordBearerAuth[dict[str, Any], Token] = OAuth2PasswordBearerAuth[dict[str, Any], Token](
             token_secret="test-secret-key-32-bytes-long!!",
             token_url="/api/auth/login",
             retrieve_user_handler=lambda token, _: token.extras,
@@ -169,6 +167,7 @@ class TestBearerTokenValidation:
         auth = MCPAuthConfig(token_validator=my_validator)
 
         import asyncio
+
         result = asyncio.get_event_loop().run_until_complete(validate_bearer_token("valid", auth))
         assert result is not None
         assert result["sub"] == "user1"
@@ -181,6 +180,7 @@ class TestBearerTokenValidation:
         auth = MCPAuthConfig(token_validator=my_validator)
 
         import asyncio
+
         result = asyncio.get_event_loop().run_until_complete(validate_bearer_token("bad", auth))
         assert result is None
 
@@ -249,11 +249,15 @@ class TestAuthEnforcement:
         client = TestClient(app=app)
 
         # Initialize should work even without token
-        resp = _rpc(client, "initialize", {
-            "protocolVersion": "2025-11-25",
-            "capabilities": {},
-            "clientInfo": {"name": "test", "version": "1.0"},
-        })
+        resp = _rpc(
+            client,
+            "initialize",
+            {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "1.0"},
+            },
+        )
         assert resp.status_code == 200
 
 
@@ -275,7 +279,8 @@ class TestPerToolScopes:
         client = TestClient(app=app)
 
         resp = _rpc(
-            client, "tools/call",
+            client,
+            "tools/call",
             {"name": "list_users", "arguments": {}},
             headers={"Authorization": "Bearer token"},
         )
@@ -295,7 +300,8 @@ class TestPerToolScopes:
         client = TestClient(app=app)
 
         resp = _rpc(
-            client, "tools/call",
+            client,
+            "tools/call",
             {"name": "list_users", "arguments": {}},
             headers={"Authorization": "Bearer token"},
         )

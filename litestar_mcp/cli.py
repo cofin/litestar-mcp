@@ -157,7 +157,7 @@ def mcp_group(ctx: "click.Context") -> None:
     ctx.obj = {"app": ctx.obj, "plugin": plugin}
 
 
-@mcp_group.command(name="list-tools")  # type: ignore[misc]
+@mcp_group.command(name="list-tools")  # type: ignore[untyped-decorator]
 def list_tools(ctx: click.Context) -> None:
     """List all available MCP tools."""
     plugin = ctx.obj["plugin"]  # pragma: no cover
@@ -178,7 +178,7 @@ def list_tools(ctx: click.Context) -> None:
         console.print(f"- [bold]{name}[/bold]: {first_line}")  # pragma: no cover
 
 
-@mcp_group.command(name="list-resources")  # type: ignore[misc]
+@mcp_group.command(name="list-resources")  # type: ignore[untyped-decorator]
 def list_resources(ctx: click.Context) -> None:
     """List all available MCP resources."""
     plugin = ctx.obj["plugin"]  # pragma: no cover

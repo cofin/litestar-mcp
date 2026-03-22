@@ -142,9 +142,7 @@ def parse_request(raw: Any) -> JSONRPCRequest:
         JSONRPCErrorException: If the request is malformed.
     """
     if not isinstance(raw, dict):
-        raise JSONRPCErrorException(
-            JSONRPCError(code=INVALID_REQUEST, message="Request must be a JSON object")
-        )
+        raise JSONRPCErrorException(JSONRPCError(code=INVALID_REQUEST, message="Request must be a JSON object"))
 
     if raw.get("jsonrpc") != "2.0":
         raise JSONRPCErrorException(
@@ -153,9 +151,7 @@ def parse_request(raw: Any) -> JSONRPCRequest:
 
     method = raw.get("method")
     if not isinstance(method, str):
-        raise JSONRPCErrorException(
-            JSONRPCError(code=INVALID_REQUEST, message="Missing or invalid 'method' field")
-        )
+        raise JSONRPCErrorException(JSONRPCError(code=INVALID_REQUEST, message="Missing or invalid 'method' field"))
 
     return JSONRPCRequest(
         jsonrpc="2.0",

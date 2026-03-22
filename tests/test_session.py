@@ -45,8 +45,6 @@ def _rpc(
     return client.post("/mcp", json=body, headers=headers or {})
 
 
-
-
 class TestMCPSessionManager:
     def test_create_session(self) -> None:
         mgr = MCPSessionManager()
@@ -80,21 +78,29 @@ class TestMCPSessionManager:
 
 class TestSessionLifecycle:
     def test_initialize_assigns_session_id(self, client: TestClient[Any]) -> None:
-        resp = _rpc(client, "initialize", {
-            "protocolVersion": "2025-11-25",
-            "capabilities": {},
-            "clientInfo": {"name": "test", "version": "1.0"},
-        })
+        resp = _rpc(
+            client,
+            "initialize",
+            {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "1.0"},
+            },
+        )
         assert resp.status_code == 200
         assert "mcp-session-id" in resp.headers
 
     def test_subsequent_requests_require_session(self, client: TestClient[Any]) -> None:
         # First initialize to get a session
-        resp = _rpc(client, "initialize", {
-            "protocolVersion": "2025-11-25",
-            "capabilities": {},
-            "clientInfo": {"name": "test", "version": "1.0"},
-        })
+        resp = _rpc(
+            client,
+            "initialize",
+            {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "1.0"},
+            },
+        )
         session_id = resp.headers["mcp-session-id"]
 
         # Request with valid session should work
@@ -104,11 +110,15 @@ class TestSessionLifecycle:
 
     def test_request_without_session_after_init_gets_error(self, client: TestClient[Any]) -> None:
         # Initialize first
-        _rpc(client, "initialize", {
-            "protocolVersion": "2025-11-25",
-            "capabilities": {},
-            "clientInfo": {"name": "test", "version": "1.0"},
-        })
+        _rpc(
+            client,
+            "initialize",
+            {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "1.0"},
+            },
+        )
 
         # Request without session header — should still work for initialize
         # but non-init methods without session should get error
@@ -124,11 +134,15 @@ class TestSessionLifecycle:
 
     def test_delete_terminates_session(self, client: TestClient[Any]) -> None:
         # Initialize
-        resp = _rpc(client, "initialize", {
-            "protocolVersion": "2025-11-25",
-            "capabilities": {},
-            "clientInfo": {"name": "test", "version": "1.0"},
-        })
+        resp = _rpc(
+            client,
+            "initialize",
+            {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "1.0"},
+            },
+        )
         session_id = resp.headers["mcp-session-id"]
 
         # DELETE to terminate

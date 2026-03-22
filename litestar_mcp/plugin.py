@@ -46,12 +46,13 @@ def _build_protected_resource_from_openapi(app: Litestar) -> dict[str, Any]:
     all_scopes: list[str] = []
 
     for scheme in schema.components.security_schemes.values():
-        if not hasattr(scheme, "flows") or not scheme.flows:
+        flows = getattr(scheme, "flows", None)
+        if not flows:
             continue
 
         # Check all OAuth2 flow types for token/auth URLs
         for flow_attr in ("password", "authorization_code", "client_credentials", "implicit"):
-            flow = getattr(scheme.flows, flow_attr, None)
+            flow = getattr(flows, flow_attr, None)
             if flow is None:
                 continue
             if hasattr(flow, "token_url") and flow.token_url:
@@ -257,7 +258,8 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
 
         # Traverse routes deeply
         for route in app.routes:
-            all_handlers.extend(route.route_handlers)
+            if hasattr(route, "route_handlers"):
+                all_handlers.extend(route.route_handlers)  # pyright: ignore[reportAttributeAccessIssue]
             # If it's a mount/router, it might have nested routes but app.routes is flattened usually
 
         logger.debug("Found %d total handlers in flattened app.routes", len(all_handlers))

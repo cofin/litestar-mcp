@@ -2,7 +2,7 @@
 """MCP JSON-RPC 2.0 Streamable HTTP transport for Litestar applications."""
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
 
 from litestar import Controller, MediaType, Request, Response, delete, post
 from litestar.serialization import encode_json
@@ -133,8 +133,9 @@ def build_jsonrpc_router(
         for name, handler in discovered_tools.items():
             # Apply filtering
             handler_tags: set[str] = set()
-            if hasattr(handler, "tags") and handler.tags:
-                handler_tags = set(handler.tags)
+            tags_attr = getattr(handler, "tags", None)
+            if tags_attr:
+                handler_tags = set(tags_attr)
             if not should_include_handler(name, handler_tags, config):
                 continue
 
@@ -166,14 +167,10 @@ def build_jsonrpc_router(
     async def handle_tools_call(params: dict[str, Any]) -> dict[str, Any]:
         tool_name = params.get("name")
         if not tool_name:
-            raise JSONRPCErrorException(
-                JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'name'")
-            )
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'name'"))
 
         if tool_name not in discovered_tools:
-            raise JSONRPCErrorException(
-                JSONRPCError(code=INVALID_PARAMS, message=f"Tool not found: {tool_name}")
-            )
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=f"Tool not found: {tool_name}"))
 
         handler = discovered_tools[tool_name]
         tool_args = params.get("arguments", {})
@@ -219,19 +216,22 @@ def build_jsonrpc_router(
         ]
         for name, handler in discovered_resources.items():
             handler_tags: set[str] = set()
-            if hasattr(handler, "tags") and handler.tags:
-                handler_tags = set(handler.tags)
+            tags_attr = getattr(handler, "tags", None)
+            if tags_attr:
+                handler_tags = set(tags_attr)
             if not should_include_handler(name, handler_tags, config):
                 continue
 
             fn = get_handler_function(handler)
             description = fn.__doc__ or f"Resource: {name}"
-            resources.append({
-                "uri": f"litestar://{name}",
-                "name": name,
-                "description": description.strip(),
-                "mimeType": "application/json",
-            })
+            resources.append(
+                {
+                    "uri": f"litestar://{name}",
+                    "name": name,
+                    "description": description.strip(),
+                    "mimeType": "application/json",
+                }
+            )
         return {"resources": resources}
 
     router.register("resources/list", handle_resources_list)
@@ -240,11 +240,9 @@ def build_jsonrpc_router(
     async def handle_resources_read(params: dict[str, Any]) -> dict[str, Any]:
         uri = params.get("uri", "")
         if not uri.startswith("litestar://"):
-            raise JSONRPCErrorException(
-                JSONRPCError(code=INVALID_PARAMS, message=f"Invalid resource URI: {uri}")
-            )
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=f"Invalid resource URI: {uri}"))
 
-        resource_name = uri[len("litestar://"):]
+        resource_name = uri[len("litestar://") :]
 
         if resource_name == "openapi" and app_ref is not None:
             openapi_schema = app_ref.openapi_schema
@@ -350,7 +348,7 @@ class MCPController(Controller):
             return _add_protocol_headers(resp)
 
         # ── Auth enforcement ──
-        user_claims: dict[str, Any] | None = None
+        user_claims: Optional[dict[str, Any]] = None
         if config.auth and config.auth.token_validator and rpc_request.method not in _AUTH_EXEMPT_METHODS:
             auth_header = request.headers.get("authorization", "")
             if not auth_header.startswith("Bearer "):
@@ -372,18 +370,21 @@ class MCPController(Controller):
 
         # ── Dispatch ──
         router = build_jsonrpc_router(
-            config, discovered_tools, discovered_resources,
-            app_ref=request.app, session_manager=session_manager,
+            config,
+            discovered_tools,
+            discovered_resources,
+            app_ref=request.app,
+            session_manager=session_manager,
             user_claims=user_claims,
         )
         result = await router.dispatch(rpc_request)
 
         if result is None:
-            resp = Response(content=None, status_code=HTTP_204_NO_CONTENT)
+            resp = Response(content=None, status_code=HTTP_204_NO_CONTENT)  # type: ignore[arg-type]
             return _add_protocol_headers(resp)
 
         # ── Create session on initialize ──
-        new_session_id: str | None = None
+        new_session_id: Optional[str] = None
         if rpc_request.method == "initialize" and "result" in result:
             new_session_id = session_manager.create_session(
                 metadata={"client_info": rpc_request.params.get("clientInfo")}

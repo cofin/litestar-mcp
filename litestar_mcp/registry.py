@@ -63,11 +63,13 @@ class Registry:
         """
         if self._sse_manager:
             # Wrap in JSON-RPC 2.0 notification envelope (no id)
-            await self._sse_manager.broadcast({
-                "jsonrpc": "2.0",
-                "method": method,
-                "params": params,
-            })
+            await self._sse_manager.broadcast(
+                {
+                    "jsonrpc": "2.0",
+                    "method": method,
+                    "params": params,
+                }
+            )
 
     async def notify_resource_updated(self, uri: str) -> None:
         """Notify clients that a resource has been updated.
