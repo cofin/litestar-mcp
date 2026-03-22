@@ -87,7 +87,8 @@ class TestMCPAuthConfig:
 
 
 class TestProtectedResourceMetadata:
-    def test_well_known_endpoint(self) -> None:
+    def test_well_known_explicit_auth_config(self) -> None:
+        """Explicit MCPAuthConfig takes precedence over auto-discovery."""
         auth = MCPAuthConfig(
             issuer="https://auth.example.com",
             audience="my-mcp-server",
@@ -101,12 +102,53 @@ class TestProtectedResourceMetadata:
         assert data["resource"] == "my-mcp-server"
         assert "https://auth.example.com" in data["authorization_servers"]
 
-    def test_well_known_not_registered_when_no_auth(self) -> None:
+    def test_well_known_no_security_returns_empty(self) -> None:
+        """When no auth is configured at all, returns empty metadata."""
         app = _make_auth_app()
         client = TestClient(app=app)
 
         resp = client.get("/.well-known/oauth-protected-resource")
-        assert resp.status_code == 404
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["authorization_servers"] == []
+
+    def test_well_known_auto_discovers_from_oauth2_password_bearer(self) -> None:
+        """Auto-discovers token_url from OAuth2PasswordBearerAuth via OpenAPI."""
+        try:
+            from litestar.security.jwt import OAuth2PasswordBearerAuth, Token
+        except ImportError:
+            return  # skip if JWT not available
+
+        from litestar.openapi.config import OpenAPIConfig
+
+        oauth2_auth: OAuth2PasswordBearerAuth[dict[str, Any], Token] = OAuth2PasswordBearerAuth[
+            dict[str, Any], Token
+        ](
+            token_secret="test-secret-key-32-bytes-long!!",
+            token_url="/api/auth/login",
+            retrieve_user_handler=lambda token, _: token.extras,
+        )
+
+        @get("/test", sync_to_thread=False)
+        @mcp_tool(name="test_tool")
+        def test_tool() -> list[dict[str, Any]]:
+            """A test tool."""
+            return []
+
+        # No MCPAuthConfig — auto-discovery should kick in
+        app = Litestar(
+            route_handlers=[test_tool],
+            plugins=[LitestarMCP(MCPConfig())],
+            on_app_init=[oauth2_auth.on_app_init],
+            openapi_config=OpenAPIConfig(title="My App", version="1.0"),
+        )
+        client = TestClient(app=app)
+
+        resp = client.get("/.well-known/oauth-protected-resource")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "/api/auth/login" in data["authorization_servers"]
+        assert data["resource"] == "My App"
 
 
 # ---------------------------------------------------------------------------

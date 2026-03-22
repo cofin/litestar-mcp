@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from litestar.security.jwt import JWTAuth, Token
 
 try:
-    from litestar.security.jwt import JWTAuth, Token
+    from litestar.security.jwt import JWTAuth, OAuth2PasswordBearerAuth, Token
 
     _JWT_AVAILABLE = True
 except ImportError:
@@ -268,4 +268,95 @@ class TestSecurity:
 
         # tools/call via JSON-RPC
         resp = _rpc(client, "tools/call", {"name": "simple_tool", "arguments": {}}, base="/api/mcp")
+        assert resp.status_code == 200
+
+    @pytest.mark.skipif(not JWT_AVAILABLE, reason="JWT auth not available")
+    def test_oauth2_password_bearer_auth_with_guards(self) -> None:
+        """Test MCP endpoints with OAuth2PasswordBearerAuth — the auth backend
+        used by DMA Accelerator and litestar-fullstack-spa.
+
+        This validates the auth bridge pattern: the app uses
+        OAuth2PasswordBearerAuth with a retrieve_user_handler that returns a
+        user dict. Guards then check roles/permissions on that user.  MCP
+        endpoints sit behind the same auth middleware, so MCP agents must
+        present a valid JWT to access tools.
+        """
+
+        oauth2_auth: OAuth2PasswordBearerAuth[dict[str, Any], Token] = OAuth2PasswordBearerAuth[
+            dict[str, Any], Token
+        ](
+            token_secret="super-secret-key-for-testing-32b!",
+            token_url="/api/auth/login",
+            retrieve_user_handler=lambda token, _: token.extras,
+        )
+
+        async def requires_workspace_membership(
+            connection: "ASGIConnection[Any, Any, Any, Any]", route_handler: BaseRouteHandler
+        ) -> None:
+            """Simulates a real guard like requires_workspace_membership."""
+            user = connection.user
+            if not user or "workspace_member" not in user.get("roles", []):
+                msg = "Workspace membership required"
+                raise PermissionDeniedException(msg)
+
+        # MCP router protected by the workspace guard
+        mcp_config = MCPConfig(guards=[requires_workspace_membership])
+        plugin = LitestarMCP(config=mcp_config)
+
+        @get("/workspaces/{workspace_id:str}/databases", opt={"mcp_tool": "list_databases"})
+        async def list_databases(workspace_id: str) -> list[dict[str, Any]]:
+            """List databases in a workspace."""
+            return [{"id": "db1", "name": "Production", "workspace_id": workspace_id}]
+
+        app = Litestar(
+            plugins=[plugin],
+            route_handlers=[list_databases],
+            on_app_init=[oauth2_auth.on_app_init],
+            openapi_config=OpenAPIConfig(title="DMA Accelerator", version="1.0.0"),
+        )
+        client = TestClient(app=app)
+
+        # ── No token → 401 ──
+        resp = _rpc(client, "tools/list")
+        assert resp.status_code == 401
+
+        # ── Valid token, no workspace role → 403 ──
+        basic_token = oauth2_auth.create_token(
+            identifier="user@example.com",
+            token_extras={"roles": ["viewer"]},
+        )
+        resp = _rpc(client, "tools/list", headers={"Authorization": f"Bearer {basic_token}"})
+        assert resp.status_code == 403
+
+        # ── Valid token, workspace member → 200, can list tools ──
+        member_token = oauth2_auth.create_token(
+            identifier="user@example.com",
+            token_extras={"roles": ["workspace_member"]},
+        )
+        resp = _rpc(client, "tools/list", headers={"Authorization": f"Bearer {member_token}"})
+        assert resp.status_code == 200
+        body = resp.json()
+        tools = body["result"]["tools"]
+        assert any(t["name"] == "list_databases" for t in tools)
+
+        # ── Workspace member can execute the tool ──
+        resp = _rpc(
+            client,
+            "tools/call",
+            {"name": "list_databases", "arguments": {"workspace_id": "ws-123"}},
+            headers={"Authorization": f"Bearer {member_token}"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "result" in body
+        import json
+
+        content = json.loads(body["result"]["content"][0]["text"])
+        assert content[0]["workspace_id"] == "ws-123"
+
+        # ── Direct route still works independently of MCP guard ──
+        resp = client.get(
+            "/workspaces/ws-123/databases",
+            headers={"Authorization": f"Bearer {member_token}"},
+        )
         assert resp.status_code == 200

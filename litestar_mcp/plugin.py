@@ -21,6 +21,55 @@ if TYPE_CHECKING:
     from click import Group
 
 
+def _build_protected_resource_from_openapi(app: Litestar) -> dict[str, Any]:
+    """Build RFC 9728 protected resource metadata from Litestar's OpenAPI security schemes.
+
+    Reads the app's OpenAPI schema to discover authorization servers (token URLs),
+    supported scopes, and the resource identifier. This means apps using
+    OAuth2PasswordBearerAuth or similar get automatic MCP auth discovery.
+
+    Args:
+        app: The Litestar application instance.
+
+    Returns:
+        Protected resource metadata dict, or empty metadata if no security schemes found.
+    """
+    openapi_config = app.openapi_config
+    if not openapi_config:
+        return {"resource": "", "authorization_servers": [], "scopes_supported": []}
+
+    schema = app.openapi_schema
+    if not schema.components or not schema.components.security_schemes:
+        return {"resource": "", "authorization_servers": [], "scopes_supported": []}
+
+    auth_servers: list[str] = []
+    all_scopes: list[str] = []
+
+    for scheme in schema.components.security_schemes.values():
+        if not hasattr(scheme, "flows") or not scheme.flows:
+            continue
+
+        # Check all OAuth2 flow types for token/auth URLs
+        for flow_attr in ("password", "authorization_code", "client_credentials", "implicit"):
+            flow = getattr(scheme.flows, flow_attr, None)
+            if flow is None:
+                continue
+            if hasattr(flow, "token_url") and flow.token_url:
+                auth_servers.append(flow.token_url)
+            if hasattr(flow, "authorization_url") and flow.authorization_url:
+                auth_servers.append(flow.authorization_url)
+            if hasattr(flow, "scopes") and flow.scopes:
+                all_scopes.extend(flow.scopes.keys() if isinstance(flow.scopes, dict) else flow.scopes)
+
+    resource_name = openapi_config.title or ""
+
+    return {
+        "resource": resource_name,
+        "authorization_servers": list(dict.fromkeys(auth_servers)),  # dedupe, preserve order
+        "scopes_supported": list(dict.fromkeys(all_scopes)),
+    }
+
+
 class LitestarMCP(InitPluginProtocol, CLIPlugin):
     """Litestar plugin for Model Context Protocol integration.
 
@@ -48,11 +97,6 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
     def registry(self) -> Registry:
         """Get the central registry."""
         return self._registry
-
-    @property
-    def sse_manager(self) -> SSEManager:
-        """Get the SSE manager."""
-        return self._sse_manager
 
     @property
     def discovered_tools(self) -> dict[str, BaseRouteHandler]:
@@ -138,9 +182,6 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         def provide_registry() -> Registry:
             return self._registry
 
-        def provide_sse_manager() -> SSEManager:
-            return self._sse_manager
-
         def provide_session_manager() -> MCPSessionManager:
             return self._session_manager
 
@@ -153,7 +194,6 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
             "dependencies": {
                 "config": Provide(provide_mcp_config, sync_to_thread=False),
                 "registry": Provide(provide_registry, sync_to_thread=False),
-                "sse_manager": Provide(provide_sse_manager, sync_to_thread=False),
                 "session_manager": Provide(provide_session_manager, sync_to_thread=False),
                 "discovered_tools": Provide(lambda: self._registry.tools, sync_to_thread=False),
                 "discovered_resources": Provide(lambda: self._registry.resources, sync_to_thread=False),
@@ -169,22 +209,37 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         app_config.route_handlers.append(mcp_router)
         app_config.on_startup.append(self.on_startup)
 
-        # Register .well-known/oauth-protected-resource endpoint when auth is configured
-        if self._config.auth and self._config.auth.issuer:
-            from litestar import get as litestar_get
+        # Register .well-known/oauth-protected-resource endpoint.
+        # Auto-discovers from Litestar's OpenAPI security schemes at request time.
+        # Falls back to explicit MCPAuthConfig if provided.
+        from litestar import Request
+        from litestar import get as litestar_get
 
-            auth_config = self._config.auth
+        auth_config = self._config.auth
 
-            @litestar_get("/.well-known/oauth-protected-resource", sync_to_thread=False)
-            def oauth_protected_resource() -> dict[str, Any]:
-                """RFC 9728 protected resource metadata."""
+        @litestar_get(
+            "/.well-known/oauth-protected-resource",
+            sync_to_thread=False,
+            opt={"exclude_from_auth": True},
+        )
+        def oauth_protected_resource(request: Request[Any, Any, Any]) -> dict[str, Any]:
+            """RFC 9728 protected resource metadata.
+
+            Auto-discovers authorization server details from the app's OpenAPI
+            security schemes when no explicit MCPAuthConfig is provided.
+            """
+            # Explicit MCPAuthConfig takes precedence
+            if auth_config and auth_config.issuer:
                 return {
                     "resource": auth_config.audience or "",
                     "authorization_servers": [auth_config.issuer],
                     "scopes_supported": list(auth_config.scopes.keys()) if auth_config.scopes else [],
                 }
 
-            app_config.route_handlers.append(oauth_protected_resource)
+            # Auto-discover from OpenAPI security schemes
+            return _build_protected_resource_from_openapi(request.app)
+
+        app_config.route_handlers.append(oauth_protected_resource)
 
         return app_config
 
