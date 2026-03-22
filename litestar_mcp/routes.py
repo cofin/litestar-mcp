@@ -6,8 +6,9 @@ from typing import TYPE_CHECKING, Any
 
 from litestar import Controller, MediaType, Request, Response, delete, post
 from litestar.serialization import encode_json
-from litestar.status_codes import HTTP_200_OK, HTTP_204_NO_CONTENT, HTTP_403_FORBIDDEN
+from litestar.status_codes import HTTP_200_OK, HTTP_204_NO_CONTENT, HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN
 
+from litestar_mcp.auth import MCPAuthConfig, validate_bearer_token
 from litestar_mcp.config import MCPConfig
 from litestar_mcp.executor import execute_tool
 from litestar_mcp.jsonrpc import (
@@ -32,7 +33,8 @@ if TYPE_CHECKING:
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
 
-# Methods that do not require an active session
+# Methods that do not require an active session or auth
+_AUTH_EXEMPT_METHODS = frozenset({"initialize", "ping", "notifications/initialized"})
 _SESSION_EXEMPT_METHODS = frozenset({"initialize", "ping"})
 
 
@@ -68,6 +70,7 @@ def build_jsonrpc_router(
     discovered_resources: "dict[str, BaseRouteHandler]",
     app_ref: Any = None,
     session_manager: "MCPSessionManager | None" = None,
+    user_claims: "dict[str, Any] | None" = None,
 ) -> JSONRPCRouter:
     """Build and return a JSONRPCRouter wired to MCP method handlers.
 
@@ -173,6 +176,21 @@ def build_jsonrpc_router(
 
         handler = discovered_tools[tool_name]
         tool_args = params.get("arguments", {})
+
+        # ── Per-tool scope enforcement ──
+        fn = get_handler_function(handler)
+        tool_metadata = get_mcp_metadata(handler) or get_mcp_metadata(fn)
+        if tool_metadata and "scopes" in tool_metadata and user_claims is not None:
+            required_scopes = set(tool_metadata["scopes"])
+            user_scopes = set(user_claims.get("scopes", []))
+            if not required_scopes.issubset(user_scopes):
+                missing = required_scopes - user_scopes
+                raise JSONRPCErrorException(
+                    JSONRPCError(
+                        code=INVALID_PARAMS,
+                        message=f"Insufficient scope. Required: {sorted(missing)}",
+                    )
+                )
 
         try:
             result = await execute_tool(handler, app_ref, tool_args)
@@ -328,10 +346,33 @@ class MCPController(Controller):
                     )
                     return _add_protocol_headers(resp)
 
+        # ── Auth enforcement ──
+        user_claims: "dict[str, Any] | None" = None
+        if config.auth and config.auth.token_validator:
+            if rpc_request.method not in _AUTH_EXEMPT_METHODS:
+                auth_header = request.headers.get("authorization", "")
+                if not auth_header.startswith("Bearer "):
+                    return Response(
+                        content={"error": "Missing or invalid Authorization header"},
+                        status_code=HTTP_401_UNAUTHORIZED,
+                        media_type=MediaType.JSON,
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+                token = auth_header[7:]  # Strip "Bearer "
+                user_claims = await validate_bearer_token(token, config.auth)
+                if user_claims is None:
+                    return Response(
+                        content={"error": "Invalid token"},
+                        status_code=HTTP_401_UNAUTHORIZED,
+                        media_type=MediaType.JSON,
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+
         # ── Dispatch ──
         router = build_jsonrpc_router(
             config, discovered_tools, discovered_resources,
             app_ref=request.app, session_manager=session_manager,
+            user_claims=user_claims,
         )
         result = await router.dispatch(rpc_request)
 

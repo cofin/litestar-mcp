@@ -169,6 +169,23 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         app_config.route_handlers.append(mcp_router)
         app_config.on_startup.append(self.on_startup)
 
+        # Register .well-known/oauth-protected-resource endpoint when auth is configured
+        if self._config.auth and self._config.auth.issuer:
+            from litestar import get as litestar_get
+
+            auth_config = self._config.auth
+
+            @litestar_get("/.well-known/oauth-protected-resource", sync_to_thread=False)
+            def oauth_protected_resource() -> dict[str, Any]:
+                """RFC 9728 protected resource metadata."""
+                return {
+                    "resource": auth_config.audience or "",
+                    "authorization_servers": [auth_config.issuer],
+                    "scopes_supported": list(auth_config.scopes.keys()) if auth_config.scopes else [],
+                }
+
+            app_config.route_handlers.append(oauth_protected_resource)
+
         return app_config
 
     def on_startup(self, app: Litestar) -> None:

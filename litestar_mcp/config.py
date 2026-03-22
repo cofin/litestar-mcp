@@ -1,6 +1,6 @@
 """Configuration for Litestar MCP Plugin."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Optional
 
 
@@ -18,6 +18,8 @@ class MCPConfig:
         guards: Optional list of guards to protect MCP endpoints.
         allowed_origins: List of allowed Origin header values. If empty/None, all origins
             are accepted. When set, requests with a non-matching Origin are rejected with 403.
+        auth: Optional OAuth 2.1 auth configuration. When set, bearer token validation
+            is enforced on MCP endpoints.
     """
 
     base_path: str = "/mcp"
@@ -29,3 +31,4 @@ class MCPConfig:
     exclude_operations: Optional[list[str]] = None
     include_tags: Optional[list[str]] = None
     exclude_tags: Optional[list[str]] = None
+    auth: Optional[Any] = None  # MCPAuthConfig instance when auth is enabled
