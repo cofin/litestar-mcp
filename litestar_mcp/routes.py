@@ -1,200 +1,412 @@
-# ruff: noqa: BLE001
-"""MCP-compatible REST API routes for Litestar applications."""
+# ruff: noqa: PLR0911, PLR0915, C901
+"""MCP JSON-RPC 2.0 Streamable HTTP transport for Litestar applications."""
 
-from typing import Any
+import json
+from typing import TYPE_CHECKING, Any, Optional
 
-from litestar import Controller, Request, get, post
-from litestar.exceptions import NotFoundException
-from litestar.handlers import BaseRouteHandler
+from litestar import Controller, MediaType, Request, Response, delete, post
 from litestar.serialization import encode_json
+from litestar.status_codes import HTTP_200_OK, HTTP_204_NO_CONTENT, HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN
 
+from litestar_mcp.auth import validate_bearer_token
 from litestar_mcp.config import MCPConfig
+from litestar_mcp.decorators import get_mcp_metadata
 from litestar_mcp.executor import execute_tool
-from litestar_mcp.schema import MCPResource, MCPTool, ServerCapabilities
+from litestar_mcp.filters import should_include_handler
+from litestar_mcp.jsonrpc import (
+    INTERNAL_ERROR,
+    INVALID_PARAMS,
+    INVALID_REQUEST,
+    PARSE_ERROR,
+    JSONRPCError,
+    JSONRPCErrorException,
+    JSONRPCRouter,
+    error_response,
+    parse_request,
+)
 from litestar_mcp.schema_builder import generate_schema_for_handler
+from litestar_mcp.session import MCPSessionManager
 from litestar_mcp.utils import get_handler_function
 
+if TYPE_CHECKING:
+    from litestar.handlers import BaseRouteHandler
 
-class MCPController(Controller):
-    """MCP-compatible REST API controller that proxies to discovered routes."""
+MCP_PROTOCOL_VERSION = "2025-11-25"
 
-    @get("/", name="mcp_info")
-    async def get_server_info(
-        self,
-        request: Request[Any, Any, Any],
-        config: MCPConfig,
-        discovered_tools: dict[str, BaseRouteHandler],
-        discovered_resources: dict[str, BaseRouteHandler],
-    ) -> dict[str, Any]:
-        """Get MCP server information and capabilities."""
-        capabilities = ServerCapabilities(
-            resources={
-                "list_resources": True,
-                "get_resource": True,
-                "openapi": True,
-            },
-            tools={
-                "list_tools": True,
-                "call_tool": True,
-            },
+# Methods that do not require an active session or auth
+_AUTH_EXEMPT_METHODS = frozenset({"initialize", "ping", "notifications/initialized"})
+_SESSION_EXEMPT_METHODS = frozenset({"initialize", "ping"})
+
+
+def _validate_origin(request: Request[Any, Any, Any], config: MCPConfig) -> "Response[Any] | None":
+    """Validate the Origin header if allowed_origins is configured.
+
+    Returns a 403 Response if the origin is disallowed, or None if OK.
+    """
+    if not config.allowed_origins:
+        return None
+
+    origin = request.headers.get("origin")
+    if origin and origin not in config.allowed_origins:
+        return Response(
+            content={"error": "Origin not allowed"},
+            status_code=HTTP_403_FORBIDDEN,
+            media_type=MediaType.JSON,
         )
+    return None
 
-        openapi_config = request.app.openapi_config
-        server_name = config.name or (openapi_config.title if openapi_config else "Litestar MCP Server")
-        server_version = openapi_config.version if openapi_config else "1.0.0"
 
-        return {
-            "server_name": server_name,
-            "server_version": server_version,
-            "protocol_version": "1.0.0",
+def _add_protocol_headers(response: Response[Any], session_id: "str | None" = None) -> Response[Any]:
+    """Add standard MCP protocol headers to a response."""
+    response.headers["mcp-protocol-version"] = MCP_PROTOCOL_VERSION
+    if session_id:
+        response.headers["mcp-session-id"] = session_id
+    return response
+
+
+def build_jsonrpc_router(
+    config: MCPConfig,
+    discovered_tools: "dict[str, BaseRouteHandler]",
+    discovered_resources: "dict[str, BaseRouteHandler]",
+    app_ref: Any = None,
+    session_manager: "MCPSessionManager | None" = None,  # noqa: ARG001
+    user_claims: "dict[str, Any] | None" = None,
+) -> JSONRPCRouter:
+    """Build and return a JSONRPCRouter wired to MCP method handlers.
+
+    Args:
+        config: The MCP plugin configuration.
+        discovered_tools: Registered tool handlers.
+        discovered_resources: Registered resource handlers.
+        app_ref: Reference to the Litestar app (for OpenAPI access).
+        session_manager: Optional session manager for creating sessions during initialize.
+        user_claims: Optional authenticated user claims for scope enforcement.
+
+    Returns:
+        A configured JSONRPCRouter.
+    """
+    router = JSONRPCRouter()
+
+    # ── initialize ────────────────────────────────────────────────────
+    async def handle_initialize(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
+        server_name = config.name or "Litestar MCP Server"
+        server_version = "1.0.0"
+
+        if app_ref is not None:
+            openapi_config = app_ref.openapi_config
+            if openapi_config:
+                server_name = config.name or openapi_config.title
+                server_version = openapi_config.version
+
+        result: dict[str, Any] = {
+            "protocolVersion": MCP_PROTOCOL_VERSION,
             "capabilities": {
-                "resources": capabilities.resources,
-                "tools": capabilities.tools,
+                "tools": {"listChanged": True},
+                "resources": {"subscribe": True, "listChanged": True},
             },
-            "discovered": {
-                "tools": len(discovered_tools),
-                "resources": len(discovered_resources),
+            "serverInfo": {
+                "name": server_name,
+                "version": server_version,
             },
         }
 
-    @get("/resources", name="list_resources")
-    async def list_resources(
-        self, request: Request[Any, Any, Any], discovered_resources: dict[str, BaseRouteHandler]
-    ) -> dict[str, Any]:
-        """List all available MCP resources."""
-        resources = []
+        # Session creation is handled by the controller after dispatch
+        return result
 
-        resources.append(
-            MCPResource(
-                uri="litestar://openapi",
-                name="openapi",
-                description="OpenAPI schema for this Litestar application",
-                mime_type="application/json",
-            )
-        )
+    router.register("initialize", handle_initialize)
 
-        for name, handler in discovered_resources.items():
-            description = handler.__doc__ or f"Resource: {name}"
-            resources.append(
-                MCPResource(
-                    uri=f"litestar://{name}", name=name, description=description.strip(), mime_type="application/json"
-                )
-            )
+    # ── notifications/initialized ──────────────────────────────────────
+    async def handle_initialized(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
+        return {}
 
-        return {
-            "resources": [
-                {
-                    "uri": resource.uri,
-                    "name": resource.name,
-                    "description": resource.description,
-                    "mimeType": resource.mime_type,
-                }
-                for resource in resources
-            ]
-        }
+    router.register("notifications/initialized", handle_initialized)
 
-    @get("/resources/{resource_name:str}", name="get_resource")
-    async def get_resource(
-        self, resource_name: str, request: Request[Any, Any, Any], discovered_resources: dict[str, BaseRouteHandler]
-    ) -> dict[str, Any]:
-        """Get a specific MCP resource by name."""
+    # ── ping ───────────────────────────────────────────────────────────
+    async def handle_ping(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
+        return {}
 
-        if resource_name == "openapi":
-            openapi_schema = request.app.openapi_schema
-            return {
-                "content": {
-                    "uri": "litestar://openapi",
-                    "mimeType": "application/json",
-                    "text": encode_json(openapi_schema).decode("utf-8"),
-                }
-            }
+    router.register("ping", handle_ping)
 
-        if resource_name not in discovered_resources:
-            raise NotFoundException(detail=f"Resource '{resource_name}' not found")
-
-        handler = discovered_resources[resource_name]
-
-        try:
-            # Execute the resource handler using the shared executor
-            # Resources typically have no arguments
-            result = await execute_tool(handler, request.app, tool_args={})
-
-            # Encode the result as JSON text
-            result_text = encode_json(result).decode("utf-8")
-        except Exception as e:
-            raise NotFoundException(detail=f"Failed to fetch resource '{resource_name}': {e!s}") from e
-        else:
-            return {
-                "content": {
-                    "uri": f"litestar://{resource_name}",
-                    "mimeType": "application/json",
-                    "text": result_text,
-                }
-            }
-
-    @get("/tools", name="list_tools")
-    async def list_tools(self, discovered_tools: dict[str, BaseRouteHandler]) -> dict[str, Any]:
-        """List all available MCP tools."""
+    # ── tools/list ─────────────────────────────────────────────────────
+    async def handle_tools_list(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
         tools = []
-
         for name, handler in discovered_tools.items():
-            # Get description from handler function docstring
+            # Apply filtering
+            handler_tags: set[str] = set()
+            tags_attr = getattr(handler, "tags", None)
+            if tags_attr:
+                handler_tags = set(tags_attr)
+            if not should_include_handler(name, handler_tags, config):
+                continue
+
             fn = get_handler_function(handler)
             fn_doc = fn.__doc__
             description = fn_doc.strip() if fn_doc else f"Tool: {name}"
-
-            # Generate JSON schema from handler signature
             input_schema = generate_schema_for_handler(handler)
 
-            tools.append(MCPTool(name=name, description=description, input_schema=input_schema))
+            tool_entry: dict[str, Any] = {
+                "name": name,
+                "description": description,
+                "inputSchema": input_schema,
+            }
 
-        return {
-            "tools": [
-                {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "inputSchema": tool.input_schema,
-                }
-                for tool in tools
-            ]
-        }
+            # Include outputSchema and annotations from decorator metadata
+            metadata = get_mcp_metadata(handler) or get_mcp_metadata(fn)
+            if metadata:
+                if "output_schema" in metadata:
+                    tool_entry["outputSchema"] = metadata["output_schema"]
+                if "annotations" in metadata:
+                    tool_entry["annotations"] = metadata["annotations"]
 
-    @post("/tools/{tool_name:str}", name="call_tool", status_code=200)
-    async def call_tool(
-        self,
-        tool_name: str,
-        data: dict[str, Any],
-        request: Request[Any, Any, Any],
-        discovered_tools: dict[str, BaseRouteHandler],
-    ) -> dict[str, Any]:
-        """Execute an MCP tool."""
+            tools.append(tool_entry)
+        return {"tools": tools}
+
+    router.register("tools/list", handle_tools_list)
+
+    # ── tools/call ─────────────────────────────────────────────────────
+    async def handle_tools_call(params: dict[str, Any]) -> dict[str, Any]:
+        tool_name = params.get("name")
+        if not tool_name:
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'name'"))
 
         if tool_name not in discovered_tools:
-            raise NotFoundException(detail=f"Tool '{tool_name}' not found")
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=f"Tool not found: {tool_name}"))
 
         handler = discovered_tools[tool_name]
-        tool_args = data.get("arguments", {})
+        tool_args = params.get("arguments", {})
+
+        # ── Per-tool scope enforcement ──
+        fn = get_handler_function(handler)
+        tool_metadata = get_mcp_metadata(handler) or get_mcp_metadata(fn)
+        if tool_metadata and "scopes" in tool_metadata and user_claims is not None:
+            required_scopes = set(tool_metadata["scopes"])
+            user_scopes = set(user_claims.get("scopes", []))
+            if not required_scopes.issubset(user_scopes):
+                missing = required_scopes - user_scopes
+                raise JSONRPCErrorException(
+                    JSONRPCError(
+                        code=INVALID_PARAMS,
+                        message=f"Insufficient scope. Required: {sorted(missing)}",
+                    )
+                )
 
         try:
-            # Execute the tool using the shared executor
-            result = await execute_tool(handler, request.app, tool_args)
-
-            # The result must be serializable.
-            # We encode it to a JSON string to be safe.
+            result = await execute_tool(handler, app_ref, tool_args)
             result_text = encode_json(result).decode("utf-8")
-        except Exception as e:
-            return {
-                "error": {
-                    "code": -1,
-                    "message": f"Tool execution failed: {e!s}",
-                }
+        except Exception as exc:
+            raise JSONRPCErrorException(
+                JSONRPCError(code=INTERNAL_ERROR, message=f"Tool execution failed: {exc!s}")
+            ) from exc
+
+        return {
+            "content": [{"type": "text", "text": result_text}],
+        }
+
+    router.register("tools/call", handle_tools_call)
+
+    # ── resources/list ─────────────────────────────────────────────────
+    async def handle_resources_list(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
+        resources = [
+            {
+                "uri": "litestar://openapi",
+                "name": "openapi",
+                "description": "OpenAPI schema for this Litestar application",
+                "mimeType": "application/json",
             }
-        else:
+        ]
+        for name, handler in discovered_resources.items():
+            handler_tags: set[str] = set()
+            tags_attr = getattr(handler, "tags", None)
+            if tags_attr:
+                handler_tags = set(tags_attr)
+            if not should_include_handler(name, handler_tags, config):
+                continue
+
+            fn = get_handler_function(handler)
+            description = fn.__doc__ or f"Resource: {name}"
+            resources.append(
+                {
+                    "uri": f"litestar://{name}",
+                    "name": name,
+                    "description": description.strip(),
+                    "mimeType": "application/json",
+                }
+            )
+        return {"resources": resources}
+
+    router.register("resources/list", handle_resources_list)
+
+    # ── resources/read ─────────────────────────────────────────────────
+    async def handle_resources_read(params: dict[str, Any]) -> dict[str, Any]:
+        uri = params.get("uri", "")
+        if not uri.startswith("litestar://"):
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=f"Invalid resource URI: {uri}"))
+
+        resource_name = uri[len("litestar://") :]
+
+        if resource_name == "openapi" and app_ref is not None:
+            openapi_schema = app_ref.openapi_schema
             return {
-                "content": [
+                "contents": [
                     {
-                        "type": "text",
-                        "text": result_text,
+                        "uri": "litestar://openapi",
+                        "mimeType": "application/json",
+                        "text": encode_json(openapi_schema).decode("utf-8"),
                     }
                 ]
             }
+
+        if resource_name not in discovered_resources:
+            raise JSONRPCErrorException(
+                JSONRPCError(code=INVALID_PARAMS, message=f"Resource not found: {resource_name}")
+            )
+
+        handler = discovered_resources[resource_name]
+        try:
+            result = await execute_tool(handler, app_ref, tool_args={})
+            result_text = encode_json(result).decode("utf-8")
+        except Exception as exc:
+            raise JSONRPCErrorException(
+                JSONRPCError(code=INTERNAL_ERROR, message=f"Resource read failed: {exc!s}")
+            ) from exc
+
+        return {
+            "contents": [
+                {
+                    "uri": uri,
+                    "mimeType": "application/json",
+                    "text": result_text,
+                }
+            ]
+        }
+
+    router.register("resources/read", handle_resources_read)
+
+    return router
+
+
+class MCPController(Controller):
+    """MCP JSON-RPC 2.0 Streamable HTTP controller.
+
+    Implements the Streamable HTTP transport with session management.
+    """
+
+    @post("/", name="mcp_jsonrpc", media_type=MediaType.JSON, status_code=HTTP_200_OK)
+    async def handle_jsonrpc(
+        self,
+        request: Request[Any, Any, Any],
+        config: MCPConfig,
+        discovered_tools: dict[str, Any],
+        discovered_resources: dict[str, Any],
+        session_manager: MCPSessionManager,
+    ) -> Response[Any]:
+        """Handle a JSON-RPC 2.0 request over Streamable HTTP."""
+        # ── Origin validation ──
+        origin_err = _validate_origin(request, config)
+        if origin_err is not None:
+            return origin_err
+
+        # ── Parse body ──
+        try:
+            raw = json.loads(await request.body())
+        except (json.JSONDecodeError, ValueError):
+            resp = Response(
+                content=error_response(None, JSONRPCError(code=PARSE_ERROR, message="Parse error")),
+                status_code=HTTP_200_OK,
+                media_type=MediaType.JSON,
+            )
+            return _add_protocol_headers(resp)
+
+        # ── Validate JSON-RPC envelope ──
+        try:
+            rpc_request = parse_request(raw)
+        except JSONRPCErrorException as exc:
+            resp = Response(
+                content=error_response(raw.get("id") if isinstance(raw, dict) else None, exc.error),
+                status_code=HTTP_200_OK,
+                media_type=MediaType.JSON,
+            )
+            return _add_protocol_headers(resp)
+
+        # ── Session validation ──
+        # initialize and ping are exempt from session requirements
+        session_id = request.headers.get("mcp-session-id")
+
+        if (
+            rpc_request.method not in _SESSION_EXEMPT_METHODS
+            and session_id
+            and not session_manager.validate_session(session_id)
+        ):
+            resp = Response(
+                content=error_response(
+                    rpc_request.id,
+                    JSONRPCError(code=INVALID_REQUEST, message="Invalid or expired session"),
+                ),
+                status_code=HTTP_200_OK,
+                media_type=MediaType.JSON,
+            )
+            return _add_protocol_headers(resp)
+
+        # ── Auth enforcement ──
+        user_claims: Optional[dict[str, Any]] = None
+        if config.auth and config.auth.token_validator and rpc_request.method not in _AUTH_EXEMPT_METHODS:
+            auth_header = request.headers.get("authorization", "")
+            if not auth_header.startswith("Bearer "):
+                return Response(
+                    content={"error": "Missing or invalid Authorization header"},
+                    status_code=HTTP_401_UNAUTHORIZED,
+                    media_type=MediaType.JSON,
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            token = auth_header[7:]  # Strip "Bearer "
+            user_claims = await validate_bearer_token(token, config.auth)
+            if user_claims is None:
+                return Response(
+                    content={"error": "Invalid token"},
+                    status_code=HTTP_401_UNAUTHORIZED,
+                    media_type=MediaType.JSON,
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
+        # ── Dispatch ──
+        router = build_jsonrpc_router(
+            config,
+            discovered_tools,
+            discovered_resources,
+            app_ref=request.app,
+            session_manager=session_manager,
+            user_claims=user_claims,
+        )
+        result = await router.dispatch(rpc_request)
+
+        if result is None:
+            resp = Response(content=None, status_code=HTTP_204_NO_CONTENT)  # type: ignore[arg-type]
+            return _add_protocol_headers(resp)
+
+        # ── Create session on initialize ──
+        new_session_id: Optional[str] = None
+        if rpc_request.method == "initialize" and "result" in result:
+            new_session_id = session_manager.create_session(
+                metadata={"client_info": rpc_request.params.get("clientInfo")}
+            )
+
+        resp = Response(content=result, status_code=HTTP_200_OK, media_type=MediaType.JSON)
+        return _add_protocol_headers(resp, session_id=new_session_id or session_id)
+
+    @delete("/", name="mcp_session_delete", status_code=HTTP_200_OK)
+    async def terminate_session(
+        self,
+        request: Request[Any, Any, Any],
+        config: MCPConfig,
+        session_manager: MCPSessionManager,
+    ) -> Response[Any]:
+        """Terminate an MCP session via DELETE."""
+        origin_err = _validate_origin(request, config)
+        if origin_err is not None:
+            return origin_err
+
+        session_id = request.headers.get("mcp-session-id")
+        if session_id:
+            session_manager.terminate_session(session_id)
+
+        return _add_protocol_headers(Response(content=None, status_code=HTTP_200_OK))

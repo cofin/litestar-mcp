@@ -155,14 +155,14 @@ class TestEdgeCases:
 
 
 @pytest.mark.parametrize(
-    "guard_func,test_obj,expected",
+    ("guard_func", "test_obj", "expected"),
     [
         (is_dict, {}, True),
         (is_dict, [], False),
-        (is_dataclass, SampleDataclass("test", 25), True),
-        (is_dataclass, {}, False),
-        (is_schema_model, SampleDataclass("test", 25), True),
-        (is_schema_model, {}, False),
+        (is_dataclass, SampleDataclass("test", 25), True),  # type: ignore[list-item]
+        (is_dataclass, {}, False),  # type: ignore[list-item]
+        (is_schema_model, SampleDataclass("test", 25), True),  # type: ignore[list-item]
+        (is_schema_model, {}, False),  # type: ignore[list-item]
     ],
     ids=["dict_true", "dict_false", "dataclass_true", "dataclass_false", "schema_true", "schema_false"],
 )

@@ -2,37 +2,42 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from litestar import Litestar, get, post
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP
+from litestar_mcp.config import MCPConfig
+
+
+def _rpc(
+    client: TestClient[Any],
+    method: str,
+    params: dict[str, Any] | None = None,
+    msg_id: int = 1,
+    base: str = "/mcp",
+) -> dict[str, Any]:
+    body: dict[str, Any] = {"jsonrpc": "2.0", "id": msg_id, "method": method}
+    if params is not None:
+        body["params"] = params
+    return client.post(base, json=body).json()  # type: ignore[no-any-return]
 
 
 class TestLitestarMCP:
     """Test suite for LitestarMCP."""
 
     def test_plugin_initialization_default(self) -> None:
-        """Test plugin initialization with default values."""
         plugin = LitestarMCP()
         assert plugin.config.base_path == "/mcp"
 
     def test_plugin_initialization_custom(self) -> None:
-        """Test plugin initialization with custom values."""
-        from litestar_mcp.config import MCPConfig
-
         config = MCPConfig(base_path="/api/mcp")
         plugin = LitestarMCP(config)
         assert plugin.config.base_path == "/api/mcp"
 
     def test_plugin_discovers_mcp_routes(self) -> None:
-        """Test that plugin discovers routes marked for MCP exposure.
-
-        Tests the plugin's ability to automatically discover routes that have
-        MCP opt metadata for both tools and resources.
-        """
-
         @get("/users", opt={"mcp_tool": "list_users"})
         async def get_users() -> list[dict[str, Any]]:
             return [{"id": 1, "name": "Alice"}]
@@ -54,98 +59,89 @@ class TestLitestarMCP:
         assert len(plugin.discovered_resources) == 1
 
     def test_mcp_endpoints_work(self) -> None:
-        """Test that MCP endpoints are accessible."""
-
         @get("/users", opt={"mcp_tool": "list_users"})
         async def get_users() -> list[dict[str, Any]]:
             return [{"id": 1, "name": "Alice"}]
 
         app = Litestar(plugins=[LitestarMCP()], route_handlers=[get_users])
-
         client = TestClient(app=app)
 
-        response = client.get("/mcp/")
-        assert response.status_code == 200
-        data = response.json()
-        assert "server_name" in data
-        assert "capabilities" in data
-        assert data["discovered"]["tools"] == 1
+        # Initialize
+        result = _rpc(
+            client,
+            "initialize",
+            {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "1.0"},
+            },
+        )
+        assert "serverInfo" in result["result"]
+        assert "capabilities" in result["result"]
 
-        response = client.get("/mcp/tools")
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data["tools"]) == 1
-        assert data["tools"][0]["name"] == "list_users"
+        # tools/list
+        result = _rpc(client, "tools/list")
+        assert len(result["result"]["tools"]) == 1
+        assert result["result"]["tools"][0]["name"] == "list_users"
 
-        response = client.get("/mcp/resources")
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data["resources"]) == 1
-        assert data["resources"][0]["name"] == "openapi"
+        # resources/list (openapi is always present)
+        result = _rpc(client, "resources/list")
+        assert len(result["result"]["resources"]) == 1
+        assert result["result"]["resources"][0]["name"] == "openapi"
 
     def test_openapi_resource_access(self) -> None:
-        """Test accessing the built-in OpenAPI resource."""
         app = Litestar(plugins=[LitestarMCP()])
         client = TestClient(app=app)
 
-        response = client.get("/mcp/resources/openapi")
-        assert response.status_code == 200
-        data = response.json()
-        assert "content" in data
-        assert data["content"]["uri"] == "litestar://openapi"
+        result = _rpc(client, "resources/read", {"uri": "litestar://openapi"})
+        contents = result["result"]["contents"]
+        assert contents[0]["uri"] == "litestar://openapi"
 
     def test_tool_execution_real(self) -> None:
-        """Test real tool execution."""
-
         @post("/analyze", opt={"mcp_tool": "analyze_data"})
         async def analyze(data: dict[str, Any]) -> dict[str, Any]:
             return {"result": "analyzed", "input": data}
 
         app = Litestar(plugins=[LitestarMCP()], route_handlers=[analyze])
-
         client = TestClient(app=app)
 
         test_data = {"test": "data", "count": 42}
-        response = client.post("/mcp/tools/analyze_data", json={"arguments": {"data": test_data}})
-        assert response.status_code == 200
-        data = response.json()
-        assert "content" in data
-
-        # Verify we get real execution results, not mock
-        import json
-
-        result_text = data["content"][0]["text"]
-        result = json.loads(result_text)
-        assert result["result"] == "analyzed"
-        assert result["input"] == test_data
+        result = _rpc(client, "tools/call", {"name": "analyze_data", "arguments": {"data": test_data}})
+        content = result["result"]["content"]
+        parsed = json.loads(content[0]["text"])
+        assert parsed["result"] == "analyzed"
+        assert parsed["input"] == test_data
 
     def test_error_handling(self) -> None:
-        """Test error handling for missing resources and tools."""
         app = Litestar(plugins=[LitestarMCP()])
         client = TestClient(app=app)
 
-        response = client.get("/mcp/resources/nonexistent")
-        assert response.status_code == 404
+        result = _rpc(client, "resources/read", {"uri": "litestar://nonexistent"})
+        assert "error" in result
 
-        response = client.post("/mcp/tools/nonexistent", json={"arguments": {}})
-        assert response.status_code == 404
+        result = _rpc(client, "tools/call", {"name": "nonexistent", "arguments": {}})
+        assert "error" in result
 
     def test_openapi_integration(self) -> None:
-        """Test that server info uses OpenAPI configuration."""
         from litestar.openapi.config import OpenAPIConfig
 
         app = Litestar(plugins=[LitestarMCP()], openapi_config=OpenAPIConfig(title="My Custom API", version="2.1.0"))
         client = TestClient(app=app)
 
-        response = client.get("/mcp/")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["server_name"] == "My Custom API"
-        assert data["server_version"] == "2.1.0"
+        result = _rpc(
+            client,
+            "initialize",
+            {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "1.0"},
+            },
+        )
+        server_info = result["result"]["serverInfo"]
+        assert server_info["name"] == "My Custom API"
+        assert server_info["version"] == "2.1.0"
 
     def test_resource_exception_handling(self) -> None:
-        """Test resource access exception handling."""
-
         @get("/custom", opt={"mcp_resource": "custom_data"})
         async def custom_route() -> dict[str, Any]:
             return {"custom": "data"}
@@ -153,15 +149,11 @@ class TestLitestarMCP:
         app = Litestar(plugins=[LitestarMCP()], route_handlers=[custom_route])
         client = TestClient(app=app)
 
-        # Test successful resource access first
-        response = client.get("/mcp/resources/custom_data")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["content"]["uri"] == "litestar://custom_data"
+        result = _rpc(client, "resources/read", {"uri": "litestar://custom_data"})
+        contents = result["result"]["contents"]
+        assert contents[0]["uri"] == "litestar://custom_data"
 
     def test_custom_resource_access(self) -> None:
-        """Test accessing a custom discovered resource."""
-
         @get("/custom", opt={"mcp_resource": "custom_data"})
         async def custom_route() -> dict[str, Any]:
             return {"custom": "data", "timestamp": "2024-01-01", "version": "1.0"}
@@ -169,43 +161,28 @@ class TestLitestarMCP:
         app = Litestar(plugins=[LitestarMCP()], route_handlers=[custom_route])
         client = TestClient(app=app)
 
-        response = client.get("/mcp/resources/custom_data")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["content"]["uri"] == "litestar://custom_data"
-
-        # Verify we get real resource data, not mock
-        import json
-
-        result_text = data["content"]["text"]
-        result = json.loads(result_text)
-        assert result["custom"] == "data"
-        assert result["timestamp"] == "2024-01-01"
-        assert result["version"] == "1.0"
+        result = _rpc(client, "resources/read", {"uri": "litestar://custom_data"})
+        contents = result["result"]["contents"]
+        assert contents[0]["uri"] == "litestar://custom_data"
+        parsed = json.loads(contents[0]["text"])
+        assert parsed["custom"] == "data"
+        assert parsed["timestamp"] == "2024-01-01"
+        assert parsed["version"] == "1.0"
 
     def test_plugin_coverage_gaps(self) -> None:
-        """Test remaining coverage gaps in plugin.py."""
-
-        # Test the recursive discovery by manually calling the method with nested structure
         plugin = LitestarMCP()
 
         @get("/nested-tool", opt={"mcp_tool": "nested_tool"})
         async def nested_tool() -> dict[str, Any]:
             return {"result": "nested"}
 
-        # Mock a container with route_handlers attribute
         class MockContainer:
             route_handlers = [nested_tool]
 
-        # Test the recursive discovery
         plugin._discover_mcp_routes([MockContainer()])
-
-        # Should have discovered the nested tool
         assert "nested_tool" in plugin.discovered_tools
 
     def test_automatic_schema_generation(self) -> None:
-        """Test that tools now have automatically generated schemas."""
-
         @get("/users", opt={"mcp_tool": "list_users"})
         async def get_users(limit: int = 10, active: bool = True) -> list[dict[str, Any]]:
             """Get users with pagination and filtering."""
@@ -214,33 +191,18 @@ class TestLitestarMCP:
         app = Litestar(plugins=[LitestarMCP()], route_handlers=[get_users])
         client = TestClient(app=app)
 
-        response = client.get("/mcp/tools")
-        assert response.status_code == 200
-        data = response.json()
-
-        # Find our tool
-        tool = next(t for t in data["tools"] if t["name"] == "list_users")
-
-        # Verify it has a real schema, not a placeholder
+        result = _rpc(client, "tools/list")
+        tool = next(t for t in result["result"]["tools"] if t["name"] == "list_users")
         schema = tool["inputSchema"]
         assert schema["type"] == "object"
         assert "properties" in schema
-
-        # Check properties
-        properties = schema["properties"]
-        assert "limit" in properties
-        assert "active" in properties
-
-        assert properties["limit"]["type"] == "integer"
-        assert properties["active"]["type"] == "boolean"
-
-        # Check required fields (both have defaults, so neither should be required)
+        assert schema["properties"]["limit"]["type"] == "integer"
+        assert schema["properties"]["active"]["type"] == "boolean"
         required = schema.get("required", [])
         assert "limit" not in required
         assert "active" not in required
 
     def test_decorator_based_discovery(self) -> None:
-        """Test that decorator-based tools and resources are discovered."""
         from litestar_mcp import mcp_resource, mcp_tool
 
         @get("/decorator-tool")
@@ -258,26 +220,19 @@ class TestLitestarMCP:
         plugin = LitestarMCP()
         app = Litestar(plugins=[plugin], route_handlers=[decorator_tool, decorator_resource])
 
-        # Check discovery
         assert "decorator_tool" in plugin.discovered_tools
         assert "decorator_resource" in plugin.discovered_resources
 
-        # Test via HTTP endpoints
         client = TestClient(app=app)
 
-        # Test tool execution
-        response = client.post("/mcp/tools/decorator_tool", json={"arguments": {"message": "test"}})
-        assert response.status_code == 200
-        data = response.json()
-        import json
+        # Tool execution via JSON-RPC
+        result = _rpc(client, "tools/call", {"name": "decorator_tool", "arguments": {"message": "test"}})
+        parsed = json.loads(result["result"]["content"][0]["text"])
+        assert parsed["message"] == "Processed: test"
 
-        result = json.loads(data["content"][0]["text"])
-        assert result["message"] == "Processed: test"
-
-        # Test resource access
-        response = client.get("/mcp/resources/decorator_resource")
-        assert response.status_code == 200
-        data = response.json()
-        result = json.loads(data["content"]["text"])
-        assert result["config"] == "value"
-        assert result["enabled"] is True
+        # Resource read via JSON-RPC
+        result = _rpc(client, "resources/read", {"uri": "litestar://decorator_resource"})
+        contents = result["result"]["contents"]
+        parsed = json.loads(contents[0]["text"])
+        assert parsed["config"] == "value"
+        assert parsed["enabled"] is True
