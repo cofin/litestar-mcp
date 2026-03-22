@@ -21,6 +21,8 @@ from litestar_mcp.jsonrpc import (
     error_response,
     parse_request,
 )
+from litestar_mcp.decorators import get_mcp_metadata
+from litestar_mcp.filters import should_include_handler
 from litestar_mcp.session import MCPSessionManager
 from litestar_mcp.schema_builder import generate_schema_for_handler
 from litestar_mcp.utils import get_handler_function
@@ -125,15 +127,33 @@ def build_jsonrpc_router(
     async def handle_tools_list(params: dict[str, Any]) -> dict[str, Any]:
         tools = []
         for name, handler in discovered_tools.items():
+            # Apply filtering
+            handler_tags: set[str] = set()
+            if hasattr(handler, "tags") and handler.tags:
+                handler_tags = set(handler.tags)
+            if not should_include_handler(name, handler_tags, config):
+                continue
+
             fn = get_handler_function(handler)
             fn_doc = fn.__doc__
             description = fn_doc.strip() if fn_doc else f"Tool: {name}"
             input_schema = generate_schema_for_handler(handler)
-            tools.append({
+
+            tool_entry: dict[str, Any] = {
                 "name": name,
                 "description": description,
                 "inputSchema": input_schema,
-            })
+            }
+
+            # Include outputSchema and annotations from decorator metadata
+            metadata = get_mcp_metadata(handler) or get_mcp_metadata(fn)
+            if metadata:
+                if "output_schema" in metadata:
+                    tool_entry["outputSchema"] = metadata["output_schema"]
+                if "annotations" in metadata:
+                    tool_entry["annotations"] = metadata["annotations"]
+
+            tools.append(tool_entry)
         return {"tools": tools}
 
     router.register("tools/list", handle_tools_list)
@@ -179,6 +199,12 @@ def build_jsonrpc_router(
             }
         ]
         for name, handler in discovered_resources.items():
+            handler_tags: set[str] = set()
+            if hasattr(handler, "tags") and handler.tags:
+                handler_tags = set(handler.tags)
+            if not should_include_handler(name, handler_tags, config):
+                continue
+
             fn = get_handler_function(handler)
             description = fn.__doc__ or f"Resource: {name}"
             resources.append({

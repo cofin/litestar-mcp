@@ -25,3 +25,7 @@ class MCPConfig:
     name: Optional[str] = None
     guards: Optional[list[Any]] = None
     allowed_origins: Optional[list[str]] = None
+    include_operations: Optional[list[str]] = None
+    exclude_operations: Optional[list[str]] = None
+    include_tags: Optional[list[str]] = None
+    exclude_tags: Optional[list[str]] = None

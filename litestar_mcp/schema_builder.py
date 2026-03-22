@@ -147,20 +147,19 @@ def union_type_to_json_schema(annotation: Any) -> "Optional[dict[str, Any]]":
     if origin is type(None):  # NoneType
         return {"type": "null"}
 
-    # Handle Union types, particularly Optional[T] which is Union[T, None]
+    # Handle Union types, including Optional[T] which is Union[T, None]
     if origin is Union:
         args = get_args(annotation)
-        # Check if this is Optional[T] (Union[T, None])
-        non_none_args = [arg for arg in args if arg is not type(None)]
-        if len(non_none_args) == 1 and type(None) in args:
-            # This is Optional[T], generate schema for T
-            return type_to_json_schema(non_none_args[0])
         if len(args) == 1:
-            # Single type in union (shouldn't happen but handle it)
             return type_to_json_schema(args[0])
-        # Complex union with multiple non-None types
-        # For now, fall back to object type
-        return {"type": "object", "description": "Union type " + str(annotation)}
+        # Build anyOf for all member types (including NoneType → {"type": "null"})
+        any_of = []
+        for arg in args:
+            if arg is type(None):
+                any_of.append({"type": "null"})
+            else:
+                any_of.append(type_to_json_schema(arg))
+        return {"anyOf": any_of}
 
     return None
 

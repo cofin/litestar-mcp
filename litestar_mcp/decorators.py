@@ -47,18 +47,26 @@ class MetadataRegistry:
 _REGISTRY = MetadataRegistry()
 
 
-def mcp_tool(name: str) -> Callable[[F], F]:
+def mcp_tool(
+    name: str,
+    output_schema: Optional[dict[str, Any]] = None,
+    annotations: Optional[dict[str, Any]] = None,
+    scopes: Optional[list[str]] = None,
+) -> Callable[[F], F]:
     """Decorator to mark a route handler as an MCP tool.
 
     Args:
         name: The name of the MCP tool.
+        output_schema: Optional JSON Schema for the tool's structured output.
+        annotations: Optional metadata annotations (audience, priority, etc.).
+        scopes: Optional list of OAuth scopes required to call this tool.
 
     Returns:
         Decorator function that adds MCP metadata to the handler.
 
     Example:
         ```python
-        @mcp_tool(name="user_manager")
+        @mcp_tool(name="user_manager", annotations={"audience": ["user"]})
         @get("/users")
         async def get_users() -> list[dict]:
             return [{"id": 1, "name": "Alice"}]
@@ -66,7 +74,14 @@ def mcp_tool(name: str) -> Callable[[F], F]:
     """
 
     def decorator(fn: F) -> F:
-        _REGISTRY.set(fn, {"type": "tool", "name": name})
+        metadata: dict[str, Any] = {"type": "tool", "name": name}
+        if output_schema is not None:
+            metadata["output_schema"] = output_schema
+        if annotations is not None:
+            metadata["annotations"] = annotations
+        if scopes is not None:
+            metadata["scopes"] = scopes
+        _REGISTRY.set(fn, metadata)
         return fn
 
     return decorator

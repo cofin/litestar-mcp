@@ -1,7 +1,7 @@
 """Tests for the schema builder module."""
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 import pytest
 from litestar import get
@@ -15,6 +15,7 @@ from litestar_mcp.schema_builder import (
     msgspec_to_json_schema,
     pydantic_to_json_schema,
     type_to_json_schema,
+    union_type_to_json_schema,
 )
 from tests.conftest import create_app_with_handler
 
@@ -109,7 +110,11 @@ class TestSchemaBuilder:
         # Check types
         assert properties["message"]["type"] == "string"
         assert properties["count"]["type"] == "integer"
-        assert properties["tags"]["type"] == "array"
+        # Optional[list[str]] should produce anyOf with array and null
+        assert "anyOf" in properties["tags"]
+        tag_types = [s.get("type") for s in properties["tags"]["anyOf"]]
+        assert "array" in tag_types
+        assert "null" in tag_types
 
     def test_generate_schema_with_complex_types(self) -> None:
         """Test schema generation with complex parameter types."""
@@ -528,3 +533,61 @@ class TestEdgeCasesAndErrorHandling:
         assert "name" in properties
         assert "config" in properties
         assert "items" in properties
+
+
+class TestOptionalNullability:
+    """Tests for Optional[T] producing anyOf with null type."""
+
+    def test_optional_str_includes_null(self) -> None:
+        result = type_to_json_schema(Optional[str])
+        assert "anyOf" in result
+        types = [s.get("type") for s in result["anyOf"]]
+        assert "string" in types
+        assert "null" in types
+
+    def test_optional_int_includes_null(self) -> None:
+        result = type_to_json_schema(Optional[int])
+        assert "anyOf" in result
+        types = [s.get("type") for s in result["anyOf"]]
+        assert "integer" in types
+        assert "null" in types
+
+    def test_optional_list_str_includes_null(self) -> None:
+        result = type_to_json_schema(Optional[list[str]])
+        assert "anyOf" in result
+        types = [s.get("type") for s in result["anyOf"]]
+        assert "array" in types
+        assert "null" in types
+
+    def test_plain_str_no_null(self) -> None:
+        result = type_to_json_schema(str)
+        assert result == {"type": "string"}
+        assert "anyOf" not in result
+
+
+class TestUnionHandling:
+    """Tests for Union[A, B] producing anyOf."""
+
+    def test_union_str_int(self) -> None:
+        result = type_to_json_schema(Union[str, int])
+        assert "anyOf" in result
+        types = [s.get("type") for s in result["anyOf"]]
+        assert "string" in types
+        assert "integer" in types
+
+    def test_union_str_int_none(self) -> None:
+        result = type_to_json_schema(Union[str, int, None])
+        assert "anyOf" in result
+        types = [s.get("type") for s in result["anyOf"]]
+        assert "string" in types
+        assert "integer" in types
+        assert "null" in types
+
+    def test_union_single_type(self) -> None:
+        # Union[str] collapses to str in Python
+        result = union_type_to_json_schema(Union[str, str])
+        # Python collapses Union[str, str] to just str, which isn't a Union
+        # So union_type_to_json_schema returns None, and type_to_json_schema handles it
+        # Just verify the full pipeline works
+        result = type_to_json_schema(str)
+        assert result == {"type": "string"}
