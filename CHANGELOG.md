@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Plugin-registered dependencies (e.g. `SQLAlchemyPlugin`'s `db_engine` / `db_session`) no longer break MCP tool execution for handlers that do not consume them. The executor now resolves only the transitive closure of dependencies actually declared by the handler's signature, mirroring Litestar's own DI semantics. ([#19](https://github.com/cofin/litestar-mcp/issues/19))
+
 ## [0.1.0] - 2025-01-04
 
 ### Added
