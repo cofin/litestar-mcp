@@ -248,6 +248,44 @@ class TestExecutor:
         assert result["items"] == complex_args["items"]
         assert result["count"] == 3
 
+    @pytest.mark.asyncio
+    async def test_unused_plugin_dependency_is_not_resolved(self) -> None:
+        """Regression for #19: app-level deps not consumed by handler must not be called.
+
+        Reproduces the SQLAlchemyPlugin scenario: an app-level `db_engine` dep is
+        registered, but the handler doesn't declare it. The provider must NOT be
+        invoked, so the tool can execute successfully.
+        """
+        from litestar import Litestar, get
+        from litestar.di import Provide
+
+        from tests.conftest import get_handler_from_app
+
+        provider_was_called = False
+
+        def broken_db_engine() -> str:
+            nonlocal provider_was_called
+            provider_was_called = True
+            msg = "db_engine should never be called — handler doesn't consume it"
+            raise RuntimeError(msg)
+
+        @get("/health", sync_to_thread=False)
+        def health_check() -> dict[str, str]:
+            return {"status": "ok"}
+
+        app = Litestar(
+            route_handlers=[health_check],
+            dependencies={"db_engine": Provide(broken_db_engine, sync_to_thread=False)},
+        )
+        handler = get_handler_from_app(app, "/health", "GET")
+
+        result = await execute_tool(handler, app, {})
+
+        assert result == {"status": "ok"}
+        assert provider_was_called is False, (
+            "db_engine provider was called despite handler not declaring it"
+        )
+
 
 class TestNotCallableInCLIContextError:
     """Test suite for NotCallableInCLIContextError exception."""
