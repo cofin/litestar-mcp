@@ -69,7 +69,8 @@ class TestExecutor:
         with pytest.raises(NotCallableInCLIContextError) as exc_info:
             await execute_tool(handler, app, {"user_id": 123})
 
-        assert "request-scoped dependency 'request'" in str(exc_info.value)
+        assert "request" in str(exc_info.value)
+        assert "request context" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_missing_required_arguments(self) -> None:
@@ -347,30 +348,61 @@ class TestExecutor:
         result = await execute_tool(handler, app, {})
         assert result == {"name": "Alice", "role": "admin"}
 
+    @pytest.mark.asyncio
+    async def test_consumed_request_scoped_dep_raises_clear_error(self) -> None:
+        """When a handler actually declares a request-scoped dep, the error
+        must name the dep and mention request context."""
+        from litestar import Litestar, get
+        from litestar.di import Provide
+
+        from tests.conftest import get_handler_from_app
+
+        def broken_db_session() -> str:
+            msg = "needs a real request scope"
+            raise RuntimeError(msg)
+
+        @get("/items", sync_to_thread=False)
+        def list_items(db_session: str) -> dict[str, str]:
+            return {"db": db_session}
+
+        app = Litestar(
+            route_handlers=[list_items],
+            dependencies={"db_session": Provide(broken_db_session, sync_to_thread=False)},
+        )
+        handler = get_handler_from_app(app, "/items", "GET")
+
+        with pytest.raises(NotCallableInCLIContextError) as exc_info:
+            await execute_tool(handler, app, {})
+
+        message = str(exc_info.value)
+        assert "db_session" in message
+        assert "request context" in message
+
 
 class TestNotCallableInCLIContextError:
     """Test suite for NotCallableInCLIContextError exception."""
 
     def test_not_callable_in_cli_context_error_creation(self) -> None:
         """Test creation of NotCallableInCLIContextError."""
-        param_name = "request"
-        param_type = "Request"
+        handler_name = "list_items"
+        param_name = "db_session"
 
-        error = NotCallableInCLIContextError(param_name, param_type)
+        error = NotCallableInCLIContextError(handler_name, param_name)
 
+        assert handler_name in str(error)
         assert param_name in str(error)
-        assert param_type in str(error)
-        assert "CLI context" in str(error)
+        assert "request context" in str(error)
 
     def test_not_callable_in_cli_context_error_with_different_types(self) -> None:
         """Test NotCallableInCLIContextError with different parameter types."""
         test_cases = [
-            ("connection", "ASGIConnection"),
-            ("response", "Response"),
-            ("websocket", "WebSocket"),
+            ("list_items", "db_session"),
+            ("get_user", "current_user"),
+            ("health", "connection"),
         ]
 
-        for param_name, param_type in test_cases:
-            error = NotCallableInCLIContextError(param_name, param_type)
+        for handler_name, param_name in test_cases:
+            error = NotCallableInCLIContextError(handler_name, param_name)
+            assert handler_name in str(error)
             assert param_name in str(error)
-            assert param_type in str(error)
+            assert "request context" in str(error)

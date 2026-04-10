@@ -167,7 +167,7 @@ async def _resolve_dependencies(
 
 
 class NotCallableInCLIContextError(ImproperlyConfiguredException):
-    """Raised when a tool is not callable from the CLI due to its dependencies."""
+    """Raised when a tool is not callable via MCP due to its dependencies."""
 
     def __init__(self, handler_name: str, parameter_name: str) -> None:
         """Initialize the exception.
@@ -177,8 +177,10 @@ class NotCallableInCLIContextError(ImproperlyConfiguredException):
             parameter_name: Name of the parameter causing the issue.
         """
         super().__init__(
-            f"Tool '{handler_name}' cannot be called from the CLI because it depends on the request-scoped "
-            f"dependency '{parameter_name}', which is not available in a CLI context."
+            f"Tool '{handler_name}' cannot be executed via MCP: its dependency "
+            f"'{parameter_name}' requires request context (e.g. a plugin-registered "
+            f"session, request, or connection-scoped resource). Tools that need "
+            f"such resources are not currently MCP-callable."
         )
 
 
