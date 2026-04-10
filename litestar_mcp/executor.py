@@ -16,6 +16,63 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
+def _provider_callable(provider: Any) -> "Callable[..., Any] | None":
+    """Return the underlying callable of a registry entry, or None if opaque.
+
+    Litestar `Provide` objects expose the actual callable via `.dependency`.
+    Some registry entries may already be bare callables (test doubles, edge
+    cases). Anything else we can't introspect is treated as having no deps.
+    """
+    if hasattr(provider, "dependency"):
+        return provider.dependency  # type: ignore[no-any-return]
+    if callable(provider):
+        return provider
+    return None
+
+
+def _collect_consumed_dependencies(
+    fn: "Callable[..., Any]",
+    registry: "dict[str, Any]",
+) -> "set[str]":
+    """Return the transitive closure of dependency names consumed by fn.
+
+    Walks fn's signature parameters; for each parameter name that exists in
+    `registry`, adds it to the consumed set and recursively walks the
+    provider's own signature. Parameters not in the registry are ignored
+    (they are tool arguments, `self`, or reserved framework parameters —
+    the caller handles those separately).
+
+    Cycles are broken by tracking visited names.
+    """
+    consumed: set[str] = set()
+    stack: list[Callable[..., Any]] = [fn]
+    visited_callables: set[int] = set()
+
+    while stack:
+        current = stack.pop()
+        if id(current) in visited_callables:
+            continue
+        visited_callables.add(id(current))
+
+        try:
+            params = inspect.signature(current).parameters
+        except (TypeError, ValueError):
+            # Builtins or C-implemented callables may not be introspectable.
+            continue
+
+        for param_name in params:
+            if param_name in consumed:
+                continue
+            if param_name not in registry:
+                continue
+            consumed.add(param_name)
+            provider_fn = _provider_callable(registry[param_name])
+            if provider_fn is not None:
+                stack.append(provider_fn)
+
+    return consumed
+
+
 def _check_unsupported_dependency(dep_name: str, unsupported_cli_deps: "set[str]", fn: Any) -> None:
     """Check if dependency is unsupported in CLI context and raise error if so."""
     if dep_name in unsupported_cli_deps:
@@ -23,45 +80,90 @@ def _check_unsupported_dependency(dep_name: str, unsupported_cli_deps: "set[str]
 
 
 async def _resolve_dependencies(
-    handler: BaseRouteHandler, fn: Any, unsupported_cli_deps: "set[str]"
+    handler: BaseRouteHandler,
+    fn: Any,
+    unsupported_cli_deps: "set[str]",
 ) -> "dict[str, Any]":
-    """Resolve dependencies for the handler, extracted to reduce complexity."""
-    dependencies: dict[str, Any] = {}
+    """Resolve only the dependencies the handler transitively consumes.
 
+    Mirrors Litestar's DI semantics: walks the handler signature outward,
+    calling only providers whose names appear (directly or transitively)
+    in the consumed closure. Providers are resolved dependency-first so
+    that a provider needing `foo` receives an already-resolved `foo` kwarg.
+    """
     try:
-        resolved_deps = handler.resolve_dependencies()
-        for dep_name, dep_provider in resolved_deps.items():
-            _check_unsupported_dependency(dep_name, unsupported_cli_deps, fn)
-
-            # For other dependencies, we execute the dependency provider directly
-            try:
-                # Provide objects have a dependency property with the actual callable
-                if hasattr(dep_provider, "dependency"):
-                    dependency_fn = dep_provider.dependency
-                    if inspect.iscoroutinefunction(dependency_fn):
-                        dependencies[dep_name] = await dependency_fn()
-                    else:
-                        dependencies[dep_name] = dependency_fn()
-                # Fallback: try to call the provider directly
-                elif inspect.iscoroutinefunction(dep_provider):
-                    dependencies[dep_name] = await dep_provider()
-                else:
-                    dependencies[dep_name] = dep_provider()
-            except Exception as e:
-                # If dependency resolution fails, it might be request-dependent
-                raise NotCallableInCLIContextError(get_name(fn), dep_name) from e
-    except NotCallableInCLIContextError:
-        # Re-raise CLI context errors
-        raise
+        registry = handler.resolve_dependencies()
     except (AttributeError, TypeError) as e:
-        # If resolve_dependencies fails entirely, log and assume no dependencies
-        # This can happen in test environments or when handler is not properly configured
         import logging
 
         logger = logging.getLogger(__name__)
         logger.debug("Failed to resolve dependencies for %s: %s", get_name(fn), e)
+        return {}
 
-    return dependencies
+    consumed = _collect_consumed_dependencies(fn, registry)
+
+    # Reserved-name check runs against the CONSUMED set only.
+    for dep_name in consumed:
+        _check_unsupported_dependency(dep_name, unsupported_cli_deps, fn)
+
+    # Topological resolution: repeatedly resolve any consumed provider whose
+    # own kwargs are either already resolved, not in the registry (tool args
+    # or framework params we can't satisfy), or have defaults.
+    resolved: dict[str, Any] = {}
+    remaining = set(consumed)
+
+    while remaining:
+        progress = False
+        for dep_name in list(remaining):
+            provider = registry[dep_name]
+            provider_fn = _provider_callable(provider)
+            if provider_fn is None:
+                raise NotCallableInCLIContextError(get_name(fn), dep_name)
+
+            try:
+                provider_sig = inspect.signature(provider_fn)
+            except (TypeError, ValueError):
+                provider_sig = None
+
+            kwargs: dict[str, Any] = {}
+            ready = True
+            if provider_sig is not None:
+                for p_name, p in provider_sig.parameters.items():
+                    if p_name in resolved:
+                        kwargs[p_name] = resolved[p_name]
+                    elif p_name in registry and p_name in consumed:
+                        # Dependency on another consumed provider — wait.
+                        ready = False
+                        break
+                    elif p.default is not inspect.Parameter.empty:
+                        continue
+                    else:
+                        # Unresolvable kwarg with no default — this provider
+                        # genuinely needs request context we don't have.
+                        raise NotCallableInCLIContextError(get_name(fn), dep_name)
+
+            if not ready:
+                continue
+
+            try:
+                if inspect.iscoroutinefunction(provider_fn):
+                    resolved[dep_name] = await provider_fn(**kwargs)
+                else:
+                    resolved[dep_name] = provider_fn(**kwargs)
+            except NotCallableInCLIContextError:
+                raise
+            except Exception as e:
+                raise NotCallableInCLIContextError(get_name(fn), dep_name) from e
+
+            remaining.discard(dep_name)
+            progress = True
+
+        if not progress:
+            # Cycle or unsatisfiable graph — fail with the first stuck dep.
+            stuck = next(iter(remaining))
+            raise NotCallableInCLIContextError(get_name(fn), stuck)
+
+    return resolved
 
 
 class NotCallableInCLIContextError(ImproperlyConfiguredException):
@@ -107,7 +209,16 @@ async def execute_tool(
     sig = inspect.signature(fn)
 
     # Dependencies that are not available in a CLI context
-    unsupported_cli_deps = {"request", "socket", "headers", "cookies", "query", "body"}
+    unsupported_cli_deps = {
+        "request",
+        "socket",
+        "headers",
+        "cookies",
+        "query",
+        "body",
+        "state",
+        "scope",
+    }
 
     call_args: dict[str, Any] = {}
 
