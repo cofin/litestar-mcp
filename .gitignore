@@ -74,6 +74,11 @@ instance/
 # Sphinx documentation
 docs/_build/
 docs-build/
+
+# Local workflow-tool artifacts (plans, specs, upstream issue drafts
+# produced by Claude Code / superpowers). Kept out of the user-facing
+# docs/ tree so they don't ship in the Sphinx build.
+docs/superpowers/
 # PyBuilder
 .pybuilder/
 target/
