@@ -379,6 +379,44 @@ class TestExecutor:
         assert "request context" in message
 
 
+    @pytest.mark.asyncio
+    async def test_cyclic_dependency_does_not_infinite_loop(self) -> None:
+        """Pathological: two providers declare each other as kwargs.
+
+        Litestar's own DI validation rejects cyclic graphs at app construction,
+        so we monkey-patch `handler.resolve_dependencies` to inject the cycle
+        post-construction (the same technique used in
+        test_cli_context_limitation_request_dependency).
+
+        The executor must:
+        1. Not hang in _collect_consumed_dependencies (visited-set guard)
+        2. Detect that the topological loop can make no progress and raise
+           NotCallableInCLIContextError — not spin forever.
+        """
+        from litestar.di import Provide
+
+        def provide_a(b: str) -> str:
+            return f"a({b})"
+
+        def provide_b(a: str) -> str:
+            return f"b({a})"
+
+        def cycle_handler(a: str) -> dict[str, str]:
+            return {"a": a}
+
+        app, handler = create_app_with_handler(cycle_handler)
+
+        # Inject the cyclic registry directly, bypassing Litestar's init-time
+        # validation (which would otherwise hang on cycles).
+        handler.resolve_dependencies = lambda: {  # type: ignore[method-assign]
+            "a": Provide(provide_a, sync_to_thread=False),
+            "b": Provide(provide_b, sync_to_thread=False),
+        }
+
+        with pytest.raises(NotCallableInCLIContextError):
+            await execute_tool(handler, app, {})
+
+
 class TestNotCallableInCLIContextError:
     """Test suite for NotCallableInCLIContextError exception."""
 
