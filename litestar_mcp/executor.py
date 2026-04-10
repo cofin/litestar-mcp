@@ -225,7 +225,11 @@ async def execute_tool(
     # Resolve dependencies first - extract to helper function to reduce complexity
     dependencies = await _resolve_dependencies(handler, fn, unsupported_cli_deps)
 
-    call_args.update(dependencies)
+    # Only inject resolved dependencies that the handler itself declares.
+    # Transitive deps (e.g. `role` consumed by `provide_user` but not by the
+    # handler directly) are needed for resolution but must NOT be forwarded.
+    handler_params = set(sig.parameters)
+    call_args.update({k: v for k, v in dependencies.items() if k in handler_params})
 
     # Check for unsupported CLI dependencies in function parameters
     for p_name in sig.parameters:

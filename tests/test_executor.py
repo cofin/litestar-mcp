@@ -314,6 +314,39 @@ class TestExecutor:
         result = await execute_tool(handler, app, {"name": "Alice"})
         assert result == {"hello": "Alice"}
 
+    @pytest.mark.asyncio
+    async def test_transitive_dependency_resolution(self) -> None:
+        """A handler consuming `user` transitively pulls in `role`.
+
+        Verifies the executor walks provider signatures, not just the handler's.
+        """
+        from litestar import Litestar, get
+        from litestar.di import Provide
+
+        from tests.conftest import get_handler_from_app
+
+        def provide_role() -> str:
+            return "admin"
+
+        def provide_user(role: str) -> dict[str, str]:
+            return {"name": "Alice", "role": role}
+
+        @get("/me", sync_to_thread=False)
+        def me(user: dict[str, str]) -> dict[str, str]:
+            return user
+
+        app = Litestar(
+            route_handlers=[me],
+            dependencies={
+                "role": Provide(provide_role, sync_to_thread=False),
+                "user": Provide(provide_user, sync_to_thread=False),
+            },
+        )
+        handler = get_handler_from_app(app, "/me", "GET")
+
+        result = await execute_tool(handler, app, {})
+        assert result == {"name": "Alice", "role": "admin"}
+
 
 class TestNotCallableInCLIContextError:
     """Test suite for NotCallableInCLIContextError exception."""
