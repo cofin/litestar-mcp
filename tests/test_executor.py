@@ -337,6 +337,61 @@ class TestExecutor:
         assert result == {"name": "Alice", "role": "admin"}
 
     @pytest.mark.asyncio
+    async def test_diamond_dependency_resolution(self) -> None:
+        """Diamond graph: handler → a; a → b, c; b → d; c → d.
+
+        Stresses two properties of ``_call_provider_without_connection``:
+
+        1. ``d`` must be resolved exactly once (not once per consumer), so the
+           call-count assertion below catches any accidental re-invocation.
+        2. ``provide_a`` declares *two* kwargs (``b`` and ``c``) — the
+           ``elif field.has_default: continue`` branch must not false-
+           positive here and wrongly raise ``NotCallableInCLIContextError``.
+
+        Together these prove ``KwargsModel.dependency_batches`` gives us a
+        correct topological order for non-linear graphs, not just chains.
+        """
+        call_counts: dict[str, int] = {"a": 0, "b": 0, "c": 0, "d": 0}
+
+        def provide_d() -> str:
+            call_counts["d"] += 1
+            return "d-value"
+
+        def provide_b(d: str) -> str:
+            call_counts["b"] += 1
+            return f"b({d})"
+
+        def provide_c(d: str) -> str:
+            call_counts["c"] += 1
+            return f"c({d})"
+
+        def provide_a(b: str, c: str) -> dict[str, str]:
+            call_counts["a"] += 1
+            return {"b": b, "c": c}
+
+        @get("/diamond", sync_to_thread=False)
+        def diamond(a: dict[str, str]) -> dict[str, str]:
+            return a
+
+        app = Litestar(
+            route_handlers=[diamond],
+            dependencies={
+                "a": Provide(provide_a, sync_to_thread=False),
+                "b": Provide(provide_b, sync_to_thread=False),
+                "c": Provide(provide_c, sync_to_thread=False),
+                "d": Provide(provide_d, sync_to_thread=False),
+            },
+        )
+        handler = get_handler_from_app(app, "/diamond", "GET")
+
+        result = await execute_tool(handler, app, {})
+
+        assert result == {"b": "b(d-value)", "c": "c(d-value)"}
+        assert call_counts == {"a": 1, "b": 1, "c": 1, "d": 1}, (
+            f"each provider must run exactly once; got {call_counts}"
+        )
+
+    @pytest.mark.asyncio
     async def test_consumed_request_scoped_dep_raises_clear_error(self) -> None:
         """When a handler actually declares a request-scoped dep, the error
         must name the dep and mention request context.
