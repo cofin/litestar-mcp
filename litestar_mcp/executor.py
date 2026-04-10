@@ -36,7 +36,7 @@ _UNSATISFIABLE_RESERVED_KWARGS = frozenset({"request", "socket", "scope", "state
 
 
 class NotCallableInCLIContextError(ImproperlyConfiguredException):
-    """Raised when a tool is not callable via MCP due to its dependencies."""
+    """Raised when a tool is not callable from the CLI due to its dependencies."""
 
     def __init__(self, handler_name: str, parameter_name: str) -> None:
         """Initialize the exception.
