@@ -3,10 +3,11 @@
 from typing import Any
 
 import pytest
+from litestar import Litestar, get
 from litestar.di import Provide
 
 from litestar_mcp.executor import NotCallableInCLIContextError, execute_tool
-from tests.conftest import create_app_with_handler
+from tests.conftest import create_app_with_handler, get_handler_from_app
 
 
 class TestExecutor:
@@ -259,11 +260,6 @@ class TestExecutor:
         registered, but the handler doesn't declare it. The provider must NOT be
         invoked, so the tool can execute successfully.
         """
-        from litestar import Litestar, get
-        from litestar.di import Provide
-
-        from tests.conftest import get_handler_from_app
-
         provider_was_called = False
 
         def broken_db_engine() -> str:
@@ -293,10 +289,6 @@ class TestExecutor:
 
         Ensures the fix doesn't accidentally drop or rename real parameters.
         """
-        from litestar import Litestar, get
-        from litestar.di import Provide
-
-        from tests.conftest import get_handler_from_app
 
         def broken_db_engine() -> str:
             msg = "should not be called"
@@ -321,10 +313,6 @@ class TestExecutor:
 
         Verifies the executor walks provider signatures, not just the handler's.
         """
-        from litestar import Litestar, get
-        from litestar.di import Provide
-
-        from tests.conftest import get_handler_from_app
 
         def provide_role() -> str:
             return "admin"
@@ -353,10 +341,6 @@ class TestExecutor:
         """When a handler actually declares a request-scoped dep, the error
         must name the dep and mention request context.
         """
-        from litestar import Litestar, get
-        from litestar.di import Provide
-
-        from tests.conftest import get_handler_from_app
 
         def broken_db_session() -> str:
             msg = "needs a real request scope"
@@ -378,6 +362,44 @@ class TestExecutor:
         message = str(exc_info.value)
         assert "db_session" in message
         assert "request context" in message
+
+    @pytest.mark.asyncio
+    async def test_generator_dependency_is_rejected(self) -> None:
+        """Generator-based providers are rejected upfront without running.
+
+        A generator provider expresses a setup/teardown lifecycle
+        (``yield resource`` → cleanup). Outside a real request scope we
+        have no way to drive the teardown half deterministically, so we
+        must refuse to invoke these providers at all. Verifies that:
+
+        1. The provider is NEVER called (no setup side-effects leak).
+        2. The error names the offending dependency.
+        3. The error mentions "request context" so users understand why.
+        """
+        setup_was_called = False
+
+        def provide_session() -> Any:
+            nonlocal setup_was_called
+            setup_was_called = True
+            yield "session-value"
+
+        @get("/items", sync_to_thread=False)
+        def list_items(session: str) -> dict[str, str]:
+            return {"db": session}
+
+        app = Litestar(
+            route_handlers=[list_items],
+            dependencies={"session": Provide(provide_session)},
+        )
+        handler = get_handler_from_app(app, "/items", "GET")
+
+        with pytest.raises(NotCallableInCLIContextError) as exc_info:
+            await execute_tool(handler, app, {})
+
+        message = str(exc_info.value)
+        assert "session" in message
+        assert "request context" in message
+        assert setup_was_called is False, "generator provider setup ran — it must be rejected before invocation"
 
 
 class TestNotCallableInCLIContextError:

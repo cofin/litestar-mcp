@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any, cast
 from litestar import Litestar
 from litestar.exceptions import ImproperlyConfiguredException
 from litestar.handlers.base import BaseRouteHandler
-from litestar.utils.compat import async_next
 from litestar.utils.helpers import get_name
 from litestar.utils.sync import ensure_async_callable
 
@@ -80,6 +79,18 @@ async def _call_provider_without_connection(
     supply — we raise ``NotCallableInCLIContextError`` naming the dep.
     """
     provide = dependency.provide
+
+    # Generator-based providers express a setup/teardown lifecycle
+    # (``yield resource`` → cleanup after yield). In a real request the
+    # cleanup is driven by Litestar's ``DependencyCleanupGroup`` when the
+    # response finishes. MCP tool execution has no such lifecycle, so
+    # running the setup side-effect would leave teardown to interpreter
+    # GC — nondeterministic, potentially after the MCP response has
+    # already been returned. Reject upfront, before invoking the provider,
+    # so no side effects leak.
+    if provide.has_sync_generator_dependency or provide.has_async_generator_dependency:
+        raise NotCallableInCLIContextError(handler_name, dependency.key)
+
     parsed_sig = provide.parsed_fn_signature
 
     kwargs: dict[str, Any] = {}
@@ -93,23 +104,9 @@ async def _call_provider_without_connection(
             raise NotCallableInCLIContextError(handler_name, dependency.key)
 
     try:
-        value = await provide(**kwargs)
-    except NotCallableInCLIContextError:
-        raise
+        return await provide(**kwargs)
     except Exception as e:
         raise NotCallableInCLIContextError(handler_name, dependency.key) from e
-
-    # Generator dependencies: pull the first value. We don't manage a
-    # DependencyCleanupGroup the way the normal request pipeline does, so
-    # cleanup happens at interpreter GC. For short-lived MCP tool calls
-    # this is acceptable; handlers needing precise teardown should not be
-    # MCP-callable anyway.
-    if provide.has_sync_generator_dependency:
-        value = next(value)
-    elif provide.has_async_generator_dependency:
-        value = await async_next(value)
-
-    return value
 
 
 async def _resolve_dependencies_via_litestar(
