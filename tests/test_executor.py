@@ -286,6 +286,34 @@ class TestExecutor:
             "db_engine provider was called despite handler not declaring it"
         )
 
+    @pytest.mark.asyncio
+    async def test_unused_plugin_dependency_with_handler_args(self) -> None:
+        """Same registry as #19 scenario, but handler also takes a tool arg.
+
+        Ensures the fix doesn't accidentally drop or rename real parameters.
+        """
+        from litestar import Litestar, get
+        from litestar.di import Provide
+
+        from tests.conftest import get_handler_from_app
+
+        def broken_db_engine() -> str:
+            msg = "should not be called"
+            raise RuntimeError(msg)
+
+        @get("/greet", sync_to_thread=False)
+        def greet(name: str) -> dict[str, str]:
+            return {"hello": name}
+
+        app = Litestar(
+            route_handlers=[greet],
+            dependencies={"db_engine": Provide(broken_db_engine, sync_to_thread=False)},
+        )
+        handler = get_handler_from_app(app, "/greet", "GET")
+
+        result = await execute_tool(handler, app, {"name": "Alice"})
+        assert result == {"hello": "Alice"}
+
 
 class TestNotCallableInCLIContextError:
     """Test suite for NotCallableInCLIContextError exception."""
