@@ -1,7 +1,6 @@
 """Tests for the executor module."""
 
 from typing import Any
-from unittest.mock import AsyncMock
 
 import pytest
 from litestar.di import Provide
@@ -56,15 +55,18 @@ class TestExecutor:
 
     @pytest.mark.asyncio
     async def test_cli_context_limitation_request_dependency(self) -> None:
-        """Test that handlers requiring request-scoped dependencies fail in CLI context."""
+        """Handlers declaring request-scoped framework kwargs fail in MCP context.
 
-        def request_dependent_handler(request: Any, user_id: int) -> dict[str, Any]:
+        Litestar's KwargsModel marks `request` (and friends) as reserved
+        kwargs, which the executor then detects via expected_reserved_kwargs
+        — no monkey-patching needed.
+        """
+        from litestar import Request
+
+        def request_dependent_handler(request: Request[Any, Any, Any], user_id: int) -> dict[str, Any]:
             return {"user_id": user_id, "path": request.url.path}
 
         app, handler = create_app_with_handler(request_dependent_handler)
-
-        # Mock the resolve_dependencies to return request as a dependency
-        handler.resolve_dependencies = lambda: {"request": AsyncMock()}  # type: ignore[method-assign]
 
         with pytest.raises(NotCallableInCLIContextError) as exc_info:
             await execute_tool(handler, app, {"user_id": 123})
@@ -283,9 +285,7 @@ class TestExecutor:
         result = await execute_tool(handler, app, {})
 
         assert result == {"status": "ok"}
-        assert provider_was_called is False, (
-            "db_engine provider was called despite handler not declaring it"
-        )
+        assert provider_was_called is False, "db_engine provider was called despite handler not declaring it"
 
     @pytest.mark.asyncio
     async def test_unused_plugin_dependency_with_handler_args(self) -> None:
@@ -351,7 +351,8 @@ class TestExecutor:
     @pytest.mark.asyncio
     async def test_consumed_request_scoped_dep_raises_clear_error(self) -> None:
         """When a handler actually declares a request-scoped dep, the error
-        must name the dep and mention request context."""
+        must name the dep and mention request context.
+        """
         from litestar import Litestar, get
         from litestar.di import Provide
 
@@ -377,44 +378,6 @@ class TestExecutor:
         message = str(exc_info.value)
         assert "db_session" in message
         assert "request context" in message
-
-
-    @pytest.mark.asyncio
-    async def test_cyclic_dependency_does_not_infinite_loop(self) -> None:
-        """Pathological: two providers declare each other as kwargs.
-
-        Litestar's own DI validation rejects cyclic graphs at app construction,
-        so we monkey-patch `handler.resolve_dependencies` to inject the cycle
-        post-construction (the same technique used in
-        test_cli_context_limitation_request_dependency).
-
-        The executor must:
-        1. Not hang in _collect_consumed_dependencies (visited-set guard)
-        2. Detect that the topological loop can make no progress and raise
-           NotCallableInCLIContextError — not spin forever.
-        """
-        from litestar.di import Provide
-
-        def provide_a(b: str) -> str:
-            return f"a({b})"
-
-        def provide_b(a: str) -> str:
-            return f"b({a})"
-
-        def cycle_handler(a: str) -> dict[str, str]:
-            return {"a": a}
-
-        app, handler = create_app_with_handler(cycle_handler)
-
-        # Inject the cyclic registry directly, bypassing Litestar's init-time
-        # validation (which would otherwise hang on cycles).
-        handler.resolve_dependencies = lambda: {  # type: ignore[method-assign]
-            "a": Provide(provide_a, sync_to_thread=False),
-            "b": Provide(provide_b, sync_to_thread=False),
-        }
-
-        with pytest.raises(NotCallableInCLIContextError):
-            await execute_tool(handler, app, {})
 
 
 class TestNotCallableInCLIContextError:

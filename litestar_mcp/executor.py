@@ -1,4 +1,11 @@
-"""Core execution logic for invoking MCP tools."""
+"""Core execution logic for invoking MCP tools.
+
+Dependency resolution is delegated to Litestar's own ``KwargsModel`` machinery
+so that the filtering (only handler-consumed deps), transitive walking, and
+topological ordering are all handled by the framework we're piggybacking on.
+We intentionally reach into ``litestar._kwargs`` — see upstream issue to
+promote this to a public API.
+"""
 
 import inspect
 from typing import TYPE_CHECKING, Any, cast
@@ -6,6 +13,7 @@ from typing import TYPE_CHECKING, Any, cast
 from litestar import Litestar
 from litestar.exceptions import ImproperlyConfiguredException
 from litestar.handlers.base import BaseRouteHandler
+from litestar.utils.compat import async_next
 from litestar.utils.helpers import get_name
 from litestar.utils.sync import ensure_async_callable
 
@@ -15,155 +23,16 @@ from litestar_mcp.utils import get_handler_function
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-
-def _provider_callable(provider: Any) -> "Callable[..., Any] | None":
-    """Return the underlying callable of a registry entry, or None if opaque.
-
-    Litestar `Provide` objects expose the actual callable via `.dependency`.
-    Some registry entries may already be bare callables (test doubles, edge
-    cases). Anything else we can't introspect is treated as having no deps.
-    """
-    if hasattr(provider, "dependency"):
-        return provider.dependency  # type: ignore[no-any-return]
-    if callable(provider):
-        return provider
-    return None
+    from litestar._kwargs import KwargsModel
+    from litestar._kwargs.dependencies import Dependency
 
 
-def _collect_consumed_dependencies(
-    fn: "Callable[..., Any]",
-    registry: "dict[str, Any]",
-) -> "set[str]":
-    """Return the transitive closure of dependency names consumed by fn.
-
-    Walks fn's signature parameters; for each parameter name that exists in
-    `registry`, adds it to the consumed set and recursively walks the
-    provider's own signature. Parameters not in the registry are ignored
-    (they are tool arguments, `self`, or reserved framework parameters —
-    the caller handles those separately).
-
-    Cycles are broken by tracking visited names.
-    """
-    consumed: set[str] = set()
-    stack: list[Callable[..., Any]] = [fn]
-    visited_callables: set[int] = set()
-
-    while stack:
-        current = stack.pop()
-        if id(current) in visited_callables:
-            continue
-        visited_callables.add(id(current))
-
-        try:
-            params = inspect.signature(current).parameters
-        except (TypeError, ValueError):
-            # Builtins or C-implemented callables may not be introspectable.
-            continue
-
-        for param_name in params:
-            if param_name in consumed:
-                continue
-            if param_name not in registry:
-                continue
-            consumed.add(param_name)
-            provider_fn = _provider_callable(registry[param_name])
-            if provider_fn is not None:
-                stack.append(provider_fn)
-
-    return consumed
-
-
-def _check_unsupported_dependency(dep_name: str, unsupported_cli_deps: "set[str]", fn: Any) -> None:
-    """Check if dependency is unsupported in CLI context and raise error if so."""
-    if dep_name in unsupported_cli_deps:
-        raise NotCallableInCLIContextError(get_name(fn), dep_name)
-
-
-async def _resolve_dependencies(
-    handler: BaseRouteHandler,
-    fn: Any,
-    unsupported_cli_deps: "set[str]",
-) -> "dict[str, Any]":
-    """Resolve only the dependencies the handler transitively consumes.
-
-    Mirrors Litestar's DI semantics: walks the handler signature outward,
-    calling only providers whose names appear (directly or transitively)
-    in the consumed closure. Providers are resolved dependency-first so
-    that a provider needing `foo` receives an already-resolved `foo` kwarg.
-    """
-    try:
-        registry = handler.resolve_dependencies()
-    except (AttributeError, TypeError) as e:
-        import logging
-
-        logger = logging.getLogger(__name__)
-        logger.debug("Failed to resolve dependencies for %s: %s", get_name(fn), e)
-        return {}
-
-    consumed = _collect_consumed_dependencies(fn, registry)
-
-    # Reserved-name check runs against the CONSUMED set only.
-    for dep_name in consumed:
-        _check_unsupported_dependency(dep_name, unsupported_cli_deps, fn)
-
-    # Topological resolution: repeatedly resolve any consumed provider whose
-    # own kwargs are either already resolved, not in the registry (tool args
-    # or framework params we can't satisfy), or have defaults.
-    resolved: dict[str, Any] = {}
-    remaining = set(consumed)
-
-    while remaining:
-        progress = False
-        for dep_name in list(remaining):
-            provider = registry[dep_name]
-            provider_fn = _provider_callable(provider)
-            if provider_fn is None:
-                raise NotCallableInCLIContextError(get_name(fn), dep_name)
-
-            try:
-                provider_sig = inspect.signature(provider_fn)
-            except (TypeError, ValueError):
-                provider_sig = None
-
-            kwargs: dict[str, Any] = {}
-            ready = True
-            if provider_sig is not None:
-                for p_name, p in provider_sig.parameters.items():
-                    if p_name in resolved:
-                        kwargs[p_name] = resolved[p_name]
-                    elif p_name in registry and p_name in consumed:
-                        # Dependency on another consumed provider — wait.
-                        ready = False
-                        break
-                    elif p.default is not inspect.Parameter.empty:
-                        continue
-                    else:
-                        # Unresolvable kwarg with no default — this provider
-                        # genuinely needs request context we don't have.
-                        raise NotCallableInCLIContextError(get_name(fn), dep_name)
-
-            if not ready:
-                continue
-
-            try:
-                if inspect.iscoroutinefunction(provider_fn):
-                    resolved[dep_name] = await provider_fn(**kwargs)
-                else:
-                    resolved[dep_name] = provider_fn(**kwargs)
-            except NotCallableInCLIContextError:
-                raise
-            except Exception as e:
-                raise NotCallableInCLIContextError(get_name(fn), dep_name) from e
-
-            remaining.discard(dep_name)
-            progress = True
-
-        if not progress:
-            # Cycle or unsatisfiable graph — fail with the first stuck dep.
-            stuck = next(iter(remaining))
-            raise NotCallableInCLIContextError(get_name(fn), stuck)
-
-    return resolved
+# Subset of Litestar's RESERVED_KWARGS that represent genuinely connection-
+# scoped resources we cannot satisfy outside an ASGI request. Litestar's own
+# RESERVED_KWARGS set also includes "data" and "body" (the request payload),
+# but for MCP tools the payload IS the tool arguments, so those are handled
+# by the normal tool_args mapping rather than raised as errors.
+_UNSATISFIABLE_RESERVED_KWARGS = frozenset({"request", "socket", "scope", "state", "headers", "cookies", "query"})
 
 
 class NotCallableInCLIContextError(ImproperlyConfiguredException):
@@ -184,93 +53,169 @@ class NotCallableInCLIContextError(ImproperlyConfiguredException):
         )
 
 
+def _build_kwargs_model(handler: BaseRouteHandler) -> "KwargsModel | None":
+    """Build a ``KwargsModel`` for the handler, scoped to MCP execution.
+
+    MCP tools do not have URL path parameters, so an empty dict is passed.
+    Returns ``None`` for test doubles or mocks that don't support
+    ``create_kwargs_model`` (e.g. a raw function passed in place of a
+    ``BaseRouteHandler``).
+    """
+    try:
+        return handler.create_kwargs_model(path_parameters={})  # type: ignore[arg-type]
+    except (AttributeError, TypeError):
+        return None
+
+
+async def _call_provider_without_connection(
+    dependency: "Dependency",
+    resolved: "dict[str, Any]",
+    handler_name: str,
+) -> Any:
+    """Invoke a single ``Dependency`` node without an ASGI connection.
+
+    Kwargs for the provider are drawn from already-resolved deps and the
+    provider's own defaults. Any kwarg that is neither resolved nor has a
+    default means the provider genuinely needs request context we can't
+    supply — we raise ``NotCallableInCLIContextError`` naming the dep.
+    """
+    provide = dependency.provide
+    parsed_sig = provide.parsed_fn_signature
+
+    kwargs: dict[str, Any] = {}
+    for param_name, field in parsed_sig.parameters.items():
+        if param_name in resolved:
+            kwargs[param_name] = resolved[param_name]
+        elif field.has_default:
+            # Provider's own default will apply — skip.
+            continue
+        else:
+            raise NotCallableInCLIContextError(handler_name, dependency.key)
+
+    try:
+        value = await provide(**kwargs)
+    except NotCallableInCLIContextError:
+        raise
+    except Exception as e:
+        raise NotCallableInCLIContextError(handler_name, dependency.key) from e
+
+    # Generator dependencies: pull the first value. We don't manage a
+    # DependencyCleanupGroup the way the normal request pipeline does, so
+    # cleanup happens at interpreter GC. For short-lived MCP tool calls
+    # this is acceptable; handlers needing precise teardown should not be
+    # MCP-callable anyway.
+    if provide.has_sync_generator_dependency:
+        value = next(value)
+    elif provide.has_async_generator_dependency:
+        value = await async_next(value)
+
+    return value
+
+
+async def _resolve_dependencies_via_litestar(
+    handler: BaseRouteHandler,
+    handler_name: str,
+) -> "dict[str, Any]":
+    """Resolve the handler's dependencies using Litestar's ``KwargsModel``.
+
+    ``KwargsModel.dependency_batches`` is a pre-computed, topologically
+    sorted ``list[set[Dependency]]`` containing only the providers the
+    handler actually consumes (directly or transitively). Litestar has
+    already done the filtering, cycle detection, and ordering; we only
+    need to invoke each provider in batch order.
+
+    If the handler (or any transitively consumed dep) needs a reserved
+    framework kwarg such as ``request``, ``state``, or ``scope``, we raise
+    ``NotCallableInCLIContextError`` up front using Litestar's own
+    ``expected_reserved_kwargs`` as the source of truth.
+    """
+    kwargs_model = _build_kwargs_model(handler)
+    if kwargs_model is None:
+        return {}
+
+    # Only reject on reserved kwargs that represent connection-scoped
+    # resources (request, headers, etc). Request-payload names (data, body)
+    # are handled by the tool_args mapping in execute_tool.
+    unsatisfiable = kwargs_model.expected_reserved_kwargs & _UNSATISFIABLE_RESERVED_KWARGS
+    if unsatisfiable:
+        first = next(iter(sorted(unsatisfiable)))
+        raise NotCallableInCLIContextError(handler_name, first)
+
+    resolved: dict[str, Any] = {}
+    for batch in kwargs_model.dependency_batches:
+        for dependency in batch:
+            resolved[dependency.key] = await _call_provider_without_connection(dependency, resolved, handler_name)
+
+    return resolved
+
+
 async def execute_tool(
     handler: BaseRouteHandler,
-    _app: Litestar,  # Renamed to indicate unused
+    _app: Litestar,
     tool_args: "dict[str, Any]",
 ) -> Any:
-    """Execute a given route handler with arguments, handling dependency injection.
+    """Execute a route handler as an MCP tool, delegating DI to Litestar.
 
     Args:
         handler: The route handler to execute.
-        app: The Litestar app instance.
+        _app: The Litestar app instance. Unused; retained for signature
+            stability with existing callers.
         tool_args: A dictionary of arguments to pass to the tool.
 
     Returns:
         The result of the handler execution.
 
     Raises:
+        NotCallableInCLIContextError: If the handler requires request-scoped
+            dependencies unavailable in an MCP context.
         ValueError: If required arguments are missing.
     """
     try:
         fn: Callable[..., Any] = get_handler_function(handler)
     except AttributeError:
-        # Fallback for test cases where handler might be a raw function
+        # Fallback for test cases where handler might be a raw function.
         fn = handler
 
+    handler_name = get_name(fn)
     sig = inspect.signature(fn)
 
-    # Dependencies that are not available in a CLI context
-    unsupported_cli_deps = {
-        "request",
-        "socket",
-        "headers",
-        "cookies",
-        "query",
-        "body",
-        "state",
-        "scope",
-    }
+    dependencies = await _resolve_dependencies_via_litestar(handler, handler_name)
 
-    call_args: dict[str, Any] = {}
-
-    # Resolve dependencies first - extract to helper function to reduce complexity
-    dependencies = await _resolve_dependencies(handler, fn, unsupported_cli_deps)
-
-    # Only inject resolved dependencies that the handler itself declares.
-    # Transitive deps (e.g. `role` consumed by `provide_user` but not by the
-    # handler directly) are needed for resolution but must NOT be forwarded.
+    # Forward only the deps the handler itself declares. Transitive
+    # intermediaries (e.g. `role` consumed by `provide_user` which is consumed
+    # by the handler) are resolved so providers can run, but must NOT be
+    # passed as kwargs to the handler — it only accepts its own parameters.
     handler_params = set(sig.parameters)
-    call_args.update({k: v for k, v in dependencies.items() if k in handler_params})
+    call_args: dict[str, Any] = {k: v for k, v in dependencies.items() if k in handler_params}
 
-    # Check for unsupported CLI dependencies in function parameters
-    for p_name in sig.parameters:
-        _check_unsupported_dependency(p_name, unsupported_cli_deps, fn)
-
-    # Map tool arguments to function parameters
+    # Map tool arguments to any remaining handler parameters.
     for p_name in sig.parameters:
         if p_name in call_args:
             continue
         if p_name in tool_args:
-            # Basic type coercion could be added here if needed
             call_args[p_name] = tool_args[p_name]
 
-    # Check for missing arguments
-    required_params = {
+    # Check for missing required arguments.
+    missing = {
         p_name
         for p_name, p in sig.parameters.items()
         if p.default is inspect.Parameter.empty and p_name not in call_args
     }
-    missing = required_params - set(call_args.keys())
     if missing:
         missing_args = ", ".join(sorted(missing))
         error_msg = f"Missing required arguments: {missing_args}"
         raise ValueError(error_msg)
 
-    # Execute the handler
+    # Execute the handler.
     if getattr(handler, "sync_to_thread", False):
-        # For sync handlers that need to run in thread
-
         async_fn = ensure_async_callable(fn)
         result = await async_fn(**call_args)
     elif inspect.iscoroutinefunction(fn):
-        # For async handlers
         result = cast("Any", await fn(**call_args))  # pyright: ignore[reportGeneralTypeIssues]
     else:
-        # For sync handlers
         result = fn(**call_args)
 
-    # Convert schema models to dicts for serialization
+    # Convert schema models to dicts for serialization.
     if not isinstance(result, (str, int, float, bool, list, dict, type(None))):
         return schema_dump(result)
 
