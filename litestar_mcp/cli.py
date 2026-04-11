@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import inspect
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 from litestar.cli._utils import LitestarGroup
@@ -17,6 +18,19 @@ try:
     import rich_click as click
 except ImportError:  # pragma: no cover
     import click  # type: ignore[no-redef]
+
+
+# Mapping from primitive Python types to click parameter types so tool
+# handler kwargs get coerced correctly when passed on the command line
+# (without this, click defaults to ``str`` and ``add(a=2, b=3)`` would
+# evaluate to ``"23"`` rather than ``5``).
+_PRIMITIVE_CLICK_TYPES: "dict[type, Any]" = {
+    int: click.INT,
+    float: click.FLOAT,
+    bool: click.BOOL,
+    str: click.STRING,
+    Path: click.Path(path_type=Path),  # type: ignore[call-overload]
+}
 
 if TYPE_CHECKING:
     from litestar import Litestar
@@ -56,7 +70,7 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
 
     def list_commands(self, ctx: click.Context) -> list[str]:  # pragma: no cover
         """List the names of all discovered tools and resources."""
-        app: Litestar = ctx.obj.app
+        app = _litestar_app_from_ctx(ctx)
         try:
             plugin = get_mcp_plugin(app)
             # Include both tools and resources
@@ -67,7 +81,7 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
 
     def get_command(self, ctx: click.Context, cmd_name: str) -> Optional[click.Command]:  # pragma: no cover
         """Create a click.Command for a specific tool or resource by its name."""
-        app: Litestar = ctx.obj.app
+        app = _litestar_app_from_ctx(ctx)
         try:
             plugin = get_mcp_plugin(app)
         except RuntimeError:
@@ -108,18 +122,23 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
                 "required": param.default is inspect.Parameter.empty,
             }
 
+            click_type = _PRIMITIVE_CLICK_TYPES.get(annotation)
+            if click_type is not None:
+                option_kwargs["type"] = click_type
+
             # For boolean parameters with defaults, create flags instead of options
             if annotation is bool and param.default is not inspect.Parameter.empty:
                 option_kwargs["is_flag"] = True
                 option_kwargs["default"] = param.default
                 option_kwargs.pop("required", None)  # Flags can't be required
+                option_kwargs.pop("type", None)
 
             params.append(click.Option([f"--{param.name}"], **option_kwargs))  # pyright: ignore
 
         @click.pass_context
         def callback(ctx: click.Context, /, **kwargs: Any) -> None:
             """The actual command callback that executes the tool."""
-            app: Litestar = ctx.obj.app
+            app = _litestar_app_from_ctx(ctx)
 
             # Parse JSON strings
             parsed_kwargs: dict[str, Any] = _parse_cli_kwargs(kwargs)
@@ -150,11 +169,27 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
         )
 
 
+def _litestar_app_from_ctx(ctx: "click.Context") -> "Litestar":
+    """Return the Litestar app from the click context, whatever its shape.
+
+    The parent ``mcp_group`` callback mutates ``ctx.obj`` from Litestar's
+    ``LitestarEnv`` into a ``dict`` to cache the resolved MCP plugin.
+    Downstream ``ToolExecutor`` code and sub-commands need the ``Litestar``
+    instance in both shapes.
+    """
+    obj = ctx.obj
+    if isinstance(obj, dict):
+        return obj["app"]  # type: ignore[no-any-return]
+    return obj.app  # type: ignore[no-any-return]
+
+
 @click.group(cls=LitestarGroup, name="mcp")
 def mcp_group(ctx: "click.Context") -> None:
     """Manage MCP tools and resources."""
-    plugin = get_mcp_plugin(ctx.obj.app)
-    ctx.obj = {"app": ctx.obj, "plugin": plugin}
+    env = ctx.obj
+    app = env.app if not isinstance(env, dict) else env["app"]
+    plugin = get_mcp_plugin(app)
+    ctx.obj = {"app": app, "env": env, "plugin": plugin}
 
 
 @mcp_group.command(name="list-tools")  # type: ignore[untyped-decorator]
