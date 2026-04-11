@@ -342,3 +342,19 @@ class TestTransportAwareExecution:
         parsed = json.loads(result["result"]["content"][0]["text"])
         assert parsed == {"session_id": "session-1"}
         assert lifecycle == ["setup", "teardown"], f"cleanup did not run: {lifecycle}"
+
+    def test_http_path_injects_real_request(self) -> None:
+        """Tools may declare ``request: Request`` on the HTTP path."""
+
+        @get("/meta", opt={"mcp_tool": "request_meta"})
+        async def request_meta(request: Request[Any, Any, Any]) -> dict[str, Any]:
+            return {"path": request.url.path, "method": request.method}
+
+        app = Litestar(plugins=[LitestarMCP()], route_handlers=[request_meta])
+        client = TestClient(app=app)
+
+        result = _rpc(client, "tools/call", {"name": "request_meta", "arguments": {}})
+        assert "error" not in result, f"unexpected error: {result.get('error')}"
+        parsed = json.loads(result["result"]["content"][0]["text"])
+        assert parsed["path"] == "/mcp"
+        assert parsed["method"] == "POST"
