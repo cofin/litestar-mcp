@@ -1,44 +1,54 @@
 """Basic Litestar MCP Plugin Example.
 
-This example demonstrates the simplest possible integration of the Litestar MCP Plugin.
-It shows how to add MCP capabilities to any Litestar application with just 3 lines of code.
+This example demonstrates the simplest possible integration of the Litestar
+MCP Plugin. It shows how to mark one route as an MCP *tool*, one as an MCP
+*resource*, and leave the rest of the API untouched.
 
-The MCP plugin exposes your application's metadata through REST endpoints that AI models
-can use to understand and interact with your API.
+MCP is served as JSON-RPC 2.0 over a single ``POST /mcp`` endpoint. Tool
+execution and resource reads are JSON-RPC method calls, not REST paths.
 """
+
+import math
+from typing import Any
 
 from litestar import Litestar, get
 
-from litestar_mcp import LitestarMCP, MCPConfig
+from litestar_mcp import LitestarMCP
 
 
 @get("/")
-async def hello() -> dict[str, str]:
-    """A simple greeting endpoint."""
-    return {"message": "Hello from Litestar!"}
+async def root() -> dict[str, str]:
+    """Root endpoint — not exposed to MCP."""
+    return {"message": "Welcome to the Basic Litestar MCP Plugin Example!"}
+
+
+@get("/add/{a:int}/{b:int}", mcp_tool="add")
+async def add(a: int, b: int) -> dict[str, int]:
+    """Add two integers — exposed as MCP tool.
+
+    MCP tools are *executable* operations. Path and query parameters become
+    the tool's input schema automatically.
+    """
+    return {"a": a, "b": b, "result": a + b}
+
+
+@get("/pi", mcp_resource="pi")
+async def pi() -> dict[str, Any]:
+    """Return the value of π — exposed as MCP resource.
+
+    MCP resources are *read-only* data that clients can cache. This handler
+    has no parameters, which is typical for resources.
+    """
+    return {"name": "pi", "value": math.pi, "description": "The ratio of a circle's circumference to its diameter."}
 
 
 @get("/status")
 async def status() -> dict[str, str]:
-    """API status endpoint."""
+    """Plain health endpoint — not exposed to MCP."""
     return {"status": "healthy", "version": "1.0.0"}
 
 
-# Step 1: Create MCP configuration (optional - uses defaults if not provided)
-mcp_config = MCPConfig(
-    server_name="Hello World API",  # Name shown to AI models
-    debug_mode=True,  # Enables /mcp/debug endpoint for development
-)
-
-# Step 2: Add LitestarMCP to your Litestar app
 app = Litestar(
-    route_handlers=[hello, status],
-    plugins=[LitestarMCP(mcp_config)],  # This enables MCP integration!
+    route_handlers=[root, add, pi, status],
+    plugins=[LitestarMCP()],  # This enables MCP integration!
 )
-
-# That's it! Your app now exposes MCP endpoints at /mcp/*
-
-if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(app, host="127.0.0.1", port=8000, reload=True)
