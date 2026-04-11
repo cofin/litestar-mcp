@@ -36,6 +36,12 @@ All examples require the base dependencies:
 uv add litestar uvicorn
 ```
 
+The advanced example also requires SQLite support via ``advanced-alchemy``:
+
+```bash
+uv add advanced-alchemy aiosqlite
+```
+
 ### 2. Running Examples
 
 Each example directory contains:
@@ -44,7 +50,7 @@ Each example directory contains:
 - `README.md` - Detailed setup instructions
 
 ```bash
-cd examples/basic/
+cd docs/examples/basic/
 uv run python main.py
 ```
 
@@ -120,7 +126,7 @@ app = Litestar(
 Begin with the basic example to understand core concepts:
 
 ```bash
-cd examples/basic/
+cd docs/examples/basic/
 uv run python main.py
 ```
 
@@ -161,6 +167,7 @@ app = Litestar(
 
 ```bash
 uv add litestar uvicorn
+uv add advanced-alchemy aiosqlite  # needed for docs/examples/advanced/
 ```
 
 **MCP endpoints not working**: Check that the plugin is properly added to your Litestar app

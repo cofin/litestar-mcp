@@ -7,14 +7,14 @@ This section provides links to the example applications and code snippets demons
 Available Examples
 ------------------
 
-The examples are located in the ``examples/`` directory of the project repository:
+The examples are located in the ``docs/examples/`` directory of the project repository:
 
 Basic Example
 ~~~~~~~~~~~~~
 
 The basic example demonstrates minimal MCP integration:
 
-- **Location**: ``examples/basic/``
+- **Location**: ``docs/examples/basic/``
 - **Features**: Simple plugin setup with marked routes
 - **Demonstrates**: Tool and resource exposure through route marking
 
@@ -25,9 +25,9 @@ Advanced Example
 
 The advanced example shows more complex usage patterns:
 
-- **Location**: ``examples/advanced/``
-- **Features**: Complex route handlers, dependency injection, error handling
-- **Demonstrates**: Real-world integration patterns
+- **Location**: ``docs/examples/advanced/``
+- **Features**: SQLite persistence, dependency injection, CRUD-style MCP tools
+- **Demonstrates**: Real-world integration patterns with ``advanced-alchemy``
 
 Code Snippets
 -------------
@@ -78,7 +78,7 @@ To run any of the examples:
 .. code-block:: bash
 
     # Navigate to example directory
-    cd examples/basic/
+    cd docs/examples/basic/
 
     # Run with uv
     uv run python main.py

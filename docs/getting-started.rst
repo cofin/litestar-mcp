@@ -137,9 +137,10 @@ The plugin automatically provides one built-in resource:
 Examples
 --------
 
-See the ``examples/`` directory for complete working examples:
+See the ``docs/examples/`` directory for complete working examples:
 
-- ``examples/basic/`` - Simple integration with marked routes
+- ``docs/examples/basic/`` - Simple integration with marked routes
+- ``docs/examples/advanced/`` - SQLite-backed task management with dependency injection
 
 Next Steps
 ----------

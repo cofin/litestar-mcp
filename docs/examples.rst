@@ -14,7 +14,7 @@ This section covers the example applications included with Litestar MCP.
 Basic Example
 =============
 
-Location: ``examples/basic/``
+Location: ``docs/examples/basic/``
 
 A minimal "Hello World" application that demonstrates:
 
@@ -40,7 +40,7 @@ A minimal "Hello World" application that demonstrates:
 
 .. code-block:: bash
 
-    cd examples/basic/
+    cd docs/examples/basic/
     uv run python main.py
 
 **Available endpoints:**
@@ -53,66 +53,81 @@ A minimal "Hello World" application that demonstrates:
 Advanced Example
 ================
 
-Location: ``examples/advanced/``
+Location: ``docs/examples/advanced/``
 
-A memory utility application that demonstrates:
+A SQLite-backed task management application that demonstrates:
 
-- Custom resource handlers
-- Custom tool handlers
-- SQLite integration
-- AI-usable memory system
+- SQLite persistence via ``advanced-alchemy``
+- Dependency injection for MCP tools and resources
+- CRUD operations exposed through MCP-marked Litestar routes
+- Real-world application structure with a small service layer
 
 **Features:**
 
-- Save text memories with tags
-- Retrieve memories by ID
-- Search memories by tags
-- Custom MCP tools for AI interaction
+- Persist tasks in SQLite with ``advanced-alchemy``
+- Retrieve task metadata through an MCP resource
+- List, create, complete, and delete tasks through MCP tools
+- Share the same injected service across tools and resources
 
 .. code-block:: python
 
-    from litestar_mcp.handlers import CustomResourceHandler, CustomToolHandler
+    from advanced_alchemy.extensions.litestar import SQLAlchemyAsyncConfig
+    from litestar import get
+    from litestar.di import Provide
 
-    class MemoryResourceHandler(CustomResourceHandler):
-        async def get_content(self, app, resource_name):
-            memories = search_memories(limit=50)
-            return {"memories": [memory.dict() for memory in memories]}
+    async def provide_task_service() -> TaskService:
+        await ensure_database_ready()
+        return TaskService()
 
-    class MemoryToolHandler(CustomToolHandler):
-        async def execute(self, app, tool_name, arguments):
-            if tool_name == "save_memory":
-                content = arguments.get("content")
-                memory = save_memory(content)
-                return ToolResult(success=True, data=memory.dict())
+    @get(
+        "/api/info",
+        mcp_resource="api_info",
+        dependencies={"task_service": Provide(provide_task_service)},
+    )
+    async def get_api_info(task_service: TaskService) -> dict[str, Any]:
+        return {
+            "storage_backend": task_service.storage_backend,
+            "tasks_count": await task_service.count_tasks(),
+        }
 
 **Running the example:**
 
 .. code-block:: bash
 
-    cd examples/advanced/
+    cd docs/examples/advanced/
     uv run python main.py
+
+**Dependencies:**
+
+- ``litestar``
+- ``uvicorn``
+- ``advanced-alchemy``
+- ``aiosqlite``
 
 **Custom MCP Tools:**
 
-- ``save_memory`` - Save a new memory with optional tags
-- ``get_memory`` - Retrieve a specific memory by ID
-- ``search_memories`` - Search memories by tags or get recent memories
+- ``list_tasks`` - List stored tasks with optional completion filtering
+- ``get_task`` - Retrieve a specific task by ID
+- ``create_task`` - Create a new task
+- ``complete_task`` - Mark a task as completed
+- ``delete_task`` - Delete a specific task
 
 **Custom MCP Resources:**
 
-- ``memories`` - Access all stored memories
+- ``api_info`` - Inspect API metadata and SQLite-backed storage details
+- ``task_schema`` - Read the task schema exposed to MCP clients
 
-**Testing the Memory System:**
+**Testing the Task System:**
 
 .. code-block:: bash
 
-    # Save a memory via MCP tool
-    curl -X POST http://127.0.0.1:8000/mcp/tools/save_memory \\
+    # Create a task via MCP tool
+    curl -X POST http://127.0.0.1:8000/mcp/tools/create_task \\
       -H 'Content-Type: application/json' \\
-      -d '{"content": "Important meeting note", "tags": "work,meeting"}'
+      -d '{"title": "Write release notes", "description": "Summarize the latest changes"}'
 
-    # Get all memories via MCP resource
-    curl http://127.0.0.1:8000/mcp/resources/memories
+    # Inspect SQLite-backed API metadata via MCP resource
+    curl http://127.0.0.1:8000/mcp/resources/api_info
 
 Example Use Cases
 =================
