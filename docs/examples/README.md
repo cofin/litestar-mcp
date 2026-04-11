@@ -1,34 +1,49 @@
 # Litestar MCP Plugin Examples
 
-This directory contains examples demonstrating the Litestar MCP Plugin integration with practical usage patterns.
+Two runnable example applications demonstrating how to expose Litestar routes as Model Context Protocol (MCP) tools and resources.
+
+> **How MCP is served:** `LitestarMCP` mounts a single JSON-RPC 2.0 endpoint at `POST /mcp`. Tool calls and resource reads are JSON-RPC *methods* (`tools/call`, `resources/read`), **not** REST paths. You will not find `GET /mcp/tools` or `GET /mcp/resources/<name>` — those don't exist.
 
 ## Examples Overview
 
-### 📁 basic/
+### 📁 `docs/examples/basic/`
 
-**Hello World Example**
+**Hello-World, one of each primitive**
 
-- ✅ Minimal MCP plugin setup (just 3 lines!)
-- ✅ Simple REST API endpoints
-- ✅ OpenAPI schema access via MCP
-- ✅ Shows how to mark routes for MCP exposure
+- One MCP **tool** (`add`) — executable, input schema derived from path params
+- One MCP **resource** (`pi`) — static, cacheable, no parameters
+- One plain route (`/status`) — demonstrates that not every endpoint needs MCP
+- Default `LitestarMCP()` config, no custom plumbing
 
-**Best for**: Getting started, understanding core concepts
+**Best for:** Getting started. Understanding the tool-vs-resource distinction in <50 lines.
 
-### 📁 advanced/
+### 📁 `docs/examples/advanced/`
 
-**Task Management API Example**
+**SQLite-backed task management, modeled on advanced-alchemy's upstream Litestar example**
 
-- ✅ Multiple MCP tools for CRUD operations
-- ✅ MCP resources for schemas and API info
-- ✅ Mix of GET, POST, and DELETE endpoints
-- ✅ Demonstrates both tools and resources in a practical context
+- CRUD tools (`list_tasks`, `get_task`, `create_task`, `complete_task`, `delete_task`) backed by SQLite via `advanced-alchemy`
+- Per-request `TaskService` wired through `providers.create_service_dependencies` — the same dependency resolves for regular HTTP handlers *and* for MCP tool calls
+- Static `api_info` resource (cacheable) + generated `task_schema` resource (from `Task.model_json_schema()`)
+- Pagination, title search, and `completedIn` collection filtering through AA's filter dependencies
+- Pydantic schemas — `app.type_encoders` picked up automatically via Litestar's auto-discovered `PydanticPlugin`
 
-**Best for**: Learning comprehensive MCP integration patterns
+**Best for:** Real-world patterns — dependency injection, service layers, controllers, persistent state.
 
-## Quick Start Guide
+## Feature Matrix
 
-### 1. Setup
+| Feature                                 | Basic | Advanced |
+| --------------------------------------- | :---: | :------: |
+| `LitestarMCP` plugin integration        |   ✅  |    ✅    |
+| Built-in `openapi` resource             |   ✅  |    ✅    |
+| Route marking (`mcp_tool` / `mcp_resource`) | ✅ |    ✅    |
+| MCP tool with input parameters          |   ✅  |    ✅    |
+| Multiple tools / resources              |   —   |    ✅    |
+| Dependency injection into MCP handlers  |   —   |    ✅    |
+| SQLite persistence via advanced-alchemy |   —   |    ✅    |
+| Controllers + service layer             |   —   |    ✅    |
+| Pagination / search / collection filters |  —  |    ✅    |
+
+## Setup
 
 All examples require the base dependencies:
 
@@ -36,171 +51,149 @@ All examples require the base dependencies:
 uv add litestar uvicorn
 ```
 
-The advanced example also requires SQLite support via ``advanced-alchemy``:
+The advanced example additionally needs:
 
 ```bash
-uv add advanced-alchemy aiosqlite
+uv add advanced-alchemy aiosqlite pydantic
 ```
 
-### 2. Running Examples
+## Running
 
-Each example directory contains:
+Both examples are serve-only ASGI apps — `main.py` only constructs `app`, it doesn't call `uvicorn.run`. Start them with `uvicorn` directly:
 
-- `main.py` - The application code
-- `README.md` - Detailed setup instructions
+### Basic example
 
 ```bash
 cd docs/examples/basic/
-uv run python main.py
+uv run uvicorn main:app --reload
 ```
 
-## MCP Features Demonstrated
+Useful URLs once it's up:
 
-The current implementation provides:
+- `http://127.0.0.1:8000/` — plain root
+- `http://127.0.0.1:8000/status` — plain health route (not MCP)
+- `http://127.0.0.1:8000/schema/swagger` — Litestar-generated API docs
+- `POST http://127.0.0.1:8000/mcp` — MCP JSON-RPC 2.0 endpoint (tools + resources)
 
-| Feature | Basic | Advanced |
-|---------|-------|----------|
-| Plugin integration | ✅ | ✅ |
-| OpenAPI resource | ✅ | ✅ |
-| Route marking with kwargs | ✅ | ✅ |
-| MCP endpoints | ✅ | ✅ |
-| Multiple MCP tools | - | ✅ |
-| Multiple MCP resources | - | ✅ |
-| CRUD operations via MCP | - | ✅ |
+Confirm the MCP surface:
+
+```bash
+# List tools (JSON-RPC)
+curl -X POST http://127.0.0.1:8000/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+
+# Call the add tool
+curl -X POST http://127.0.0.1:8000/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"add","arguments":{"a":2,"b":3}}}'
+
+# Read the pi resource
+curl -X POST http://127.0.0.1:8000/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{"uri":"litestar://pi"}}'
+```
+
+Plain (non-MCP) routes are served normally:
+
+```bash
+curl http://127.0.0.1:8000/          # root
+curl http://127.0.0.1:8000/status    # plain health route
+```
+
+### Advanced example
+
+```bash
+cd docs/examples/advanced/
+uv run uvicorn main:app --reload
+```
+
+The database (`db.sqlite3`) is created and seeded on first startup via `on_startup=[seed_initial_tasks]`.
+
+Useful URLs once it's up:
+
+- `http://127.0.0.1:8000/` — plain root
+- `http://127.0.0.1:8000/health` — plain health route (not MCP)
+- `http://127.0.0.1:8000/schema/swagger` — Litestar-generated API docs for the task CRUD surface
+- `http://127.0.0.1:8000/tasks` — regular HTTP access to the same handlers that back the MCP tools (pagination, title search, and `?completedIn=true|false` all work here)
+- `POST http://127.0.0.1:8000/mcp` — MCP JSON-RPC 2.0 endpoint
+
+See `docs/examples.rst` for the full tool/resource catalog and sample JSON-RPC payloads.
 
 ## How Route Marking Works
 
-Mark your routes to expose them via MCP:
+Mark a handler with `mcp_tool=` (executable) or `mcp_resource=` (readable) to expose it through MCP. Unknown kwargs on Litestar's route decorators land on `handler.opt`, where the plugin discovers them:
 
 ```python
-from litestar import get, post
+from litestar import Litestar, get
 from litestar_mcp import LitestarMCP
 
-# Expose as MCP tool (executable)
+
+# Expose as an MCP tool — clients invoke this via tools/call
 @get("/users", mcp_tool="list_users")
-async def get_users() -> list[dict]:
-    """List users - executable via MCP."""
+async def list_users() -> list[dict]:
     return [{"id": 1, "name": "Alice"}]
 
-# Expose as MCP resource (readable)
+
+# Expose as an MCP resource — clients read this via resources/read
 @get("/schema", mcp_resource="user_schema")
-async def get_user_schema() -> dict:
-    """User schema - readable via MCP."""
+async def user_schema() -> dict:
     return {"type": "object", "properties": {}}
 
-# Regular route - not exposed to MCP
+
+# Regular route — not exposed to MCP
 @get("/health")
 async def health_check() -> dict:
     return {"status": "ok"}
 
+
 app = Litestar(
-    route_handlers=[get_users, get_user_schema, health_check],
-    plugins=[LitestarMCP()]
+    route_handlers=[list_users, user_schema, health_check],
+    plugins=[LitestarMCP()],
 )
 ```
 
-## Common MCP Interactions
+The equivalent, more explicit form — useful inside `Controller` classes or when you already pass an `opt` dict — is `@get("/users", opt={"mcp_tool": "list_users"})`. Both work; the plugin reads from `handler.opt` either way.
 
-### Exploring the Application
+### Tool vs resource: which do I want?
 
-> **AI**: "What's available in this application?"
->
-> **Response**: *AI can access the OpenAPI resource to understand all endpoints*
+| Use a **resource** (`mcp_resource=...`) for | Use a **tool** (`mcp_tool=...`) for |
+| ------------------------------------------- | ----------------------------------- |
+| Read-only data the client may cache         | Executable operations and mutations |
+| Schemas, metadata, static configuration     | Queries that take input parameters  |
+| Calls that take no parameters               | Anything that changes state         |
 
-### Using Marked Routes
+## Configuration
 
-> **AI**: "List the users in the system"
->
-> **Response**: *AI can execute the `list_users` tool if the route was marked with `mcp_tool`*
-
-### Accessing Schemas
-
-> **AI**: "What's the structure of user data?"
->
-> **Response**: *AI can read the `user_schema` resource if the route was marked with `mcp_resource`*
-
-## Development Workflow
-
-### 1. Start Simple
-
-Begin with the basic example to understand core concepts:
-
-```bash
-cd docs/examples/basic/
-uv run python main.py
-```
-
-### 2. Build Your Own
-
-Use the basic example as a template:
+The plugin accepts `MCPConfig` for overrides:
 
 ```python
-from litestar import Litestar, get
 from litestar_mcp import LitestarMCP, MCPConfig
 
-# Mark routes you want exposed to MCP
-@get("/data", mcp_tool="get_data")
-async def get_data() -> dict:
-    return {"data": "example"}
-
-@get("/info", mcp_resource="app_info")
-async def get_info() -> dict:
-    return {"name": "My App", "version": "1.0"}
-
-# Configure the plugin
-config = MCPConfig(
-    name="My Application",
-    base_path="/mcp"
-)
-
 app = Litestar(
-    route_handlers=[get_data, get_info],
-    plugins=[LitestarMCP(config)]
+    route_handlers=[...],
+    plugins=[
+        LitestarMCP(
+            MCPConfig(
+                name="My API Server",   # Override server name (defaults to OpenAPI title)
+                base_path="/mcp",       # Change the JSON-RPC endpoint mount path
+                include_in_schema=False,  # Keep /mcp out of the OpenAPI schema
+            ),
+        ),
+    ],
 )
 ```
 
 ## Troubleshooting
 
-### Common Issues
+**Routes not appearing under `tools/list` or `resources/list`** — make sure the handler is registered in `route_handlers` *and* carries `mcp_tool=` / `mcp_resource=` (or the `opt={...}` equivalent). Tool/resource discovery happens during app startup, so when driving through `TestClient`, use `with TestClient(app=app) as client:` so the ASGI lifespan fires.
 
-**Import errors**: Make sure you have all dependencies installed
+**"Tool execution failed: Unsupported type: ..."** — the MCP result encoder honors whatever type encoders Litestar has registered for the app (Pydantic is auto-discovered, msgspec/dataclass/stdlib types are built in). If you return a custom object from a tool, register a `type_encoders` entry on the `Litestar(...)` constructor.
 
-```bash
-uv add litestar uvicorn
-uv add advanced-alchemy aiosqlite  # needed for docs/examples/advanced/
-```
-
-**MCP endpoints not working**: Check that the plugin is properly added to your Litestar app
-
-**Routes not appearing in MCP**: Ensure you've marked them with `mcp_tool` or `mcp_resource` kwargs
-
-### Getting Help
-
-1. **Check MCP endpoints**: Visit `http://127.0.0.1:8000/mcp/` to see server info
-2. **Test resources**: Visit `http://127.0.0.1:8000/mcp/resources` to see available resources
-3. **Test tools**: Visit `http://127.0.0.1:8000/mcp/tools` to see available tools
-4. **Main documentation**: See the main README.md in the repository root
-
-## Configuration Options
-
-The plugin supports minimal configuration:
-
-```python
-from litestar_mcp import MCPConfig
-
-config = MCPConfig(
-    base_path="/mcp",              # Base path for MCP endpoints
-    include_in_schema=False,       # Include MCP routes in OpenAPI schema
-    name=None,                     # Override server name (uses OpenAPI title by default)
-)
-```
+**HTTP 404 on `GET /mcp/tools` or `GET /mcp/resources`** — expected. MCP is JSON-RPC 2.0 over a single `POST /mcp`; there are no per-tool / per-resource REST paths.
 
 ## Next Steps
 
-After working through these examples:
-
-1. **Read the main documentation**: See README.md in the repository root
-2. **Mark your own routes**: Add `mcp_tool` or `mcp_resource` to your endpoints
-3. **Test with AI models**: Use MCP clients to interact with your application
-
-Happy building with Litestar and MCP! 🚀
+- Start from `docs/examples/basic/` and mark one of your own routes.
+- Read the upstream advanced-alchemy pattern in `docs/examples/advanced/main.py` for DI + service-layer guidance.
+- The main docs (`docs/` or `https://docs.litestar-mcp.litestar.dev/`) cover auth, scopes, and the full plugin configuration surface.

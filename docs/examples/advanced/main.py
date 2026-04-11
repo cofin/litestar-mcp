@@ -255,17 +255,3 @@ app = Litestar(
     ),
 )
 
-if __name__ == "__main__":
-    import logging
-
-    import uvicorn
-
-    logger = logging.getLogger(__name__)
-
-    logger.info("🚀 Starting SQLite-backed Task Management API with MCP integration...")
-    logger.info("📊 API Documentation: http://127.0.0.1:8000/schema/swagger")
-    logger.info("🔧 MCP Server Info: http://127.0.0.1:8000/mcp/")
-    logger.info("📋 MCP Resources: http://127.0.0.1:8000/mcp/resources")
-    logger.info("🛠️ MCP Tools: http://127.0.0.1:8000/mcp/tools")
-
-    uvicorn.run(app, host="127.0.0.1", port=8000, reload=True)

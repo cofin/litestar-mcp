@@ -9,7 +9,6 @@ This section covers the example applications included with Litestar MCP.
    :maxdepth: 1
 
    examples/README
-   examples/basic/README
 
 Basic Example
 =============
