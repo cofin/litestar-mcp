@@ -2,10 +2,11 @@
 """MCP JSON-RPC 2.0 Streamable HTTP transport for Litestar applications."""
 
 import json
+from functools import partial
 from typing import TYPE_CHECKING, Any, Optional
 
 from litestar import Controller, MediaType, Request, Response, delete, post
-from litestar.serialization import encode_json
+from litestar.serialization import default_serializer, encode_json
 from litestar.status_codes import HTTP_200_OK, HTTP_204_NO_CONTENT, HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN
 
 from litestar_mcp.auth import validate_bearer_token
@@ -88,6 +89,15 @@ def build_jsonrpc_router(
         A configured JSONRPCRouter.
     """
     router = JSONRPCRouter()
+
+    # Serializer that honors the Litestar app's registered ``type_encoders``
+    # so tool/resource results serialize through any user- or plugin-provided
+    # encoders (notably Pydantic's, contributed by ``PydanticPlugin``).
+    app_type_encoders = getattr(app_ref, "type_encoders", None) or {}
+    mcp_serializer = partial(default_serializer, type_encoders=app_type_encoders)
+
+    def _mcp_encode(value: Any) -> str:
+        return encode_json(value, serializer=mcp_serializer).decode("utf-8")
 
     # ── initialize ────────────────────────────────────────────────────
     async def handle_initialize(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
@@ -194,7 +204,7 @@ def build_jsonrpc_router(
 
         try:
             result = await execute_tool(handler, app_ref, tool_args, connection=request)
-            result_text = encode_json(result).decode("utf-8")
+            result_text = _mcp_encode(result)
         except Exception as exc:
             raise JSONRPCErrorException(
                 JSONRPCError(code=INTERNAL_ERROR, message=f"Tool execution failed: {exc!s}")
@@ -253,7 +263,7 @@ def build_jsonrpc_router(
                     {
                         "uri": "litestar://openapi",
                         "mimeType": "application/json",
-                        "text": encode_json(openapi_schema).decode("utf-8"),
+                        "text": _mcp_encode(openapi_schema),
                     }
                 ]
             }
@@ -266,7 +276,7 @@ def build_jsonrpc_router(
         handler = discovered_resources[resource_name]
         try:
             result = await execute_tool(handler, app_ref, tool_args={})
-            result_text = encode_json(result).decode("utf-8")
+            result_text = _mcp_encode(result)
         except Exception as exc:
             raise JSONRPCErrorException(
                 JSONRPCError(code=INTERNAL_ERROR, message=f"Resource read failed: {exc!s}")
