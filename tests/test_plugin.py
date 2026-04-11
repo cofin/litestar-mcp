@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from litestar import Litestar, get, post
+from litestar import Litestar, Request, get, post
+from litestar.datastructures import State
+from litestar.di import Provide
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP
@@ -236,3 +238,46 @@ class TestLitestarMCP:
         parsed = json.loads(contents[0]["text"])
         assert parsed["config"] == "value"
         assert parsed["enabled"] is True
+
+
+class TestTransportAwareExecution:
+    """Regression tests for issue #19: MCP HTTP path must use real request scope.
+
+    Each test mirrors how real plugins (notably
+    ``advanced_alchemy.extensions.litestar.SQLAlchemyPlugin``) register
+    dependencies whose providers take framework kwargs such as ``state`` and
+    ``scope``. Prior to the fix, any such dependency failed over HTTP with
+    ``NotCallableInCLIContextError`` because the executor routed the call
+    through the connectionless resolver, which cannot satisfy framework
+    kwargs. After the fix, the HTTP path passes the live ``Request`` down and
+    Litestar's real DI machinery resolves them naturally.
+    """
+
+    def test_http_path_resolves_plugin_dep(self) -> None:
+        """Provider takes ``state: State`` — must resolve over HTTP.
+
+        Shape matches ``SQLAlchemyPlugin.provide_engine(self, state: State)``.
+        """
+
+        async def provide_engine(state: State) -> dict[str, str]:
+            # Real plugins pull their resource out of app state under a key
+            # the plugin sets during ``on_app_init``. We simulate that here.
+            return state["mcp_test_engine"]  # type: ignore[no-any-return]
+
+        @get("/products", opt={"mcp_tool": "list_products"})
+        async def list_products(db_engine: dict[str, str]) -> dict[str, Any]:
+            return {"engine_kind": db_engine["kind"]}
+
+        app = Litestar(
+            plugins=[LitestarMCP()],
+            route_handlers=[list_products],
+            dependencies={"db_engine": Provide(provide_engine)},
+            state=State({"mcp_test_engine": {"kind": "fake-engine", "url": "sqlite://:memory:"}}),
+        )
+        client = TestClient(app=app)
+
+        result = _rpc(client, "tools/call", {"name": "list_products", "arguments": {}})
+        assert "error" not in result, f"unexpected error: {result.get('error')}"
+        content = result["result"]["content"]
+        parsed = json.loads(content[0]["text"])
+        assert parsed == {"engine_kind": "fake-engine"}
