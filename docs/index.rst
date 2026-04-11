@@ -26,14 +26,14 @@ Litestar plugin for Model Context Protocol (MCP) integration
 ============================================================
 
 The Litestar MCP Plugin enables integration between Litestar web applications and the Model Context Protocol (MCP),
-allowing AI models to interact with your marked application routes through standardized REST endpoints.
+allowing AI models to interact with your marked application routes through a JSON-RPC 2.0 endpoint.
 
 Features
 --------
 
 ✨ **Simple Integration**: Mark routes with kwargs to expose them via MCP
 🔧 **Lightweight**: Minimal configuration and dependencies
-🚀 **REST-Based**: No special transport protocols required
+🚀 **Standards-Based**: Speaks MCP's JSON-RPC 2.0 protocol over a single HTTP endpoint
 📊 **OpenAPI Integration**: Automatic OpenAPI schema exposure
 🎯 **Type Safe**: Full type hints with dataclasses
 
@@ -76,11 +76,12 @@ Add MCP capabilities to your Litestar application by marking routes:
         plugins=[LitestarMCP()]
     )
 
-Your application now exposes MCP endpoints at ``/mcp/*`` that AI models can use to:
+Your application now exposes a single JSON-RPC 2.0 endpoint at ``POST /mcp``
+that AI models can use to:
 
-- 🔍 Discover marked routes via tools and resources
-- 📊 Access your application's OpenAPI schema
-- 🛠️ Execute marked tools and read marked resources
+- 🔍 Discover marked routes via ``tools/list`` and ``resources/list``
+- 📊 Access your application's OpenAPI schema via ``resources/read`` with ``uri=litestar://openapi``
+- 🛠️ Execute marked tools via ``tools/call`` and read marked resources via ``resources/read``
 
 Core Concepts
 -------------
@@ -103,7 +104,7 @@ How It Works
 1. **Mark Routes**: Add ``mcp_tool`` or ``mcp_resource`` kwargs to your route decorators
 2. **Litestar Processing**: Litestar automatically moves these kwargs into the route handler's ``opt`` dictionary
 3. **Plugin Discovery**: The plugin scans route handlers' opt dictionaries for MCP markers at app startup
-4. **MCP Exposure**: Marked routes become available through MCP REST endpoints
+4. **MCP Exposure**: Marked routes become addressable via the JSON-RPC 2.0 methods ``tools/call`` and ``resources/read``
 5. **AI Interaction**: AI models can discover and interact with your marked routes
 
 Kwargs to Opt Mechanism
@@ -122,23 +123,30 @@ Litestar automatically processes kwargs in route decorators and moves them into 
 
 The plugin discovers MCP-marked routes by scanning the ``opt`` dictionary of each route handler.
 
-Available Endpoints
--------------------
+Available JSON-RPC Methods
+--------------------------
 
-Once configured, your application exposes:
+Once configured, your application serves MCP at a single HTTP endpoint —
+``POST /mcp`` (the path is configurable via ``MCPConfig.base_path``). All
+interaction is a JSON-RPC 2.0 request with one of these ``method`` values:
 
-- ``/mcp/`` - Server information and capabilities
-- ``/mcp/resources`` - List available resources (including OpenAPI schema)
-- ``/mcp/resources/{name}`` - Get specific resource content
-- ``/mcp/tools`` - List available tools from marked routes
-- ``/mcp/tools/{name}`` - Execute a specific tool
+- ``initialize`` - Handshake, returns server info and protocol capabilities
+- ``ping`` - Liveness check
+- ``tools/list`` - Enumerate tools registered from marked routes
+- ``tools/call`` - Invoke a tool by ``name`` with its ``arguments``
+- ``resources/list`` - Enumerate resources (always includes the built-in ``openapi`` resource)
+- ``resources/read`` - Read a resource by ``uri`` (e.g. ``litestar://openapi`` or ``litestar://<marked_resource_name>``)
+
+There are no REST paths like ``GET /mcp/tools`` or ``GET /mcp/resources/<name>``;
+MCP is JSON-RPC, so the ``method`` field inside the request body dispatches
+to the right handler.
 
 What Makes This Different?
 ---------------------------
 
 - **Route-Centric**: Mark individual routes for MCP exposure using simple kwargs
 - **Minimal Setup**: Just add ``mcp_tool`` or ``mcp_resource`` kwargs to existing route handlers
-- **REST-Based**: No complex transport protocols required
+- **Standards-Compliant**: Speaks MCP's native JSON-RPC 2.0 protocol; plugs straight into any MCP client
 - **Litestar Native**: Built specifically for Litestar applications using the opt mechanism
 
 Getting Started

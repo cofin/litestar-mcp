@@ -15,4 +15,5 @@ LitestarMCP
 
    The main plugin class that implements :class:`litestar.plugins.InitPluginProtocol`.
    It discovers routes marked with ``mcp_tool`` or ``mcp_resource`` in their ``opt``
-   dictionary and exposes them through MCP-compatible REST endpoints.
+   dictionary and exposes them through a JSON-RPC 2.0 endpoint mounted at
+   ``MCPConfig.base_path`` (default ``POST /mcp``).

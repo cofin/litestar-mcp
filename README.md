@@ -1,6 +1,6 @@
 # Litestar MCP Plugin
 
-A lightweight plugin that integrates Litestar web applications with the Model Context Protocol (MCP) by exposing marked routes as MCP tools and resources through REST API endpoints.
+A lightweight plugin that integrates Litestar web applications with the Model Context Protocol (MCP) by exposing marked routes as MCP tools and resources through a JSON-RPC 2.0 endpoint.
 
 [![PyPI - Version](https://img.shields.io/pypi/v/litestar-mcp)](https://pypi.org/project/litestar-mcp/)
 [![Python Version](https://img.shields.io/pypi/pyversions/litestar-mcp)](https://pypi.org/project/litestar-mcp/)
@@ -8,16 +8,16 @@ A lightweight plugin that integrates Litestar web applications with the Model Co
 
 ## Overview
 
-This plugin automatically discovers routes marked with the `opt` attribute and exposes them as MCP-compatible REST endpoints. Routes marked with `mcp_tool="name"` become executable tools, while routes marked with `mcp_resource="name"` become readable resources.
+This plugin automatically discovers routes marked with the `opt` attribute and exposes them over MCP's native JSON-RPC 2.0 transport. Routes marked with `mcp_tool="name"` become executable tools, while routes marked with `mcp_resource="name"` become readable resources. Clients talk to a single `POST /mcp` endpoint and dispatch on the JSON-RPC `method` field (`tools/list`, `tools/call`, `resources/list`, `resources/read`).
 
 ## Features
 
-- 🚀 **Zero Dependencies** - Only requires Litestar
-- 📡 **REST API Endpoints** - No stdio transport or MCP libraries needed
+- 🚀 **Zero MCP Dependencies** - Only requires Litestar; no stdio transport or MCP SDK
+- 📡 **Standards-Compliant** - Speaks MCP's native JSON-RPC 2.0 over a single HTTP endpoint
 - 🔧 **Simple Route Marking** - Use Litestar's `opt` attribute pattern
 - 🛡️ **Type Safe** - Full type hints with dataclasses
-- 📊 **Automatic Discovery** - Routes are discovered at app initialization
-- 🎯 **OpenAPI Integration** - Server info derived from OpenAPI config
+- 📊 **Automatic Discovery** - Routes are discovered at app initialization (and, for `Controller`-hosted routes, at startup)
+- 🎯 **OpenAPI Integration** - Server info derived from OpenAPI config; OpenAPI schema exposed as a built-in resource
 
 ## Quick Start
 
@@ -126,24 +126,39 @@ async def search(query: str, limit: int = 10) -> dict:
 
 ## How It Works
 
-1. **Route Discovery**: At app initialization, the plugin scans all route handlers for the `opt` attribute
-2. **Automatic Exposure**: Routes marked with `mcp_tool` or `mcp_resource` are automatically exposed
-3. **MCP Endpoints**: The plugin adds REST endpoints under the configured base path (default `/mcp`)
-4. **Server Info**: Server name and version are derived from your OpenAPI configuration
+1. **Route Discovery**: At app initialization, the plugin scans all route handlers for the `opt` attribute. A second discovery pass runs at startup to pick up handlers contributed by `Controller` subclasses.
+2. **Automatic Exposure**: Routes marked with `mcp_tool` or `mcp_resource` are automatically exposed.
+3. **JSON-RPC Endpoint**: The plugin mounts a single `POST /mcp` handler (path configurable via `MCPConfig.base_path`) that dispatches on the JSON-RPC `method` field.
+4. **Server Info**: Server name and version are derived from your OpenAPI configuration.
 
-## MCP Endpoints
+## MCP Endpoint
 
-Once configured, your application exposes these MCP-compatible endpoints:
+MCP is JSON-RPC 2.0, not REST — the plugin serves one HTTP endpoint and dispatches internally:
 
-- `GET /mcp/` - Server info and capabilities
-- `GET /mcp/resources` - List available resources
-- `GET /mcp/resources/{name}` - Get specific resource content
-- `GET /mcp/tools` - List available tools
-- `POST /mcp/tools/{name}` - Execute a tool
+- `POST /mcp` - The only HTTP endpoint (path configurable via `MCPConfig.base_path`)
+
+Clients send JSON-RPC 2.0 requests with one of these `method` values:
+
+- `initialize` - Handshake; returns server info and protocol capabilities
+- `ping` - Liveness check
+- `tools/list` - Enumerate tools registered from marked routes
+- `tools/call` - Invoke a tool by `name` with its `arguments`
+- `resources/list` - Enumerate resources (includes the built-in `openapi` resource)
+- `resources/read` - Read a resource by `uri` (e.g. `litestar://openapi` or `litestar://<marked_resource_name>`)
+
+Example — listing tools:
+
+```bash
+curl -X POST http://localhost:8000/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+There is **no** `GET /mcp/tools` or `GET /mcp/resources/<name>`; those are REST idioms, and MCP doesn't use them.
 
 **Built-in Resources:**
 
-- `openapi` - Your application's OpenAPI schema (always available)
+- `openapi` - Your application's OpenAPI schema (always available, read via `resources/read` with `uri=litestar://openapi`)
 
 ## Configuration
 

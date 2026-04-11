@@ -37,11 +37,18 @@ The simplest way to add MCP support to your Litestar application:
         plugins=[LitestarMCP()]
     )
 
-That's it! Your application now has MCP endpoints available at:
+That's it! Your application now speaks MCP over a single JSON-RPC 2.0
+endpoint at ``POST /mcp``. Clients dispatch on the ``method`` field:
 
-- ``/mcp/`` - Server information
-- ``/mcp/resources`` - Available resources (includes OpenAPI schema)
-- ``/mcp/tools`` - Available tools (from marked routes)
+- ``initialize`` - Handshake (capabilities, server info)
+- ``tools/list`` - Enumerate tools registered from marked routes
+- ``tools/call`` - Invoke a tool by name with its arguments
+- ``resources/list`` - Enumerate resources (includes the built-in ``openapi`` resource)
+- ``resources/read`` - Read a resource by ``uri`` (e.g. ``litestar://openapi``)
+
+There is **no** ``GET /mcp/tools`` or ``GET /mcp/resources/<name>``; MCP is
+JSON-RPC, not REST, so all interaction is ``POST /mcp`` with a JSON-RPC
+envelope. See :doc:`examples` for worked ``curl`` examples.
 
 Marking Routes for MCP Exposure
 --------------------------------
@@ -113,19 +120,41 @@ Resources vs Tools
 Testing Your Integration
 ------------------------
 
-Start your application and test the MCP endpoints:
+Start your application and drive the MCP endpoint with JSON-RPC:
 
 .. code-block:: bash
 
     # Start your app
     uvicorn myapp:app --reload
 
-    # Test the MCP endpoints
-    curl http://localhost:8000/mcp/
-    curl http://localhost:8000/mcp/resources
-    curl http://localhost:8000/mcp/tools
+    # Enumerate tools
+    curl -X POST http://localhost:8000/mcp \
+      -H 'Content-Type: application/json' \
+      -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 
-You should see JSON responses with your application's MCP capabilities.
+    # Enumerate resources
+    curl -X POST http://localhost:8000/mcp \
+      -H 'Content-Type: application/json' \
+      -d '{"jsonrpc":"2.0","id":2,"method":"resources/list"}'
+
+    # Read the built-in OpenAPI resource
+    curl -X POST http://localhost:8000/mcp \
+      -H 'Content-Type: application/json' \
+      -d '{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{"uri":"litestar://openapi"}}'
+
+You should see JSON-RPC 2.0 responses describing your application's MCP
+capabilities.
+
+You can also introspect and run tools offline without starting a server
+using Litestar's CLI:
+
+.. code-block:: bash
+
+    uv run litestar --app myapp:app mcp list-tools
+    uv run litestar --app myapp:app mcp list-resources
+    uv run litestar --app myapp:app mcp run <tool-or-resource-name>
+
+See :doc:`examples` for the full CLI surface.
 
 Built-in Resources
 ------------------

@@ -19,7 +19,7 @@ Added
 - Initial implementation of the Litestar MCP Plugin
 - Route marking using ``mcp_tool`` and ``mcp_resource`` kwargs
 - Automatic discovery of marked routes via opt dictionary scanning
-- REST-based MCP endpoints (``/mcp/``, ``/mcp/tools``, ``/mcp/resources``)
+- JSON-RPC 2.0 MCP endpoint mounted at ``POST /mcp`` (path configurable via ``MCPConfig.base_path``) with ``tools/list``, ``tools/call``, ``resources/list``, and ``resources/read`` methods
 - OpenAPI schema integration and exposure as MCP resource
 - Minimal configuration with ``MCPConfig`` class
 - Support for both tools (executable functions) and resources (read-only data)
