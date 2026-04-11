@@ -281,3 +281,36 @@ class TestTransportAwareExecution:
         content = result["result"]["content"]
         parsed = json.loads(content[0]["text"])
         assert parsed == {"engine_kind": "fake-engine"}
+
+    def test_http_path_resolves_transitive_plugin_dep(self) -> None:
+        """Transitive plugin deps resolve over HTTP via KwargsModel batching.
+
+        Shape matches ``SQLAlchemyPlugin.provide_session`` / ``provide_engine``.
+        """
+
+        async def provide_engine(state: State) -> dict[str, str]:
+            return state["mcp_test_engine"]  # type: ignore[no-any-return]
+
+        async def provide_session(db_engine: dict[str, str]) -> dict[str, str]:
+            return {"session_for": db_engine["kind"]}
+
+        @get("/orders", opt={"mcp_tool": "list_orders"})
+        async def list_orders(db_session: dict[str, str]) -> dict[str, Any]:
+            return {"session": db_session["session_for"]}
+
+        app = Litestar(
+            plugins=[LitestarMCP()],
+            route_handlers=[list_orders],
+            dependencies={
+                "db_engine": Provide(provide_engine),
+                "db_session": Provide(provide_session),
+            },
+            state=State({"mcp_test_engine": {"kind": "fake-engine"}}),
+        )
+        client = TestClient(app=app)
+
+        result = _rpc(client, "tools/call", {"name": "list_orders", "arguments": {}})
+        assert "error" not in result, f"unexpected error: {result.get('error')}"
+        content = result["result"]["content"]
+        parsed = json.loads(content[0]["text"])
+        assert parsed == {"session": "fake-engine"}
