@@ -71,6 +71,8 @@ def build_jsonrpc_router(
     app_ref: Any = None,
     session_manager: "MCPSessionManager | None" = None,  # noqa: ARG001
     user_claims: "dict[str, Any] | None" = None,
+    *,
+    request: "Request[Any, Any, Any] | None" = None,
 ) -> JSONRPCRouter:
     """Build and return a JSONRPCRouter wired to MCP method handlers.
 
@@ -191,7 +193,7 @@ def build_jsonrpc_router(
                 )
 
         try:
-            result = await execute_tool(handler, app_ref, tool_args)
+            result = await execute_tool(handler, app_ref, tool_args, connection=request)
             result_text = encode_json(result).decode("utf-8")
         except Exception as exc:
             raise JSONRPCErrorException(
@@ -376,6 +378,7 @@ class MCPController(Controller):
             app_ref=request.app,
             session_manager=session_manager,
             user_claims=user_claims,
+            request=request,
         )
         result = await router.dispatch(rpc_request)
 

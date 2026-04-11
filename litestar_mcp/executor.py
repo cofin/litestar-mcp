@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
     from litestar._kwargs import KwargsModel
     from litestar._kwargs.dependencies import Dependency
+    from litestar.connection import ASGIConnection
 
 
 # Subset of Litestar's RESERVED_KWARGS that represent genuinely connection-
@@ -146,26 +147,16 @@ async def _resolve_dependencies_via_litestar(
     return resolved
 
 
-async def execute_tool(
+async def _execute_connectionless(
     handler: BaseRouteHandler,
-    _app: Litestar,
     tool_args: "dict[str, Any]",
 ) -> Any:
-    """Execute a route handler as an MCP tool, delegating DI to Litestar.
+    """Execute a tool without an ASGI connection (CLI path).
 
-    Args:
-        handler: The route handler to execute.
-        _app: The Litestar app instance. Unused; retained for signature
-            stability with existing callers.
-        tool_args: A dictionary of arguments to pass to the tool.
-
-    Returns:
-        The result of the handler execution.
-
-    Raises:
-        NotCallableInCLIContextError: If the handler requires request-scoped
-            dependencies unavailable in an MCP context.
-        ValueError: If required arguments are missing.
+    Uses Litestar's ``KwargsModel`` batching to discover and invoke
+    handler-consumed providers, but without a live request scope. Any
+    reserved framework kwarg (``request``, ``state``, ...) or generator
+    provider is rejected via :class:`NotCallableInCLIContextError`.
     """
     try:
         fn: Callable[..., Any] = get_handler_function(handler)
@@ -217,3 +208,127 @@ async def execute_tool(
         return schema_dump(result)
 
     return result  # pyright: ignore
+
+
+async def _execute_with_connection(
+    handler: BaseRouteHandler,
+    connection: "ASGIConnection[Any, Any, Any, Any]",
+    tool_args: "dict[str, Any]",
+) -> Any:
+    """Execute a tool against a live ASGI connection.
+
+    This is the HTTP MCP path. It uses Litestar's ``KwargsModel`` to:
+
+    1. Enumerate the reserved framework kwargs the handler declared
+       (``request``, ``headers``, ``cookies``, ``query``, ``state``, ``scope``)
+       via ``kwargs_model.expected_reserved_kwargs`` and satisfy them manually
+       from the connection. We deliberately skip ``data``/``body`` — the MCP
+       POST body is a JSON-RPC envelope, not the tool's input.
+    2. Resolve dependency batches against the live connection via
+       ``kwargs_model.resolve_dependencies(connection, kwargs)`` — this is
+       where plugin-registered deps (``db_engine`` / ``db_session`` / etc.)
+       actually flow in, using Litestar's own concurrent TaskGroup batching.
+    3. Run the handler inside a ``try``/``finally`` that invokes the
+       ``DependencyCleanupGroup`` returned by ``resolve_dependencies``, so
+       generator providers' teardown runs even on exceptions.
+
+    Business-logic parameters (everything that is not a plugin dep or a
+    reserved framework kwarg) come from ``tool_args``, identical to how the
+    connectionless path handles them. This keeps existing tools like
+    ``analyze(data: dict[str, Any])`` working unchanged.
+    """
+    kwargs_model = handler.create_kwargs_model(path_parameters={})  # type: ignore[arg-type]
+
+    kwargs: dict[str, Any] = {}
+    # Satisfy only the reserved framework slots the handler actually
+    # declared, and only from connection attributes that do NOT touch the
+    # request body. `data` and `body` are intentionally omitted — tool
+    # input comes from `tool_args`.
+    for reserved in kwargs_model.expected_reserved_kwargs:
+        if reserved == "request":
+            kwargs["request"] = connection
+        elif reserved == "headers":
+            kwargs["headers"] = connection.headers
+        elif reserved == "cookies":
+            kwargs["cookies"] = connection.cookies
+        elif reserved == "query":
+            kwargs["query"] = connection.query_params
+        elif reserved == "state":
+            # Mirror Litestar's own ``state_extractor``: the reserved ``state``
+            # kwarg is the app-level ``State``'s underlying dict, not the
+            # request-scoped state. Plugin providers typically read resources
+            # the plugin placed on app state during ``on_app_init``.
+            kwargs["state"] = connection.app.state._state  # noqa: SLF001
+        elif reserved == "scope":
+            kwargs["scope"] = connection.scope
+        # Any other reserved slot (data, body, socket, form, ...) is left
+        # unset — if the handler actually needs one, resolve_dependencies or
+        # the missing-arg check below will surface it clearly.
+
+    cleanup_group = await kwargs_model.resolve_dependencies(connection=connection, kwargs=kwargs)
+    try:
+        fn: Callable[..., Any] = get_handler_function(handler)
+        sig = inspect.signature(fn)
+        # Fill remaining handler parameters from the MCP tool arguments.
+        for p_name in sig.parameters:
+            if p_name in kwargs:
+                continue
+            if p_name in tool_args:
+                kwargs[p_name] = tool_args[p_name]
+        # Forward only keys that are actual handler parameters. KwargsModel
+        # may surface transitive dep values in ``kwargs`` that providers
+        # needed but the handler itself does not accept.
+        handler_params = set(sig.parameters)
+        call_args = {k: v for k, v in kwargs.items() if k in handler_params}
+        missing = {
+            p_name
+            for p_name, p in sig.parameters.items()
+            if p.default is inspect.Parameter.empty and p_name not in call_args
+        }
+        if missing:
+            error_msg = f"Missing required arguments: {', '.join(sorted(missing))}"
+            raise ValueError(error_msg)
+        if getattr(handler, "sync_to_thread", False):
+            result = await ensure_async_callable(fn)(**call_args)
+        elif inspect.iscoroutinefunction(fn):
+            result = cast("Any", await fn(**call_args))  # pyright: ignore[reportGeneralTypeIssues]
+        else:
+            result = fn(**call_args)
+    finally:
+        await cleanup_group.close()
+    if not isinstance(result, (str, int, float, bool, list, dict, type(None))):
+        return schema_dump(result)
+    return result
+
+
+async def execute_tool(
+    handler: BaseRouteHandler,
+    _app: Litestar,
+    tool_args: "dict[str, Any]",
+    *,
+    connection: "ASGIConnection[Any, Any, Any, Any] | None" = None,
+) -> Any:
+    """Execute a route handler as an MCP tool.
+
+    Args:
+        handler: The route handler to execute.
+        _app: The Litestar app instance. Unused; retained for signature
+            stability with existing callers.
+        tool_args: A dictionary of arguments to pass to the tool.
+        connection: An active ASGI connection (typically the ``Request`` for the
+            incoming MCP POST). When provided, the tool is resolved against the
+            live request scope, enabling plugin-registered dependencies and
+            generator-provider teardown. When ``None`` (the default, used by
+            the CLI), falls back to the connectionless resolver.
+
+    Returns:
+        The result of the handler execution.
+
+    Raises:
+        NotCallableInCLIContextError: If the handler requires request-scoped
+            dependencies and no connection was provided.
+        ValueError: If required arguments are missing.
+    """
+    if connection is not None:
+        return await _execute_with_connection(handler, connection, tool_args)
+    return await _execute_connectionless(handler, tool_args)
