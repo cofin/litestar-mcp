@@ -236,6 +236,18 @@ async def _execute_with_connection(
     reserved framework kwarg) come from ``tool_args``, identical to how the
     connectionless path handles them. This keeps existing tools like
     ``analyze(data: dict[str, Any])`` working unchanged.
+
+    Known semantics gap — cleanup timing:
+        In a normal Litestar route, ``DependencyCleanupGroup.close()`` is
+        invoked *after* the response has been fully sent (via the route
+        lifecycle hooks). Here we call ``close()`` inside the tool handler's
+        ``finally`` block, which fires while the outer ``POST /mcp`` route is
+        still running — i.e. BEFORE the MCP response is serialized and
+        flushed. For most providers (transaction-scoped sessions, fixture
+        resources, etc.) this is indistinguishable. Providers that observe
+        "response already sent" state — e.g. ones that commit only after
+        successful transmission — would see different timing here than in a
+        real route. Plugins affected by this can opt out of MCP callability.
     """
     kwargs_model = handler.create_kwargs_model(path_parameters={})  # type: ignore[arg-type]
 
@@ -254,10 +266,14 @@ async def _execute_with_connection(
         elif reserved == "query":
             kwargs["query"] = connection.query_params
         elif reserved == "state":
-            # Mirror Litestar's own ``state_extractor``: the reserved ``state``
-            # kwarg is the app-level ``State``'s underlying dict, not the
-            # request-scoped state. Plugin providers typically read resources
-            # the plugin placed on app state during ``on_app_init``.
+            # Mirror Litestar's own ``state_extractor`` byte-for-byte (see
+            # ``litestar/_kwargs/extractors.py::state_extractor``). The
+            # reserved ``state`` kwarg resolves to the app-level ``State``'s
+            # underlying dict, NOT the request-scoped state. Plugin providers
+            # read resources the plugin placed on app state during
+            # ``on_app_init``. Private-attribute access is intentional — we're
+            # copying the framework's own extractor; if Litestar renames
+            # ``_state``, both their code and ours break at the same time.
             kwargs["state"] = connection.app.state._state  # noqa: SLF001
         elif reserved == "scope":
             kwargs["scope"] = connection.scope
