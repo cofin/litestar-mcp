@@ -61,6 +61,16 @@ uv add advanced-alchemy aiosqlite pydantic
 
 Both examples are serve-only ASGI apps — `main.py` only constructs `app`, it doesn't call `uvicorn.run`. Start them with `uvicorn` directly:
 
+Both examples can be served two ways:
+
+```bash
+# Option A — uvicorn directly
+uv run uvicorn main:app --reload
+
+# Option B — Litestar's own CLI runner (nicer banner, --debug flag, reload)
+uv run litestar --app main:app run --reload --debug
+```
+
 ### Basic example
 
 ```bash
@@ -119,6 +129,34 @@ Useful URLs once it's up:
 - `POST http://127.0.0.1:8000/mcp` — MCP JSON-RPC 2.0 endpoint
 
 See `docs/examples.rst` for the full tool/resource catalog and sample JSON-RPC payloads.
+
+## Offline Invocation: the `litestar mcp` CLI
+
+`LitestarMCP` registers a `mcp` sub-group under Litestar's own CLI, so you can introspect and run MCP tools and resources without starting a server. This is useful for scripting, smoke tests, and quick debugging.
+
+```bash
+# Show the group help
+uv run litestar --app main:app mcp
+
+# List everything the app exposes
+uv run litestar --app main:app mcp list-tools
+uv run litestar --app main:app mcp list-resources
+
+# Run a tool — handler kwargs become --flags and are coerced to their
+# declared type (int, float, bool, str, Path). Complex types accept a JSON string.
+uv run litestar --app main:app mcp run add --a 2 --b 3
+# => {"a": 2, "b": 3, "result": 5}
+
+# Read a resource — resources have no parameters, just name them
+uv run litestar --app main:app mcp run pi
+# => {"name": "pi", "value": 3.141592653589793, "description": "..."}
+```
+
+### Limits
+
+- Tools that depend on request-scoped framework resources (`Request`, `State`, `scope`, `headers`, …) can't run offline — the CLI isn't a request context. The CLI will print a `NotCallableInCLIContextError` explaining which dependency is incompatible and ask you to invoke that tool over HTTP instead.
+- `mcp run` looks up tools *and* resources by name — you'll get an error for names not in either registry.
+- The `advanced/` example's tools all depend on a per-request `db_session` provided by `SQLAlchemyPlugin`, so most of them are HTTP-only. Run them via `POST /mcp` as shown above instead.
 
 ## How Route Marking Works
 
