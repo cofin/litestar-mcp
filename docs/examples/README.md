@@ -130,6 +130,56 @@ Useful URLs once it's up:
 
 See `docs/examples.rst` for the full tool/resource catalog and sample JSON-RPC payloads.
 
+## Interactive Debugging: MCP Inspector
+
+[`@modelcontextprotocol/inspector`](https://github.com/modelcontextprotocol/inspector) is the official Anthropic debugging UI for MCP servers. It's a browser-based tool that speaks both Streamable HTTP and legacy SSE, shows every JSON-RPC request/response in a side panel, and gives you clickable buttons for every tool/resource your server advertises. This is the fastest way to poke at a running example end-to-end from a real MCP client without touching Postman or curl.
+
+### Run it against an example
+
+Start one of the examples in one terminal (either `basic/` or `advanced/` — the steps below are identical):
+
+```bash
+cd docs/examples/basic/
+uv run uvicorn main:app --reload
+```
+
+In a second terminal, launch the Inspector — no global install needed:
+
+```bash
+npx @modelcontextprotocol/inspector
+```
+
+The Inspector prints a URL (default `http://localhost:6274`) and opens it in your browser. On the **Connect** panel:
+
+1. **Transport**: pick `Streamable HTTP` (the plugin does **not** serve the legacy SSE transport — there is no `GET /mcp` that streams `text/event-stream`).
+2. **URL**: `http://127.0.0.1:8000/mcp`.
+3. Click **Connect**.
+
+The Inspector performs the `initialize` handshake for you, stores the `mcp-session-id` response header, and then lets you browse:
+
+- **Tools** tab — every handler marked with `mcp_tool=...`. For the basic example you'll see `add`; for the advanced example you'll see `list_tasks`, `get_task`, `create_task`, `complete_task`, and `delete_task`. Each tool shows its input schema (derived from the handler signature) and gives you a form to call it.
+- **Resources** tab — every handler marked with `mcp_resource=...` plus the built-in `openapi` resource. Clicking a resource calls `resources/read` and shows the JSON payload.
+- **History / Logs** panel — every raw JSON-RPC envelope sent and received, so you can verify request shapes and see exactly what the server returned on errors.
+
+### What to click first
+
+On the basic example:
+
+- **Tools → `add` → `{"a": 2, "b": 3}` → Call Tool** — should return `{"a":2,"b":3,"result":5}`.
+- **Resources → `pi`** — should return `{"name":"pi","value":3.141592653589793,...}`.
+
+On the advanced example:
+
+- **Tools → `list_tasks` → Call Tool** — should return an `OffsetPagination` envelope with the three seeded tasks. This also proves the full DI chain (`SQLAlchemyPlugin` → `db_session` → `providers.create_service_dependencies` → `TaskService`) works over the MCP HTTP path.
+- **Tools → `create_task` → `{"data": {"title": "From Inspector", "description": "Created via MCP"}}` → Call Tool** — should return the new task. Call `list_tasks` again to see it appear.
+- **Resources → `task_schema`** — should return the Pydantic-generated JSON Schema for `Task`, including the descriptions and `maxLength` constraints declared on the model fields.
+
+### Debugging tips
+
+- The Inspector's **History** panel is the best way to catch encoder/serialization bugs — if a tool returns a type that isn't in `app.type_encoders`, you'll see the `-32603 Tool execution failed` JSON-RPC error in the log panel with the exact type name.
+- If `Connect` times out, check for the `127.0.0.1` vs `127.0.0.0` typo and that uvicorn is actually listening on the same port you're pointing at.
+- If the Inspector complains about legacy SSE, double-check you selected `Streamable HTTP` in the transport dropdown.
+
 ## Offline Invocation: the `litestar mcp` CLI
 
 `LitestarMCP` registers a `mcp` sub-group under Litestar's own CLI, so you can introspect and run MCP tools and resources without starting a server. This is useful for scripting, smoke tests, and quick debugging.

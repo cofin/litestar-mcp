@@ -145,6 +145,22 @@ Start your application and drive the MCP endpoint with JSON-RPC:
 You should see JSON-RPC 2.0 responses describing your application's MCP
 capabilities.
 
+For interactive debugging with a real MCP client, point the official
+`MCP Inspector <https://github.com/modelcontextprotocol/inspector>`_ at
+your running server — it speaks Streamable HTTP natively and gives you
+a browser UI for every tool and resource:
+
+.. code-block:: bash
+
+    # In another terminal, with uvicorn still running:
+    npx @modelcontextprotocol/inspector
+
+In the Inspector UI, select **Transport: Streamable HTTP**,
+**URL: http://127.0.0.1:8000/mcp**, click **Connect**, and you'll get
+clickable tabs for Tools, Resources, and Prompts plus a raw JSON-RPC
+log panel. See :doc:`examples` for a walk-through with the shipped
+example apps.
+
 You can also introspect and run tools offline without starting a server
 using Litestar's CLI:
 
