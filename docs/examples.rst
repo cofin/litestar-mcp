@@ -71,24 +71,48 @@ A SQLite-backed task management application that demonstrates:
 
 .. code-block:: python
 
-    from advanced_alchemy.extensions.litestar import SQLAlchemyAsyncConfig
-    from litestar import get
-    from litestar.di import Provide
-
-    async def provide_task_service() -> TaskService:
-        await ensure_database_ready()
-        return TaskService()
-
-    @get(
-        "/api/info",
-        mcp_resource="api_info",
-        dependencies={"task_service": Provide(provide_task_service)},
+    from advanced_alchemy.extensions.litestar import (
+        SQLAlchemyAsyncConfig,
+        SQLAlchemyPlugin,
+        providers,
+        repository,
+        service,
     )
-    async def get_api_info(task_service: TaskService) -> dict[str, Any]:
-        return {
-            "storage_backend": task_service.storage_backend,
-            "tasks_count": await task_service.count_tasks(),
-        }
+    from litestar import Controller, Litestar, get
+
+    class TaskService(service.SQLAlchemyAsyncRepositoryService[TaskRecord]):
+        class Repo(repository.SQLAlchemyAsyncRepository[TaskRecord]):
+            model_type = TaskRecord
+
+        repository_type = Repo
+
+
+    class TaskController(Controller):
+        path = "/tasks"
+        dependencies = providers.create_service_dependencies(
+            TaskService,
+            "task_service",
+            filters={
+                "pagination_type": "limit_offset",
+                "id_filter": int,
+                "search": "title",
+                "search_ignore_case": True,
+                "in_fields": {FieldNameType("completed", bool)},
+            },
+        )
+
+        @get("/{task_id:int}", opt={"mcp_tool": "get_task"})
+        async def get_task(self, task_service: TaskService, task_id: int) -> Task:
+            obj = await task_service.get(
+                task_id,
+                error_messages={"not_found": f"Task {task_id} not found"},
+            )
+            return task_service.to_schema(obj, schema_type=Task)
+
+``providers.create_service_dependencies`` wires the per-request
+``TaskService`` through the Litestar DI container — ``LitestarMCP`` picks up
+the same dependency when the tool is invoked over ``POST /mcp``, so tool
+handlers get a live session without any MCP-specific plumbing.
 
 **Running the example:**
 
@@ -106,7 +130,8 @@ A SQLite-backed task management application that demonstrates:
 
 **Custom MCP Tools:**
 
-- ``list_tasks`` - List stored tasks with optional completion filtering
+- ``list_tasks`` - List stored tasks with pagination, title search, and
+  ``completedIn`` collection filtering (``?completedIn=true``)
 - ``get_task`` - Retrieve a specific task by ID
 - ``create_task`` - Create a new task
 - ``complete_task`` - Mark a task as completed
@@ -114,20 +139,45 @@ A SQLite-backed task management application that demonstrates:
 
 **Custom MCP Resources:**
 
-- ``api_info`` - Inspect API metadata and SQLite-backed storage details
-- ``task_schema`` - Read the task schema exposed to MCP clients
+- ``api_info`` - Static API metadata (name, version, features) — designed
+  to be cacheable, so it deliberately avoids live database lookups
+- ``task_schema`` - JSON Schema for the task model, generated directly
+  from ``Task.model_json_schema()`` so it can't drift from the code
 
 **Testing the Task System:**
 
+MCP speaks JSON-RPC 2.0 over a single ``POST /mcp`` endpoint. Tool calls and
+resource reads are both request methods, not REST paths:
+
 .. code-block:: bash
 
-    # Create a task via MCP tool
-    curl -X POST http://127.0.0.1:8000/mcp/tools/create_task \\
+    # Create a task via the create_task MCP tool
+    curl -X POST http://127.0.0.1:8000/mcp \\
       -H 'Content-Type: application/json' \\
-      -d '{"title": "Write release notes", "description": "Summarize the latest changes"}'
+      -d '{
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "create_task",
+          "arguments": {
+            "data": {
+              "title": "Write release notes",
+              "description": "Summarize the latest changes"
+            }
+          }
+        }
+      }'
 
-    # Inspect SQLite-backed API metadata via MCP resource
-    curl http://127.0.0.1:8000/mcp/resources/api_info
+    # Read the api_info MCP resource
+    curl -X POST http://127.0.0.1:8000/mcp \\
+      -H 'Content-Type: application/json' \\
+      -d '{
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "resources/read",
+        "params": {"uri": "litestar://api_info"}
+      }'
 
 Example Use Cases
 =================
