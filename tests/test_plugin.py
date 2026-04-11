@@ -358,3 +358,111 @@ class TestTransportAwareExecution:
         parsed = json.loads(result["result"]["content"][0]["text"])
         assert parsed["path"] == "/mcp"
         assert parsed["method"] == "POST"
+
+    def test_http_resource_resolves_plugin_dep(self) -> None:
+        """Regression: resources/read must pass ``connection=request`` too.
+
+        The initial fix only plumbed the live request through ``tools/call``;
+        ``resources/read`` was left calling the connectionless path, which
+        silently regressed any resource whose provider needed ``state``,
+        ``headers``, ``scope``, etc. This test exercises a resource whose
+        provider takes ``state: State`` — identical in shape to the
+        ``SQLAlchemyPlugin.provide_engine`` case that motivated #19 — and
+        asserts the HTTP path resolves it.
+        """
+
+        async def provide_engine(state: State) -> dict[str, str]:
+            return state["mcp_test_engine"]  # type: ignore[no-any-return]
+
+        @get("/engine-info", opt={"mcp_resource": "engine_info"})
+        async def engine_info(db_engine: dict[str, str]) -> dict[str, Any]:
+            return {"kind": db_engine["kind"]}
+
+        app = Litestar(
+            plugins=[LitestarMCP()],
+            route_handlers=[engine_info],
+            dependencies={"db_engine": Provide(provide_engine)},
+            state=State({"mcp_test_engine": {"kind": "fake-engine"}}),
+        )
+        client = TestClient(app=app)
+
+        result = _rpc(client, "resources/read", {"uri": "litestar://engine_info"})
+        assert "error" not in result, f"unexpected error: {result.get('error')}"
+        contents = result["result"]["contents"]
+        parsed = json.loads(contents[0]["text"])
+        assert parsed == {"kind": "fake-engine"}
+
+    def test_http_path_with_body_param(self) -> None:
+        """Handlers declaring ``data: dict[str, Any]`` still work over HTTP.
+
+        MCP tool input is the JSON-RPC ``arguments`` map, so we pre-populate
+        the ``data`` reserved slot from ``tool_args`` before Litestar's
+        body extractor runs. Without that step, Litestar would try to
+        parse the JSON-RPC envelope as the handler's payload.
+        """
+
+        @post("/echo", opt={"mcp_tool": "echo_payload"})
+        async def echo_payload(data: dict[str, Any]) -> dict[str, Any]:
+            return {"received": data}
+
+        app = Litestar(plugins=[LitestarMCP()], route_handlers=[echo_payload])
+        client = TestClient(app=app)
+
+        payload = {"name": "alice", "n": 7}
+        result = _rpc(
+            client,
+            "tools/call",
+            {"name": "echo_payload", "arguments": {"data": payload}},
+        )
+        assert "error" not in result, f"unexpected error: {result.get('error')}"
+        parsed = json.loads(result["result"]["content"][0]["text"])
+        assert parsed == {"received": payload}
+
+
+class TestPluginIdempotency:
+    """Guard against duplicate discovery when ``on_startup`` runs twice."""
+
+    def test_on_startup_is_idempotent(self) -> None:
+        """CLI invokes ``plugin.on_startup`` manually because it never runs
+        the ASGI lifespan. If the ASGI lifespan later fires (tests using
+        ``TestClient``, or a user running the CLI against an already-served
+        app), ``on_startup`` must no-op on the second call. The registry's
+        dict semantics already prevent double-counting, but we also track a
+        ``_startup_discovery_ran`` flag so the route walk is short-circuited.
+        """
+
+        @get("/items", opt={"mcp_tool": "list_items"})
+        async def list_items() -> list[dict[str, Any]]:
+            return []
+
+        plugin = LitestarMCP()
+        app = Litestar(plugins=[plugin], route_handlers=[list_items])
+
+        plugin.on_startup(app)
+        first_tools = dict(plugin.discovered_tools)
+        first_resources = dict(plugin.discovered_resources)
+        # Second invocation must be a no-op — same identity dicts, same
+        # membership, same handler objects.
+        plugin.on_startup(app)
+        assert plugin.discovered_tools == first_tools
+        assert plugin.discovered_resources == first_resources
+        assert plugin._startup_discovery_ran is True
+
+
+class TestAppStateExtractorCanary:
+    """Canary for ``connection.app.state._state`` private-attribute access.
+
+    ``_execute_with_connection`` mirrors Litestar's own ``state_extractor``
+    by reading ``connection.app.state._state``. If Litestar ever renames
+    that attribute, the MCP executor breaks silently. This test pokes the
+    attribute directly on a real app so any rename surfaces as a test
+    failure in our CI, not as a runtime error in user tools.
+    """
+
+    def test_app_state_private_dict_exists(self) -> None:
+        from litestar.datastructures import State
+
+        app = Litestar(route_handlers=[], state=State({"sentinel": 42}))
+        underlying = app.state._state
+        assert isinstance(underlying, dict)
+        assert underlying.get("sentinel") == 42

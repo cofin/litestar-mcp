@@ -5,7 +5,7 @@ import contextlib
 import inspect
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 from litestar.cli._utils import LitestarGroup
 from rich.console import Console
@@ -20,16 +20,27 @@ except ImportError:  # pragma: no cover
     import click  # type: ignore[no-redef]
 
 
+# Key under which the resolved ``LitestarMCP`` plugin is cached on
+# ``click.Context.meta``. Using ``ctx.meta`` (not ``ctx.obj``) keeps
+# Litestar's own ``LitestarEnv`` on ``ctx.obj`` intact, so downstream
+# helpers that read ``ctx.obj.app`` continue to work unchanged.
+_MCP_PLUGIN_META_KEY = "litestar_mcp.plugin"
+
+
 # Mapping from primitive Python types to click parameter types so tool
 # handler kwargs get coerced correctly when passed on the command line
 # (without this, click defaults to ``str`` and ``add(a=2, b=3)`` would
 # evaluate to ``"23"`` rather than ``5``).
+#
+# ``bool`` is deliberately omitted: the boolean branch below always
+# renders as ``is_flag=True`` (the only form click can sensibly accept
+# from a shell) and pops ``type`` before constructing the Option, so
+# mapping it here would be dead configuration.
 _PRIMITIVE_CLICK_TYPES: "dict[type, Any]" = {
     int: click.INT,
     float: click.FLOAT,
-    bool: click.BOOL,
     str: click.STRING,
-    Path: click.Path(path_type=Path),  # type: ignore[call-overload]
+    Path: click.Path(path_type=Path),
 }
 
 if TYPE_CHECKING:
@@ -70,21 +81,17 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
 
     def list_commands(self, ctx: click.Context) -> list[str]:  # pragma: no cover
         """List the names of all discovered tools and resources."""
-        app = _litestar_app_from_ctx(ctx)
-        try:
-            plugin = get_mcp_plugin(app)
-            # Include both tools and resources
-            all_commands = set(plugin.discovered_tools.keys()) | set(plugin.discovered_resources.keys())
-            return sorted(all_commands)
-        except RuntimeError:
+        plugin = _resolve_plugin_from_ctx(ctx)
+        if plugin is None:
             return []
+        # Include both tools and resources
+        all_commands = set(plugin.discovered_tools.keys()) | set(plugin.discovered_resources.keys())
+        return sorted(all_commands)
 
     def get_command(self, ctx: click.Context, cmd_name: str) -> Optional[click.Command]:  # pragma: no cover
         """Create a click.Command for a specific tool or resource by its name."""
-        app = _litestar_app_from_ctx(ctx)
-        try:
-            plugin = get_mcp_plugin(app)
-        except RuntimeError:
+        plugin = _resolve_plugin_from_ctx(ctx)
+        if plugin is None:
             return None
 
         # Check both tools and resources
@@ -138,7 +145,7 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
         @click.pass_context
         def callback(ctx: click.Context, /, **kwargs: Any) -> None:
             """The actual command callback that executes the tool."""
-            app = _litestar_app_from_ctx(ctx)
+            app = ctx.obj.app
 
             # Parse JSON strings
             parsed_kwargs: dict[str, Any] = _parse_cli_kwargs(kwargs)
@@ -158,8 +165,6 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
         # Get docstring from the underlying function
         fn_doc = fn.__doc__ or "No description provided."
 
-        from typing import cast
-
         return click.Command(
             cmd_name,
             params=cast("list[click.Parameter]", params),
@@ -169,25 +174,28 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
         )
 
 
-def _litestar_app_from_ctx(ctx: "click.Context") -> "Litestar":
-    """Return the Litestar app from the click context, whatever its shape.
+def _resolve_plugin_from_ctx(ctx: "click.Context") -> "LitestarMCP | None":
+    """Return the MCP plugin cached on the click context, if any.
 
-    The parent ``mcp_group`` callback mutates ``ctx.obj`` from Litestar's
-    ``LitestarEnv`` into a ``dict`` to cache the resolved MCP plugin.
-    Downstream ``ToolExecutor`` code and sub-commands need the ``Litestar``
-    instance in both shapes.
+    Resolved once by ``mcp_group`` and stored on ``ctx.meta`` so that
+    sub-commands don't need to re-fetch (or rebuild) it. Falls back to a
+    direct lookup against ``ctx.obj.app`` for callers that bypass
+    ``mcp_group`` (unit tests, ``list_commands`` invoked by click's shell
+    completion helpers, etc.).
     """
-    obj = ctx.obj
-    if isinstance(obj, dict):
-        return obj["app"]  # type: ignore[no-any-return]
-    return obj.app  # type: ignore[no-any-return]
+    cached = ctx.meta.get(_MCP_PLUGIN_META_KEY)
+    if cached is not None:
+        return cast("LitestarMCP", cached)
+    try:
+        return get_mcp_plugin(ctx.obj.app)
+    except (AttributeError, RuntimeError):
+        return None
 
 
 @click.group(cls=LitestarGroup, name="mcp")
 def mcp_group(ctx: "click.Context") -> None:
     """Manage MCP tools and resources."""
-    env = ctx.obj
-    app = env.app if not isinstance(env, dict) else env["app"]
+    app: Litestar = ctx.obj.app
     plugin = get_mcp_plugin(app)
 
     # ``LitestarMCP`` runs two discovery passes: one during ``on_app_init``
@@ -196,20 +204,22 @@ def mcp_group(ctx: "click.Context") -> None:
     # instance after route resolution). The CLI never triggers the ASGI
     # startup lifespan, so without this call ``Controller``-hosted tools
     # and resources would never appear under ``mcp list-tools``/``run``.
-    # The startup discovery is idempotent (registry uses plain dict writes),
-    # so it's safe to invoke here whether or not the app has been served.
+    # ``on_startup`` is guarded on the plugin to be safe to call repeatedly.
     plugin.on_startup(app)
 
-    ctx.obj = {"app": app, "env": env, "plugin": plugin}
+    # Cache the plugin on ctx.meta (NOT ctx.obj). Leaving ctx.obj as the
+    # ``LitestarEnv`` that Litestar's ``LitestarGroup`` populated means any
+    # downstream helper reading ``ctx.obj.app`` still works.
+    ctx.meta[_MCP_PLUGIN_META_KEY] = plugin
 
 
 @mcp_group.command(name="list-tools")  # type: ignore[untyped-decorator]
 def list_tools(ctx: click.Context) -> None:
     """List all available MCP tools."""
-    plugin = ctx.obj["plugin"]  # pragma: no cover
+    plugin = _resolve_plugin_from_ctx(ctx)  # pragma: no cover
     console = Console()  # pragma: no cover
 
-    if not plugin.discovered_tools:  # pragma: no cover
+    if plugin is None or not plugin.discovered_tools:  # pragma: no cover
         console.print("[yellow]No MCP tools discovered.[/yellow]")  # pragma: no cover
         return  # pragma: no cover
 
@@ -227,10 +237,10 @@ def list_tools(ctx: click.Context) -> None:
 @mcp_group.command(name="list-resources")  # type: ignore[untyped-decorator]
 def list_resources(ctx: click.Context) -> None:
     """List all available MCP resources."""
-    plugin = ctx.obj["plugin"]  # pragma: no cover
+    plugin = _resolve_plugin_from_ctx(ctx)  # pragma: no cover
     console = Console()  # pragma: no cover
 
-    if not plugin.discovered_resources:  # pragma: no cover
+    if plugin is None or not plugin.discovered_resources:  # pragma: no cover
         console.print("[yellow]No MCP resources discovered.[/yellow]")  # pragma: no cover
         return  # pragma: no cover
 

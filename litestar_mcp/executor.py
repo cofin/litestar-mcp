@@ -28,11 +28,26 @@ if TYPE_CHECKING:
 
 
 # Subset of Litestar's RESERVED_KWARGS that represent genuinely connection-
-# scoped resources we cannot satisfy outside an ASGI request. Litestar's own
-# RESERVED_KWARGS set also includes "data" and "body" (the request payload),
-# but for MCP tools the payload IS the tool arguments, so those are handled
-# by the normal tool_args mapping rather than raised as errors.
+# scoped resources we cannot satisfy outside an ASGI request.
+#
+# Note on ``socket``: Litestar uses this for the websocket connection on
+# websocket handlers. MCP tools are always discovered from HTTP route
+# handlers (``@get`` / ``@post`` / controllers), so a handler declaring
+# ``socket`` would already be rejected at route registration time and
+# cannot reach the executor. Listing it here anyway is belt-and-braces so
+# that, if the discovery surface ever widens, the executor's refusal of
+# connectionless invocation remains correct.
 _UNSATISFIABLE_RESERVED_KWARGS = frozenset({"request", "socket", "scope", "state", "headers", "cookies", "query"})
+
+# Reserved kwargs that, in a normal Litestar route, represent the parsed
+# request body. MCP tool input arrives as a JSON-RPC ``arguments`` map,
+# not an HTTP body, so for MCP tools we explicitly route these names
+# through ``tool_args`` — i.e. a handler with ``data: dict[str, Any]`` is
+# valid MCP shape and receives ``tool_args["data"]``. On the HTTP path we
+# must pre-populate these slots BEFORE calling Litestar's dependency
+# resolver, otherwise Litestar's body extractor would try to parse the
+# JSON-RPC envelope as the handler's body.
+_REQUEST_BODY_RESERVED_KWARGS = frozenset({"data", "body", "form"})
 
 
 class NotCallableInCLIContextError(ImproperlyConfiguredException):
@@ -53,18 +68,19 @@ class NotCallableInCLIContextError(ImproperlyConfiguredException):
         )
 
 
-def _build_kwargs_model(handler: BaseRouteHandler) -> "KwargsModel | None":
+def _build_kwargs_model(handler: Any) -> "KwargsModel | None":
     """Build a ``KwargsModel`` for the handler, scoped to MCP execution.
 
-    MCP tools do not have URL path parameters, so an empty dict is passed.
-    Returns ``None`` for test doubles or mocks that don't support
-    ``create_kwargs_model`` (e.g. a raw function passed in place of a
-    ``BaseRouteHandler``).
+    The parameter is typed ``Any`` (not ``BaseRouteHandler``) because the
+    unit tests exercise the fallback path by passing a raw function in
+    place of a handler. At runtime we return ``None`` in that case; for
+    genuine ``BaseRouteHandler`` instances, any failure inside
+    ``create_kwargs_model`` propagates so misconfiguration is surfaced
+    loudly instead of being swallowed as "no dependencies".
     """
-    try:
-        return handler.create_kwargs_model(path_parameters={})  # type: ignore[arg-type]
-    except (AttributeError, TypeError):
+    if not isinstance(handler, BaseRouteHandler):
         return None
+    return handler.create_kwargs_model(path_parameters={})
 
 
 async def _call_provider_without_connection(
@@ -78,17 +94,21 @@ async def _call_provider_without_connection(
     provider's own defaults. Any kwarg that is neither resolved nor has a
     default means the provider genuinely needs request context we can't
     supply — we raise ``NotCallableInCLIContextError`` naming the dep.
+
+    Exceptions raised inside the provider itself are **not** rewritten. A
+    ``KeyError`` in user logic must surface as a ``KeyError``, not a
+    misleading "requires request context" error. Only the specific shape
+    of failure that means "I need kwargs I didn't get" is translated.
     """
     provide = dependency.provide
 
     # Generator-based providers express a setup/teardown lifecycle
     # (``yield resource`` → cleanup after yield). In a real request the
     # cleanup is driven by Litestar's ``DependencyCleanupGroup`` when the
-    # response finishes. MCP tool execution has no such lifecycle, so
-    # running the setup side-effect would leave teardown to interpreter
-    # GC — nondeterministic, potentially after the MCP response has
-    # already been returned. Reject upfront, before invoking the provider,
-    # so no side effects leak.
+    # response finishes. MCP tool execution without a connection has no
+    # such lifecycle, so running the setup side-effect would leave
+    # teardown to interpreter GC. Reject upfront, before invoking the
+    # provider, so no side effects leak.
     if provide.has_sync_generator_dependency or provide.has_async_generator_dependency:
         raise NotCallableInCLIContextError(handler_name, dependency.key)
 
@@ -104,10 +124,7 @@ async def _call_provider_without_connection(
         else:
             raise NotCallableInCLIContextError(handler_name, dependency.key)
 
-    try:
-        return await provide(**kwargs)
-    except Exception as e:
-        raise NotCallableInCLIContextError(handler_name, dependency.key) from e
+    return await provide(**kwargs)
 
 
 async def _resolve_dependencies_via_litestar(
@@ -132,8 +149,9 @@ async def _resolve_dependencies_via_litestar(
         return {}
 
     # Only reject on reserved kwargs that represent connection-scoped
-    # resources (request, headers, etc). Request-payload names (data, body)
-    # are handled by the tool_args mapping in execute_tool.
+    # resources (request, headers, etc). Request-body names (``data``,
+    # ``body``, ``form``) are left alone — the shared ``_fill_tool_args``
+    # step below maps them from ``tool_args`` just like any other parameter.
     unsatisfiable = kwargs_model.expected_reserved_kwargs & _UNSATISFIABLE_RESERVED_KWARGS
     if unsatisfiable:
         first = next(iter(sorted(unsatisfiable)))
@@ -145,6 +163,64 @@ async def _resolve_dependencies_via_litestar(
             resolved[dependency.key] = await _call_provider_without_connection(dependency, resolved, handler_name)
 
     return resolved
+
+
+def _fill_tool_args(
+    fn: "Callable[..., Any]",
+    resolved: "dict[str, Any]",
+    tool_args: "dict[str, Any]",
+) -> "dict[str, Any]":
+    """Build the final ``call_args`` for the handler function.
+
+    Drops any resolved keys the handler does not declare (transitive deps),
+    then layers in matching tool arguments, and finally raises ``ValueError``
+    if any required parameter remains unset. Shared by both execution paths.
+    """
+    sig = inspect.signature(fn)
+    handler_params = set(sig.parameters)
+    call_args: dict[str, Any] = {k: v for k, v in resolved.items() if k in handler_params}
+
+    for p_name in sig.parameters:
+        if p_name in call_args:
+            continue
+        if p_name in tool_args:
+            call_args[p_name] = tool_args[p_name]
+
+    missing = {
+        p_name
+        for p_name, p in sig.parameters.items()
+        if p.default is inspect.Parameter.empty and p_name not in call_args
+    }
+    if missing:
+        missing_args = ", ".join(sorted(missing))
+        error_msg = f"Missing required arguments: {missing_args}"
+        raise ValueError(error_msg)
+
+    return call_args
+
+
+async def _invoke_handler(
+    handler: BaseRouteHandler,
+    fn: "Callable[..., Any]",
+    call_args: "dict[str, Any]",
+) -> Any:
+    """Dispatch the handler and serialize its result.
+
+    Handles the sync/async/sync-to-thread tri-state and the final
+    ``schema_dump`` fallback for non-primitive return values. Shared by
+    both execution paths so the dispatch logic cannot drift.
+    """
+    if getattr(handler, "sync_to_thread", False):
+        async_fn = ensure_async_callable(fn)
+        result = await async_fn(**call_args)
+    elif inspect.iscoroutinefunction(fn):
+        result = cast("Any", await fn(**call_args))  # pyright: ignore[reportGeneralTypeIssues]
+    else:
+        result = fn(**call_args)
+
+    if not isinstance(result, (str, int, float, bool, list, dict, type(None))):
+        return schema_dump(result)
+    return result  # pyright: ignore
 
 
 async def _execute_connectionless(
@@ -165,49 +241,9 @@ async def _execute_connectionless(
         fn = handler
 
     handler_name = get_name(fn)
-    sig = inspect.signature(fn)
-
     dependencies = await _resolve_dependencies_via_litestar(handler, handler_name)
-
-    # Forward only the deps the handler itself declares. Transitive
-    # intermediaries (e.g. `role` consumed by `provide_user` which is consumed
-    # by the handler) are resolved so providers can run, but must NOT be
-    # passed as kwargs to the handler — it only accepts its own parameters.
-    handler_params = set(sig.parameters)
-    call_args: dict[str, Any] = {k: v for k, v in dependencies.items() if k in handler_params}
-
-    # Map tool arguments to any remaining handler parameters.
-    for p_name in sig.parameters:
-        if p_name in call_args:
-            continue
-        if p_name in tool_args:
-            call_args[p_name] = tool_args[p_name]
-
-    # Check for missing required arguments.
-    missing = {
-        p_name
-        for p_name, p in sig.parameters.items()
-        if p.default is inspect.Parameter.empty and p_name not in call_args
-    }
-    if missing:
-        missing_args = ", ".join(sorted(missing))
-        error_msg = f"Missing required arguments: {missing_args}"
-        raise ValueError(error_msg)
-
-    # Execute the handler.
-    if getattr(handler, "sync_to_thread", False):
-        async_fn = ensure_async_callable(fn)
-        result = await async_fn(**call_args)
-    elif inspect.iscoroutinefunction(fn):
-        result = cast("Any", await fn(**call_args))  # pyright: ignore[reportGeneralTypeIssues]
-    else:
-        result = fn(**call_args)
-
-    # Convert schema models to dicts for serialization.
-    if not isinstance(result, (str, int, float, bool, list, dict, type(None))):
-        return schema_dump(result)
-
-    return result  # pyright: ignore
+    call_args = _fill_tool_args(fn, dependencies, tool_args)
+    return await _invoke_handler(handler, fn, call_args)
 
 
 async def _execute_with_connection(
@@ -221,9 +257,11 @@ async def _execute_with_connection(
 
     1. Enumerate the reserved framework kwargs the handler declared
        (``request``, ``headers``, ``cookies``, ``query``, ``state``, ``scope``)
-       via ``kwargs_model.expected_reserved_kwargs`` and satisfy them manually
-       from the connection. We deliberately skip ``data``/``body`` — the MCP
-       POST body is a JSON-RPC envelope, not the tool's input.
+       via ``kwargs_model.expected_reserved_kwargs`` and satisfy them
+       manually from the connection. Request-body slots (``data``/``body``/
+       ``form``) are pre-populated from ``tool_args`` BEFORE calling
+       Litestar's resolver, so the resolver's body extractor never tries
+       to parse the JSON-RPC envelope as the handler's payload.
     2. Resolve dependency batches against the live connection via
        ``kwargs_model.resolve_dependencies(connection, kwargs)`` — this is
        where plugin-registered deps (``db_engine`` / ``db_session`` / etc.)
@@ -234,8 +272,7 @@ async def _execute_with_connection(
 
     Business-logic parameters (everything that is not a plugin dep or a
     reserved framework kwarg) come from ``tool_args``, identical to how the
-    connectionless path handles them. This keeps existing tools like
-    ``analyze(data: dict[str, Any])`` working unchanged.
+    connectionless path handles them.
 
     Known semantics gap — cleanup timing:
         In a normal Litestar route, ``DependencyCleanupGroup.close()`` is
@@ -249,13 +286,22 @@ async def _execute_with_connection(
         successful transmission — would see different timing here than in a
         real route. Plugins affected by this can opt out of MCP callability.
     """
-    kwargs_model = handler.create_kwargs_model(path_parameters={})  # type: ignore[arg-type]
+    kwargs_model = handler.create_kwargs_model(path_parameters={})
+
+    fn: Callable[..., Any] = get_handler_function(handler)
 
     kwargs: dict[str, Any] = {}
+    # Pre-populate request-body reserved slots from ``tool_args`` so that
+    # Litestar's body extractor (invoked by ``resolve_dependencies``) sees
+    # the slot already satisfied and does not attempt to parse the MCP
+    # POST body, which is the JSON-RPC envelope rather than the tool
+    # payload.
+    for body_kwarg in kwargs_model.expected_reserved_kwargs & _REQUEST_BODY_RESERVED_KWARGS:
+        if body_kwarg in tool_args:
+            kwargs[body_kwarg] = tool_args[body_kwarg]
     # Satisfy only the reserved framework slots the handler actually
     # declared, and only from connection attributes that do NOT touch the
-    # request body. `data` and `body` are intentionally omitted — tool
-    # input comes from `tool_args`.
+    # request body. Request-body slots were already rejected above.
     for reserved in kwargs_model.expected_reserved_kwargs:
         if reserved == "request":
             kwargs["request"] = connection
@@ -272,49 +318,21 @@ async def _execute_with_connection(
             # underlying dict, NOT the request-scoped state. Plugin providers
             # read resources the plugin placed on app state during
             # ``on_app_init``. Private-attribute access is intentional — we're
-            # copying the framework's own extractor; if Litestar renames
-            # ``_state``, both their code and ours break at the same time.
+            # copying the framework's own extractor; a regression test in
+            # ``tests/test_executor.py`` fails loudly if ``_state`` disappears.
             kwargs["state"] = connection.app.state._state  # noqa: SLF001
         elif reserved == "scope":
             kwargs["scope"] = connection.scope
-        # Any other reserved slot (data, body, socket, form, ...) is left
-        # unset — if the handler actually needs one, resolve_dependencies or
-        # the missing-arg check below will surface it clearly.
+        # Any other reserved slot is left unset — if the handler actually
+        # needs one, ``resolve_dependencies`` or the missing-arg check in
+        # ``_fill_tool_args`` will surface it.
 
     cleanup_group = await kwargs_model.resolve_dependencies(connection=connection, kwargs=kwargs)
     try:
-        fn: Callable[..., Any] = get_handler_function(handler)
-        sig = inspect.signature(fn)
-        # Fill remaining handler parameters from the MCP tool arguments.
-        for p_name in sig.parameters:
-            if p_name in kwargs:
-                continue
-            if p_name in tool_args:
-                kwargs[p_name] = tool_args[p_name]
-        # Forward only keys that are actual handler parameters. KwargsModel
-        # may surface transitive dep values in ``kwargs`` that providers
-        # needed but the handler itself does not accept.
-        handler_params = set(sig.parameters)
-        call_args = {k: v for k, v in kwargs.items() if k in handler_params}
-        missing = {
-            p_name
-            for p_name, p in sig.parameters.items()
-            if p.default is inspect.Parameter.empty and p_name not in call_args
-        }
-        if missing:
-            error_msg = f"Missing required arguments: {', '.join(sorted(missing))}"
-            raise ValueError(error_msg)
-        if getattr(handler, "sync_to_thread", False):
-            result = await ensure_async_callable(fn)(**call_args)
-        elif inspect.iscoroutinefunction(fn):
-            result = cast("Any", await fn(**call_args))  # pyright: ignore[reportGeneralTypeIssues]
-        else:
-            result = fn(**call_args)
+        call_args = _fill_tool_args(fn, kwargs, tool_args)
+        return await _invoke_handler(handler, fn, call_args)
     finally:
         await cleanup_group.close()
-    if not isinstance(result, (str, int, float, bool, list, dict, type(None))):
-        return schema_dump(result)
-    return result
 
 
 async def execute_tool(
@@ -343,6 +361,9 @@ async def execute_tool(
     Raises:
         NotCallableInCLIContextError: If the handler requires request-scoped
             dependencies and no connection was provided.
+        ToolRequiresRequestBodyError: If the handler declares ``data``,
+            ``body``, or ``form`` — reserved request-body kwargs that MCP
+            cannot supply (the MCP envelope owns the HTTP body).
         ValueError: If required arguments are missing.
     """
     if connection is not None:

@@ -142,8 +142,15 @@ class TestExecutor:
         assert result == {"status": "ok", "version": "1.0.0"}
 
     @pytest.mark.asyncio
-    async def test_dependency_resolution_failure(self) -> None:
-        """Test that dependency resolution failures are handled."""
+    async def test_provider_bug_is_not_rewritten_as_cli_error(self) -> None:
+        """A genuine bug inside a provider must surface as its own exception.
+
+        The old executor blanket-caught provider exceptions and rewrote
+        them as :class:`NotCallableInCLIContextError`. That hid real bugs
+        behind a misleading "requires request context" message. Now only
+        the specific shape of failure that means "I need kwargs I didn't
+        get" is translated — other exceptions propagate unchanged.
+        """
 
         def failing_dependency() -> str:
             msg = "Dependency failed"
@@ -156,8 +163,7 @@ class TestExecutor:
             handler_with_failing_dep, dependencies={"config": Provide(failing_dependency, sync_to_thread=False)}
         )
 
-        # Should raise NotCallableInCLIContextError when dependency resolution fails
-        with pytest.raises(NotCallableInCLIContextError):
+        with pytest.raises(RuntimeError, match="Dependency failed"):
             await execute_tool(handler, app, {"name": "test"})
 
     @pytest.mark.asyncio
@@ -395,11 +401,16 @@ class TestExecutor:
     async def test_consumed_request_scoped_dep_raises_clear_error(self) -> None:
         """When a handler actually declares a request-scoped dep, the error
         must name the dep and mention request context.
-        """
 
-        def broken_db_session() -> str:
-            msg = "needs a real request scope"
-            raise RuntimeError(msg)
+        The provider takes ``state: State`` — a reserved framework kwarg
+        that cannot be satisfied outside a real request scope. The
+        executor detects this via ``KwargsModel.expected_reserved_kwargs``
+        and raises before invoking the provider (no side effects leak).
+        """
+        from litestar.datastructures import State
+
+        def provide_db_session(state: State) -> str:
+            return str(state["db"])
 
         @get("/items", sync_to_thread=False)
         def list_items(db_session: str) -> dict[str, str]:
@@ -407,7 +418,7 @@ class TestExecutor:
 
         app = Litestar(
             route_handlers=[list_items],
-            dependencies={"db_session": Provide(broken_db_session, sync_to_thread=False)},
+            dependencies={"db_session": Provide(provide_db_session, sync_to_thread=False)},
         )
         handler = get_handler_from_app(app, "/items", "GET")
 
@@ -415,7 +426,9 @@ class TestExecutor:
             await execute_tool(handler, app, {})
 
         message = str(exc_info.value)
-        assert "db_session" in message
+        # The connectionless path reports the first unsatisfiable reserved
+        # kwarg (``state``) as the blocker.
+        assert "state" in message
         assert "request context" in message
 
     @pytest.mark.asyncio

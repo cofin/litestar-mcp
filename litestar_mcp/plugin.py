@@ -88,6 +88,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         self._registry = Registry()
         self._sse_manager = SSEManager()
         self._session_manager = MCPSessionManager()
+        self._startup_discovery_ran = False
 
     @property
     def config(self) -> MCPConfig:
@@ -248,7 +249,14 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         """Perform discovery after app is fully initialized and routes are built.
 
         This captures handlers from Controllers and other dynamic sources.
+        Safe to invoke more than once: subsequent calls are no-ops, which
+        matters because the CLI entrypoint runs this manually (the CLI
+        never triggers the ASGI startup lifespan) and we don't want to
+        re-scan the route tree every ``litestar mcp ...`` invocation.
         """
+        if self._startup_discovery_ran:
+            return
+
         import logging
 
         logger = logging.getLogger(__name__)
@@ -264,3 +272,4 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
 
         logger.debug("Found %d total handlers in flattened app.routes", len(all_handlers))
         self._discover_mcp_routes(all_handlers)
+        self._startup_discovery_ran = True

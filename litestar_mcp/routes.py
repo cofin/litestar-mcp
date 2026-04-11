@@ -70,7 +70,6 @@ def build_jsonrpc_router(
     discovered_tools: "dict[str, BaseRouteHandler]",
     discovered_resources: "dict[str, BaseRouteHandler]",
     app_ref: Any = None,
-    session_manager: "MCPSessionManager | None" = None,  # noqa: ARG001
     user_claims: "dict[str, Any] | None" = None,
     *,
     request: "Request[Any, Any, Any] | None" = None,
@@ -82,8 +81,10 @@ def build_jsonrpc_router(
         discovered_tools: Registered tool handlers.
         discovered_resources: Registered resource handlers.
         app_ref: Reference to the Litestar app (for OpenAPI access).
-        session_manager: Optional session manager for creating sessions during initialize.
         user_claims: Optional authenticated user claims for scope enforcement.
+        request: The live ``Request`` for the incoming MCP POST; forwarded to
+            :func:`execute_tool` so plugin-registered dependencies (e.g.
+            ``db_session``) resolve against the real request scope.
 
     Returns:
         A configured JSONRPCRouter.
@@ -275,7 +276,7 @@ def build_jsonrpc_router(
 
         handler = discovered_resources[resource_name]
         try:
-            result = await execute_tool(handler, app_ref, tool_args={})
+            result = await execute_tool(handler, app_ref, tool_args={}, connection=request)
             result_text = _mcp_encode(result)
         except Exception as exc:
             raise JSONRPCErrorException(
@@ -386,7 +387,6 @@ class MCPController(Controller):
             discovered_tools,
             discovered_resources,
             app_ref=request.app,
-            session_manager=session_manager,
             user_claims=user_claims,
             request=request,
         )
