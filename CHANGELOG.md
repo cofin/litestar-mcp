@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Plugin-registered dependencies (e.g. `SQLAlchemyPlugin`'s `db_engine` / `db_session`) no longer break MCP tool execution for handlers that do not consume them. The executor now resolves only the transitive closure of dependencies actually declared by the handler's signature, mirroring Litestar's own DI semantics. ([#19](https://github.com/cofin/litestar-mcp/issues/19))
+- MCP tool calls made over the HTTP transport now resolve through the live
+  Litestar request scope, so plugin-registered dependencies
+  (``SQLAlchemyPlugin``'s ``db_engine`` / ``db_session``,
+  generator-based providers, ``request``/``headers``/``cookies`` extractors)
+  work naturally. Previously every MCP invocation was routed through the
+  CLI-only connectionless resolver, so any tool declaring a plugin-scoped
+  dependency failed with a misleading "cannot be called from the CLI"
+  error even when called via ``POST /mcp``. The CLI path is unchanged and
+  continues to reject request-scoped kwargs. Reported in
+  `#19 <https://github.com/cofin/litestar-mcp/issues/19>`_.
 
 ## [0.1.0] - 2025-01-04
 
