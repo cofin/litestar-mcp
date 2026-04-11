@@ -456,6 +456,25 @@ class TestExecutor:
         assert "request context" in message
         assert setup_was_called is False, "generator provider setup ran — it must be rejected before invocation"
 
+    @pytest.mark.asyncio
+    async def test_cli_path_still_rejects_request_injection(self) -> None:
+        """CLI path must still reject handlers declaring request: Request.
+
+        The HTTP path (Task 4) allows it, but no connection is available in
+        the CLI, so the reserved-kwargs gate should fire.
+        """
+        from litestar import Request
+
+        def needs_request(request: Request[Any, Any, Any]) -> dict[str, Any]:
+            return {"path": request.url.path}
+
+        app, handler = create_app_with_handler(needs_request)
+
+        with pytest.raises(NotCallableInCLIContextError) as exc_info:
+            await execute_tool(handler, app, {})  # no connection → CLI path
+
+        assert "request" in str(exc_info.value)
+
 
 class TestNotCallableInCLIContextError:
     """Test suite for NotCallableInCLIContextError exception."""
