@@ -314,3 +314,31 @@ class TestTransportAwareExecution:
         content = result["result"]["content"]
         parsed = json.loads(content[0]["text"])
         assert parsed == {"session": "fake-engine"}
+
+    def test_http_path_supports_generator_provider(self) -> None:
+        """Generator providers run setup AND teardown on the HTTP path."""
+        lifecycle: list[str] = []
+
+        async def provide_session() -> Any:
+            lifecycle.append("setup")
+            try:
+                yield {"id": "session-1"}
+            finally:
+                lifecycle.append("teardown")
+
+        @get("/who", opt={"mcp_tool": "who_am_i"})
+        async def who_am_i(session: dict[str, str]) -> dict[str, str]:
+            return {"session_id": session["id"]}
+
+        app = Litestar(
+            plugins=[LitestarMCP()],
+            route_handlers=[who_am_i],
+            dependencies={"session": Provide(provide_session)},
+        )
+        client = TestClient(app=app)
+
+        result = _rpc(client, "tools/call", {"name": "who_am_i", "arguments": {}})
+        assert "error" not in result, f"unexpected error: {result.get('error')}"
+        parsed = json.loads(result["result"]["content"][0]["text"])
+        assert parsed == {"session_id": "session-1"}
+        assert lifecycle == ["setup", "teardown"], f"cleanup did not run: {lifecycle}"
