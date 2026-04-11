@@ -189,6 +189,17 @@ def mcp_group(ctx: "click.Context") -> None:
     env = ctx.obj
     app = env.app if not isinstance(env, dict) else env["app"]
     plugin = get_mcp_plugin(app)
+
+    # ``LitestarMCP`` runs two discovery passes: one during ``on_app_init``
+    # (loose handlers) and one during ``on_startup`` (handlers contributed
+    # by ``Controller`` subclasses, which only exist on the built ``Litestar``
+    # instance after route resolution). The CLI never triggers the ASGI
+    # startup lifespan, so without this call ``Controller``-hosted tools
+    # and resources would never appear under ``mcp list-tools``/``run``.
+    # The startup discovery is idempotent (registry uses plain dict writes),
+    # so it's safe to invoke here whether or not the app has been served.
+    plugin.on_startup(app)
+
     ctx.obj = {"app": app, "env": env, "plugin": plugin}
 
 
