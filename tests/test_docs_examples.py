@@ -133,18 +133,25 @@ def test_advanced_example_api_info_resource_is_static() -> None:
 
 
 def test_advanced_example_docs_use_real_path() -> None:
-    """The docs should point at the real docs example locations."""
+    """The docs should point at the real docs example locations.
 
-    examples_page = Path("docs/examples.rst").read_text()
-    usage_page = Path("docs/usage/examples.rst").read_text()
+    The canonical hands-on guide is ``docs/examples/README.md``; the
+    top-level Sphinx page at ``docs/examples.rst`` is a thin wrapper
+    that embeds the README via a toctree entry.
+    """
+
     examples_readme = Path("docs/examples/README.md").read_text()
+    examples_page = Path("docs/examples.rst").read_text()
     getting_started = Path("docs/getting-started.rst").read_text()
 
-    assert "docs/examples/advanced/" in examples_page
-    assert "docs/examples/advanced/" in usage_page
-    assert "cd docs/examples/advanced/" in examples_page
-    assert "docs/examples/basic/" in examples_page
-    assert "docs/examples/basic/" in usage_page
-    assert "cd docs/examples/basic/" in examples_page
+    # README carries the authoritative paths for both examples
+    assert "docs/examples/basic/" in examples_readme
+    assert "docs/examples/advanced/" in examples_readme
     assert "cd docs/examples/basic/" in examples_readme
+    assert "cd docs/examples/advanced/" in examples_readme
+
+    # The top-level examples.rst must link to the README subpage
+    assert "examples/README" in examples_page
+
+    # Getting-started still references the example location
     assert "docs/examples/basic/" in getting_started
