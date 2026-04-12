@@ -6,7 +6,7 @@ import pytest
 from litestar import Litestar, get
 from litestar.di import Provide
 
-from litestar_mcp.executor import NotCallableInCLIContextError, execute_tool
+from litestar_mcp.executor import NotCallableWithoutConnectionError, check_cli_compatibility, execute_tool
 from tests.conftest import create_app_with_handler, get_handler_from_app
 
 
@@ -69,7 +69,7 @@ class TestExecutor:
 
         app, handler = create_app_with_handler(request_dependent_handler)
 
-        with pytest.raises(NotCallableInCLIContextError) as exc_info:
+        with pytest.raises(NotCallableWithoutConnectionError) as exc_info:
             await execute_tool(handler, app, {"user_id": 123})
 
         assert "request" in str(exc_info.value)
@@ -146,7 +146,7 @@ class TestExecutor:
         """A genuine bug inside a provider must surface as its own exception.
 
         The old executor blanket-caught provider exceptions and rewrote
-        them as :class:`NotCallableInCLIContextError`. That hid real bugs
+        them as :class:`NotCallableWithoutConnectionError`. That hid real bugs
         behind a misleading "requires request context" message. Now only
         the specific shape of failure that means "I need kwargs I didn't
         get" is translated — other exceptions propagate unchanged.
@@ -238,8 +238,8 @@ class TestExecutor:
 
         app, handler = create_app_with_handler(request_dependent_handler)
 
-        # Should raise NotCallableInCLIContextError
-        with pytest.raises(NotCallableInCLIContextError):
+        # Should raise NotCallableWithoutConnectionError
+        with pytest.raises(NotCallableWithoutConnectionError):
             await execute_tool(handler, app, {"value": "test"})
 
     @pytest.mark.asyncio
@@ -352,7 +352,7 @@ class TestExecutor:
            call-count assertion below catches any accidental re-invocation.
         2. ``provide_a`` declares *two* kwargs (``b`` and ``c``) — the
            ``elif field.has_default: continue`` branch must not false-
-           positive here and wrongly raise ``NotCallableInCLIContextError``.
+           positive here and wrongly raise ``NotCallableWithoutConnectionError``.
 
         Together these prove ``KwargsModel.dependency_batches`` gives us a
         correct topological order for non-linear graphs, not just chains.
@@ -422,7 +422,7 @@ class TestExecutor:
         )
         handler = get_handler_from_app(app, "/items", "GET")
 
-        with pytest.raises(NotCallableInCLIContextError) as exc_info:
+        with pytest.raises(NotCallableWithoutConnectionError) as exc_info:
             await execute_tool(handler, app, {})
 
         message = str(exc_info.value)
@@ -461,7 +461,7 @@ class TestExecutor:
         )
         handler = get_handler_from_app(app, "/items", "GET")
 
-        with pytest.raises(NotCallableInCLIContextError) as exc_info:
+        with pytest.raises(NotCallableWithoutConnectionError) as exc_info:
             await execute_tool(handler, app, {})
 
         message = str(exc_info.value)
@@ -483,28 +483,73 @@ class TestExecutor:
 
         app, handler = create_app_with_handler(needs_request)
 
-        with pytest.raises(NotCallableInCLIContextError) as exc_info:
+        with pytest.raises(NotCallableWithoutConnectionError) as exc_info:
             await execute_tool(handler, app, {})  # no connection → CLI path
 
         assert "request" in str(exc_info.value)
 
 
-class TestNotCallableInCLIContextError:
-    """Test suite for NotCallableInCLIContextError exception."""
+    @pytest.mark.asyncio
+    async def test_async_provider_in_connectionless_path(self) -> None:
+        """Async dependency providers must resolve correctly on the CLI path.
+
+        All prior connectionless tests use sync providers. This proves that
+        ``_call_provider_without_connection`` correctly awaits an ``async def``
+        provider via Litestar's ``Provide`` wrapping.
+        """
+
+        async def provide_config() -> dict[str, str]:
+            return {"url": "sqlite:///:memory:"}
+
+        def handler_with_async_dep(user_id: int, config: dict[str, str]) -> dict[str, Any]:
+            return {"user_id": user_id, "db": config["url"]}
+
+        app, handler = create_app_with_handler(
+            handler_with_async_dep, dependencies={"config": Provide(provide_config, sync_to_thread=False)}
+        )
+
+        result = await execute_tool(handler, app, {"user_id": 42})
+        assert result == {"user_id": 42, "db": "sqlite:///:memory:"}
+
+    @pytest.mark.asyncio
+    async def test_data_param_in_connectionless_path(self) -> None:
+        """A ``@post`` handler declaring ``data: dict`` works on the CLI path.
+
+        ``data`` is a request-body reserved kwarg in Litestar, but the executor
+        deliberately excludes it from ``_UNSATISFIABLE_RESERVED_KWARGS`` so it
+        can be satisfied from ``tool_args``. This test verifies the CLI path
+        handles it correctly.
+        """
+        from litestar import post
+
+        @post("/echo", sync_to_thread=False)
+        def echo_data(data: dict[str, Any]) -> dict[str, Any]:
+            return {"received": data}
+
+        app = Litestar(route_handlers=[echo_data])
+        handler = get_handler_from_app(app, "/echo", "POST")
+
+        payload = {"key": "value", "n": 7}
+        result = await execute_tool(handler, app, {"data": payload})
+        assert result == {"received": payload}
+
+
+class TestNotCallableWithoutConnectionError:
+    """Test suite for NotCallableWithoutConnectionError exception."""
 
     def test_not_callable_in_cli_context_error_creation(self) -> None:
-        """Test creation of NotCallableInCLIContextError."""
+        """Test creation of NotCallableWithoutConnectionError."""
         handler_name = "list_items"
         param_name = "db_session"
 
-        error = NotCallableInCLIContextError(handler_name, param_name)
+        error = NotCallableWithoutConnectionError(handler_name, param_name)
 
         assert handler_name in str(error)
         assert param_name in str(error)
         assert "request context" in str(error)
 
     def test_not_callable_in_cli_context_error_with_different_types(self) -> None:
-        """Test NotCallableInCLIContextError with different parameter types."""
+        """Test NotCallableWithoutConnectionError with different parameter types."""
         test_cases = [
             ("list_items", "db_session"),
             ("get_user", "current_user"),
@@ -512,7 +557,106 @@ class TestNotCallableInCLIContextError:
         ]
 
         for handler_name, param_name in test_cases:
-            error = NotCallableInCLIContextError(handler_name, param_name)
+            error = NotCallableWithoutConnectionError(handler_name, param_name)
             assert handler_name in str(error)
             assert param_name in str(error)
             assert "request context" in str(error)
+
+
+class TestCheckCliCompatibility:
+    """Test suite for the check_cli_compatibility function."""
+
+    def test_simple_handler_is_compatible(self) -> None:
+        """A handler with no dependencies is CLI-compatible."""
+
+        @get("/status", sync_to_thread=False)
+        def status() -> dict[str, str]:
+            return {"status": "ok"}
+
+        app = Litestar(route_handlers=[status])
+        handler = get_handler_from_app(app, "/status", "GET")
+
+        compatible, reason = check_cli_compatibility(handler)
+        assert compatible is True
+        assert reason is None
+
+    def test_handler_with_plain_dependency_is_compatible(self) -> None:
+        """A handler whose dependencies are plain functions is CLI-compatible."""
+        from litestar.di import Provide
+
+        def provide_config() -> dict[str, str]:
+            return {"key": "value"}
+
+        @get("/cfg", sync_to_thread=False)
+        def with_config(config: dict[str, str]) -> dict[str, str]:
+            return config
+
+        app = Litestar(
+            route_handlers=[with_config],
+            dependencies={"config": Provide(provide_config, sync_to_thread=False)},
+        )
+        handler = get_handler_from_app(app, "/cfg", "GET")
+
+        compatible, reason = check_cli_compatibility(handler)
+        assert compatible is True
+        assert reason is None
+
+    def test_handler_with_request_param_is_incompatible(self) -> None:
+        """A handler declaring ``request`` is not CLI-compatible."""
+        from litestar import Request
+
+        def needs_request(request: Request[Any, Any, Any]) -> dict[str, str]:
+            return {"path": request.url.path}
+
+        app, handler = create_app_with_handler(needs_request)
+
+        compatible, reason = check_cli_compatibility(handler)
+        assert compatible is False
+        assert reason is not None
+        assert "request" in reason
+
+    def test_handler_with_state_dependency_is_incompatible(self) -> None:
+        """A handler whose provider needs ``state`` is not CLI-compatible."""
+        from litestar.datastructures import State
+        from litestar.di import Provide
+
+        def provide_db(state: State) -> str:
+            return str(state["db"])
+
+        @get("/items", sync_to_thread=False)
+        def list_items(db: str) -> dict[str, str]:
+            return {"db": db}
+
+        app = Litestar(
+            route_handlers=[list_items],
+            dependencies={"db": Provide(provide_db, sync_to_thread=False)},
+        )
+        handler = get_handler_from_app(app, "/items", "GET")
+
+        compatible, reason = check_cli_compatibility(handler)
+        assert compatible is False
+        assert reason is not None
+        assert "state" in reason
+
+    def test_handler_with_generator_dependency_is_incompatible(self) -> None:
+        """A handler whose provider is a generator is not CLI-compatible."""
+        from litestar.di import Provide
+
+        def provide_session() -> Any:
+            yield "session"
+
+        @get("/data", sync_to_thread=False)
+        def get_data(session: str) -> dict[str, str]:
+            return {"session": session}
+
+        app = Litestar(
+            route_handlers=[get_data],
+            dependencies={"session": Provide(provide_session)},
+        )
+        handler = get_handler_from_app(app, "/data", "GET")
+
+        compatible, reason = check_cli_compatibility(handler)
+        assert compatible is False
+        assert reason is not None
+        assert "session" in reason
+        assert "generator" in reason

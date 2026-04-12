@@ -205,10 +205,20 @@ def build_jsonrpc_router(
 
         try:
             result = await execute_tool(handler, app_ref, tool_args, connection=request)
-            result_text = _mcp_encode(result)
+        except ValueError as exc:
+            raise JSONRPCErrorException(
+                JSONRPCError(code=INVALID_PARAMS, message=f"Invalid tool arguments: {exc!s}")
+            ) from exc
         except Exception as exc:
             raise JSONRPCErrorException(
                 JSONRPCError(code=INTERNAL_ERROR, message=f"Tool execution failed: {exc!s}")
+            ) from exc
+
+        try:
+            result_text = _mcp_encode(result)
+        except Exception as exc:
+            raise JSONRPCErrorException(
+                JSONRPCError(code=INTERNAL_ERROR, message=f"Failed to serialize tool result: {exc!s}")
             ) from exc
 
         return {
@@ -277,10 +287,20 @@ def build_jsonrpc_router(
         handler = discovered_resources[resource_name]
         try:
             result = await execute_tool(handler, app_ref, tool_args={}, connection=request)
-            result_text = _mcp_encode(result)
+        except ValueError as exc:
+            raise JSONRPCErrorException(
+                JSONRPCError(code=INVALID_PARAMS, message=f"Invalid resource arguments: {exc!s}")
+            ) from exc
         except Exception as exc:
             raise JSONRPCErrorException(
                 JSONRPCError(code=INTERNAL_ERROR, message=f"Resource read failed: {exc!s}")
+            ) from exc
+
+        try:
+            result_text = _mcp_encode(result)
+        except Exception as exc:
+            raise JSONRPCErrorException(
+                JSONRPCError(code=INTERNAL_ERROR, message=f"Failed to serialize resource result: {exc!s}")
             ) from exc
 
         return {

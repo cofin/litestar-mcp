@@ -247,7 +247,7 @@ class TestTransportAwareExecution:
     ``advanced_alchemy.extensions.litestar.SQLAlchemyPlugin``) register
     dependencies whose providers take framework kwargs such as ``state`` and
     ``scope``. Prior to the fix, any such dependency failed over HTTP with
-    ``NotCallableInCLIContextError`` because the executor routed the call
+    ``NotCallableWithoutConnectionError`` because the executor routed the call
     through the connectionless resolver, which cannot satisfy framework
     kwargs. After the fix, the HTTP path passes the live ``Request`` down and
     Litestar's real DI machinery resolves them naturally.
@@ -417,6 +417,129 @@ class TestTransportAwareExecution:
         assert "error" not in result, f"unexpected error: {result.get('error')}"
         parsed = json.loads(result["result"]["content"][0]["text"])
         assert parsed == {"received": payload}
+
+
+    def test_http_path_cleanup_runs_on_handler_exception(self) -> None:
+        """Generator provider teardown runs even when handler raises.
+
+        ``_execute_with_connection`` wraps execution in ``try/finally`` that
+        calls ``cleanup_group.close()``. This test proves teardown fires when
+        the handler itself throws, preventing resource leaks.
+        """
+        lifecycle: list[str] = []
+
+        async def provide_session() -> Any:
+            lifecycle.append("setup")
+            try:
+                yield {"id": "sess-1"}
+            finally:
+                lifecycle.append("teardown")
+
+        @get("/boom", opt={"mcp_tool": "boom"})
+        async def boom(session: dict[str, str]) -> dict[str, str]:
+            msg = "handler exploded"
+            raise RuntimeError(msg)
+
+        app = Litestar(
+            plugins=[LitestarMCP()],
+            route_handlers=[boom],
+            dependencies={"session": Provide(provide_session)},
+        )
+        client = TestClient(app=app)
+
+        result = _rpc(client, "tools/call", {"name": "boom", "arguments": {}})
+        assert "error" in result, "expected a JSON-RPC error response"
+        assert "handler exploded" in result["error"]["message"]
+        assert lifecycle == ["setup", "teardown"], f"cleanup did not run on exception: {lifecycle}"
+
+    def test_http_path_injects_headers(self) -> None:
+        """Handler declaring ``headers`` receives the MCP POST request headers."""
+
+        @get("/hdr", opt={"mcp_tool": "read_headers"})
+        async def read_headers(headers: dict[str, str]) -> dict[str, Any]:
+            return {"host": headers.get("host", "unknown")}
+
+        app = Litestar(plugins=[LitestarMCP()], route_handlers=[read_headers])
+        client = TestClient(app=app)
+
+        result = _rpc(client, "tools/call", {"name": "read_headers", "arguments": {}})
+        assert "error" not in result, f"unexpected error: {result.get('error')}"
+        parsed = json.loads(result["result"]["content"][0]["text"])
+        # TestClient sets a host header; just verify we got something
+        assert "host" in parsed
+        assert parsed["host"] != "unknown"
+
+    def test_http_path_injects_cookies(self) -> None:
+        """Handler declaring ``cookies`` receives the MCP POST request cookies."""
+
+        @get("/cook", opt={"mcp_tool": "read_cookies"})
+        async def read_cookies(cookies: dict[str, str]) -> dict[str, Any]:
+            return {"session": cookies.get("session_id", "none")}
+
+        app = Litestar(plugins=[LitestarMCP()], route_handlers=[read_cookies])
+        client = TestClient(app=app)
+
+        # TestClient sends without cookies by default
+        result = _rpc(client, "tools/call", {"name": "read_cookies", "arguments": {}})
+        assert "error" not in result, f"unexpected error: {result.get('error')}"
+        parsed = json.loads(result["result"]["content"][0]["text"])
+        assert parsed == {"session": "none"}
+
+    def test_http_path_injects_query(self) -> None:
+        """Handler declaring ``query`` receives query params from the connection."""
+
+        @get("/q", opt={"mcp_tool": "read_query"})
+        async def read_query(query: dict[str, Any]) -> dict[str, Any]:
+            return {"params": dict(query)}
+
+        app = Litestar(plugins=[LitestarMCP()], route_handlers=[read_query])
+        client = TestClient(app=app)
+
+        result = _rpc(client, "tools/call", {"name": "read_query", "arguments": {}})
+        assert "error" not in result, f"unexpected error: {result.get('error')}"
+        # MCP POST has no query string, so params should be empty
+        parsed = json.loads(result["result"]["content"][0]["text"])
+        assert parsed["params"] == {}
+
+    def test_http_path_injects_scope(self) -> None:
+        """Handler declaring ``scope`` receives the ASGI scope dict."""
+
+        @get("/sc", opt={"mcp_tool": "read_scope"})
+        async def read_scope(scope: dict[str, Any]) -> dict[str, Any]:
+            return {"type": scope.get("type", "unknown"), "method": scope.get("method", "unknown")}
+
+        app = Litestar(plugins=[LitestarMCP()], route_handlers=[read_scope])
+        client = TestClient(app=app)
+
+        result = _rpc(client, "tools/call", {"name": "read_scope", "arguments": {}})
+        assert "error" not in result, f"unexpected error: {result.get('error')}"
+        parsed = json.loads(result["result"]["content"][0]["text"])
+        assert parsed["type"] == "http"
+        assert parsed["method"] == "POST"
+
+    def test_http_path_custom_type_encoder(self) -> None:
+        """Custom type encoders registered on the app are honored in _mcp_encode.
+
+        If a tool returns an object with a custom type, the app's
+        ``type_encoders`` must be used for serialization.
+        """
+        from datetime import date
+
+        @get("/today", opt={"mcp_tool": "get_date"})
+        async def get_date() -> dict[str, Any]:
+            return {"today": date(2025, 6, 15)}
+
+        app = Litestar(
+            plugins=[LitestarMCP()],
+            route_handlers=[get_date],
+            type_encoders={date: lambda d: d.isoformat()},
+        )
+        client = TestClient(app=app)
+
+        result = _rpc(client, "tools/call", {"name": "get_date", "arguments": {}})
+        assert "error" not in result, f"unexpected error: {result.get('error')}"
+        parsed = json.loads(result["result"]["content"][0]["text"])
+        assert parsed["today"] == "2025-06-15"
 
 
 class TestPluginIdempotency:

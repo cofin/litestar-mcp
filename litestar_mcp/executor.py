@@ -3,8 +3,8 @@
 Dependency resolution is delegated to Litestar's own ``KwargsModel`` machinery
 so that the filtering (only handler-consumed deps), transitive walking, and
 topological ordering are all handled by the framework we're piggybacking on.
-We intentionally reach into ``litestar._kwargs`` — see upstream issue to
-promote this to a public API.
+We intentionally reach into ``litestar._kwargs`` — this is a private API; if
+Litestar promotes it to a public surface, the import path should be updated.
 """
 
 import inspect
@@ -50,8 +50,8 @@ _UNSATISFIABLE_RESERVED_KWARGS = frozenset({"request", "socket", "scope", "state
 _REQUEST_BODY_RESERVED_KWARGS = frozenset({"data", "body", "form"})
 
 
-class NotCallableInCLIContextError(ImproperlyConfiguredException):
-    """Raised when a tool is not callable from the CLI due to its dependencies."""
+class NotCallableWithoutConnectionError(ImproperlyConfiguredException):
+    """Raised when a tool requires an ASGI connection that is not available."""
 
     def __init__(self, handler_name: str, parameter_name: str) -> None:
         """Initialize the exception.
@@ -61,10 +61,10 @@ class NotCallableInCLIContextError(ImproperlyConfiguredException):
             parameter_name: Name of the parameter causing the issue.
         """
         super().__init__(
-            f"Tool '{handler_name}' cannot be executed via MCP: its dependency "
-            f"'{parameter_name}' requires request context (e.g. a plugin-registered "
-            f"session, request, or connection-scoped resource). Tools that need "
-            f"such resources are not currently MCP-callable."
+            f"Tool '{handler_name}' requires an ASGI connection: its dependency "
+            f"'{parameter_name}' needs request context (e.g. a plugin-registered "
+            f"session, request, or connection-scoped resource). Use the HTTP "
+            f"transport to invoke this tool, or remove the connection-scoped dependency."
         )
 
 
@@ -93,7 +93,7 @@ async def _call_provider_without_connection(
     Kwargs for the provider are drawn from already-resolved deps and the
     provider's own defaults. Any kwarg that is neither resolved nor has a
     default means the provider genuinely needs request context we can't
-    supply — we raise ``NotCallableInCLIContextError`` naming the dep.
+    supply — we raise ``NotCallableWithoutConnectionError`` naming the dep.
 
     Exceptions raised inside the provider itself are **not** rewritten. A
     ``KeyError`` in user logic must surface as a ``KeyError``, not a
@@ -110,7 +110,7 @@ async def _call_provider_without_connection(
     # teardown to interpreter GC. Reject upfront, before invoking the
     # provider, so no side effects leak.
     if provide.has_sync_generator_dependency or provide.has_async_generator_dependency:
-        raise NotCallableInCLIContextError(handler_name, dependency.key)
+        raise NotCallableWithoutConnectionError(handler_name, dependency.key)
 
     parsed_sig = provide.parsed_fn_signature
 
@@ -122,7 +122,7 @@ async def _call_provider_without_connection(
             # Provider's own default will apply — skip.
             continue
         else:
-            raise NotCallableInCLIContextError(handler_name, dependency.key)
+            raise NotCallableWithoutConnectionError(handler_name, dependency.key)
 
     return await provide(**kwargs)
 
@@ -141,7 +141,7 @@ async def _resolve_dependencies_via_litestar(
 
     If the handler (or any transitively consumed dep) needs a reserved
     framework kwarg such as ``request``, ``state``, or ``scope``, we raise
-    ``NotCallableInCLIContextError`` up front using Litestar's own
+    ``NotCallableWithoutConnectionError`` up front using Litestar's own
     ``expected_reserved_kwargs`` as the source of truth.
     """
     kwargs_model = _build_kwargs_model(handler)
@@ -155,7 +155,7 @@ async def _resolve_dependencies_via_litestar(
     unsatisfiable = kwargs_model.expected_reserved_kwargs & _UNSATISFIABLE_RESERVED_KWARGS
     if unsatisfiable:
         first = next(iter(sorted(unsatisfiable)))
-        raise NotCallableInCLIContextError(handler_name, first)
+        raise NotCallableWithoutConnectionError(handler_name, first)
 
     resolved: dict[str, Any] = {}
     for batch in kwargs_model.dependency_batches:
@@ -223,6 +223,39 @@ async def _invoke_handler(
     return result  # pyright: ignore
 
 
+def check_cli_compatibility(handler: Any) -> tuple[bool, str | None]:
+    """Check whether a handler can execute without an ASGI connection.
+
+    Performs the same static checks that the connectionless executor would
+    apply at runtime — reserved-kwarg detection and generator-provider
+    rejection — but without invoking any provider code.
+
+    Args:
+        handler: A route handler (or raw function for tests).
+
+    Returns:
+        A ``(is_compatible, reason)`` tuple. When compatible, *reason* is
+        ``None``; otherwise it is a human-readable explanation suitable for
+        CLI display.
+    """
+    kwargs_model = _build_kwargs_model(handler)
+    if kwargs_model is None:
+        return True, None
+
+    unsatisfiable = kwargs_model.expected_reserved_kwargs & _UNSATISFIABLE_RESERVED_KWARGS
+    if unsatisfiable:
+        first = next(iter(sorted(unsatisfiable)))
+        return False, f"requires '{first}' (ASGI connection)"
+
+    for batch in kwargs_model.dependency_batches:
+        for dependency in batch:
+            provide = dependency.provide
+            if provide.has_sync_generator_dependency or provide.has_async_generator_dependency:
+                return False, f"dependency '{dependency.key}' uses generator provider"
+
+    return True, None
+
+
 async def _execute_connectionless(
     handler: BaseRouteHandler,
     tool_args: "dict[str, Any]",
@@ -232,12 +265,12 @@ async def _execute_connectionless(
     Uses Litestar's ``KwargsModel`` batching to discover and invoke
     handler-consumed providers, but without a live request scope. Any
     reserved framework kwarg (``request``, ``state``, ...) or generator
-    provider is rejected via :class:`NotCallableInCLIContextError`.
+    provider is rejected via :class:`NotCallableWithoutConnectionError`.
     """
-    try:
+    if isinstance(handler, BaseRouteHandler):
         fn: Callable[..., Any] = get_handler_function(handler)
-    except AttributeError:
-        # Fallback for test cases where handler might be a raw function.
+    else:
+        # Test path: raw function passed directly.
         fn = handler
 
     handler_name = get_name(fn)
@@ -301,7 +334,7 @@ async def _execute_with_connection(
             kwargs[body_kwarg] = tool_args[body_kwarg]
     # Satisfy only the reserved framework slots the handler actually
     # declared, and only from connection attributes that do NOT touch the
-    # request body. Request-body slots were already rejected above.
+    # request body. Request-body slots were already pre-populated above.
     for reserved in kwargs_model.expected_reserved_kwargs:
         if reserved == "request":
             kwargs["request"] = connection
@@ -359,11 +392,8 @@ async def execute_tool(
         The result of the handler execution.
 
     Raises:
-        NotCallableInCLIContextError: If the handler requires request-scoped
+        NotCallableWithoutConnectionError: If the handler requires request-scoped
             dependencies and no connection was provided.
-        ToolRequiresRequestBodyError: If the handler declares ``data``,
-            ``body``, or ``form`` — reserved request-body kwargs that MCP
-            cannot supply (the MCP envelope owns the HTTP body).
         ValueError: If required arguments are missing.
     """
     if connection is not None:

@@ -1,9 +1,9 @@
 """CLI commands for MCP plugin integration."""
 
 import asyncio
-import contextlib
 import inspect
 import json
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, cast
 
@@ -11,7 +11,7 @@ from litestar.cli._utils import LitestarGroup
 from rich.console import Console
 from rich.json import JSON
 
-from litestar_mcp.executor import NotCallableInCLIContextError, execute_tool
+from litestar_mcp.executor import NotCallableWithoutConnectionError, check_cli_compatibility, execute_tool
 from litestar_mcp.utils import get_handler_function
 
 try:
@@ -101,10 +101,19 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
         fn = get_handler_function(handler)
         sig = inspect.signature(fn)
 
-        # Dependencies that are handled by the executor, not the CLI
+        # Dependencies that are handled by the executor, not the CLI.
+        # Best-effort exclusion — the executor uses KwargsModel for actual
+        # resolution; this only drives CLI option generation.
         di_params: set[str] = set()
-        with contextlib.suppress(Exception):
+        try:
             di_params = set(handler.resolve_dependencies().keys())
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).warning(
+                "Failed to resolve dependencies for handler '%s'; "
+                "all parameters will appear as CLI options.",
+                cmd_name,
+                exc_info=True,
+            )
 
         # Create CLI options from function signature
         params = []
@@ -153,13 +162,13 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
             try:
                 result = asyncio.run(execute_tool(handler, app, parsed_kwargs))
                 _display_result(self._console, result)
-            except (NotCallableInCLIContextError, ValueError) as e:
+            except (NotCallableWithoutConnectionError, ValueError) as e:
                 self._console.print(f"[bold red]Error executing tool '{cmd_name}':[/bold red]")
                 self._console.print(str(e))
                 ctx.exit(1)
             except Exception as e:  # noqa: BLE001
                 self._console.print(f"[bold red]Unexpected error executing tool '{cmd_name}':[/bold red]")
-                self._console.print(str(e))
+                self._console.print(repr(e))
                 ctx.exit(1)
 
         # Get docstring from the underlying function
@@ -186,9 +195,13 @@ def _resolve_plugin_from_ctx(ctx: "click.Context") -> "LitestarMCP | None":
     cached = ctx.meta.get(_MCP_PLUGIN_META_KEY)
     if cached is not None:
         return cast("LitestarMCP", cached)
+
+    app = getattr(ctx.obj, "app", None)
+    if app is None:
+        return None
     try:
-        return get_mcp_plugin(ctx.obj.app)
-    except (AttributeError, RuntimeError):
+        return get_mcp_plugin(app)
+    except RuntimeError:
         return None
 
 
@@ -226,12 +239,12 @@ def list_tools(ctx: click.Context) -> None:
     console.print(f"[bold green]Discovered {len(plugin.discovered_tools)} tools:[/bold green]")  # pragma: no cover
     for name in sorted(plugin.discovered_tools.keys()):  # pragma: no cover
         handler = plugin.discovered_tools[name]  # pragma: no cover
-        # Get the underlying function and its docstring  # pragma: no cover
         fn = get_handler_function(handler)  # pragma: no cover
         description = fn.__doc__ or "No description"  # pragma: no cover
-        # Clean up the description - take first line only  # pragma: no cover
         first_line = description.split("\n")[0].strip()  # pragma: no cover
-        console.print(f"- [bold]{name}[/bold]: {first_line}")  # pragma: no cover
+        cli_ok, _reason = check_cli_compatibility(handler)  # pragma: no cover
+        suffix = "" if cli_ok else " [yellow]\\[HTTP only][/yellow]"  # pragma: no cover
+        console.print(f"- [bold]{name}[/bold]: {first_line}{suffix}")  # pragma: no cover
 
 
 @mcp_group.command(name="list-resources")  # type: ignore[untyped-decorator]
@@ -272,6 +285,9 @@ def _parse_cli_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:  # pragma: no c
             else:
                 parsed_kwargs[key] = value
         except (json.JSONDecodeError, TypeError):
+            logging.getLogger(__name__).warning(
+                "Failed to parse JSON for argument '%s'; passing raw string.", key,
+            )
             parsed_kwargs[key] = value
     return parsed_kwargs
 

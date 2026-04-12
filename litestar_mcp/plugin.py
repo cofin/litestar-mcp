@@ -75,7 +75,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
     """Litestar plugin for Model Context Protocol integration.
 
     This plugin discovers routes marked for MCP exposure and exposes them through
-    MCP-compatible REST API endpoints.
+    MCP JSON-RPC endpoints over Streamable HTTP.
     """
 
     def __init__(self, config: Optional[MCPConfig] = None) -> None:
@@ -167,7 +167,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         """Initialize the MCP integration when the Litestar app starts.
 
         This method discovers routes marked for MCP exposure and adds
-        MCP-compatible REST API endpoints to expose them.
+        MCP JSON-RPC endpoints to expose them.
 
         Args:
             app_config: The Litestar application configuration
