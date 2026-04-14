@@ -1,5 +1,7 @@
 """Tests for the MCP Registry."""
 
+import json
+
 import pytest
 from litestar.handlers import get
 
@@ -31,20 +33,13 @@ def test_registry_resource_registration(registry: Registry) -> None:
     assert registry.resources["my_resource"] == my_handler
 
 
-def test_registry_metadata_storage(registry: Registry) -> None:
-    @get("/")
-    def my_handler() -> str:
-        return "hello"
-
-    metadata = {"type": "tool", "name": "test"}
-    registry.set_metadata(my_handler, metadata)
-    assert registry.get_metadata(my_handler) == metadata
+def test_registry_sse_manager_property_requires_configuration(registry: Registry) -> None:
+    with pytest.raises(RuntimeError, match="SSE manager has not been configured"):
+        _ = registry.sse_manager
 
 
 @pytest.mark.asyncio
 async def test_registry_notifications(registry: Registry) -> None:
-    import json
-
     from litestar_mcp.sse import SSEManager
 
     sse_manager = SSEManager()
@@ -52,7 +47,8 @@ async def test_registry_notifications(registry: Registry) -> None:
 
     # Subscribe a client
     sse_manager.register_client("client1")
-    stream = sse_manager.subscribe("client1")
+    stream = await sse_manager.subscribe("client1")
+    await stream.__anext__()  # Prime event
 
     # Notify
     await registry.notify_resource_updated("test://res")

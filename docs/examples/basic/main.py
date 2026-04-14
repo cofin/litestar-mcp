@@ -26,8 +26,7 @@ async def status() -> dict[str, str]:
 
 # Step 1: Create MCP configuration (optional - uses defaults if not provided)
 mcp_config = MCPConfig(
-    server_name="Hello World API",  # Name shown to AI models
-    debug_mode=True,  # Enables /mcp/debug endpoint for development
+    name="Hello World API",  # Name shown to AI models
 )
 
 # Step 2: Add LitestarMCP to your Litestar app

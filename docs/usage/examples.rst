@@ -14,7 +14,7 @@ Basic Example
 
 The basic example demonstrates minimal MCP integration:
 
-- **Location**: ``examples/basic/``
+- **Location**: ``docs/examples/basic/``
 - **Features**: Simple plugin setup with marked routes
 - **Demonstrates**: Tool and resource exposure through route marking
 
@@ -25,7 +25,7 @@ Advanced Example
 
 The advanced example shows more complex usage patterns:
 
-- **Location**: ``examples/advanced/``
+- **Location**: ``docs/examples/advanced/``
 - **Features**: Complex route handlers, dependency injection, error handling
 - **Demonstrates**: Real-world integration patterns
 
@@ -78,7 +78,7 @@ To run any of the examples:
 .. code-block:: bash
 
     # Navigate to example directory
-    cd examples/basic/
+    cd docs/examples/basic/
 
     # Run with uv
     uv run python main.py
@@ -88,9 +88,9 @@ To run any of the examples:
 
 Once running, you can access the MCP endpoints at:
 
-- ``http://localhost:8000/mcp/`` - Server info
-- ``http://localhost:8000/mcp/tools`` - Available tools
-- ``http://localhost:8000/mcp/resources`` - Available resources
+- ``http://localhost:8000/mcp`` - MCP Streamable HTTP endpoint
+- ``http://localhost:8000/.well-known/mcp-server.json`` - MCP server manifest
+- ``http://localhost:8000/.well-known/agent-card.json`` - Agent metadata document
 
 Testing MCP Integration
 -----------------------
@@ -99,17 +99,27 @@ You can test the MCP endpoints using curl:
 
 .. code-block:: bash
 
-    # Get server info
-    curl http://localhost:8000/mcp/
+    # Initialize the server
+    curl -X POST http://localhost:8000/mcp \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}'
 
     # List available tools
-    curl http://localhost:8000/mcp/tools
+    curl -X POST http://localhost:8000/mcp \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
 
-    # Execute a tool (if it accepts GET requests)
-    curl http://localhost:8000/mcp/tools/say_hello
+    # Execute a tool
+    curl -X POST http://localhost:8000/mcp \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"say_hello","arguments":{"name":"Litestar"}}}'
 
     # List resources
-    curl http://localhost:8000/mcp/resources
+    curl -X POST http://localhost:8000/mcp \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","id":4,"method":"resources/list","params":{}}'
 
-    # Get a specific resource
-    curl http://localhost:8000/mcp/resources/api_schema
+    # Read the OpenAPI resource
+    curl -X POST http://localhost:8000/mcp \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","id":5,"method":"resources/read","params":{"uri":"litestar://openapi"}}'

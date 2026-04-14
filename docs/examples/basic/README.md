@@ -23,14 +23,16 @@ This is the simplest possible example of integrating the Litestar MCP Plugin wit
 
 3. **Test the MCP endpoints**:
    - The application will be available at `http://localhost:8000`
-   - MCP endpoints are available at `http://localhost:8000/mcp/`
+   - The MCP endpoint is available at `http://localhost:8000/mcp`
 
 ## Available MCP Resources
 
 ### OpenAPI Resource (`openapi`)
 The application's OpenAPI schema is automatically available as an MCP resource:
 ```bash
-curl http://localhost:8000/mcp/resources/openapi
+curl -X POST http://localhost:8000/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"litestar://openapi"}}'
 ```
 
 This returns the complete OpenAPI specification for your application.
@@ -51,17 +53,25 @@ async def get_users() -> list[dict]:
 Test the MCP integration with these endpoints:
 
 ```bash
-# Get server information
-curl http://localhost:8000/mcp/
+# Initialize the MCP server
+curl -X POST http://localhost:8000/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}'
 
 # List available resources
-curl http://localhost:8000/mcp/resources
+curl -X POST http://localhost:8000/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"resources/list","params":{}}'
 
 # List available tools
-curl http://localhost:8000/mcp/tools
+curl -X POST http://localhost:8000/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/list","params":{}}'
 
 # Get the OpenAPI schema
-curl http://localhost:8000/mcp/resources/openapi
+curl -X POST http://localhost:8000/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":4,"method":"resources/read","params":{"uri":"litestar://openapi"}}'
 ```
 
 ## Testing with Curl
