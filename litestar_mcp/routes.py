@@ -7,7 +7,13 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from litestar import Controller, MediaType, Request, Response, delete, post
 from litestar.serialization import default_serializer, encode_json
-from litestar.status_codes import HTTP_200_OK, HTTP_204_NO_CONTENT, HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN
+from litestar.status_codes import (
+    HTTP_200_OK,
+    HTTP_204_NO_CONTENT,
+    HTTP_401_UNAUTHORIZED,
+    HTTP_403_FORBIDDEN,
+    HTTP_404_NOT_FOUND,
+)
 
 from litestar_mcp.auth import validate_bearer_token
 from litestar_mcp.config import MCPConfig
@@ -375,7 +381,7 @@ class MCPController(Controller):
                     rpc_request.id,
                     JSONRPCError(code=INVALID_REQUEST, message="Invalid or expired session"),
                 ),
-                status_code=HTTP_200_OK,
+                status_code=HTTP_404_NOT_FOUND,
                 media_type=MediaType.JSON,
             )
             return _add_protocol_headers(resp)

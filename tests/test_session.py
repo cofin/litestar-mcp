@@ -129,6 +129,7 @@ class TestSessionLifecycle:
 
     def test_invalid_session_rejected(self, client: TestClient[Any]) -> None:
         resp = _rpc(client, "tools/list", headers={"mcp-session-id": "bogus-session"})
+        assert resp.status_code == 404
         body = resp.json()
         assert "error" in body
 
@@ -149,8 +150,9 @@ class TestSessionLifecycle:
         resp = client.delete("/mcp", headers={"mcp-session-id": session_id})
         assert resp.status_code == 200
 
-        # Session should now be invalid
+        # Session should now be invalid — spec requires 404
         resp = _rpc(client, "tools/list", headers={"mcp-session-id": session_id})
+        assert resp.status_code == 404
         body = resp.json()
         assert "error" in body
 
