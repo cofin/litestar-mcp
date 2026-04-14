@@ -76,6 +76,12 @@ test = [
     "pytest-cov",
     "coverage",
     "pytest-asyncio",
+    "advanced-alchemy",
+    "dishka",
+    "sqlspec[asyncpg,duckdb]",
+    "pytest-databases[postgres]",
+    "asyncpg",
+    "duckdb",
     "pytest-sugar",
     "pytest-mock>=3.11.1",
     "pytest-xdist>=3.6.1",
@@ -169,7 +175,7 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 "__init__.py" = ['F401', 'D104']
 "docs/**/*.*" = ["S", "B", "DTZ", "A", "TC", "ERA", "D", "RET", "E731", "RUF012", "FA100", "ARG001"]
 "docs/conf.py" = ["FIX002", "ARG001", "INP001"]
-"tests/*.py" = ['D103', 'S101', "S105", "S106", 'D104', "PLR2004", "RUF029", "ARG001", "SLF001", "DOC"]
+"tests/**/*.py" = ['D103', 'S101', "S105", "S106", 'D104', "PLR2004", "RUF029", "ARG001", "SLF001", "DOC"]
 "tools/*.py" = ["INP001", "ERA001", "N999"]
 "tools/**/*.*" = ["D", "ARG", "EM", "TRY", "G", "FBT", "INP001", "S603", "S404", "PLR0915"]
 

@@ -11,7 +11,7 @@ from litestar.di import Provide
 
 from litestar_mcp.config import MCPConfig
 from litestar_mcp.executor import NotCallableInCLIContextError, execute_tool
-from tests.conftest import create_app_with_handler, get_handler_from_app
+from tests.unit.conftest import create_app_with_handler, get_handler_from_app
 
 
 class TestExecutor:

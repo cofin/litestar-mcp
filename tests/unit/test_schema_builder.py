@@ -17,7 +17,7 @@ from litestar_mcp.schema_builder import (
     type_to_json_schema,
     union_type_to_json_schema,
 )
-from tests.conftest import create_app_with_handler
+from tests.unit.conftest import create_app_with_handler
 
 
 class TestSchemaBuilder:
