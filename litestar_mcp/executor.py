@@ -11,12 +11,13 @@ from litestar.handlers.base import BaseRouteHandler
 from litestar.utils.helpers import get_name
 from litestar.utils.sync import ensure_async_callable
 
-from litestar_mcp.config import MCPConfig
 from litestar_mcp.typing import schema_dump
 from litestar_mcp.utils import get_handler_function
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from litestar_mcp.config import MCPConfig
 
 _UNSUPPORTED_CLI_DEPENDENCIES = {"request", "socket", "headers", "cookies", "query", "body"}
 _EXECUTION_CONTEXT_PARAMS = {"resolved_user", "user_claims"}

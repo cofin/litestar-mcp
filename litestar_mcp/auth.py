@@ -1,9 +1,10 @@
 """MCP OAuth 2.1 authentication and auth bridge."""
 
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from time import monotonic
-from typing import Any, Awaitable, Callable, Optional, Union, cast
+from typing import Any, cast
 
 _JSON_DOCUMENT_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 
@@ -13,9 +14,9 @@ class OIDCProviderConfig:
     """Configuration for validating bearer tokens against an OIDC/JWKS provider."""
 
     issuer: str
-    audience: Optional[Union[str, list[str]]] = None
-    jwks_uri: Optional[str] = None
-    discovery_url: Optional[str] = None
+    audience: str | list[str] | None = None
+    jwks_uri: str | None = None
+    discovery_url: str | None = None
     algorithms: list[str] = field(default_factory=lambda: ["RS256"])
     cache_ttl: int = 300
 
@@ -40,12 +41,12 @@ class MCPAuthConfig:
             user object that is then exposed to MCP tool execution.
     """
 
-    issuer: Optional[str] = None
-    audience: Optional[Union[str, list[str]]] = None
-    scopes: Optional[dict[str, str]] = None
-    token_validator: Optional[Callable[[str], Awaitable[Optional[dict[str, Any]]]]] = None
-    providers: Optional[list[OIDCProviderConfig]] = None
-    user_resolver: Optional[Callable[[dict[str, Any], Any], Union[Awaitable[Any], Any]]] = None
+    issuer: str | None = None
+    audience: str | list[str] | None = None
+    scopes: dict[str, str] | None = None
+    token_validator: Callable[[str], Awaitable[dict[str, Any] | None]] | None = None
+    providers: list[OIDCProviderConfig] | None = None
+    user_resolver: Callable[[dict[str, Any], Any], Awaitable[Any] | Any] | None = None
 
 
 def _normalize_issuer(issuer: str) -> str:
@@ -136,7 +137,7 @@ def _load_signing_key(token: str, jwks: dict[str, Any], algorithms: list[str]) -
     return algorithm.from_jwk(json.dumps(selected_key))
 
 
-async def _validate_with_oidc_provider(token: str, provider: OIDCProviderConfig) -> Optional[dict[str, Any]]:
+async def _validate_with_oidc_provider(token: str, provider: OIDCProviderConfig) -> dict[str, Any] | None:
     try:
         import jwt
     except ImportError as exc:  # pragma: no cover - optional dependency path
@@ -154,14 +155,14 @@ async def _validate_with_oidc_provider(token: str, provider: OIDCProviderConfig)
             issuer=_normalize_issuer(provider.issuer),
             options={"verify_aud": provider.audience is not None},
         )
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
 
 async def validate_bearer_token(
     token: str,
     auth_config: MCPAuthConfig,
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Validate a bearer token using the configured validator(s).
 
     Args:

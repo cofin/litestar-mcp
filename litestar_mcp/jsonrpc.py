@@ -1,9 +1,9 @@
 # ruff: noqa: N818, PLR0911, BLE001
 """JSON-RPC 2.0 message routing for MCP."""
 
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from typing import Any
 
 # Standard JSON-RPC 2.0 error codes
 PARSE_ERROR = -32700
@@ -25,7 +25,7 @@ class JSONRPCError:
 
     code: int
     message: str
-    data: Optional[Any] = None
+    data: Any | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to a JSON-serializable dict."""
@@ -48,7 +48,7 @@ class JSONRPCRequest:
 
     jsonrpc: str
     method: str
-    id: Optional[Any] = None
+    id: Any | None = None
     params: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -84,7 +84,7 @@ class JSONRPCRouter:
         """
         self._methods[method] = handler
 
-    async def dispatch(self, request: JSONRPCRequest) -> Optional[dict[str, Any]]:
+    async def dispatch(self, request: JSONRPCRequest) -> dict[str, Any] | None:
         """Dispatch a JSON-RPC request to the appropriate handler.
 
         Args:

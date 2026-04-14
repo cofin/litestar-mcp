@@ -1,7 +1,7 @@
 # pyright: ignore[reportAttributeAccessIssue]
-from typing import TYPE_CHECKING, Any, Protocol, Union
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, TypeGuard
 
-from typing_extensions import TypeAlias, TypeGuard, TypeVar
+from typing_extensions import TypeVar
 
 from litestar_mcp._typing import (
     ATTRS_INSTALLED,
@@ -33,7 +33,7 @@ class DictLike(Protocol):
 
 T = TypeVar("T")
 
-SupportedSchemaModel: TypeAlias = "Union[DictLike, StructStub, BaseModelStub, DataclassProtocol, AttrsInstanceStub]"
+SupportedSchemaModel: TypeAlias = "DictLike | StructStub | BaseModelStub | DataclassProtocol | AttrsInstanceStub"
 """Type alias for supported schema models.
 
 :class:`msgspec.Struct` | :class:`pydantic.BaseModel` | :class:`DataclassProtocol` | :class:`AttrsInstance`
@@ -171,7 +171,7 @@ def schema_dump(data: Any, exclude_unset: bool = True) -> "dict[str, Any] | None
     """
     from litestar_mcp._typing import UNSET
 
-    result: Union[dict[str, Any], None] = None
+    result: dict[str, Any] | None = None
 
     if data is None:
         result = None

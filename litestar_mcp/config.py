@@ -1,9 +1,9 @@
 """Configuration for Litestar MCP Plugin."""
 
 from dataclasses import dataclass
-from typing import Any, Optional, Union
+from typing import Any
 
-from litestar_mcp.auth import MCPAuthConfig
+from litestar_mcp.auth import MCPAuthConfig  # noqa: TC001
 
 
 @dataclass
@@ -51,16 +51,16 @@ class MCPConfig:
 
     base_path: str = "/mcp"
     include_in_schema: bool = False
-    name: Optional[str] = None
-    guards: Optional[list[Any]] = None
-    allowed_origins: Optional[list[str]] = None
-    include_operations: Optional[list[str]] = None
-    exclude_operations: Optional[list[str]] = None
-    include_tags: Optional[list[str]] = None
-    exclude_tags: Optional[list[str]] = None
+    name: str | None = None
+    guards: list[Any] | None = None
+    allowed_origins: list[str] | None = None
+    include_operations: list[str] | None = None
+    exclude_operations: list[str] | None = None
+    include_tags: list[str] | None = None
+    exclude_tags: list[str] | None = None
     auth: "MCPAuthConfig | None" = None
-    dependency_provider: Optional[Any] = None
-    tasks: "Union[bool, MCPTaskConfig]" = False
+    dependency_provider: Any | None = None
+    tasks: "bool | MCPTaskConfig" = False
 
     @property
     def task_config(self) -> "MCPTaskConfig | None":

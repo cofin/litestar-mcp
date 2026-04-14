@@ -161,4 +161,3 @@ def test_tasks_cancel_marks_task_cancelled() -> None:
         listed = _rpc(client, "tasks/list", {}, headers=headers)
         task_ids = [task["taskId"] for task in listed["result"]["tasks"]]
         assert task_id in task_ids
-

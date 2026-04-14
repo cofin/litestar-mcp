@@ -5,10 +5,13 @@ import base64
 import binascii
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Awaitable, Callable, Optional
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from litestar_mcp.jsonrpc import INTERNAL_ERROR, JSONRPCError
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 TERMINAL_TASK_STATUSES = frozenset({"completed", "failed", "cancelled"})
 
@@ -51,18 +54,18 @@ class TaskRecord:
     status: str
     created_at: datetime
     last_updated_at: datetime
-    ttl: Optional[int]
-    poll_interval: Optional[int]
-    status_message: Optional[str] = None
-    result: Optional[dict[str, Any]] = None
-    error: Optional[JSONRPCError] = None
-    background_task: Optional[asyncio.Task[Any]] = field(default=None, repr=False)
+    ttl: int | None
+    poll_interval: int | None
+    status_message: str | None = None
+    result: dict[str, Any] | None = None
+    error: JSONRPCError | None = None
+    background_task: asyncio.Task[Any] | None = field(default=None, repr=False)
     done_event: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
 
     def is_terminal(self) -> bool:
         return self.status in TERMINAL_TASK_STATUSES
 
-    def is_expired(self, now: Optional[datetime] = None) -> bool:
+    def is_expired(self, now: datetime | None = None) -> bool:
         if self.ttl is None:
             return False
         current_time = now or _utc_now()
@@ -107,7 +110,7 @@ class InMemoryTaskStore:
     async def create(
         self,
         owner_id: str,
-        ttl: Optional[int],
+        ttl: int | None,
         status_message: str = "The operation is now in progress.",
     ) -> TaskRecord:
         async with self._lock:
@@ -140,7 +143,9 @@ class InMemoryTaskStore:
             record = self._lookup_locked(task_id, owner_id)
             return self._clone_record(record)
 
-    async def list(self, owner_id: str, cursor: Optional[str] = None, limit: int = 50) -> tuple[list[TaskRecord], Optional[str]]:
+    async def list(
+        self, owner_id: str, cursor: str | None = None, limit: int = 50
+    ) -> tuple[list[TaskRecord], str | None]:
         async with self._lock:
             self._purge_expired_locked()
             offset = _decode_cursor(cursor) if cursor is not None else 0
@@ -175,7 +180,7 @@ class InMemoryTaskStore:
         self,
         task_id: str,
         error: JSONRPCError,
-        status_message: Optional[str] = None,
+        status_message: str | None = None,
     ) -> TaskRecord:
         return await self.update_status(
             task_id,
@@ -208,9 +213,9 @@ class InMemoryTaskStore:
         task_id: str,
         *,
         status: str,
-        status_message: Optional[str] = None,
-        result: Optional[dict[str, Any]] = None,
-        error: Optional[JSONRPCError] = None,
+        status_message: str | None = None,
+        result: dict[str, Any] | None = None,
+        error: JSONRPCError | None = None,
     ) -> TaskRecord:
         async with self._lock:
             record = self._lookup_locked(task_id)
@@ -233,14 +238,14 @@ class InMemoryTaskStore:
         await self._notify_status(updated_record)
         return updated_record
 
-    def _resolve_ttl(self, ttl: Optional[int]) -> Optional[int]:
+    def _resolve_ttl(self, ttl: int | None) -> int | None:
         if ttl is None:
             return self._default_ttl
         if ttl <= 0:
             return 0
         return min(ttl, self._max_ttl)
 
-    def _lookup_locked(self, task_id: str, owner_id: Optional[str] = None) -> TaskRecord:
+    def _lookup_locked(self, task_id: str, owner_id: str | None = None) -> TaskRecord:
         record = self._tasks.get(task_id)
         if record is None:
             msg = "Failed to retrieve task: Task not found"

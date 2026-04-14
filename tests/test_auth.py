@@ -2,7 +2,7 @@
 
 import base64
 import json
-from typing import Any, Optional
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -19,8 +19,8 @@ from litestar_mcp.decorators import mcp_tool
 
 
 def _make_auth_app(
-    auth_config: Optional[MCPAuthConfig] = None,
-    tool_scopes: Optional[list[str]] = None,
+    auth_config: MCPAuthConfig | None = None,
+    tool_scopes: list[str] | None = None,
 ) -> Litestar:
     """Helper to create an app with auth configuration."""
 
@@ -175,7 +175,7 @@ class TestBearerTokenValidation:
     def test_validate_bearer_token_calls_validator(self) -> None:
         calls: list[str] = []
 
-        async def my_validator(token: str) -> Optional[dict[str, Any]]:
+        async def my_validator(token: str) -> dict[str, Any] | None:
             calls.append(token)
             if token == "valid":
                 return {"sub": "user1", "scopes": ["read"]}
@@ -191,7 +191,7 @@ class TestBearerTokenValidation:
         assert calls == ["valid"]
 
     def test_validate_bearer_token_invalid(self) -> None:
-        async def my_validator(token: str) -> Optional[dict[str, Any]]:
+        async def my_validator(token: str) -> dict[str, Any] | None:
             return None
 
         auth = MCPAuthConfig(token_validator=my_validator)
@@ -227,7 +227,8 @@ class TestBearerTokenValidation:
                         }
                     ]
                 }
-            raise AssertionError(f"unexpected URL: {url}")
+            msg = f"unexpected URL: {url}"
+            raise AssertionError(msg)
 
         auth = MCPAuthConfig(
             providers=[
@@ -255,7 +256,7 @@ class TestBearerTokenValidation:
 
 class TestAuthEnforcement:
     def test_auth_required_rejects_no_token(self) -> None:
-        async def validator(token: str) -> Optional[dict[str, Any]]:
+        async def validator(token: str) -> dict[str, Any] | None:
             if token == "good":
                 return {"sub": "user1"}
             return None
@@ -271,7 +272,7 @@ class TestAuthEnforcement:
         assert resp.status_code == 401
 
     def test_auth_required_accepts_valid_token(self) -> None:
-        async def validator(token: str) -> Optional[dict[str, Any]]:
+        async def validator(token: str) -> dict[str, Any] | None:
             if token == "good":
                 return {"sub": "user1"}
             return None
@@ -287,7 +288,7 @@ class TestAuthEnforcement:
         assert resp.status_code == 200
 
     def test_auth_required_rejects_invalid_token(self) -> None:
-        async def validator(token: str) -> Optional[dict[str, Any]]:
+        async def validator(token: str) -> dict[str, Any] | None:
             return None
 
         auth = MCPAuthConfig(
@@ -301,7 +302,7 @@ class TestAuthEnforcement:
         assert resp.status_code == 401
 
     def test_initialize_exempt_from_auth(self) -> None:
-        async def validator(token: str) -> Optional[dict[str, Any]]:
+        async def validator(token: str) -> dict[str, Any] | None:
             return None  # always reject
 
         auth = MCPAuthConfig(
@@ -326,7 +327,7 @@ class TestAuthEnforcement:
     def test_user_resolver_runs_after_successful_validation(self) -> None:
         resolver_calls: list[dict[str, Any]] = []
 
-        async def validator(token: str) -> Optional[dict[str, Any]]:
+        async def validator(token: str) -> dict[str, Any] | None:
             if token == "good":
                 return {"sub": "user-1"}
             return None
@@ -348,14 +349,18 @@ class TestAuthEnforcement:
         app = Litestar(route_handlers=[who_am_i], plugins=[LitestarMCP(MCPConfig(auth=auth))])
         client = TestClient(app=app)
 
-        success = _rpc(client, "tools/call", {"name": "who_am_i", "arguments": {}}, headers={"Authorization": "Bearer good"})
+        success = _rpc(
+            client, "tools/call", {"name": "who_am_i", "arguments": {}}, headers={"Authorization": "Bearer good"}
+        )
         assert success.status_code == 200
         payload = json.loads(success.json()["result"]["content"][0]["text"])
         assert payload == {"id": "user-1"}
         assert resolver_calls == [{"sub": "user-1"}]
 
         resolver_calls.clear()
-        failure = _rpc(client, "tools/call", {"name": "who_am_i", "arguments": {}}, headers={"Authorization": "Bearer bad"})
+        failure = _rpc(
+            client, "tools/call", {"name": "who_am_i", "arguments": {}}, headers={"Authorization": "Bearer bad"}
+        )
         assert failure.status_code == 401
         assert resolver_calls == []
 
@@ -367,7 +372,7 @@ class TestAuthEnforcement:
 
 class TestPerToolScopes:
     def test_tool_with_required_scope_allowed(self) -> None:
-        async def validator(token: str) -> Optional[dict[str, Any]]:
+        async def validator(token: str) -> dict[str, Any] | None:
             return {"sub": "user1", "scopes": ["users:read"]}
 
         auth = MCPAuthConfig(
@@ -388,7 +393,7 @@ class TestPerToolScopes:
         assert "result" in body
 
     def test_tool_with_missing_scope_rejected(self) -> None:
-        async def validator(token: str) -> Optional[dict[str, Any]]:
+        async def validator(token: str) -> dict[str, Any] | None:
             return {"sub": "user1", "scopes": ["other:scope"]}
 
         auth = MCPAuthConfig(

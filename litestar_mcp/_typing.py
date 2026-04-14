@@ -3,9 +3,9 @@
 
 import enum
 from enum import Enum
-from typing import Any, ClassVar, Optional, Protocol, Union, runtime_checkable
+from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
 
-from typing_extensions import Literal, TypeVar, dataclass_transform
+from typing_extensions import TypeVar, dataclass_transform
 
 
 @runtime_checkable
@@ -34,15 +34,15 @@ class BaseModelStub:
         self,
         /,
         *,
-        include: "Optional[Any]" = None,  # noqa: ARG002
-        exclude: "Optional[Any]" = None,  # noqa: ARG002
-        context: "Optional[Any]" = None,  # noqa: ARG002
+        include: "Any | None" = None,  # noqa: ARG002
+        exclude: "Any | None" = None,  # noqa: ARG002
+        context: "Any | None" = None,  # noqa: ARG002
         by_alias: bool = False,  # noqa: ARG002
         exclude_unset: bool = False,  # noqa: ARG002
         exclude_defaults: bool = False,  # noqa: ARG002
         exclude_none: bool = False,  # noqa: ARG002
         round_trip: bool = False,  # noqa: ARG002
-        warnings: "Union[bool, Literal['none', 'warn', 'error']]" = True,  # noqa: ARG002
+        warnings: "bool | Literal['none', 'warn', 'error']" = True,  # noqa: ARG002
         serialize_as_any: bool = False,  # noqa: ARG002
     ) -> "dict[str, Any]":
         """Placeholder implementation."""
@@ -52,7 +52,7 @@ class BaseModelStub:
         self,
         by_alias: bool = True,  # noqa: ARG002
         ref_template: str = "#/$defs/{model}",  # noqa: ARG002
-        schema_generator: "Optional[Any]" = None,  # noqa: ARG002
+        schema_generator: "Any | None" = None,  # noqa: ARG002
         mode: str = "validation",  # noqa: ARG002
     ) -> "dict[str, Any]":
         """Placeholder implementation for JSON schema generation."""
@@ -89,8 +89,8 @@ def convert_stub(  # noqa: PLR0913
     *,
     strict: bool = True,  # noqa: ARG001
     from_attributes: bool = False,  # noqa: ARG001
-    dec_hook: "Optional[Any]" = None,  # noqa: ARG001
-    builtin_types: "Optional[Any]" = None,  # noqa: ARG001
+    dec_hook: "Any | None" = None,  # noqa: ARG001
+    builtin_types: "Any | None" = None,  # noqa: ARG001
     str_keys: bool = False,  # noqa: ARG001
 ) -> Any:
     """Placeholder implementation."""
@@ -195,7 +195,7 @@ class EmptyEnum(Enum):
     EMPTY = 0
 
 
-EmptyType = Union[Literal[EmptyEnum.EMPTY], UnsetType]
+EmptyType = Literal[EmptyEnum.EMPTY] | UnsetType
 Empty = EmptyEnum.EMPTY
 
 

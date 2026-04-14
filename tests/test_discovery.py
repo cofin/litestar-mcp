@@ -1,7 +1,5 @@
 """Tests for generated discovery artifacts."""
 
-from typing import Any
-
 from litestar import Litestar, get
 from litestar.testing import TestClient
 
@@ -43,4 +41,3 @@ def test_experimental_mcp_server_manifest_generated() -> None:
         assert payload["protocolVersion"] == "2025-11-25"
         assert payload["endpoints"]["mcp"].endswith("/mcp")
         assert "tools" in payload
-

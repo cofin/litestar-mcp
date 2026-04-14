@@ -2,7 +2,8 @@
 
 import contextlib
 import inspect
-from typing import TYPE_CHECKING, Any, Optional, Union, get_args, get_origin
+from types import UnionType
+from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
 
 if TYPE_CHECKING:
     from litestar.handlers import BaseRouteHandler
@@ -19,7 +20,7 @@ from litestar_mcp.utils import get_handler_function
 _EXECUTION_CONTEXT_PARAMS = {"resolved_user", "user_claims"}
 
 
-def basic_type_to_json_schema(annotation: Any) -> "Optional[dict[str, Any]]":
+def basic_type_to_json_schema(annotation: Any) -> "dict[str, Any] | None":
     """Convert basic Python types to JSON Schema format."""
     if annotation is str:
         return {"type": "string"}
@@ -32,7 +33,7 @@ def basic_type_to_json_schema(annotation: Any) -> "Optional[dict[str, Any]]":
     return None
 
 
-def collection_type_to_json_schema(annotation: Any) -> "Optional[dict[str, Any]]":
+def collection_type_to_json_schema(annotation: Any) -> "dict[str, Any] | None":
     """Convert collection types (list, dict, set) to JSON Schema format."""
     origin = get_origin(annotation)
 
@@ -122,7 +123,7 @@ def attrs_to_json_schema(attrs_type: Any) -> "dict[str, Any]":
     return schema
 
 
-def model_to_json_schema(annotation: Any) -> "Optional[dict[str, Any]]":
+def model_to_json_schema(annotation: Any) -> "dict[str, Any] | None":
     """Convert a model class (Pydantic, msgspec, attrs, dataclass) to JSON Schema format.
 
     This is the main entry point for structured type conversion.
@@ -142,7 +143,7 @@ def model_to_json_schema(annotation: Any) -> "Optional[dict[str, Any]]":
     return None
 
 
-def union_type_to_json_schema(annotation: Any) -> "Optional[dict[str, Any]]":
+def union_type_to_json_schema(annotation: Any) -> "dict[str, Any] | None":
     """Convert Union types (including Optional) to JSON Schema format."""
     origin = get_origin(annotation)
 
@@ -150,7 +151,7 @@ def union_type_to_json_schema(annotation: Any) -> "Optional[dict[str, Any]]":
         return {"type": "null"}
 
     # Handle Union types, including Optional[T] which is Union[T, None]
-    if origin is Union:
+    if origin in (Union, UnionType):
         args = get_args(annotation)
         if len(args) == 1:
             return type_to_json_schema(args[0])

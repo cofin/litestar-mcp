@@ -1,6 +1,6 @@
 """Central registry for MCP tools and resources."""
 
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from litestar.handlers import BaseRouteHandler
@@ -19,7 +19,7 @@ class Registry:
         """Initialize the registry."""
         self._tools: dict[str, BaseRouteHandler] = {}
         self._resources: dict[str, BaseRouteHandler] = {}
-        self._sse_manager: Optional[SSEManager] = None
+        self._sse_manager: SSEManager | None = None
 
     def set_sse_manager(self, manager: "SSEManager") -> None:
         """Set the SSE manager for notifications."""
@@ -65,7 +65,7 @@ class Registry:
         self,
         method: str,
         params: dict[str, Any],
-        client_id: Optional[str] = None,
+        client_id: str | None = None,
     ) -> None:
         """Publish a JSON-RPC 2.0 notification to all connected clients.
 

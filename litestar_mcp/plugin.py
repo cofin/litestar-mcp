@@ -1,7 +1,7 @@
 """Litestar MCP Plugin implementation."""
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from litestar import Litestar, Router
 from litestar.config.app import AppConfig
@@ -25,12 +25,12 @@ if TYPE_CHECKING:
 class LitestarMCP(InitPluginProtocol, CLIPlugin):
     """Litestar plugin for Model Context Protocol integration."""
 
-    def __init__(self, config: Optional[MCPConfig] = None) -> None:
+    def __init__(self, config: MCPConfig | None = None) -> None:
         """Initialize the MCP plugin."""
         self._config = config or MCPConfig()
         self._registry = Registry()
         self._sse_manager = SSEManager()
-        self._task_store: Optional[InMemoryTaskStore] = None
+        self._task_store: InMemoryTaskStore | None = None
         if self._config.task_config is not None:
             task_config = self._config.task_config
             self._task_store = InMemoryTaskStore(
@@ -109,7 +109,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         def provide_registry() -> Registry:
             return self._registry
 
-        def provide_task_store() -> Optional[InMemoryTaskStore]:
+        def provide_task_store() -> InMemoryTaskStore | None:
             return self._task_store
 
         router_kwargs: dict[str, Any] = {

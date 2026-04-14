@@ -1,7 +1,8 @@
 # ruff: noqa: PYI034
 """Decorators for marking MCP tools and resources."""
 
-from typing import Any, Callable, Optional, TypeVar
+from collections.abc import Callable
+from typing import Any, Optional, TypeVar
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -23,7 +24,7 @@ class MetadataRegistry:
         key = self._get_key(obj)
         self._data[key] = value
 
-    def get(self, obj: Any) -> Optional[dict[str, Any]]:
+    def get(self, obj: Any) -> dict[str, Any] | None:
         key = self._get_key(obj)
         return self._data.get(key)  # pyright: ignore[reportReturnType]
 
@@ -52,10 +53,10 @@ _REGISTRY = MetadataRegistry()
 
 def mcp_tool(
     name: str,
-    output_schema: Optional[dict[str, Any]] = None,
-    annotations: Optional[dict[str, Any]] = None,
-    scopes: Optional[list[str]] = None,
-    task_support: Optional[str] = None,
+    output_schema: dict[str, Any] | None = None,
+    annotations: dict[str, Any] | None = None,
+    scopes: list[str] | None = None,
+    task_support: str | None = None,
 ) -> Callable[[F], F]:
     """Decorator to mark a route handler as an MCP tool.
 
@@ -123,7 +124,7 @@ def mcp_resource(name: str) -> Callable[[F], F]:
     return decorator
 
 
-def get_mcp_metadata(obj: Any) -> Optional[dict[str, Any]]:
+def get_mcp_metadata(obj: Any) -> dict[str, Any] | None:
     """Get MCP metadata for an object if it exists.
 
     Args:

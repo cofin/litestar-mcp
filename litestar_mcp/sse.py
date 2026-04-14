@@ -4,7 +4,7 @@ import asyncio
 import json
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 from uuid import uuid4
 
 
@@ -14,7 +14,7 @@ class SSEMessage:
 
     data: str
     event: str = "message"
-    id: Optional[str] = None
+    id: str | None = None
 
 
 @dataclass
@@ -47,7 +47,7 @@ class SSEManager:
     async def open_stream(
         self,
         client_id: str,
-        last_event_id: Optional[str] = None,
+        last_event_id: str | None = None,
     ) -> tuple[str, AsyncGenerator[SSEMessage, None]]:
         """Open a stream for a client and return its ID and event generator."""
         async with self._lock:
@@ -91,7 +91,7 @@ class SSEManager:
             if not group.stream_ids:
                 self._client_groups.pop(state.client_id, None)
 
-    async def publish(self, message: dict[str, Any], client_id: Optional[str] = None) -> None:
+    async def publish(self, message: dict[str, Any], client_id: str | None = None) -> None:
         """Publish a JSON payload to one stream per client."""
         payload = json.dumps(message)
         async with self._lock:
@@ -109,7 +109,7 @@ class SSEManager:
     def _get_or_create_stream(
         self,
         client_id: str,
-        last_event_id: Optional[str],
+        last_event_id: str | None,
     ) -> tuple[_StreamState, list[SSEMessage]]:
         if last_event_id:
             stream_id, event_index = self._parse_event_id(last_event_id)

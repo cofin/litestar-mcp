@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import inspect
 import json
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from litestar.cli._utils import LitestarGroup
 from rich.console import Console
@@ -65,7 +65,7 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
         except RuntimeError:
             return []
 
-    def get_command(self, ctx: click.Context, cmd_name: str) -> Optional[click.Command]:  # pragma: no cover
+    def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:  # pragma: no cover
         """Create a click.Command for a specific tool or resource by its name."""
         app: Litestar = ctx.obj.app
         try:

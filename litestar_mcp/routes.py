@@ -1,11 +1,11 @@
-# ruff: noqa: PLR0911, PLR0915, C901
+# ruff: noqa: PLR0915, C901
 """MCP JSON-RPC 2.0 Streamable HTTP transport for Litestar applications."""
 
 import asyncio
 import json
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from litestar import Controller, MediaType, Request, Response, get, post
 from litestar.handlers import BaseRouteHandler
@@ -36,8 +36,8 @@ from litestar_mcp.jsonrpc import (
     error_response,
     parse_request,
 )
-from litestar_mcp.schema_builder import generate_schema_for_handler
 from litestar_mcp.registry import Registry
+from litestar_mcp.schema_builder import generate_schema_for_handler
 from litestar_mcp.tasks import InMemoryTaskStore, TaskLookupError, TaskRecord, TaskStateError
 from litestar_mcp.utils import get_handler_function
 
@@ -52,11 +52,11 @@ class RequestContext:
 
     client_id: str
     owner_id: str
-    user_claims: Optional[dict[str, Any]] = None
+    user_claims: dict[str, Any] | None = None
     resolved_user: Any = None
 
 
-def _validate_origin(request: Request[Any, Any, Any], config: MCPConfig) -> Optional[Response[Any]]:
+def _validate_origin(request: Request[Any, Any, Any], config: MCPConfig) -> Response[Any] | None:
     """Validate the Origin header if allowed_origins is configured."""
     if not config.allowed_origins:
         return None
@@ -81,7 +81,7 @@ def _auth_config_is_enabled(config: MCPConfig) -> bool:
     return bool(config.auth and (config.auth.token_validator or config.auth.providers or config.auth.issuer))
 
 
-def _resolve_client_id(request: Request[Any, Any, Any], user_claims: Optional[dict[str, Any]]) -> str:
+def _resolve_client_id(request: Request[Any, Any, Any], user_claims: dict[str, Any] | None) -> str:
     explicit_client_id = (
         request.headers.get("x-mcp-client-id")
         or request.headers.get("mcp-client-id")
@@ -100,14 +100,11 @@ def _resolve_client_id(request: Request[Any, Any, Any], user_claims: Optional[di
 def _build_request_context(
     request: Request[Any, Any, Any],
     *,
-    user_claims: Optional[dict[str, Any]],
+    user_claims: dict[str, Any] | None,
     resolved_user: Any,
 ) -> RequestContext:
     client_id = _resolve_client_id(request, user_claims)
-    if user_claims and user_claims.get("sub"):
-        owner_id = f"user:{user_claims['sub']}"
-    else:
-        owner_id = f"client:{client_id}"
+    owner_id = f"user:{user_claims['sub']}" if user_claims and user_claims.get("sub") else f"client:{client_id}"
     return RequestContext(client_id=client_id, owner_id=owner_id, user_claims=user_claims, resolved_user=resolved_user)
 
 
@@ -117,7 +114,7 @@ def _serialize_tool_content(value: Any) -> str:
     return encode_json(value).decode("utf-8")
 
 
-def _build_tool_result(value: Any, *, is_error: bool, task_id: Optional[str] = None) -> dict[str, Any]:
+def _build_tool_result(value: Any, *, is_error: bool, task_id: str | None = None) -> dict[str, Any]:
     result: dict[str, Any] = {
         "content": [{"type": "text", "text": _serialize_tool_content(value)}],
         "isError": is_error,
@@ -149,28 +146,36 @@ async def _authenticate_request(
     config: MCPConfig,
     *,
     method_name: str,
-) -> tuple[Optional[dict[str, Any]], Any, Optional[Response[Any]]]:
+) -> tuple[dict[str, Any] | None, Any, Response[Any] | None]:
     auth_config = config.auth
     if auth_config is None or not _auth_config_is_enabled(config) or method_name in _AUTH_EXEMPT_METHODS:
         return None, None, None
 
     auth_header = request.headers.get("authorization", "")
     if not auth_header.startswith("Bearer "):
-        return None, None, Response(
-            content={"error": "Missing or invalid Authorization header"},
-            status_code=HTTP_401_UNAUTHORIZED,
-            media_type=MediaType.JSON,
-            headers={"WWW-Authenticate": "Bearer"},
+        return (
+            None,
+            None,
+            Response(
+                content={"error": "Missing or invalid Authorization header"},
+                status_code=HTTP_401_UNAUTHORIZED,
+                media_type=MediaType.JSON,
+                headers={"WWW-Authenticate": "Bearer"},
+            ),
         )
 
     token = auth_header[7:]
     user_claims = await validate_bearer_token(token, auth_config)
     if user_claims is None:
-        return None, None, Response(
-            content={"error": "Invalid token"},
-            status_code=HTTP_401_UNAUTHORIZED,
-            media_type=MediaType.JSON,
-            headers={"WWW-Authenticate": "Bearer"},
+        return (
+            None,
+            None,
+            Response(
+                content={"error": "Invalid token"},
+                status_code=HTTP_401_UNAUTHORIZED,
+                media_type=MediaType.JSON,
+                headers={"WWW-Authenticate": "Bearer"},
+            ),
         )
 
     resolved_user = await resolve_user(user_claims, auth_config, request.app)
@@ -183,9 +188,8 @@ def build_jsonrpc_router(
     discovered_resources: dict[str, BaseRouteHandler],
     *,
     app_ref: Any,
-    registry: Registry,
     request_context: RequestContext,
-    task_store: Optional[InMemoryTaskStore] = None,
+    task_store: InMemoryTaskStore | None = None,
 ) -> JSONRPCRouter:
     """Build and return a JSONRPCRouter wired to MCP method handlers."""
     router = JSONRPCRouter()
@@ -195,7 +199,7 @@ def build_jsonrpc_router(
         handler: BaseRouteHandler,
         tool_args: dict[str, Any],
         *,
-        task_id: Optional[str] = None,
+        task_id: str | None = None,
     ) -> dict[str, Any]:
         validation_errors = _validate_tool_arguments(handler, tool_args)
         if validation_errors:
@@ -214,7 +218,7 @@ def build_jsonrpc_router(
                 user_claims=request_context.user_claims,
                 resolved_user=request_context.resolved_user,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return _build_tool_result({"error": str(exc)}, is_error=True, task_id=task_id)
 
         return _build_tool_result(result, is_error=False, task_id=task_id)
@@ -231,7 +235,7 @@ def build_jsonrpc_router(
             await task_store.fail(record.task_id, exc.error)  # type: ignore[union-attr]
         except asyncio.CancelledError:
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             await task_store.fail(  # type: ignore[union-attr]
                 record.task_id,
                 JSONRPCError(code=INTERNAL_ERROR, message=str(exc)),
@@ -350,7 +354,9 @@ def build_jsonrpc_router(
                 JSONRPCError(code=METHOD_NOT_FOUND, message=f"Task augmentation is not supported for tool: {tool_name}")
             )
         if not isinstance(task_request, dict):
-            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="The 'task' parameter must be an object"))
+            raise JSONRPCErrorException(
+                JSONRPCError(code=INVALID_PARAMS, message="The 'task' parameter must be an object")
+            )
 
         record = await task_store.create(request_context.owner_id, task_request.get("ttl"))  # type: ignore[union-attr]
         background_task = asyncio.create_task(run_task(record, handler, tool_args))
@@ -419,7 +425,9 @@ def build_jsonrpc_router(
                 resolved_user=request_context.resolved_user,
             )
         except Exception as exc:
-            raise JSONRPCErrorException(JSONRPCError(code=INTERNAL_ERROR, message=f"Resource read failed: {exc!s}")) from exc
+            raise JSONRPCErrorException(
+                JSONRPCError(code=INTERNAL_ERROR, message=f"Resource read failed: {exc!s}")
+            ) from exc
 
         return {
             "contents": [
@@ -438,7 +446,9 @@ def build_jsonrpc_router(
         async def handle_tasks_get(params: dict[str, Any]) -> dict[str, Any]:
             task_id = params.get("taskId")
             if not task_id:
-                raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'taskId'"))
+                raise JSONRPCErrorException(
+                    JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'taskId'")
+                )
             try:
                 record = await task_store.get(task_id, request_context.owner_id)
             except TaskLookupError as exc:
@@ -448,7 +458,9 @@ def build_jsonrpc_router(
         async def handle_tasks_result(params: dict[str, Any]) -> dict[str, Any]:
             task_id = params.get("taskId")
             if not task_id:
-                raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'taskId'"))
+                raise JSONRPCErrorException(
+                    JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'taskId'")
+                )
             try:
                 record = await task_store.wait_for_terminal(task_id, request_context.owner_id)
             except TaskLookupError as exc:
@@ -460,12 +472,16 @@ def build_jsonrpc_router(
                 return record.result
             if record.error is not None:
                 raise JSONRPCErrorException(record.error)
-            raise JSONRPCErrorException(JSONRPCError(code=INTERNAL_ERROR, message="Task did not produce a final result"))
+            raise JSONRPCErrorException(
+                JSONRPCError(code=INTERNAL_ERROR, message="Task did not produce a final result")
+            )
 
         async def handle_tasks_list(params: dict[str, Any]) -> dict[str, Any]:
             limit = params.get("limit", 50)
             if not isinstance(limit, int) or limit <= 0:
-                raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="The 'limit' parameter must be a positive integer"))
+                raise JSONRPCErrorException(
+                    JSONRPCError(code=INVALID_PARAMS, message="The 'limit' parameter must be a positive integer")
+                )
             try:
                 tasks, next_cursor = await task_store.list(
                     request_context.owner_id,
@@ -482,7 +498,9 @@ def build_jsonrpc_router(
         async def handle_tasks_cancel(params: dict[str, Any]) -> dict[str, Any]:
             task_id = params.get("taskId")
             if not task_id:
-                raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'taskId'"))
+                raise JSONRPCErrorException(
+                    JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'taskId'")
+                )
             try:
                 record = await task_store.cancel(task_id, request_context.owner_id)
             except TaskLookupError as exc:
@@ -551,7 +569,7 @@ class MCPController(Controller):
         discovered_tools: dict[str, Any],
         discovered_resources: dict[str, Any],
         registry: Registry,
-        task_store: Optional[InMemoryTaskStore] = None,
+        task_store: InMemoryTaskStore | None = None,
     ) -> Response[Any]:
         """Handle a JSON-RPC 2.0 request over Streamable HTTP."""
         origin_err = _validate_origin(request, config)
@@ -594,7 +612,6 @@ class MCPController(Controller):
             discovered_tools,
             discovered_resources,
             app_ref=request.app,
-            registry=registry,
             request_context=request_context,
             task_store=task_store,
         )
