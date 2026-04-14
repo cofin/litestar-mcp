@@ -120,10 +120,14 @@ Start your application and test the MCP endpoints:
     # Start your app
     uvicorn myapp:app --reload
 
-    # Initialize the MCP session over Streamable HTTP
+    # Initialize the MCP server over Streamable HTTP / JSON-RPC
     curl -X POST http://localhost:8000/mcp \
       -H "Content-Type: application/json" \
       -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}'
+
+    # Open the SSE stream used for server notifications
+    curl http://localhost:8000/mcp \
+      -H "Accept: text/event-stream"
 
     # List available tools
     curl -X POST http://localhost:8000/mcp \

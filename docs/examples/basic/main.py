@@ -3,8 +3,8 @@
 This example demonstrates the simplest possible integration of the Litestar MCP Plugin.
 It shows how to add MCP capabilities to any Litestar application with just 3 lines of code.
 
-The MCP plugin exposes your application's metadata through REST endpoints that AI models
-can use to understand and interact with your API.
+The MCP plugin exposes your application's metadata through the MCP Streamable HTTP
+transport surface so AI models can discover and interact with your API.
 """
 
 from litestar import Litestar, get
@@ -35,7 +35,7 @@ app = Litestar(
     plugins=[LitestarMCP(mcp_config)],  # This enables MCP integration!
 )
 
-# That's it! Your app now exposes MCP endpoints at /mcp/*
+# That's it! Your app now exposes MCP endpoints at /mcp and well-known metadata documents.
 
 if __name__ == "__main__":
     import uvicorn

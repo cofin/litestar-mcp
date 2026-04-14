@@ -1,6 +1,6 @@
 # Litestar MCP Plugin
 
-A lightweight plugin that integrates Litestar web applications with the Model Context Protocol (MCP) by exposing marked routes as MCP tools and resources through REST API endpoints.
+A lightweight plugin that integrates Litestar web applications with the Model Context Protocol (MCP) by exposing marked routes as MCP tools and resources over MCP Streamable HTTP and JSON-RPC.
 
 [![PyPI - Version](https://img.shields.io/pypi/v/litestar-mcp)](https://pypi.org/project/litestar-mcp/)
 [![Python Version](https://img.shields.io/pypi/pyversions/litestar-mcp)](https://pypi.org/project/litestar-mcp/)
@@ -8,16 +8,18 @@ A lightweight plugin that integrates Litestar web applications with the Model Co
 
 ## Overview
 
-This plugin automatically discovers routes marked with the `opt` attribute and exposes them as MCP-compatible REST endpoints. Routes marked with `mcp_tool="name"` become executable tools, while routes marked with `mcp_resource="name"` become readable resources.
+This plugin automatically discovers routes marked with the `opt` attribute and exposes them through an MCP-native transport surface. Routes marked with `mcp_tool="name"` become executable tools, while routes marked with `mcp_resource="name"` become readable resources.
 
 ## Features
 
 - 🚀 **Zero Dependencies** - Only requires Litestar
-- 📡 **REST API Endpoints** - No stdio transport or MCP libraries needed
+- 📡 **Protocol-Native Transport** - MCP Streamable HTTP with JSON-RPC requests and SSE streams
 - 🔧 **Simple Route Marking** - Use Litestar's `opt` attribute pattern
 - 🛡️ **Type Safe** - Full type hints with dataclasses
 - 📊 **Automatic Discovery** - Routes are discovered at app initialization
 - 🎯 **OpenAPI Integration** - Server info derived from OpenAPI config
+- 🔐 **Optional Auth Metadata** - OAuth protected resource metadata and bearer-token validation hooks
+- ⏳ **Optional Task Support** - Experimental in-memory MCP task lifecycle endpoints
 
 ## Quick Start
 
@@ -136,7 +138,7 @@ async def search(query: str, limit: int = 10) -> dict:
 Once configured, your application exposes these MCP-compatible endpoints:
 
 - `GET /mcp` - Server-Sent Events stream when `Accept: text/event-stream` is provided
-- `POST /mcp` - JSON-RPC endpoint for `initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`, and task methods
+- `POST /mcp` - JSON-RPC endpoint for `initialize`, `ping`, `tools/*`, `resources/*`, and optional task methods
 - `GET /.well-known/mcp-server.json` - MCP server manifest
 - `GET /.well-known/agent-card.json` - Agent card metadata
 - `GET /.well-known/oauth-protected-resource` - OAuth protected resource metadata when auth is configured
@@ -159,9 +161,17 @@ config = MCPConfig()
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `base_path` | `str` | `"/mcp"` | Base path for MCP API endpoints |
+| `base_path` | `str` | `"/mcp"` | Base path for the MCP Streamable HTTP endpoint |
 | `include_in_schema` | `bool` | `False` | Whether to include MCP routes in OpenAPI schema |
 | `name` | `str \| None` | `None` | Override server name. If None, uses OpenAPI title |
+| `guards` | `list[Any] \| None` | `None` | Litestar guards applied to the MCP router |
+| `allowed_origins` | `list[str] \| None` | `None` | Restrict accepted `Origin` header values |
+| `include_operations` | `list[str] \| None` | `None` | Only expose matching operation names |
+| `exclude_operations` | `list[str] \| None` | `None` | Exclude matching operation names |
+| `include_tags` | `list[str] \| None` | `None` | Only expose routes with matching OpenAPI tags |
+| `exclude_tags` | `list[str] \| None` | `None` | Exclude routes with matching OpenAPI tags |
+| `auth` | `MCPAuthConfig \| None` | `None` | Enable bearer-token validation and OAuth metadata |
+| `tasks` | `bool \| MCPTaskConfig` | `False` | Enable experimental in-memory MCP task support |
 
 ## Complete Example
 
@@ -245,7 +255,7 @@ git clone https://github.com/litestar-org/litestar-mcp.git
 cd litestar-mcp
 
 # Install with development dependencies
-uv install --dev
+uv sync --all-extras --dev
 
 # Run tests
 make test

@@ -1,11 +1,10 @@
 """Central registry for MCP tools and resources."""
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    from litestar.handlers import BaseRouteHandler
+from litestar.handlers import BaseRouteHandler
 
-    from litestar_mcp.sse import SSEManager
+from litestar_mcp.sse import SSEManager
 
 
 class Registry:
@@ -21,12 +20,12 @@ class Registry:
         self._resources: dict[str, BaseRouteHandler] = {}
         self._sse_manager: SSEManager | None = None
 
-    def set_sse_manager(self, manager: "SSEManager") -> None:
+    def set_sse_manager(self, manager: SSEManager) -> None:
         """Set the SSE manager for notifications."""
         self._sse_manager = manager
 
     @property
-    def sse_manager(self) -> "SSEManager":
+    def sse_manager(self) -> SSEManager:
         """Return the configured SSE manager."""
         if self._sse_manager is None:
             msg = "SSE manager has not been configured"
@@ -34,16 +33,16 @@ class Registry:
         return self._sse_manager
 
     @property
-    def tools(self) -> dict[str, "BaseRouteHandler"]:
+    def tools(self) -> dict[str, BaseRouteHandler]:
         """Get registered tools."""
         return self._tools
 
     @property
-    def resources(self) -> dict[str, "BaseRouteHandler"]:
+    def resources(self) -> dict[str, BaseRouteHandler]:
         """Get registered resources."""
         return self._resources
 
-    def register_tool(self, name: str, handler: "BaseRouteHandler") -> None:
+    def register_tool(self, name: str, handler: BaseRouteHandler) -> None:
         """Register a tool.
 
         Args:
@@ -52,7 +51,7 @@ class Registry:
         """
         self._tools[name] = handler
 
-    def register_resource(self, name: str, handler: "BaseRouteHandler") -> None:
+    def register_resource(self, name: str, handler: BaseRouteHandler) -> None:
         """Register a resource.
 
         Args:

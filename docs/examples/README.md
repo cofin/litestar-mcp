@@ -9,7 +9,7 @@ This directory contains examples demonstrating the Litestar MCP Plugin integrati
 **Hello World Example**
 
 - ✅ Minimal MCP plugin setup (just 3 lines!)
-- ✅ Simple REST API endpoints
+- ✅ Streamable HTTP and JSON-RPC transport
 - ✅ OpenAPI schema access via MCP
 - ✅ Shows how to mark routes for MCP exposure
 

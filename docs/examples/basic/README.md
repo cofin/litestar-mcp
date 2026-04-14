@@ -5,7 +5,7 @@ This is the simplest possible example of integrating the Litestar MCP Plugin wit
 ## What This Example Demonstrates
 
 - ✅ Basic MCP plugin integration
-- ✅ Simple REST API endpoints
+- ✅ Streamable HTTP and JSON-RPC transport
 - ✅ Marking routes for MCP exposure using kwargs
 - ✅ OpenAPI schema access via MCP resources
 
@@ -18,12 +18,12 @@ This is the simplest possible example of integrating the Litestar MCP Plugin wit
 
 2. **Run the application**:
    ```bash
-   python main.py
+   uv run python main.py
    ```
 
 3. **Test the MCP endpoints**:
    - The application will be available at `http://localhost:8000`
-   - The MCP endpoint is available at `http://localhost:8000/mcp`
+   - The MCP transport surface is available at `http://localhost:8000/mcp`
 
 ## Available MCP Resources
 
@@ -62,6 +62,10 @@ curl -X POST http://localhost:8000/mcp \
 curl -X POST http://localhost:8000/mcp \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":2,"method":"resources/list","params":{}}'
+
+# Open the SSE stream for server notifications
+curl http://localhost:8000/mcp \
+  -H "Accept: text/event-stream"
 
 # List available tools
 curl -X POST http://localhost:8000/mcp \
