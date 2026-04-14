@@ -10,7 +10,6 @@ import sys
 from collections import defaultdict
 from collections.abc import Generator
 from dataclasses import dataclass
-from typing import Optional
 
 import click
 import httpx
@@ -27,7 +26,7 @@ class PullRequest(msgspec.Struct, kw_only=True):
     body: str
     created_at: str
     user: "RepoUser"
-    merge_commit_sha: Optional[str] = None
+    merge_commit_sha: str | None = None
 
 
 class Comp(msgspec.Struct):
@@ -72,7 +71,7 @@ class ReleaseInfo:
         return f"https://github.com/litestar-org/advanced-alchemy/compare/{self.base}...{self.release_tag}"
 
 
-def _pr_number_from_commit(comp: Comp) -> Optional[int]:
+def _pr_number_from_commit(comp: Comp) -> int | None:
     # this is an ugly hack, but it appears to actually be the most reliably way to
     # extract the most "reliable" way to extract the info we want from GH ¯\_(ツ)_/¯
     message_head = comp.commit.message.split("\n\n")[0]
@@ -128,7 +127,7 @@ class _Thing:
             for edge in data["data"]["repository"]["pullRequest"]["closingIssuesReferences"]["edges"]
         ]
 
-    async def _get_pr_info_for_pr(self, number: int) -> Optional[PRInfo]:
+    async def _get_pr_info_for_pr(self, number: int) -> PRInfo | None:
         res = await self._api_client.get(f"/pulls/{number}")
         if res.is_client_error:
             click.secho(
@@ -267,7 +266,7 @@ class ChangelogEntryWriter:
                 self.add_line(line)
 
     @contextlib.contextmanager
-    def directive(self, name: str, arg: Optional[str] = None, **options: str) -> Generator[None, None, None]:
+    def directive(self, name: str, arg: str | None = None, **options: str) -> Generator[None, None, None]:
         self.add_line(f".. {name}:: {arg or ''}")
         self._level += 1
         for key, value in options.items():
@@ -402,10 +401,10 @@ def update_pyproject_version(new_version: str) -> None:
 )
 @click.option("-c", "--create-draft-release", is_flag=True, help="Create draft release on GitHub")
 def cli(
-    base: Optional[str],
+    base: str | None,
     branch: str,
     version: str,
-    gh_token: Optional[str],
+    gh_token: str | None,
     interactive: bool,
     create_draft_release: bool,
 ) -> None:
