@@ -9,7 +9,7 @@ This directory contains examples demonstrating the Litestar MCP Plugin integrati
 **Hello World Example**
 
 - ✅ Minimal MCP plugin setup (just 3 lines!)
-- ✅ Simple REST API endpoints
+- ✅ Streamable HTTP and JSON-RPC transport
 - ✅ OpenAPI schema access via MCP
 - ✅ Shows how to mark routes for MCP exposure
 
@@ -44,7 +44,7 @@ Each example directory contains:
 - `README.md` - Detailed setup instructions
 
 ```bash
-cd examples/basic/
+cd docs/examples/basic/
 uv run python main.py
 ```
 
@@ -120,7 +120,7 @@ app = Litestar(
 Begin with the basic example to understand core concepts:
 
 ```bash
-cd examples/basic/
+cd docs/examples/basic/
 uv run python main.py
 ```
 
@@ -169,9 +169,9 @@ uv add litestar uvicorn
 
 ### Getting Help
 
-1. **Check MCP endpoints**: Visit `http://127.0.0.1:8000/mcp/` to see server info
-2. **Test resources**: Visit `http://127.0.0.1:8000/mcp/resources` to see available resources
-3. **Test tools**: Visit `http://127.0.0.1:8000/mcp/tools` to see available tools
+1. **Check the transport**: Use `POST http://127.0.0.1:8000/mcp` for MCP JSON-RPC requests
+2. **Check discovery**: Visit `http://127.0.0.1:8000/.well-known/mcp-server.json`
+3. **Check agent metadata**: Visit `http://127.0.0.1:8000/.well-known/agent-card.json`
 4. **Main documentation**: See the main README.md in the repository root
 
 ## Configuration Options

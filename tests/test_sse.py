@@ -13,13 +13,13 @@ from litestar_mcp.sse import SSEManager, SSEMessage
 async def test_sse_manager_queuing() -> None:
     manager = SSEManager()
     client_id = "test_client"
+    stream = await manager.subscribe(client_id)
+    await stream.__anext__()  # Prime event
 
     # Send a message to a client
     message = {"event": "test", "data": "hello"}
     await manager.enqueue_message(client_id, message)
 
-    # Consume the message
-    stream = manager.subscribe(client_id)
     msg = await stream.__anext__()
 
     assert json.loads(msg.data) == message
@@ -28,14 +28,15 @@ async def test_sse_manager_queuing() -> None:
 @pytest.mark.asyncio
 async def test_sse_manager_multiple_clients() -> None:
     manager = SSEManager()
+    s1 = await manager.subscribe("client1")
+    s2 = await manager.subscribe("client2")
+    await s1.__anext__()  # Prime event
+    await s2.__anext__()  # Prime event
 
     m1 = {"data": "msg1"}
     m2 = {"data": "msg2"}
     await manager.enqueue_message("client1", m1)
     await manager.enqueue_message("client2", m2)
-
-    s1 = manager.subscribe("client1")
-    s2 = manager.subscribe("client2")
 
     r1 = await s1.__anext__()
     r2 = await s2.__anext__()
@@ -47,13 +48,10 @@ async def test_sse_manager_multiple_clients() -> None:
 @pytest.mark.asyncio
 async def test_sse_manager_broadcast() -> None:
     manager = SSEManager()
-
-    # Register clients to ensure queues exist
-    manager.register_client("client1")
-    manager.register_client("client2")
-
-    s1 = manager.subscribe("client1")
-    s2 = manager.subscribe("client2")
+    s1 = await manager.subscribe("client1")
+    s2 = await manager.subscribe("client2")
+    await s1.__anext__()  # Prime event
+    await s2.__anext__()  # Prime event
 
     message = {"method": "notifications/resources/updated", "params": {"uri": "test://resource"}}
 

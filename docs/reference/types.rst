@@ -13,11 +13,25 @@ MCPConfig
    :members:
    :show-inheritance:
 
+MCPTaskConfig
+-------------
+
+.. autoclass:: MCPTaskConfig
+   :members:
+   :show-inheritance:
+
 .. currentmodule:: litestar_mcp.auth
 
 MCPAuthConfig
 -------------
 
 .. autoclass:: MCPAuthConfig
+   :members:
+   :show-inheritance:
+
+OIDCProviderConfig
+------------------
+
+.. autoclass:: OIDCProviderConfig
    :members:
    :show-inheritance:

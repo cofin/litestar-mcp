@@ -1,6 +1,7 @@
 """Utility functions for litestar-mcp to reduce defensive programming."""
 
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from litestar.handlers import BaseRouteHandler

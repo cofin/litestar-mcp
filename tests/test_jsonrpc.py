@@ -260,6 +260,47 @@ class TestToolsCall:
         assert "error" in result
         assert result["error"]["code"] == INVALID_PARAMS
 
+    def test_tools_call_invalid_arguments_return_call_tool_error(self) -> None:
+        @get("/typed", opt={"mcp_tool": "typed_tool"}, sync_to_thread=False)
+        def typed_tool(count: int) -> dict[str, int]:
+            return {"count": count}
+
+        app = Litestar(route_handlers=[typed_tool], plugins=[LitestarMCP(MCPConfig())])
+        with TestClient(app=app) as client:
+            result = _rpc(client, "tools/call", {"name": "typed_tool", "arguments": {"count": "bad"}})
+            assert "result" in result
+            assert result["result"]["isError"] is True
+            assert "count" in result["result"]["content"][0]["text"]
+
+    def test_tools_call_rejects_additional_properties_via_tool_error(self) -> None:
+        @get("/typed", opt={"mcp_tool": "strict_tool"}, sync_to_thread=False)
+        def strict_tool(name: str) -> dict[str, str]:
+            return {"name": name}
+
+        app = Litestar(route_handlers=[strict_tool], plugins=[LitestarMCP(MCPConfig())])
+        with TestClient(app=app) as client:
+            result = _rpc(
+                client,
+                "tools/call",
+                {"name": "strict_tool", "arguments": {"name": "Alice", "unexpected": True}},
+            )
+            assert "result" in result
+            assert result["result"]["isError"] is True
+            assert "unexpected" in result["result"]["content"][0]["text"]
+
+    def test_tools_call_handler_exception_returns_call_tool_error(self) -> None:
+        @get("/boom", opt={"mcp_tool": "boom"}, sync_to_thread=False)
+        def boom() -> dict[str, str]:
+            msg = "tool exploded"
+            raise RuntimeError(msg)
+
+        app = Litestar(route_handlers=[boom], plugins=[LitestarMCP(MCPConfig())])
+        with TestClient(app=app) as client:
+            result = _rpc(client, "tools/call", {"name": "boom", "arguments": {}})
+            assert "result" in result
+            assert result["result"]["isError"] is True
+            assert "tool exploded" in result["result"]["content"][0]["text"]
+
 
 # ---------------------------------------------------------------------------
 # resources/list

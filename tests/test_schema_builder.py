@@ -1,7 +1,7 @@
 """Tests for the schema builder module."""
 
 from dataclasses import dataclass
-from typing import Any, Optional, Union
+from typing import Any
 
 import pytest
 from litestar import get
@@ -92,7 +92,7 @@ class TestSchemaBuilder:
     def test_generate_schema_for_handler_with_optional_params(self) -> None:
         """Test schema generation for handler with optional parameters."""
 
-        def handler_with_optional(message: str, count: int = 1, tags: Optional[list[str]] = None) -> dict[str, Any]:
+        def handler_with_optional(message: str, count: int = 1, tags: list[str] | None = None) -> dict[str, Any]:
             return {"message": message, "count": count, "tags": tags}
 
         _, handler = create_app_with_handler(handler_with_optional)
@@ -205,7 +205,7 @@ class TestSchemaBuilder:
             class UserModel(BaseModel):
                 name: str
                 age: int
-                email: Optional[str] = None
+                email: str | None = None
 
             @get("/test")
             def pydantic_handler(user: UserModel) -> dict[str, Any]:
@@ -227,7 +227,7 @@ class TestSchemaBuilder:
     def test_type_annotation_edge_cases(self) -> None:
         """Test edge cases in type annotation handling."""
 
-        def edge_case_handler(any_param: Any, union_param: Optional[str], raw_param: Any) -> dict[str, Any]:
+        def edge_case_handler(any_param: Any, union_param: str | None, raw_param: Any) -> dict[str, Any]:
             return {"processed": True}
 
         _, handler = create_app_with_handler(edge_case_handler)
@@ -374,7 +374,7 @@ class TestDataclassToJsonSchema:
         @dataclass
         class TestDataclass:
             name: str
-            description: Optional[str] = None
+            description: str | None = None
 
         result = dataclass_to_json_schema(TestDataclass)
 
@@ -517,8 +517,8 @@ class TestEdgeCasesAndErrorHandling:
 
         def handler_with_complex_defaults(
             name: str,
-            config: Optional[dict[str, Any]] = None,
-            items: Optional[list[str]] = None,
+            config: dict[str, Any] | None = None,
+            items: list[str] | None = None,
         ) -> dict[str, Any]:
             return {"name": name, "config": config or {}, "items": items or []}
 
@@ -539,21 +539,21 @@ class TestOptionalNullability:
     """Tests for Optional[T] producing anyOf with null type."""
 
     def test_optional_str_includes_null(self) -> None:
-        result = type_to_json_schema(Optional[str])
+        result = type_to_json_schema(str | None)
         assert "anyOf" in result
         types = [s.get("type") for s in result["anyOf"]]
         assert "string" in types
         assert "null" in types
 
     def test_optional_int_includes_null(self) -> None:
-        result = type_to_json_schema(Optional[int])
+        result = type_to_json_schema(int | None)
         assert "anyOf" in result
         types = [s.get("type") for s in result["anyOf"]]
         assert "integer" in types
         assert "null" in types
 
     def test_optional_list_str_includes_null(self) -> None:
-        result = type_to_json_schema(Optional[list[str]])
+        result = type_to_json_schema(list[str] | None)
         assert "anyOf" in result
         types = [s.get("type") for s in result["anyOf"]]
         assert "array" in types
@@ -569,14 +569,14 @@ class TestUnionHandling:
     """Tests for Union[A, B] producing anyOf."""
 
     def test_union_str_int(self) -> None:
-        result = type_to_json_schema(Union[str, int])
+        result = type_to_json_schema(str | int)
         assert "anyOf" in result
         types = [s.get("type") for s in result["anyOf"]]
         assert "string" in types
         assert "integer" in types
 
     def test_union_str_int_none(self) -> None:
-        result = type_to_json_schema(Union[str, int, None])
+        result = type_to_json_schema(str | int | None)
         assert "anyOf" in result
         types = [s.get("type") for s in result["anyOf"]]
         assert "string" in types

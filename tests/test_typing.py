@@ -1,7 +1,7 @@
 """Tests for litestar_mcp.typing module - simplified version."""
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 import pytest
 
@@ -23,7 +23,7 @@ class SampleDataclass:
 
     name: str
     age: int
-    optional_field: Optional[str] = None
+    optional_field: str | None = None
 
 
 class TestBasicTypeGuards:

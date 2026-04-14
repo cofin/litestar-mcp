@@ -39,9 +39,9 @@ The simplest way to add MCP support to your Litestar application:
 
 That's it! Your application now has MCP endpoints available at:
 
-- ``/mcp/`` - Server information
-- ``/mcp/resources`` - Available resources (includes OpenAPI schema)
-- ``/mcp/tools`` - Available tools (from marked routes)
+- ``/mcp`` - Streamable HTTP MCP endpoint
+- ``/.well-known/mcp-server.json`` - MCP server manifest
+- ``/.well-known/agent-card.json`` - Agent metadata document
 
 Marking Routes for MCP Exposure
 --------------------------------
@@ -120,26 +120,40 @@ Start your application and test the MCP endpoints:
     # Start your app
     uvicorn myapp:app --reload
 
-    # Test the MCP endpoints
-    curl http://localhost:8000/mcp/
-    curl http://localhost:8000/mcp/resources
-    curl http://localhost:8000/mcp/tools
+    # Initialize the MCP server over Streamable HTTP / JSON-RPC
+    curl -X POST http://localhost:8000/mcp \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}'
 
-You should see JSON responses with your application's MCP capabilities.
+    # Open the SSE stream used for server notifications
+    curl http://localhost:8000/mcp \
+      -H "Accept: text/event-stream"
+
+    # List available tools
+    curl -X POST http://localhost:8000/mcp \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+
+    # List available resources
+    curl -X POST http://localhost:8000/mcp \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","id":3,"method":"resources/list","params":{}}'
+
+You should see JSON-RPC responses describing your application's MCP capabilities.
 
 Built-in Resources
 ------------------
 
 The plugin automatically provides one built-in resource:
 
-- ``openapi`` - Your application's OpenAPI schema (always available)
+- ``litestar://openapi`` - Your application's OpenAPI schema (always available)
 
 Examples
 --------
 
 See the ``examples/`` directory for complete working examples:
 
-- ``examples/basic/`` - Simple integration with marked routes
+- ``docs/examples/basic/`` - Simple integration with marked routes
 
 Next Steps
 ----------

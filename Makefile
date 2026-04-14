@@ -6,8 +6,10 @@ SHELL := /bin/bash
 
 .DEFAULT_GOAL := help
 .ONESHELL:
+.SHELLFLAGS := -e -o pipefail -c
 .EXPORT_ALL_VARIABLES:
 MAKEFLAGS += --no-print-directory
+UV_RUN_PY310 := uv run --python 3.10
 
 # -----------------------------------------------------------------------------
 # Display Formatting and Colors
@@ -43,14 +45,14 @@ install-uv:                                         ## Install latest version of
 .PHONY: install
 install: clean                                      ## Install the project, dependencies, and pre-commit for local development
 	@echo "${INFO} Starting fresh installation..."
-	@uv python pin 3.9 >/dev/null 2>&1
+	@uv python pin 3.10 >/dev/null 2>&1
 	@uv sync --all-extras --dev
 	@echo "${OK} Installation complete! ⚡"
 
 .PHONY: destroy
 destroy:                                            ## Destroy the virtual environment
 	@echo "${INFO} Destroying virtual environment... 💥"
-	@uv run pre-commit clean >/dev/null 2>&1 || true
+	@$(UV_RUN_PY310) pre-commit clean >/dev/null 2>&1 || true
 	@rm -rf .venv
 	@echo "${OK} Virtual environment destroyed 💥"
 
@@ -63,7 +65,7 @@ upgrade:                                            ## Upgrade all dependencies 
 	@echo "${INFO} Updating all dependencies... 🔄"
 	@uv lock --upgrade
 	@echo "${OK} Dependencies updated 🔄"
-	@uv run pre-commit autoupdate
+	@$(UV_RUN_PY310) pre-commit autoupdate
 	@echo "${OK} Updated Pre-commit hooks 🔄"
 
 .PHONY: lock
@@ -107,7 +109,7 @@ clean:                                              ## Cleanup temporary build a
 .PHONY: test
 test:                                               ## Run the tests
 	@echo "${INFO} Running test cases... 🧪"
-	@uv run pytest tests
+	@$(UV_RUN_PY310) pytest tests
 	@echo "${OK} Tests complete ✨"
 
 .PHONY: test-all
@@ -116,9 +118,9 @@ test-all: test                                      ## Run all tests
 .PHONY: coverage
 coverage:                                           ## Run tests with coverage report
 	@echo "${INFO} Running tests with coverage... 📊"
-	@uv run pytest tests --cov -n auto
-	@uv run coverage html >/dev/null 2>&1
-	@uv run coverage xml >/dev/null 2>&1
+	@$(UV_RUN_PY310) pytest tests --cov -n auto
+	@$(UV_RUN_PY310) coverage html >/dev/null 2>&1
+	@$(UV_RUN_PY310) coverage xml >/dev/null 2>&1
 	@echo "${OK} Coverage report generated ✨"
 
 # -----------------------------------------------------------------------------
@@ -128,19 +130,19 @@ coverage:                                           ## Run tests with coverage r
 .PHONY: mypy
 mypy:                                               ## Run mypy
 	@echo "${INFO} Running mypy... 🔄"
-	@uv run dmypy run litestar_mcp tests || uv run mypy litestar_mcp tests
+	@$(UV_RUN_PY310) dmypy run litestar_mcp tests || $(UV_RUN_PY310) mypy litestar_mcp tests
 	@echo "${OK} Mypy checks passed ✨"
 
 .PHONY: mypy-nocache
 mypy-nocache:                                       ## Run Mypy without cache
 	@echo "${INFO} Running mypy without cache... 🔄"
-	@uv run mypy litestar_mcp tests
+	@$(UV_RUN_PY310) mypy litestar_mcp tests
 	@echo "${OK} Mypy checks passed ✨"
 
 .PHONY: pyright
 pyright:                                            ## Run pyright
 	@echo "${INFO} Running pyright... 🔄"
-	@uv run pyright litestar_mcp tests
+	@$(UV_RUN_PY310) pyright litestar_mcp tests
 	@echo "${OK} Pyright checks passed ✨"
 
 .PHONY: type-check
@@ -153,25 +155,25 @@ type-check: mypy pyright                            ## Run all type checking
 .PHONY: pre-commit
 pre-commit:                                         ## Run pre-commit hooks
 	@echo "${INFO} Running pre-commit checks... ="
-	@uv run pre-commit run --all-files
+	@$(UV_RUN_PY310) pre-commit run --all-files
 	@echo "${OK} Pre-commit checks passed ✨"
 
 .PHONY: ruff-check
 ruff-check:                                         ## Run ruff linting
 	@echo "${INFO} Running ruff checks... 🔄"
-	@uv run ruff check --fix litestar_mcp tests
+	@$(UV_RUN_PY310) ruff check --fix litestar_mcp tests
 	@echo "${OK} Ruff checks passed ✨"
 
 .PHONY: ruff-format
 ruff-format:                                        ## Run ruff formatting
 	@echo "${INFO} Running ruff formatting... 🎨"
-	@uv run ruff format litestar_mcp tests
+	@$(UV_RUN_PY310) ruff format litestar_mcp tests
 	@echo "${OK} Ruff formatting complete ✨"
 
 .PHONY: slotscheck
 slotscheck:                                         ## Run slotscheck
 	@echo "${INFO} Running slots check... 🔄"
-	@uv run slotscheck litestar_mcp
+	@$(UV_RUN_PY310) slotscheck litestar_mcp
 	@echo "${OK} Slots check passed ✨"
 
 .PHONY: lint
@@ -193,24 +195,24 @@ docs-clean:                                         ## Clean documentation build
 .PHONY: docs-serve
 docs-serve: docs-clean                              ## Serve documentation locally
 	@echo "${INFO} Starting documentation server... 📚"
-	uv run sphinx-autobuild docs docs/_build/ -j auto --watch litestar_mcp --watch docs --watch tests --watch CONTRIBUTING.rst --port 8002
+	$(UV_RUN_PY310) sphinx-autobuild docs docs/_build/ -j auto --watch litestar_mcp --watch docs --watch tests --watch CONTRIBUTING.rst --port 8002
 
 .PHONY: docs
 docs: docs-clean                                    ## Build documentation
 	@echo "${INFO} Building documentation... 📚"
-	@uv run sphinx-build -M html docs docs/_build/ -E -a -j auto -W --keep-going
+	@$(UV_RUN_PY310) sphinx-build -M html docs docs/_build/ -E -a -j auto -W --keep-going
 	@echo "${OK} Documentation built successfully"
 
 .PHONY: docs-linkcheck
 docs-linkcheck:                                     ## Check documentation links
 	@echo "${INFO} Checking documentation links... 🔗"
-	@uv run sphinx-build -b linkcheck ./docs ./docs/_build -D linkcheck_ignore='http://.*','https://.*'
+	@$(UV_RUN_PY310) sphinx-build -b linkcheck ./docs ./docs/_build -D linkcheck_ignore='http://.*','https://.*'
 	@echo "${OK} Link check complete"
 
 .PHONY: docs-linkcheck-full
 docs-linkcheck-full:                                ## Run full documentation link check
 	@echo "${INFO} Running full link check... 🔗"
-	@uv run sphinx-build -b linkcheck ./docs ./docs/_build -D linkcheck_anchors=0
+	@$(UV_RUN_PY310) sphinx-build -b linkcheck ./docs ./docs/_build -D linkcheck_anchors=0
 	@echo "${OK} Full link check complete"
 
 # =============================================================================
@@ -220,25 +222,25 @@ docs-linkcheck-full:                                ## Run full documentation li
 .PHONY: mcp-test
 mcp-test:                                           ## Run MCP protocol tests specifically
 	@echo "${INFO} Running MCP protocol tests... 🔌"
-	@uv run pytest tests -m "not slow" -k "mcp" -v
+	@$(UV_RUN_PY310) pytest tests -m "not slow" -k "mcp" -v
 	@echo "${OK} MCP tests complete ✨"
 
 .PHONY: websocket-test
 websocket-test:                                     ## Run WebSocket handler tests
 	@echo "${INFO} Running WebSocket tests... 🔌"
-	@uv run pytest tests -k "websocket" -v
+	@$(UV_RUN_PY310) pytest tests -k "websocket" -v
 	@echo "${OK} WebSocket tests complete ✨"
 
 .PHONY: integration-test
 integration-test:                                   ## Run integration tests
 	@echo "${INFO} Running integration tests... 🔗"
-	@uv run pytest tests/integration/ -v
+	@$(UV_RUN_PY310) pytest tests/integration/ -v
 	@echo "${OK} Integration tests complete ✨"
 
 .PHONY: example-run
 example-run:                                        ## Run basic example
 	@echo "${INFO} Running basic example... 🚀"
-	@uv run python examples/basic_usage.py
+	@$(UV_RUN_PY310) python examples/basic_usage.py
 	@echo "${OK} Example completed ✨"
 
 # =============================================================================
@@ -252,16 +254,16 @@ dev-setup: install lint test                       ## Complete development setup
 .PHONY: quick-test
 quick-test:                                         ## Run quick tests (no coverage)
 	@echo "${INFO} Running quick tests... ⚡"
-	@uv run pytest tests -x --ff
+	@$(UV_RUN_PY310) pytest tests -x --ff
 	@echo "${OK} Quick tests complete ✨"
 
 .PHONY: watch-test
 watch-test:                                         ## Run tests in watch mode
 	@echo "${INFO} Running tests in watch mode... 👀"
-	@uv run pytest-watch tests
+	@$(UV_RUN_PY310) pytest-watch tests
 
 .PHONY: format-check
 format-check:                                       ## Check if code is formatted correctly
 	@echo "${INFO} Checking code formatting... 🔍"
-	@uv run ruff format --check litestar_mcp tests
+	@$(UV_RUN_PY310) ruff format --check litestar_mcp tests
 	@echo "${OK} Code formatting check complete ✨"

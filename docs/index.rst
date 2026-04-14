@@ -26,16 +26,17 @@ Litestar plugin for Model Context Protocol (MCP) integration
 ============================================================
 
 The Litestar MCP Plugin enables integration between Litestar web applications and the Model Context Protocol (MCP),
-allowing AI models to interact with your marked application routes through standardized REST endpoints.
+allowing AI models to interact with your marked application routes through MCP Streamable HTTP and JSON-RPC.
 
 Features
 --------
 
 ✨ **Simple Integration**: Mark routes with kwargs to expose them via MCP
 🔧 **Lightweight**: Minimal configuration and dependencies
-🚀 **REST-Based**: No special transport protocols required
+🚀 **Protocol-Native**: Uses MCP Streamable HTTP, JSON-RPC, and SSE directly
 📊 **OpenAPI Integration**: Automatic OpenAPI schema exposure
 🎯 **Type Safe**: Full type hints with dataclasses
+🔐 **Auth-Ready**: Optional OAuth metadata and bearer-token validation hooks
 
 Installation
 ------------
@@ -76,7 +77,7 @@ Add MCP capabilities to your Litestar application by marking routes:
         plugins=[LitestarMCP()]
     )
 
-Your application now exposes MCP endpoints at ``/mcp/*`` that AI models can use to:
+Your application now exposes MCP endpoints at ``/mcp`` plus well-known metadata documents that AI models can use to:
 
 - 🔍 Discover marked routes via tools and resources
 - 📊 Access your application's OpenAPI schema
@@ -103,7 +104,7 @@ How It Works
 1. **Mark Routes**: Add ``mcp_tool`` or ``mcp_resource`` kwargs to your route decorators
 2. **Litestar Processing**: Litestar automatically moves these kwargs into the route handler's ``opt`` dictionary
 3. **Plugin Discovery**: The plugin scans route handlers' opt dictionaries for MCP markers at app startup
-4. **MCP Exposure**: Marked routes become available through MCP REST endpoints
+4. **MCP Exposure**: Marked routes become available through the MCP Streamable HTTP transport surface
 5. **AI Interaction**: AI models can discover and interact with your marked routes
 
 Kwargs to Opt Mechanism
@@ -127,18 +128,17 @@ Available Endpoints
 
 Once configured, your application exposes:
 
-- ``/mcp/`` - Server information and capabilities
-- ``/mcp/resources`` - List available resources (including OpenAPI schema)
-- ``/mcp/resources/{name}`` - Get specific resource content
-- ``/mcp/tools`` - List available tools from marked routes
-- ``/mcp/tools/{name}`` - Execute a specific tool
+- ``/mcp`` - Streamable HTTP MCP endpoint for JSON-RPC and SSE
+- ``/.well-known/mcp-server.json`` - MCP server manifest
+- ``/.well-known/agent-card.json`` - Agent metadata document
+- ``/.well-known/oauth-protected-resource`` - OAuth metadata when auth is enabled
 
 What Makes This Different?
 ---------------------------
 
 - **Route-Centric**: Mark individual routes for MCP exposure using simple kwargs
 - **Minimal Setup**: Just add ``mcp_tool`` or ``mcp_resource`` kwargs to existing route handlers
-- **REST-Based**: No complex transport protocols required
+- **Protocol-Native**: Uses MCP Streamable HTTP and JSON-RPC directly
 - **Litestar Native**: Built specifically for Litestar applications using the opt mechanism
 
 Getting Started

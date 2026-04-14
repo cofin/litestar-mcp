@@ -1,12 +1,16 @@
 """Tests for MCP OAuth 2.1 and Auth Bridge."""
 
-from typing import Any, Optional
+import base64
+import json
+from typing import Any
+from unittest.mock import patch
 
+import pytest
 from litestar import Litestar, get
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig
-from litestar_mcp.auth import MCPAuthConfig, validate_bearer_token
+from litestar_mcp.auth import MCPAuthConfig, OIDCProviderConfig, validate_bearer_token
 from litestar_mcp.decorators import mcp_tool
 
 # ---------------------------------------------------------------------------
@@ -15,8 +19,8 @@ from litestar_mcp.decorators import mcp_tool
 
 
 def _make_auth_app(
-    auth_config: Optional[MCPAuthConfig] = None,
-    tool_scopes: Optional[list[str]] = None,
+    auth_config: MCPAuthConfig | None = None,
+    tool_scopes: list[str] | None = None,
 ) -> Litestar:
     """Helper to create an app with auth configuration."""
 
@@ -79,6 +83,19 @@ class TestMCPAuthConfig:
         assert auth.issuer == "https://auth.example.com"
         assert auth.audience == "my-mcp-server"
         assert auth.scopes == {"read": "Read access", "write": "Write access"}
+
+    def test_auth_supports_oidc_providers_and_user_resolver(self) -> None:
+        async def resolve_user(claims: dict[str, Any], app: Litestar) -> dict[str, Any]:
+            return {"id": claims["sub"], "app": app.__class__.__name__}
+
+        auth = MCPAuthConfig(
+            providers=[OIDCProviderConfig(issuer="https://issuer.example.com", audience="my-mcp-server")],
+            user_resolver=resolve_user,
+        )
+
+        assert auth.providers is not None
+        assert auth.providers[0].issuer == "https://issuer.example.com"
+        assert auth.user_resolver is resolve_user
 
 
 # ---------------------------------------------------------------------------
@@ -158,7 +175,7 @@ class TestBearerTokenValidation:
     def test_validate_bearer_token_calls_validator(self) -> None:
         calls: list[str] = []
 
-        async def my_validator(token: str) -> Optional[dict[str, Any]]:
+        async def my_validator(token: str) -> dict[str, Any] | None:
             calls.append(token)
             if token == "valid":
                 return {"sub": "user1", "scopes": ["read"]}
@@ -174,7 +191,7 @@ class TestBearerTokenValidation:
         assert calls == ["valid"]
 
     def test_validate_bearer_token_invalid(self) -> None:
-        async def my_validator(token: str) -> Optional[dict[str, Any]]:
+        async def my_validator(token: str) -> dict[str, Any] | None:
             return None
 
         auth = MCPAuthConfig(token_validator=my_validator)
@@ -184,6 +201,53 @@ class TestBearerTokenValidation:
         result = asyncio.get_event_loop().run_until_complete(validate_bearer_token("bad", auth))
         assert result is None
 
+    def test_validate_bearer_token_with_oidc_provider(self) -> None:
+        jwt = pytest.importorskip("jwt")
+
+        secret = b"super-secret-key"
+        encoded_secret = base64.urlsafe_b64encode(secret).rstrip(b"=").decode("ascii")
+        token = jwt.encode(
+            {"sub": "user-1", "iss": "https://issuer.example.com", "aud": "my-mcp-server"},
+            secret,
+            algorithm="HS256",
+            headers={"kid": "test-key"},
+        )
+
+        async def fake_fetch_json_document(url: str) -> dict[str, Any]:
+            if url.endswith("/.well-known/openid-configuration"):
+                return {"jwks_uri": "https://issuer.example.com/keys"}
+            if url == "https://issuer.example.com/keys":
+                return {
+                    "keys": [
+                        {
+                            "kty": "oct",
+                            "k": encoded_secret,
+                            "kid": "test-key",
+                            "alg": "HS256",
+                        }
+                    ]
+                }
+            msg = f"unexpected URL: {url}"
+            raise AssertionError(msg)
+
+        auth = MCPAuthConfig(
+            providers=[
+                OIDCProviderConfig(
+                    issuer="https://issuer.example.com",
+                    audience="my-mcp-server",
+                    algorithms=["HS256"],
+                )
+            ]
+        )
+
+        with patch("litestar_mcp.auth._fetch_json_document", side_effect=fake_fetch_json_document):
+            import asyncio
+
+            result = asyncio.get_event_loop().run_until_complete(validate_bearer_token(token, auth))
+
+        assert result is not None
+        assert result["sub"] == "user-1"
+
 
 # ---------------------------------------------------------------------------
 # Auth enforcement on MCP endpoint
@@ -192,7 +256,7 @@ class TestBearerTokenValidation:
 
 class TestAuthEnforcement:
     def test_auth_required_rejects_no_token(self) -> None:
-        async def validator(token: str) -> Optional[dict[str, Any]]:
+        async def validator(token: str) -> dict[str, Any] | None:
             if token == "good":
                 return {"sub": "user1"}
             return None
@@ -208,7 +272,7 @@ class TestAuthEnforcement:
         assert resp.status_code == 401
 
     def test_auth_required_accepts_valid_token(self) -> None:
-        async def validator(token: str) -> Optional[dict[str, Any]]:
+        async def validator(token: str) -> dict[str, Any] | None:
             if token == "good":
                 return {"sub": "user1"}
             return None
@@ -224,7 +288,7 @@ class TestAuthEnforcement:
         assert resp.status_code == 200
 
     def test_auth_required_rejects_invalid_token(self) -> None:
-        async def validator(token: str) -> Optional[dict[str, Any]]:
+        async def validator(token: str) -> dict[str, Any] | None:
             return None
 
         auth = MCPAuthConfig(
@@ -238,7 +302,7 @@ class TestAuthEnforcement:
         assert resp.status_code == 401
 
     def test_initialize_exempt_from_auth(self) -> None:
-        async def validator(token: str) -> Optional[dict[str, Any]]:
+        async def validator(token: str) -> dict[str, Any] | None:
             return None  # always reject
 
         auth = MCPAuthConfig(
@@ -260,6 +324,46 @@ class TestAuthEnforcement:
         )
         assert resp.status_code == 200
 
+    def test_user_resolver_runs_after_successful_validation(self) -> None:
+        resolver_calls: list[dict[str, Any]] = []
+
+        async def validator(token: str) -> dict[str, Any] | None:
+            if token == "good":
+                return {"sub": "user-1"}
+            return None
+
+        async def resolve_user(claims: dict[str, Any], app: Litestar) -> dict[str, Any]:
+            resolver_calls.append(claims)
+            return {"id": claims["sub"]}
+
+        @get("/me", sync_to_thread=False)
+        @mcp_tool(name="who_am_i")
+        def who_am_i(resolved_user: dict[str, Any]) -> dict[str, Any]:
+            return resolved_user
+
+        auth = MCPAuthConfig(
+            issuer="https://auth.example.com",
+            token_validator=validator,
+            user_resolver=resolve_user,
+        )
+        app = Litestar(route_handlers=[who_am_i], plugins=[LitestarMCP(MCPConfig(auth=auth))])
+        client = TestClient(app=app)
+
+        success = _rpc(
+            client, "tools/call", {"name": "who_am_i", "arguments": {}}, headers={"Authorization": "Bearer good"}
+        )
+        assert success.status_code == 200
+        payload = json.loads(success.json()["result"]["content"][0]["text"])
+        assert payload == {"id": "user-1"}
+        assert resolver_calls == [{"sub": "user-1"}]
+
+        resolver_calls.clear()
+        failure = _rpc(
+            client, "tools/call", {"name": "who_am_i", "arguments": {}}, headers={"Authorization": "Bearer bad"}
+        )
+        assert failure.status_code == 401
+        assert resolver_calls == []
+
 
 # ---------------------------------------------------------------------------
 # Per-tool scope challenges
@@ -268,7 +372,7 @@ class TestAuthEnforcement:
 
 class TestPerToolScopes:
     def test_tool_with_required_scope_allowed(self) -> None:
-        async def validator(token: str) -> Optional[dict[str, Any]]:
+        async def validator(token: str) -> dict[str, Any] | None:
             return {"sub": "user1", "scopes": ["users:read"]}
 
         auth = MCPAuthConfig(
@@ -289,7 +393,7 @@ class TestPerToolScopes:
         assert "result" in body
 
     def test_tool_with_missing_scope_rejected(self) -> None:
-        async def validator(token: str) -> Optional[dict[str, Any]]:
+        async def validator(token: str) -> dict[str, Any] | None:
             return {"sub": "user1", "scopes": ["other:scope"]}
 
         auth = MCPAuthConfig(

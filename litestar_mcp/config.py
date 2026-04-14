@@ -1,7 +1,30 @@
 """Configuration for Litestar MCP Plugin."""
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
+
+from litestar_mcp.auth import MCPAuthConfig  # noqa: TC001
+
+
+@dataclass
+class MCPTaskConfig:
+    """Configuration for experimental MCP task support."""
+
+    enabled: bool = True
+    list_enabled: bool = True
+    cancel_enabled: bool = True
+    default_ttl: int = 300_000
+    max_ttl: int = 3_600_000
+    poll_interval: int = 1_000
+
+
+def normalize_task_config(value: "bool | MCPTaskConfig") -> "MCPTaskConfig | None":
+    """Normalize task configuration into a concrete config object."""
+    if value is False:
+        return None
+    if value is True:
+        return MCPTaskConfig()
+    return value
 
 
 @dataclass
@@ -20,15 +43,26 @@ class MCPConfig:
             are accepted. When set, requests with a non-matching Origin are rejected with 403.
         auth: Optional OAuth 2.1 auth configuration. When set, bearer token validation
             is enforced on MCP endpoints.
+        dependency_provider: Optional context-managed hook for request-scoped dependency
+            injection during tool execution.
+        tasks: Optional task configuration or ``True`` to enable the default
+            experimental in-memory task implementation.
     """
 
     base_path: str = "/mcp"
     include_in_schema: bool = False
-    name: Optional[str] = None
-    guards: Optional[list[Any]] = None
-    allowed_origins: Optional[list[str]] = None
-    include_operations: Optional[list[str]] = None
-    exclude_operations: Optional[list[str]] = None
-    include_tags: Optional[list[str]] = None
-    exclude_tags: Optional[list[str]] = None
-    auth: Optional[Any] = None  # MCPAuthConfig instance when auth is enabled
+    name: str | None = None
+    guards: list[Any] | None = None
+    allowed_origins: list[str] | None = None
+    include_operations: list[str] | None = None
+    exclude_operations: list[str] | None = None
+    include_tags: list[str] | None = None
+    exclude_tags: list[str] | None = None
+    auth: "MCPAuthConfig | None" = None
+    dependency_provider: Any | None = None
+    tasks: "bool | MCPTaskConfig" = False
+
+    @property
+    def task_config(self) -> "MCPTaskConfig | None":
+        """Return the normalized task configuration, if task support is enabled."""
+        return normalize_task_config(self.tasks)
