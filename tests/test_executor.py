@@ -1,13 +1,17 @@
 """Tests for the executor module."""
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from litestar import Litestar, get
 from litestar.di import Provide
 
+from litestar_mcp.config import MCPConfig
 from litestar_mcp.executor import NotCallableInCLIContextError, execute_tool
-from tests.conftest import create_app_with_handler
+from tests.conftest import create_app_with_handler, get_handler_from_app
 
 
 class TestExecutor:
@@ -247,6 +251,88 @@ class TestExecutor:
         assert result["data"] == complex_args["data"]
         assert result["items"] == complex_args["items"]
         assert result["count"] == 3
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_ignores_unused_app_dependencies(self) -> None:
+        """Unused app dependencies should not be resolved for MCP tools."""
+        dependency_calls: list[str] = []
+
+        def provide_db_session() -> str:
+            dependency_calls.append("called")
+            msg = "request-scoped dependency should not be resolved"
+            raise RuntimeError(msg)
+
+        @get("/users", sync_to_thread=False)
+        def list_users(limit: int = 10) -> dict[str, int]:
+            return {"limit": limit}
+
+        app = Litestar(
+            route_handlers=[list_users],
+            dependencies={"db_session": Provide(provide_db_session, sync_to_thread=False)},
+        )
+        handler = get_handler_from_app(app, "/users")
+
+        result = await execute_tool(handler, app, {"limit": 5})
+
+        assert result == {"limit": 5}
+        assert dependency_calls == []
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_dependency_provider_injects_scoped_dependencies(self) -> None:
+        """A dependency provider hook should inject scoped resources for tool execution."""
+        lifecycle_events: list[str] = []
+
+        def provide_db_session() -> str:
+            msg = "request-scoped dependency should be satisfied by dependency_provider"
+            raise RuntimeError(msg)
+
+        @get("/reports", sync_to_thread=False)
+        def load_report(db_session: str) -> dict[str, str]:
+            return {"db_session": db_session}
+
+        app = Litestar(
+            route_handlers=[load_report],
+            dependencies={"db_session": Provide(provide_db_session, sync_to_thread=False)},
+        )
+        handler = get_handler_from_app(app, "/reports")
+
+        @asynccontextmanager
+        async def dependency_provider(context: Any) -> AsyncIterator[dict[str, str]]:
+            lifecycle_events.append(f"enter:{context.handler.name}")
+            yield {"db_session": "scoped-session"}
+            lifecycle_events.append("exit")
+
+        result = await execute_tool(
+            handler,
+            app,
+            {},
+            config=MCPConfig(dependency_provider=dependency_provider),
+        )
+
+        assert result == {"db_session": "scoped-session"}
+        assert lifecycle_events == [f"enter:{handler.name}", "exit"]
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_injects_authenticated_context(self) -> None:
+        """Resolved auth context should be available to tool execution."""
+
+        def who_am_i(resolved_user: dict[str, Any], user_claims: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "user_id": resolved_user["id"],
+                "subject": user_claims["sub"],
+            }
+
+        app, handler = create_app_with_handler(who_am_i)
+
+        result = await execute_tool(
+            handler,
+            app,
+            {},
+            user_claims={"sub": "user-1"},
+            resolved_user={"id": "user-1"},
+        )
+
+        assert result == {"user_id": "user-1", "subject": "user-1"}
 
 
 class TestNotCallableInCLIContextError:

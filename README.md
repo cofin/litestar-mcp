@@ -128,22 +128,22 @@ async def search(query: str, limit: int = 10) -> dict:
 
 1. **Route Discovery**: At app initialization, the plugin scans all route handlers for the `opt` attribute
 2. **Automatic Exposure**: Routes marked with `mcp_tool` or `mcp_resource` are automatically exposed
-3. **MCP Endpoints**: The plugin adds REST endpoints under the configured base path (default `/mcp`)
+3. **MCP Transport**: The plugin adds a Streamable HTTP MCP endpoint under the configured base path (default `/mcp`)
 4. **Server Info**: Server name and version are derived from your OpenAPI configuration
 
 ## MCP Endpoints
 
 Once configured, your application exposes these MCP-compatible endpoints:
 
-- `GET /mcp/` - Server info and capabilities
-- `GET /mcp/resources` - List available resources
-- `GET /mcp/resources/{name}` - Get specific resource content
-- `GET /mcp/tools` - List available tools
-- `POST /mcp/tools/{name}` - Execute a tool
+- `GET /mcp` - Server-Sent Events stream when `Accept: text/event-stream` is provided
+- `POST /mcp` - JSON-RPC endpoint for `initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`, and task methods
+- `GET /.well-known/mcp-server.json` - MCP server manifest
+- `GET /.well-known/agent-card.json` - Agent card metadata
+- `GET /.well-known/oauth-protected-resource` - OAuth protected resource metadata when auth is configured
 
 **Built-in Resources:**
 
-- `openapi` - Your application's OpenAPI schema (always available)
+- `litestar://openapi` - Your application's OpenAPI schema (always available via `resources/read`)
 
 ## Configuration
 

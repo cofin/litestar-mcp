@@ -127,18 +127,17 @@ Available Endpoints
 
 Once configured, your application exposes:
 
-- ``/mcp/`` - Server information and capabilities
-- ``/mcp/resources`` - List available resources (including OpenAPI schema)
-- ``/mcp/resources/{name}`` - Get specific resource content
-- ``/mcp/tools`` - List available tools from marked routes
-- ``/mcp/tools/{name}`` - Execute a specific tool
+- ``/mcp`` - Streamable HTTP MCP endpoint for JSON-RPC and SSE
+- ``/.well-known/mcp-server.json`` - MCP server manifest
+- ``/.well-known/agent-card.json`` - Agent metadata document
+- ``/.well-known/oauth-protected-resource`` - OAuth metadata when auth is enabled
 
 What Makes This Different?
 ---------------------------
 
 - **Route-Centric**: Mark individual routes for MCP exposure using simple kwargs
 - **Minimal Setup**: Just add ``mcp_tool`` or ``mcp_resource`` kwargs to existing route handlers
-- **REST-Based**: No complex transport protocols required
+- **Protocol-Native**: Uses MCP Streamable HTTP and JSON-RPC directly
 - **Litestar Native**: Built specifically for Litestar applications using the opt mechanism
 
 Getting Started

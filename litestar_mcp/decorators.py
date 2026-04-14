@@ -55,6 +55,7 @@ def mcp_tool(
     output_schema: Optional[dict[str, Any]] = None,
     annotations: Optional[dict[str, Any]] = None,
     scopes: Optional[list[str]] = None,
+    task_support: Optional[str] = None,
 ) -> Callable[[F], F]:
     """Decorator to mark a route handler as an MCP tool.
 
@@ -63,6 +64,8 @@ def mcp_tool(
         output_schema: Optional JSON Schema for the tool's structured output.
         annotations: Optional metadata annotations (audience, priority, etc.).
         scopes: Optional list of OAuth scopes required to call this tool.
+        task_support: Optional task support mode. Must be one of ``optional``,
+            ``required``, or ``forbidden``.
 
     Returns:
         Decorator function that adds MCP metadata to the handler.
@@ -84,6 +87,11 @@ def mcp_tool(
             metadata["annotations"] = annotations
         if scopes is not None:
             metadata["scopes"] = scopes
+        if task_support is not None:
+            if task_support not in {"optional", "required", "forbidden"}:
+                msg = "task_support must be one of 'optional', 'required', or 'forbidden'"
+                raise ValueError(msg)
+            metadata["task_support"] = task_support
         _REGISTRY.set(fn, metadata)
         return fn
 

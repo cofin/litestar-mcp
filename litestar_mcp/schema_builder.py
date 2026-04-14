@@ -16,6 +16,8 @@ from litestar_mcp.typing import (
 )
 from litestar_mcp.utils import get_handler_function
 
+_EXECUTION_CONTEXT_PARAMS = {"resolved_user", "user_claims"}
+
 
 def basic_type_to_json_schema(annotation: Any) -> "Optional[dict[str, Any]]":
     """Convert basic Python types to JSON Schema format."""
@@ -250,7 +252,7 @@ def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]"
 
     for param_name, param in sig.parameters.items():
         # Skip dependency injection parameters
-        if param_name in di_params:
+        if param_name in di_params or param_name in _EXECUTION_CONTEXT_PARAMS:
             continue
 
         # Generate schema for this parameter
@@ -267,7 +269,12 @@ def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]"
             required.append(param_name)
 
     # Build the complete schema
-    schema = {"type": "object", "properties": properties}
+    schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": properties,
+        "additionalProperties": False,
+    }
 
     if required:
         schema["required"] = required

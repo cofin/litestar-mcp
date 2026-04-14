@@ -10,6 +10,18 @@ and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0
 Unreleased
 ----------
 
+Changed
+~~~~~~~
+
+- Switched the transport surface to MCP Streamable HTTP with ``GET /mcp`` for SSE and ``POST /mcp`` for JSON-RPC requests.
+- Added well-known discovery documents for MCP clients and agent metadata.
+- Raised the supported Python floor to 3.10.
+
+Removed
+~~~~~~~
+
+- Removed the legacy REST MCP endpoints and session-oriented transport surface.
+
 v0.1.0 (2025-01-04)
 -------------------
 

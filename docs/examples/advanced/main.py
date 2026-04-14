@@ -15,8 +15,9 @@ from __future__ import annotations
 from typing import Any
 
 from litestar import Litestar, delete, get, post
+from litestar.exceptions import NotFoundException
 from litestar.openapi.config import OpenAPIConfig
-from litestar.status_codes import HTTP_201_CREATED, HTTP_404_NOT_FOUND
+from litestar.status_codes import HTTP_201_CREATED
 from pydantic import BaseModel
 
 from litestar_mcp import LitestarMCP, MCPConfig
@@ -86,7 +87,7 @@ async def list_tasks(completed: bool | None = None) -> list[Task]:
 async def get_task(task_id: int) -> Task:
     """Get a specific task by ID - exposed as MCP tool."""
     if task_id not in TASKS:
-        raise HTTP_404_NOT_FOUND
+        raise NotFoundException(detail=f"Task {task_id} not found")
     return TASKS[task_id]
 
 
@@ -110,7 +111,7 @@ async def create_task(data: CreateTaskRequest) -> Task:
 async def complete_task(task_id: int) -> Task:
     """Mark a task as completed - exposed as MCP tool."""
     if task_id not in TASKS:
-        raise HTTP_404_NOT_FOUND
+        raise NotFoundException(detail=f"Task {task_id} not found")
 
     TASKS[task_id].completed = True
     return TASKS[task_id]
@@ -120,7 +121,7 @@ async def complete_task(task_id: int) -> Task:
 async def delete_task(task_id: int) -> dict[str, str]:
     """Delete a task by ID - exposed as MCP tool."""
     if task_id not in TASKS:
-        raise HTTP_404_NOT_FOUND
+        raise NotFoundException(detail=f"Task {task_id} not found")
 
     del TASKS[task_id]
     return {"message": f"Task {task_id} deleted successfully"}
@@ -134,7 +135,7 @@ async def root() -> dict[str, str]:
 
 
 @get("/health")
-async def health_check() -> dict[str, str]:
+async def health_check() -> dict[str, str | int]:
     """Health check endpoint - not exposed to MCP."""
     return {"status": "healthy", "tasks_count": len(TASKS)}
 
@@ -179,8 +180,8 @@ if __name__ == "__main__":
 
     logger.info("🚀 Starting Task Management API with MCP integration...")
     logger.info("📊 API Documentation: http://127.0.0.1:8000/schema/swagger")
-    logger.info("🔧 MCP Server Info: http://127.0.0.1:8000/mcp/")
-    logger.info("📋 MCP Resources: http://127.0.0.1:8000/mcp/resources")
-    logger.info("🛠️ MCP Tools: http://127.0.0.1:8000/mcp/tools")
+    logger.info("🔧 MCP Transport: http://127.0.0.1:8000/mcp")
+    logger.info("📋 MCP Server Manifest: http://127.0.0.1:8000/.well-known/mcp-server.json")
+    logger.info("🛠️ Agent Card: http://127.0.0.1:8000/.well-known/agent-card.json")
 
     uvicorn.run(app, host="127.0.0.1", port=8000, reload=True)
