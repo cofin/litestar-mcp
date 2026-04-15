@@ -125,61 +125,71 @@ def _build_tool_result(value: Any, *, is_error: bool, task_id: str | None = None
     return result
 
 
-_VALIDATION_CONTEXT_PARAMS = {"resolved_user", "user_claims"}
+_VALIDATION_CONTEXT_PARAMS = {
+    "resolved_user",
+    "user_claims",
+    "request",
+    "socket",
+    "state",
+    "scope",
+    "headers",
+    "cookies",
+    "query",
+    "body",
+    "data",
+}
 
 
 def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: dict[str, Any]) -> list[str]:
-    """Validate ``tool_args`` against the handler's typed signature via msgspec.
+    """Validate ``tool_args`` against the handler's Litestar signature model.
 
-    Each user-facing parameter (i.e. not a DI dependency and not an execution
-    context key) is checked: required params must be present and every
-    provided value is coerced through ``msgspec.convert`` so type mismatches
-    and ``msgspec.Meta`` constraints produce structured errors. Parameters
-    whose annotation is missing or unsupported by msgspec are skipped rather
-    than failing closed — that matches the previous schema-based behaviour
-    for exotic types.
+    Litestar attaches a ``signature_model`` (a msgspec Struct) to every
+    route handler whose fields mirror the handler's typed parameters after
+    forward-ref resolution and ``Annotated`` / ``Parameter`` metadata
+    normalisation. We introspect those fields (rather than raw
+    ``inspect.signature`` annotations) so constraints declared via
+    ``msgspec.Meta`` and Litestar ``Parameter()`` markers flow through
+    ``msgspec.convert`` automatically.
+
+    Per-field iteration (instead of one-shot ``msgspec.convert(args, model)``)
+    lets us ignore DI-injected fields and reject extras, both of which the
+    bare signature model cannot express.
     """
-    import inspect
-
     import msgspec
 
-    from litestar_mcp.utils import get_handler_function
+    signature_model = getattr(handler, "signature_model", None)
+    if signature_model is None:
+        return []
 
-    fn: Any
     try:
-        fn = get_handler_function(handler)
-    except AttributeError:
-        fn = handler
-    try:
-        signature = inspect.signature(fn)
-    except (TypeError, ValueError):
+        fields = msgspec.structs.fields(signature_model)
+    except TypeError:
         return []
 
     di_params: set[str] = set()
     with contextlib.suppress(AttributeError, TypeError):
         di_params = set(handler.resolve_dependencies().keys())
 
+    declared_by_name = {field.name: field for field in fields}
     errors: list[str] = []
 
-    for name, parameter in signature.parameters.items():
-        if name in di_params or name in _VALIDATION_CONTEXT_PARAMS:
+    for field in fields:
+        if field.name in di_params or field.name in _VALIDATION_CONTEXT_PARAMS:
             continue
-        if name in tool_args:
+        if field.name in tool_args:
             continue
-        if parameter.default is inspect.Parameter.empty:
-            errors.append(f"{name}: required")
+        if field.default is msgspec.NODEFAULT and field.default_factory is msgspec.NODEFAULT:
+            errors.append(f"{field.name}: required")
 
     for name, value in tool_args.items():
-        declared = signature.parameters.get(name)
-        if declared is None or name in di_params or name in _VALIDATION_CONTEXT_PARAMS:
-            if declared is None:
-                errors.append(f"{name}: unexpected argument")
+        declared = declared_by_name.get(name)
+        if declared is None:
+            errors.append(f"{name}: unexpected argument")
             continue
-        annotation = declared.annotation
-        if annotation is inspect.Parameter.empty:
+        if name in di_params or name in _VALIDATION_CONTEXT_PARAMS:
             continue
         try:
-            msgspec.convert(value, annotation, strict=False)
+            msgspec.convert(value, declared.type, strict=False)
         except msgspec.ValidationError as exc:
             errors.append(f"{name}: {exc}")
         except TypeError:
