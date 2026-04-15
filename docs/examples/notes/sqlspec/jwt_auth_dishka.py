@@ -173,6 +173,14 @@ def create_app(
         ``resolved_user`` is injected directly by the plugin executor from
         the shared ``user_resolver``; the Dishka container only owns the
         domain-service wiring.
+
+        Yields:
+            dict[str, Any]: The dependencies to inject into the MCP tool's
+                execution context. For tools marked with the appropriate
+                ``mcp_tool`` opt, a ``note_service`` key is included with a
+                live service instance connected to the configured database.
+                For other tools, an empty dict is yielded.
+
         """
         opt = getattr(context.handler, "opt", {}) or {}
         if opt.get("mcp_tool") not in {LIST_NOTES_TOOL_NAME, CREATE_NOTE_TOOL_NAME, DELETE_NOTE_TOOL_NAME}:
