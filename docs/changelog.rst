@@ -16,6 +16,13 @@ Changed
 - Switched the transport surface to MCP Streamable HTTP with ``GET /mcp`` for SSE and ``POST /mcp`` for JSON-RPC requests.
 - Added well-known discovery documents for MCP clients and agent metadata.
 - Raised the supported Python floor to 3.10.
+- Renamed the bundled example directories from ``docs/examples/basic/`` and
+  ``docs/examples/advanced/`` to ``docs/examples/hello_world/`` and
+  ``docs/examples/task_manager/``. Each example now ships with a sibling
+  pytest module and ``# start-example`` / ``# end-example`` marker blocks so
+  the usage guide can pull snippets via ``.. literalinclude:: :dedent: 4``.
+  No compatibility shim is provided - update any external references to use
+  the new paths.
 
 Removed
 ~~~~~~~

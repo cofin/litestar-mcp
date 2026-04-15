@@ -153,7 +153,7 @@ Examples
 
 See the ``examples/`` directory for complete working examples:
 
-- ``docs/examples/basic/`` - Simple integration with marked routes
+- ``docs/examples/hello_world/`` - Simple integration with marked routes
 
 Next Steps
 ----------

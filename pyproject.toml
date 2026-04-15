@@ -112,7 +112,7 @@ search = 'version = "{current_version}"'
 # Ruff configuration
 [tool.ruff]
 line-length = 120
-src = ["litestar_mcp", "tests", "examples", "docs"]
+src = ["litestar_mcp", "tests", "examples", "docs", "docs/examples"]
 target-version = "py310"
 
 [tool.ruff.lint]
@@ -168,6 +168,7 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ['F401', 'D104']
 "docs/**/*.*" = ["S", "B", "DTZ", "A", "TC", "ERA", "D", "RET", "E731", "RUF012", "FA100", "ARG001"]
+"docs/examples/**/test_*.py" = ["PLR2004", "S101", "S105", "S106", "ARG001", "SLF001", "DOC"]
 "docs/conf.py" = ["FIX002", "ARG001", "INP001"]
 "tests/*.py" = ['D103', 'S101', "S105", "S106", 'D104', "PLR2004", "RUF029", "ARG001", "SLF001", "DOC"]
 "tools/*.py" = ["INP001", "ERA001", "N999"]
@@ -239,7 +240,7 @@ markers = [
     "unit: marks tests as unit tests",
 ]
 minversion = "7.0"
-testpaths = ["tests"]
+testpaths = ["tests", "docs/examples"]
 
 # Coverage configuration
 [tool.coverage.run]

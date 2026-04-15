@@ -1,4 +1,4 @@
-"""Basic Litestar MCP Plugin Example.
+"""Hello World Litestar MCP Plugin Example.
 
 This example demonstrates the simplest possible integration of the Litestar MCP Plugin.
 It shows how to add MCP capabilities to any Litestar application with just 3 lines of code.
@@ -24,16 +24,23 @@ async def status() -> dict[str, str]:
     return {"status": "healthy", "version": "1.0.0"}
 
 
-# Step 1: Create MCP configuration (optional - uses defaults if not provided)
-mcp_config = MCPConfig(
-    name="Hello World API",  # Name shown to AI models
-)
+def build_app() -> Litestar:
+    """Construct the Litestar app with the MCP plugin wired in.
 
-# Step 2: Add LitestarMCP to your Litestar app
-app = Litestar(
-    route_handlers=[hello, status],
-    plugins=[LitestarMCP(mcp_config)],  # This enables MCP integration!
-)
+    The body between the markers is what gets rendered via
+    ``.. literalinclude:: ... :dedent: 4`` in the usage guide.
+    """
+    # start-example
+    mcp_config = MCPConfig(name="Hello World API")
+    app = Litestar(
+        route_handlers=[hello, status],
+        plugins=[LitestarMCP(mcp_config)],
+    )
+    # end-example
+    return app
+
+
+app = build_app()
 
 # That's it! Your app now exposes MCP endpoints at /mcp and well-known metadata documents.
 
