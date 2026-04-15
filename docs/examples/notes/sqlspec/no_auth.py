@@ -6,6 +6,16 @@ bound, results are mapped into :class:`NoteRow` via ``schema_type``, and the
 HTTP/MCP surface is handed the shared public :class:`Note` shape.
 """
 
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#   "litestar[standard]>=2.0",
+#   "litestar-mcp",
+#   "sqlspec[aiosqlite]>=0.43",
+#   "uvicorn",
+# ]
+# ///
+
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path

@@ -7,6 +7,15 @@ The MCP plugin exposes your application's metadata through the MCP Streamable HT
 transport surface so AI models can discover and interact with your API.
 """
 
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#   "litestar[standard]>=2.0",
+#   "litestar-mcp",
+#   "uvicorn",
+# ]
+# ///
+
 from litestar import Litestar, get
 
 from litestar_mcp import LitestarMCP, MCPConfig

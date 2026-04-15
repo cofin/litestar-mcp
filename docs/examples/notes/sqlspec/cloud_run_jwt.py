@@ -31,6 +31,17 @@ secrets (``JWT_SIGNING_KEY`` in particular) via Cloud Run Secret Manager
 integration rather than plain env vars.
 """
 
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#   "litestar[standard]>=2.0",
+#   "litestar-mcp",
+#   "sqlspec[aiosqlite]>=0.43",
+#   "python-jose[cryptography]",
+#   "uvicorn",
+# ]
+# ///
+
 from __future__ import annotations
 
 import os

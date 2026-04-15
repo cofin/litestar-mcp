@@ -11,6 +11,16 @@ Features:
 - Demonstrates both tools and resources.
 """
 
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#   "litestar[standard]>=2.0",
+#   "litestar-mcp",
+#   "pydantic>=2",
+#   "uvicorn",
+# ]
+# ///
+
 import copy
 from typing import Any
 

@@ -39,6 +39,18 @@ document is cached for one hour via the same helper used by the core
 ``litestar_mcp.auth`` OIDC path.
 """
 
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#   "litestar[standard]>=2.0",
+#   "litestar-mcp",
+#   "sqlspec[aiosqlite]>=0.43",
+#   "python-jose[cryptography]",
+#   "httpx",
+#   "uvicorn",
+# ]
+# ///
+
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path

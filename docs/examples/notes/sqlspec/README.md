@@ -53,30 +53,22 @@ module demonstrates the core SQLSpec contract:
 ## Running a variant
 
 Each variant exposes a `create_app(...)` factory suitable for
-`litestar.testing.TestClient` and for a plain ASGI server. From a repo
-checkout, smoke-test any variant with:
+`litestar.testing.TestClient` and for a plain ASGI server. Every
+variant file ships a :pep:`723` inline-script metadata block, so `uv`
+reads its dependencies from the file itself — no clone or
+`uv sync` required:
 
 ```bash
-uv run python -m docs.examples.notes.sqlspec.no_auth
-uv run python -m docs.examples.notes.sqlspec.no_auth_dishka
-uv run python -m docs.examples.notes.sqlspec.jwt_auth       # requires token_secret
-uv run python -m docs.examples.notes.sqlspec.jwt_auth_dishka
+uv run docs/examples/notes/sqlspec/no_auth.py
+uv run docs/examples/notes/sqlspec/no_auth_dishka.py
+uv run docs/examples/notes/sqlspec/jwt_auth.py               # requires TOKEN_SECRET env
+uv run docs/examples/notes/sqlspec/jwt_auth_dishka.py
+uv run docs/examples/notes/sqlspec/cloud_run_jwt.py
+uv run docs/examples/notes/sqlspec/google_iap.py
 ```
 
-Without a checkout, run any variant ephemerally with `uvx`:
-
-```bash
-uvx --from litestar-mcp \
-    --with "sqlspec[aiosqlite],litestar[standard],pyjwt" \
-    python -m docs.examples.notes.sqlspec.jwt_auth
-
-uvx --from litestar-mcp \
-    --with "sqlspec[aiosqlite],litestar[standard],pyjwt,cryptography" \
-    python -m docs.examples.notes.sqlspec.google_iap
-```
-
-See the [`uvx` reference guide](../../../usage/uvx_guide.rst) for the
-full set of required extras per variant.
+See the [single-file run reference](../../../usage/uvx_guide.rst) for
+the full variant matrix.
 
 ## Deployment-oriented variants
 
@@ -104,6 +96,29 @@ A minimal `/auth/login` controller (built via
 `shared.auth.build_login_controller`) accepts a `{"username": ..., "password": ...}`
 body and returns an HS256-signed access token so the example is
 self-contained.
+
+## Multi-Replica Deployment
+
+Each MCP session (identified by the `Mcp-Session-Id` response header
+from `initialize`) is bound to the replica that issued it. SSE streams
+pin to that replica because their event queues live in process memory.
+
+For Cloud Run, GKE, or any horizontally-scaled deployment:
+
+1. Configure your load balancer for **session affinity on the
+   `Mcp-Session-Id` header** — cookie affinity is insufficient because
+   MCP clients use headers, not cookies.
+2. Use a shared session store: configure
+   `MCPConfig(session_store=...)` with Redis, or the SQL-backed store
+   from `advanced_alchemy` / `sqlspec`, so session metadata survives
+   replica restarts and any replica can resolve a session id for
+   stateless POST tool calls.
+3. Sticky routing only matters for the GET SSE stream and any POST
+   that expects a server-streamed response. Pure POST → POST tool
+   flows can land on any replica that reads the shared store.
+
+See [`docs/usage/deployment.rst`](../../../usage/deployment.rst) for
+the full rationale and platform-specific notes.
 
 ## When to choose SQLSpec over Advanced Alchemy
 

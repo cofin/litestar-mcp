@@ -6,6 +6,18 @@ built-in DI. The public MCP surface (tool and resource names, payload shapes)
 is identical to the plain variant.
 """
 
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#   "litestar[standard]>=2.0",
+#   "litestar-mcp",
+#   "advanced-alchemy[litestar]>=1.0",
+#   "aiosqlite",
+#   "dishka",
+#   "uvicorn",
+# ]
+# ///
+
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path

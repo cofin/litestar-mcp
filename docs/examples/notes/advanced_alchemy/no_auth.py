@@ -1,5 +1,16 @@
 """No-auth Advanced Alchemy reference notes example."""
 
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#   "litestar[standard]>=2.0",
+#   "litestar-mcp",
+#   "advanced-alchemy[litestar]>=1.0",
+#   "aiosqlite",
+#   "uvicorn",
+# ]
+# ///
+
 from pathlib import Path
 from typing import Any
 from uuid import UUID

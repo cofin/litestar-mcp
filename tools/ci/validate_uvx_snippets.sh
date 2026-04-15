@@ -80,14 +80,12 @@ done < <(
     done | grep -E "^[[:space:]]*uvx " || true
 )
 
-if (( snippet_count == 0 )); then
-    echo "no uvx snippets found in the reference docs" >&2
-    exit 1
-fi
-
 if (( error_count > 0 )); then
     echo "${error_count} uvx snippet(s) failed validation (of ${snippet_count})" >&2
     exit 1
 fi
 
+# Zero snippets is explicitly OK: the reference docs now lead with single-file
+# PEP 723 runs (see `make validate-pep723`). `uvx --from litestar-mcp` is kept
+# as a fallback mention in the guide but is no longer the primary entrypoint.
 echo "OK: ${snippet_count} uvx snippet(s) validated"

@@ -52,36 +52,32 @@ dependency injection is Litestar-native or routed through Dishka.
   The app only validates the signed `x-goog-iap-jwt-assertion` header
   against Google's JWKS.
 
-## Run it with `uvx`
+## Run any variant with one command
 
-`uvx` runs any variant as an ephemeral demo without cloning the
-repository. The template is the same for every variant; only the
-module path and the `--with` extras differ.
-
-```bash
-# Advanced Alchemy, plain JWT bearer auth
-uvx --from litestar-mcp \
-    --with "advanced-alchemy,litestar[standard],pyjwt" \
-    python -m docs.examples.notes.advanced_alchemy.jwt_auth
-
-# SQLSpec, Google IAP edition
-uvx --from litestar-mcp \
-    --with "sqlspec[aiosqlite],litestar[standard],pyjwt,cryptography" \
-    python -m docs.examples.notes.sqlspec.google_iap
-```
-
-See the [`uvx` reference guide](../../usage/uvx_guide.rst) for the full
-set of commands, required extras per variant, and common pitfalls.
-
-## Run it from a checkout
-
-If you have the repo checked out, you can skip `uvx` entirely and use
-`uv run` against the working tree:
+Every variant ships a :pep:`723` inline script metadata block, so
+`uv` reads its dependencies directly from the file and provisions an
+ephemeral environment on first run. No clone, no `uv sync`, no extras
+juggling:
 
 ```bash
-uv run python -m docs.examples.notes.advanced_alchemy.no_auth
-uv run python -m docs.examples.notes.sqlspec.jwt_auth
+uv run docs/examples/notes/advanced_alchemy/no_auth.py
+uv run docs/examples/notes/advanced_alchemy/jwt_auth.py
+uv run docs/examples/notes/sqlspec/no_auth.py
+uv run docs/examples/notes/sqlspec/google_iap.py
 ```
+
+See the [single-file run reference](../../usage/uvx_guide.rst) for the
+full variant matrix and common pitfalls.
+
+## Multi-replica deployments
+
+Each MCP session is bound to the replica that issued its
+`Mcp-Session-Id`. SSE streams pin to that replica because event queues
+live in process memory. For Cloud Run / GKE, configure session
+affinity on the `Mcp-Session-Id` header and pair it with a shared
+session store so stateless POST tool calls can hit any replica. See
+[`docs/usage/deployment.rst`](../../usage/deployment.rst) for the full
+note.
 
 ## Shared contract
 

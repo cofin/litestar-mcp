@@ -59,6 +59,13 @@ examples drawn from :mod:`docs.examples`.
         vs SQLSpec, no-auth/JWT/Cloud Run/IAP, with ``uvx`` run-first
         guidance.
 
+    .. grid-item-card:: Deployment
+        :link: deployment
+        :link-type: doc
+
+        Sticky routing on ``Mcp-Session-Id``, shared session stores,
+        and multi-replica notes for Cloud Run / GKE.
+
 .. toctree::
     :hidden:
     :maxdepth: 1
@@ -71,3 +78,4 @@ examples drawn from :mod:`docs.examples`.
     framework_integration
     reference_examples
     uvx_guide
+    deployment

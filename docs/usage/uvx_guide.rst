@@ -1,157 +1,102 @@
-====================
-``uvx`` Reference Guide
-====================
+========================
+Single-file Run Reference
+========================
 
 .. note::
 
-    ``uvx`` is for **ephemeral demo runs** — it installs the package
-    and its extras into a scratch environment, runs a command, and
-    throws the environment away. ``uv run`` is for **development
-    inside this repo**. This page is about the first.
+    This page is about **zero-install demo runs**. ``uv run`` (or
+    ``uvx run``) reads the :pep:`723` metadata block baked into each
+    reference example and provisions an ephemeral environment on first
+    invocation. ``uv sync`` inside a checkout is only needed for
+    contributors editing the plugin itself.
 
-Why ``uvx``
-===========
+Run an Example with One Command
+===============================
 
-The reference notes examples are the primary way most users will first
-see the plugin's MCP surface. ``uvx`` lets a reader run any variant
-without cloning the repo, without creating a venv, and without editing
-a ``pyproject.toml`` — the exact zero-install story we want MCP
-clients (Claude Desktop, agents, etc.) to be able to point at.
-
-The command template
-====================
-
-Every variant uses the same shape. Only the module path and the
-``--with`` extras change:
+Every runnable example under ``docs/examples/`` declares its
+dependencies inline via :pep:`723`. ``uv`` reads the metadata block,
+provisions an ephemeral environment, and runs the script — no clone,
+no ``uv sync``, no extras juggling:
 
 .. code-block:: bash
 
-    uvx --from litestar-mcp \
-        --with "<variant-specific-extras>" \
-        python -m docs.examples.notes.<family>.<variant>
+    uv run docs/examples/notes/sqlspec/no_auth.py
+    uv run docs/examples/notes/advanced_alchemy/jwt_auth.py
+    uv run docs/examples/notes/sqlspec/google_iap.py
+    uv run docs/examples/notes/sqlspec/cloud_run_jwt.py
 
-``--from litestar-mcp`` pins the package that owns the example tree.
-``--with`` declares the adapter-level and auth-level dependencies that
-the specific variant imports at runtime. ``python -m ...`` runs the
-variant's ``create_app(...)`` bootstrap.
-
-Run any variant
-===============
-
-The commands below are the complete, copy-pasteable invocations for
-each shipped variant. They all bind the Litestar app to
-``http://127.0.0.1:8000`` by default.
-
-Advanced Alchemy family
------------------------
+Readers who have *not* cloned the repository can pass the raw URL to
+``uv run`` instead — ``uv`` will download, cache, and execute the
+single file with the declared deps:
 
 .. code-block:: bash
 
-    # no-auth (public demo)
-    uvx --from litestar-mcp \
-        --with "advanced-alchemy,litestar[standard]" \
-        python -m docs.examples.notes.advanced_alchemy.no_auth
+    uv run https://raw.githubusercontent.com/litestar-org/litestar-mcp/main/docs/examples/notes/sqlspec/no_auth.py
 
-    # no-auth + Dishka DI
-    uvx --from litestar-mcp \
-        --with "advanced-alchemy,litestar[standard],dishka" \
-        python -m docs.examples.notes.advanced_alchemy.no_auth_dishka
+Each variant binds the Litestar app to ``http://127.0.0.1:8000`` by
+default. MCP clients can point at ``http://127.0.0.1:8000/mcp`` as
+soon as the process is up.
 
-    # app-managed JWT bearer auth
-    uvx --from litestar-mcp \
-        --with "advanced-alchemy,litestar[standard],pyjwt" \
-        python -m docs.examples.notes.advanced_alchemy.jwt_auth
+Variant matrix
+==============
 
-    # JWT + Dishka DI
-    uvx --from litestar-mcp \
-        --with "advanced-alchemy,litestar[standard],pyjwt,dishka" \
-        python -m docs.examples.notes.advanced_alchemy.jwt_auth_dishka
+.. list-table::
+   :header-rows: 1
+   :widths: 30 30 40
 
-SQLSpec family
---------------
-
-.. code-block:: bash
-
-    # no-auth (public demo)
-    uvx --from litestar-mcp \
-        --with "sqlspec[aiosqlite],litestar[standard]" \
-        python -m docs.examples.notes.sqlspec.no_auth
-
-    # no-auth + Dishka DI
-    uvx --from litestar-mcp \
-        --with "sqlspec[aiosqlite],litestar[standard],dishka" \
-        python -m docs.examples.notes.sqlspec.no_auth_dishka
-
-    # app-managed JWT bearer auth
-    uvx --from litestar-mcp \
-        --with "sqlspec[aiosqlite],litestar[standard],pyjwt" \
-        python -m docs.examples.notes.sqlspec.jwt_auth
-
-    # JWT + Dishka DI
-    uvx --from litestar-mcp \
-        --with "sqlspec[aiosqlite],litestar[standard],pyjwt,dishka" \
-        python -m docs.examples.notes.sqlspec.jwt_auth_dishka
-
-    # Cloud Run JWT (env-driven config, /healthz)
-    uvx --from litestar-mcp \
-        --with "sqlspec[aiosqlite],litestar[standard],pyjwt" \
-        python -m docs.examples.notes.sqlspec.cloud_run_jwt
-
-    # Google IAP (ES256 signed assertion validation)
-    uvx --from litestar-mcp \
-        --with "sqlspec[aiosqlite],litestar[standard],pyjwt,cryptography" \
-        python -m docs.examples.notes.sqlspec.google_iap
+   * - Family / variant
+     - Auth
+     - Single-file run command
+   * - ``advanced_alchemy/no_auth``
+     - none
+     - ``uv run docs/examples/notes/advanced_alchemy/no_auth.py``
+   * - ``advanced_alchemy/no_auth_dishka``
+     - none (Dishka DI)
+     - ``uv run docs/examples/notes/advanced_alchemy/no_auth_dishka.py``
+   * - ``advanced_alchemy/jwt_auth``
+     - HS256 JWT
+     - ``uv run docs/examples/notes/advanced_alchemy/jwt_auth.py``
+   * - ``advanced_alchemy/jwt_auth_dishka``
+     - HS256 JWT (Dishka DI)
+     - ``uv run docs/examples/notes/advanced_alchemy/jwt_auth_dishka.py``
+   * - ``sqlspec/no_auth``
+     - none
+     - ``uv run docs/examples/notes/sqlspec/no_auth.py``
+   * - ``sqlspec/no_auth_dishka``
+     - none (Dishka DI)
+     - ``uv run docs/examples/notes/sqlspec/no_auth_dishka.py``
+   * - ``sqlspec/jwt_auth``
+     - HS256 JWT
+     - ``uv run docs/examples/notes/sqlspec/jwt_auth.py``
+   * - ``sqlspec/jwt_auth_dishka``
+     - HS256 JWT (Dishka DI)
+     - ``uv run docs/examples/notes/sqlspec/jwt_auth_dishka.py``
+   * - ``sqlspec/cloud_run_jwt``
+     - app-managed JWT, env-driven
+     - ``uv run docs/examples/notes/sqlspec/cloud_run_jwt.py``
+   * - ``sqlspec/google_iap``
+     - Google IAP (ES256)
+     - ``uv run docs/examples/notes/sqlspec/google_iap.py``
 
 Common pitfalls
 ===============
 
-``--with`` must include every adapter and auth extra the variant imports.
-    The table below is the authoritative list. Missing an extra fails
-    with an ``ImportError`` at startup, not at request time.
-
-    .. list-table::
-       :header-rows: 1
-       :widths: 45 55
-
-       * - Variant
-         - Required ``--with`` extras
-       * - ``advanced_alchemy/no_auth``
-         - ``advanced-alchemy,litestar[standard]``
-       * - ``advanced_alchemy/no_auth_dishka``
-         - ``advanced-alchemy,litestar[standard],dishka``
-       * - ``advanced_alchemy/jwt_auth``
-         - ``advanced-alchemy,litestar[standard],pyjwt``
-       * - ``advanced_alchemy/jwt_auth_dishka``
-         - ``advanced-alchemy,litestar[standard],pyjwt,dishka``
-       * - ``sqlspec/no_auth``
-         - ``sqlspec[aiosqlite],litestar[standard]``
-       * - ``sqlspec/no_auth_dishka``
-         - ``sqlspec[aiosqlite],litestar[standard],dishka``
-       * - ``sqlspec/jwt_auth``
-         - ``sqlspec[aiosqlite],litestar[standard],pyjwt``
-       * - ``sqlspec/jwt_auth_dishka``
-         - ``sqlspec[aiosqlite],litestar[standard],pyjwt,dishka``
-       * - ``sqlspec/cloud_run_jwt``
-         - ``sqlspec[aiosqlite],litestar[standard],pyjwt``
-       * - ``sqlspec/google_iap``
-         - ``sqlspec[aiosqlite],litestar[standard],pyjwt,cryptography``
-
-The JWT variants need a token secret.
+JWT variants need a token secret.
     Set ``TOKEN_SECRET`` (or the variant's documented env var) before
-    launching. The demo ``/auth/login`` endpoint will mint a token
-    against that secret for ``POST {"username": ..., "password": ...}``.
-
-``uvx`` is not ``uv run``.
-    If you are working inside a clone of the repo, prefer
-    ``uv run python -m docs.examples.notes.<family>.<variant>`` — that
-    uses the repo's locked environment. ``uvx`` is for readers who
-    have *not* cloned the repo.
+    launching. The demo ``/auth/login`` endpoint mints a token against
+    that secret for ``POST {"username": ..., "password": ...}``.
 
 Don't confuse Cloud Run JWT with Google IAP.
     ``cloud_run_jwt`` is app-managed HS256 auth that happens to target
     Cloud Run. ``google_iap`` is platform auth where Google manages
     identity upstream of the app. They are separate variants on
     purpose.
+
+Deployment images still build with ``uv sync``.
+    The PEP 723 block is for local single-file runs. The shipped
+    ``Dockerfile.cloud_run`` for ``sqlspec/cloud_run_jwt.py`` continues
+    to build the image with ``uv sync`` against the repo's locked
+    environment — that is the expected path for production.
 
 Pointing an MCP client at a running variant
 ===========================================
@@ -177,7 +122,25 @@ same URL; the plugin publishes RFC 9728 discovery at
 auth config is attached, so clients can negotiate the bearer flow
 automatically.
 
+A bare ``curl`` probe confirms the transport is live:
+
+.. code-block:: bash
+
+    curl -sX POST http://127.0.0.1:8000/mcp \
+        -H 'content-type: application/json' \
+        -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{}}}' | jq .
+
+When to use ``uvx --from litestar-mcp``
+=======================================
+
+``uvx --from litestar-mcp <command>`` still works for the installed-tool
+use case — e.g. running a packaged CLI or module that ships with the
+distribution. For the reference examples, prefer the single-file
+``uv run docs/examples/...`` form above: the PEP 723 block is the
+authoritative dependency list and removes the ``--with`` book-keeping.
+
 .. seealso::
 
     - :doc:`reference_examples` — the family chooser and variant matrix.
     - :doc:`auth` — :class:`~litestar_mcp.auth.MCPAuthConfig` reference.
+    - :doc:`deployment` — sticky routing and multi-replica notes.

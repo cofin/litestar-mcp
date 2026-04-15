@@ -11,6 +11,17 @@ Each MCP tool call receives a fresh request-scoped SQLSpec session, plus the
 ``request.user``.
 """
 
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#   "litestar[standard]>=2.0",
+#   "litestar-mcp",
+#   "sqlspec[aiosqlite]>=0.43",
+#   "python-jose[cryptography]",
+#   "uvicorn",
+# ]
+# ///
+
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path

@@ -33,26 +33,20 @@ calls (`ToolExecutionContext` -> Dishka container).
 ## Running a variant
 
 Each variant exposes a `create_app(...)` factory suitable for
-`litestar.testing.TestClient` and for a plain ASGI server. From a repo
-checkout, smoke-test any variant with:
+`litestar.testing.TestClient` and for a plain ASGI server. Every
+variant file ships a :pep:`723` inline-script metadata block, so `uv`
+reads its dependencies from the file itself — no clone or
+`uv sync` required:
 
 ```bash
-uv run python -m docs.examples.notes.advanced_alchemy.no_auth
-uv run python -m docs.examples.notes.advanced_alchemy.no_auth_dishka
-uv run python -m docs.examples.notes.advanced_alchemy.jwt_auth       # requires TOKEN_SECRET env
-uv run python -m docs.examples.notes.advanced_alchemy.jwt_auth_dishka
+uv run docs/examples/notes/advanced_alchemy/no_auth.py
+uv run docs/examples/notes/advanced_alchemy/no_auth_dishka.py
+uv run docs/examples/notes/advanced_alchemy/jwt_auth.py        # requires TOKEN_SECRET env
+uv run docs/examples/notes/advanced_alchemy/jwt_auth_dishka.py
 ```
 
-Without a checkout, run any variant ephemerally with `uvx`:
-
-```bash
-uvx --from litestar-mcp \
-    --with "advanced-alchemy,litestar[standard],pyjwt" \
-    python -m docs.examples.notes.advanced_alchemy.jwt_auth
-```
-
-See the [`uvx` reference guide](../../../usage/uvx_guide.rst) for the
-full set of required extras per variant.
+See the [single-file run reference](../../../usage/uvx_guide.rst) for
+the full variant matrix.
 
 The JWT variants require a caller-supplied `token_secret` argument. The
 defaults for `issuer` and `audience` follow the foundation's locked

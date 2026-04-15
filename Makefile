@@ -286,6 +286,12 @@ validate-uvx:                                       ## Validate uvx snippets in 
 	@bash tools/ci/validate_uvx_snippets.sh
 	@echo "${OK} uvx snippets valid ✨"
 
+.PHONY: validate-pep723
+validate-pep723:                                    ## Validate PEP 723 blocks in runnable examples
+	@echo "${INFO} Validating PEP 723 script blocks... 🔎"
+	@$(UV_RUN_PY310) python tools/ci/validate_pep723_blocks.py
+	@echo "${OK} PEP 723 blocks valid ✨"
+
 # =============================================================================
 # Development Targets
 # =============================================================================

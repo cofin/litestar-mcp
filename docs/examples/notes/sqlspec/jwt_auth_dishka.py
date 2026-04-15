@@ -6,6 +6,18 @@ authenticated identity still comes from Litestar's normal auth surface —
 Dishka is only responsible for domain-service wiring.
 """
 
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#   "litestar[standard]>=2.0",
+#   "litestar-mcp",
+#   "sqlspec[aiosqlite]>=0.43",
+#   "dishka",
+#   "python-jose[cryptography]",
+#   "uvicorn",
+# ]
+# ///
+
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
