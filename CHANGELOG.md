@@ -42,6 +42,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Regression test `tests/unit/test_version_sync.py` guarding that
   `litestar_mcp.__metadata__.__version__` matches the packaged distribution
   version.
+- `MCPAuthConfig.on_validation_error` — observability hook called with
+  `(issuer, exception)` on every OIDC validation failure path (JWKS fetch,
+  unknown kid, bad alg, expired, bad aud/iss/sig). Sync or async; hook
+  exceptions are logged and swallowed so auth outcomes stay independent
+  of observability plumbing. Also accepted by
+  `create_oidc_validator()`.
+- `MCPAuthHardRejectionError` — exported from the package root. Raise from
+  a `token_validator` to signal "I own this token and it is invalid" and
+  skip OIDC provider fallthrough. Terminal HTTP response remains 401 per
+  MCP / OAuth 2.1.
+- `MCPDependencyProvider` Protocol in new `litestar_mcp.types` module.
+  Runtime-checkable; accepts sync or async context managers returning a
+  mapping of injected kwargs.
+- `ToolExecutionContext.request` — the inbound Litestar `Request` on HTTP
+  invocations (or `None` for CLI / stdio). Dependency providers needing
+  request-scoped state (headers, `request.state`, DI containers bound to
+  the request) can now reach it.
+- Per-URL single-flight locking on the JWKS / OIDC discovery cache.
+  Concurrent cold-cache callers for the same URL coalesce into one
+  upstream fetch; distinct URLs keep parallel throughput.
 
 ### Changed
 
@@ -64,6 +84,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All MCP transport JSON encoding/decoding goes through
   `litestar.serialization.encode_json` / `decode_json` for consistency with
   the rest of the Litestar pipeline.
+- **Breaking — `MCPConfig.dependency_provider` type.** Narrowed from
+  `Any | None` to `MCPDependencyProvider | None`. Existing callables
+  continue to work via structural (Protocol) matching; only explicit type
+  annotations need updating.
+- Claims-dict contract on `MCPAuthConfig.token_validator` is now
+  documented: the returned mapping is opaque to litestar-mcp and is passed
+  as-is to `user_resolver`. Keys prefixed with `_` are reserved for
+  downstream use.
 
 ### Removed
 
