@@ -13,6 +13,7 @@ from typing import Any
 from litestar_mcp.auth import (
     DEFAULT_CLOCK_SKEW_SECONDS,
     DEFAULT_JWKS_CACHE_TTL_SECONDS,
+    ValidationErrorHook,
     _validate_oidc_bearer,
 )
 
@@ -30,6 +31,7 @@ def create_oidc_validator(
     algorithms: tuple[str, ...] = ("RS256",),
     clock_skew: int = DEFAULT_CLOCK_SKEW_SECONDS,
     jwks_cache_ttl: int = DEFAULT_JWKS_CACHE_TTL_SECONDS,
+    on_validation_error: ValidationErrorHook | None = None,
 ) -> TokenValidator:
     """Build an async token validator that verifies bearer tokens against an OIDC IdP.
 
@@ -44,6 +46,9 @@ def create_oidc_validator(
         algorithms: Allowed JWS algorithms (default: ``("RS256",)``).
         clock_skew: Tolerance in seconds for ``exp`` / ``iat`` / ``nbf``.
         jwks_cache_ttl: How long to cache the JWKS document in seconds.
+        on_validation_error: Optional observability hook called with
+            ``(issuer, exception)`` whenever validation fails. Sync or async.
+            Hook exceptions are logged and swallowed.
 
     Returns:
         An async callable suitable for
@@ -68,6 +73,7 @@ def create_oidc_validator(
             algorithms=algorithms,
             clock_skew=clock_skew,
             jwks_cache_ttl=jwks_cache_ttl,
+            on_validation_error=on_validation_error,
         )
 
     return _validator

@@ -1,12 +1,25 @@
 """MCP OAuth 2.1 authentication and auth bridge."""
 
 import asyncio
+import inspect
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from time import monotonic
 from typing import Any, cast
 
 from litestar.serialization import encode_json
+
+_logger = logging.getLogger(__name__)
+
+ValidationErrorHook = Callable[[str, BaseException], None | Awaitable[None]]
+"""Observability callback: ``(issuer, exception) -> None | Awaitable[None]``.
+
+Invoked when a provider validator rejects a token or raises during validation.
+Return value is ignored. Sync or async; litestar-mcp auto-detects. Exceptions
+raised by the hook itself are logged and swallowed to keep auth outcomes
+independent of observability plumbing.
+"""
 
 _JSON_DOCUMENT_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 _JSON_DOCUMENT_LOCKS: dict[str, asyncio.Lock] = {}
@@ -73,6 +86,13 @@ class MCPAuthConfig:
     token_validator: Callable[[str], Awaitable[dict[str, Any] | None]] | None = None
     providers: list[OIDCProviderConfig] | None = None
     user_resolver: Callable[[dict[str, Any], Any], Awaitable[Any] | Any] | None = None
+    on_validation_error: ValidationErrorHook | None = None
+    """Optional observability hook fired on provider validation failure.
+
+    Called with ``(issuer, exception)`` before the validator returns ``None``.
+    Sync or async. Hook exceptions are logged and swallowed — auth outcome
+    stays independent of observability.
+    """
 
 
 def _normalize_issuer(issuer: str) -> str:
@@ -178,6 +198,19 @@ def _load_signing_key(token: str, jwks: dict[str, Any], algorithms: "tuple[str, 
     return algorithm.from_jwk(encode_json(selected_key).decode("utf-8"))
 
 
+async def _invoke_validation_error_hook(
+    hook: ValidationErrorHook,
+    issuer: str,
+    exc: BaseException,
+) -> None:
+    try:
+        result = hook(issuer, exc)
+        if inspect.isawaitable(result):
+            await result
+    except Exception:
+        _logger.exception("on_validation_error hook raised for issuer %s", issuer)
+
+
 async def _validate_oidc_bearer(
     token: str,
     *,
@@ -188,6 +221,7 @@ async def _validate_oidc_bearer(
     algorithms: "tuple[str, ...] | list[str]",
     clock_skew: int = DEFAULT_CLOCK_SKEW_SECONDS,
     jwks_cache_ttl: int = DEFAULT_JWKS_CACHE_TTL_SECONDS,
+    on_validation_error: ValidationErrorHook | None = None,
 ) -> dict[str, Any] | None:
     """Validate a bearer token against an OIDC issuer.
 
@@ -204,6 +238,9 @@ async def _validate_oidc_bearer(
         algorithms: Allowed JWS algorithms.
         clock_skew: Tolerance in seconds for ``exp`` / ``iat`` / ``nbf``.
         jwks_cache_ttl: JWKS cache TTL in seconds.
+        on_validation_error: Optional observability hook; fired with
+            ``(issuer, exception)`` on any validation failure path. Sync or
+            async. Raises from the hook are logged and swallowed.
 
     Returns:
         Validated claims dict or ``None`` if validation fails.
@@ -231,11 +268,18 @@ async def _validate_oidc_bearer(
             leeway=clock_skew,
             options={"verify_aud": audience is not None},
         )
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        if on_validation_error is not None:
+            await _invoke_validation_error_hook(on_validation_error, issuer, exc)
         return None
 
 
-async def _validate_with_oidc_provider(token: str, provider: OIDCProviderConfig) -> dict[str, Any] | None:
+async def _validate_with_oidc_provider(
+    token: str,
+    provider: OIDCProviderConfig,
+    *,
+    on_validation_error: ValidationErrorHook | None = None,
+) -> dict[str, Any] | None:
     return await _validate_oidc_bearer(
         token,
         issuer=provider.issuer,
@@ -245,6 +289,7 @@ async def _validate_with_oidc_provider(token: str, provider: OIDCProviderConfig)
         algorithms=provider.algorithms,
         clock_skew=provider.clock_skew,
         jwks_cache_ttl=provider.cache_ttl,
+        on_validation_error=on_validation_error,
     )
 
 
@@ -270,7 +315,11 @@ async def validate_bearer_token(
             return claims
 
     for provider in _iter_providers(auth_config):
-        claims = await _validate_with_oidc_provider(token, provider)
+        claims = await _validate_with_oidc_provider(
+            token,
+            provider,
+            on_validation_error=auth_config.on_validation_error,
+        )
         if claims is not None:
             return claims
 
