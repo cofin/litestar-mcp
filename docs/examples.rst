@@ -9,12 +9,13 @@ This section covers the example applications included with Litestar MCP.
    :maxdepth: 1
 
    examples/README
-   examples/basic/README
+   examples/hello_world/README
+   examples/task_manager/README
 
-Basic Example
-=============
+Hello World Example
+===================
 
-Location: ``docs/examples/basic/``
+Location: ``docs/examples/hello_world/``
 
 A minimal "Hello World" application that demonstrates:
 
@@ -40,7 +41,7 @@ A minimal "Hello World" application that demonstrates:
 
 .. code-block:: bash
 
-    cd docs/examples/basic/
+    cd docs/examples/hello_world/
     uv run python main.py
 
 **Available endpoints:**
@@ -50,10 +51,10 @@ A minimal "Hello World" application that demonstrates:
 - ``http://127.0.0.1:8000/.well-known/mcp-server.json`` - MCP server manifest
 - ``http://127.0.0.1:8000/.well-known/agent-card.json`` - Agent metadata document
 
-Advanced Example
-================
+Task Manager Example
+====================
 
-Location: ``docs/examples/advanced/``
+Location: ``docs/examples/task_manager/``
 
 A task management application that demonstrates:
 
@@ -73,7 +74,7 @@ A task management application that demonstrates:
 
 .. code-block:: bash
 
-    cd docs/examples/advanced/
+    cd docs/examples/task_manager/
     uv run python main.py
 
 **Exposed MCP Tools:**

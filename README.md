@@ -261,7 +261,7 @@ uv sync --all-extras --dev
 make test
 
 # Run example
-uv run python docs/examples/basic/main.py
+uv run python docs/examples/hello_world/main.py
 ```
 
 ## License

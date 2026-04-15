@@ -9,23 +9,23 @@ Available Examples
 
 The examples are located in the ``examples/`` directory of the project repository:
 
-Basic Example
-~~~~~~~~~~~~~
+Hello World Example
+~~~~~~~~~~~~~~~~~~~
 
-The basic example demonstrates minimal MCP integration:
+The hello-world example demonstrates minimal MCP integration:
 
-- **Location**: ``docs/examples/basic/``
+- **Location**: ``docs/examples/hello_world/``
 - **Features**: Simple plugin setup with marked routes
 - **Demonstrates**: Tool and resource exposure through route marking
 
 See the :doc:`../examples` section for detailed code and explanation.
 
-Advanced Example
-~~~~~~~~~~~~~~~~
+Task Manager Example
+~~~~~~~~~~~~~~~~~~~~
 
-The advanced example shows more complex usage patterns:
+The task-manager example shows more complex usage patterns:
 
-- **Location**: ``docs/examples/advanced/``
+- **Location**: ``docs/examples/task_manager/``
 - **Features**: Complex route handlers, dependency injection, error handling
 - **Demonstrates**: Real-world integration patterns
 
@@ -78,7 +78,7 @@ To run any of the examples:
 .. code-block:: bash
 
     # Navigate to example directory
-    cd docs/examples/basic/
+    cd docs/examples/hello_world/
 
     # Run with uv
     uv run python main.py

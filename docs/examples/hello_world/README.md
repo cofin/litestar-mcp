@@ -1,6 +1,8 @@
-# Basic Litestar MCP Example
+# Hello World Litestar MCP Example
 
 This is the simplest possible example of integrating the Litestar MCP Plugin with a Litestar application.
+
+This directory follows the project's hybrid example convention: ``main.py`` is a runnable script, and ``test_hello_world.py`` is its pytest companion. The plugin-registration block inside ``build_app()`` is wrapped in ``# start-example`` / ``# end-example`` markers so the usage guide can include it with ``:dedent: 4``.
 
 ## What This Example Demonstrates
 

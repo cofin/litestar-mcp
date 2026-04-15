@@ -4,7 +4,7 @@ This directory contains examples demonstrating the Litestar MCP Plugin integrati
 
 ## Examples Overview
 
-### 📁 basic/
+### 📁 hello_world/
 
 **Hello World Example**
 
@@ -15,7 +15,7 @@ This directory contains examples demonstrating the Litestar MCP Plugin integrati
 
 **Best for**: Getting started, understanding core concepts
 
-### 📁 advanced/
+### 📁 task_manager/
 
 **Task Management API Example**
 
@@ -44,7 +44,7 @@ Each example directory contains:
 - `README.md` - Detailed setup instructions
 
 ```bash
-cd docs/examples/basic/
+cd docs/examples/hello_world/
 uv run python main.py
 ```
 
@@ -52,8 +52,8 @@ uv run python main.py
 
 The current implementation provides:
 
-| Feature | Basic | Advanced |
-|---------|-------|----------|
+| Feature | Hello World | Task Manager |
+|---------|-------------|--------------|
 | Plugin integration | ✅ | ✅ |
 | OpenAPI resource | ✅ | ✅ |
 | Route marking with kwargs | ✅ | ✅ |
@@ -117,16 +117,16 @@ app = Litestar(
 
 ### 1. Start Simple
 
-Begin with the basic example to understand core concepts:
+Begin with the hello-world example to understand core concepts:
 
 ```bash
-cd docs/examples/basic/
+cd docs/examples/hello_world/
 uv run python main.py
 ```
 
 ### 2. Build Your Own
 
-Use the basic example as a template:
+Use the hello-world example as a template:
 
 ```python
 from litestar import Litestar, get

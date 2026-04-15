@@ -161,13 +161,13 @@ pre-commit:                                         ## Run pre-commit hooks
 .PHONY: ruff-check
 ruff-check:                                         ## Run ruff linting
 	@echo "${INFO} Running ruff checks... 🔄"
-	@$(UV_RUN_PY310) ruff check --fix litestar_mcp tests
+	@$(UV_RUN_PY310) ruff check --fix litestar_mcp tests docs/examples tools/ci
 	@echo "${OK} Ruff checks passed ✨"
 
 .PHONY: ruff-format
 ruff-format:                                        ## Run ruff formatting
 	@echo "${INFO} Running ruff formatting... 🎨"
-	@$(UV_RUN_PY310) ruff format litestar_mcp tests
+	@$(UV_RUN_PY310) ruff format litestar_mcp tests docs/examples tools/ci
 	@echo "${OK} Ruff formatting complete ✨"
 
 .PHONY: slotscheck
@@ -242,6 +242,12 @@ example-run:                                        ## Run basic example
 	@echo "${INFO} Running basic example... 🚀"
 	@$(UV_RUN_PY310) python examples/basic_usage.py
 	@echo "${OK} Example completed ✨"
+
+.PHONY: validate-examples
+validate-examples:                                  ## Validate docs/examples marker blocks
+	@echo "${INFO} Validating doc example markers... 🔎"
+	@$(UV_RUN_PY310) python tools/ci/validate_doc_markers.py
+	@echo "${OK} Doc example markers valid ✨"
 
 # =============================================================================
 # Development Targets
