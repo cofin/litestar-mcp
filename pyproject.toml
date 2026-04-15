@@ -48,6 +48,10 @@ Homepage = "https://docs.litestar-mcp.litestar.dev/latest/"
 Issue = "https://github.com/litestar-org/litestar-mcp/issues/"
 Source = "https://github.com/litestar-org/litestar-mcp"
 
+[project.entry-points."pygments.styles"]
+litestar-mcp-dark = "tools.sphinx_ext.pygments_styles:LitestarMcpDarkStyle"
+litestar-mcp-light = "tools.sphinx_ext.pygments_styles:LitestarMcpLightStyle"
+
 [tool.hatch.build.targets.wheel]
 packages = ["litestar_mcp"]
 
