@@ -15,6 +15,15 @@ DEFAULT_CLOCK_SKEW_SECONDS = 30
 DEFAULT_JWKS_CACHE_TTL_SECONDS = 3600
 
 
+class MCPAuthHardRejectionError(Exception):
+    """Raised by a ``token_validator`` to signal "I own this token and it is
+    invalid; do not fall through to OIDC providers".
+
+    The terminal HTTP response remains 401 per MCP / OAuth 2.1. This exception
+    is an internal routing signal only; it never reaches the wire.
+    """
+
+
 @dataclass
 class OIDCProviderConfig:
     """Configuration for validating bearer tokens against an OIDC/JWKS provider.
@@ -253,7 +262,10 @@ async def validate_bearer_token(
         User claims dict if valid, None if invalid.
     """
     if auth_config.token_validator is not None:
-        claims = await auth_config.token_validator(token)
+        try:
+            claims = await auth_config.token_validator(token)
+        except MCPAuthHardRejectionError:
+            return None
         if claims is not None:
             return claims
 

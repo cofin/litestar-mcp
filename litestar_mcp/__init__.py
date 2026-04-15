@@ -7,6 +7,7 @@ automatically exposed through a single MCP endpoint.
 """
 
 from litestar_mcp.__metadata__ import __version__
+from litestar_mcp.auth import MCPAuthConfig, MCPAuthHardRejectionError
 from litestar_mcp.config import MCPConfig
 from litestar_mcp.decorators import mcp_resource, mcp_tool
 from litestar_mcp.oidc import TokenValidator, create_oidc_validator
@@ -15,6 +16,8 @@ from litestar_mcp.routes import MCPController
 
 __all__ = (
     "LitestarMCP",
+    "MCPAuthConfig",
+    "MCPAuthHardRejectionError",
     "MCPConfig",
     "MCPController",
     "TokenValidator",
