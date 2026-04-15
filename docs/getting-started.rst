@@ -158,6 +158,5 @@ See the ``examples/`` directory for complete working examples:
 Next Steps
 ----------
 
-- :doc:`examples` - See practical usage examples
-- :doc:`usage/index` - Learn more about configuration options
+- :doc:`usage/index` - Detailed usage guides for every plugin feature
 - :doc:`reference/index` - API reference documentation

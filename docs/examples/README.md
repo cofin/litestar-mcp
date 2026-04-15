@@ -1,3 +1,7 @@
+---
+orphan: true
+---
+
 # Litestar MCP Plugin Examples
 
 This directory contains examples demonstrating the Litestar MCP Plugin integration with practical usage patterns.

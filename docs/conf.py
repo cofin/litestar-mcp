@@ -198,11 +198,6 @@ html_theme_options = {
                     "url": "reference/index",
                     "summary": "Comprehensive API documentation",
                 },
-                {
-                    "title": "Examples",
-                    "url": "examples",
-                    "summary": "End-to-end examples and integrations",
-                },
             ],
         },
         {

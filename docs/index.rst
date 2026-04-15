@@ -10,7 +10,6 @@ Litestar MCP
 
     getting-started
     usage/index
-    examples
     reference/index
 
 .. toctree::
@@ -144,7 +143,7 @@ What Makes This Different?
 Getting Started
 ---------------
 
-Check out the :doc:`getting-started` guide to learn the basics, or explore our :doc:`examples` to see practical usage.
+Check out the :doc:`getting-started` guide to learn the basics, or explore the :doc:`usage/index` for deeper topics.
 
 Community
 ---------

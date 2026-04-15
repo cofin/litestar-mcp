@@ -1,3 +1,7 @@
+---
+orphan: true
+---
+
 # Task Manager Litestar MCP Example
 
 A broader example of integrating the Litestar MCP Plugin — a small task-management API that exposes CRUD operations as MCP tools and a schema + API-info pair as MCP resources.

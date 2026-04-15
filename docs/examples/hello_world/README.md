@@ -1,3 +1,7 @@
+---
+orphan: true
+---
+
 # Hello World Litestar MCP Example
 
 This is the simplest possible example of integrating the Litestar MCP Plugin with a Litestar application.
