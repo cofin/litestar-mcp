@@ -3,23 +3,17 @@
 import json
 from pathlib import Path
 
-import pytest
 from litestar.testing import TestClient
 
-from tests.integration.apps import AuthMode
-from tests.integration.conftest import AUTH_MODES, auth_headers, parse_tool_payload, rpc
+from tests.integration.conftest import parse_tool_payload, rpc
 
 
-@pytest.mark.parametrize("auth_mode", AUTH_MODES)
-def test_notes_advanced_alchemy_example_round_trip(tmp_path: Path, auth_mode: AuthMode) -> None:
-    """The AA notes example should expose the shared notes contract over MCP."""
+def test_notes_advanced_alchemy_example_round_trip(tmp_path: Path) -> None:
+    """The AA no-auth notes example exposes the shared notes contract over MCP."""
     from docs.examples.notes.advanced_alchemy.no_auth import create_app
 
-    app = create_app(
-        database_path=str(tmp_path / f"notes-aa-{auth_mode}.sqlite"),
-        auth_mode=auth_mode,
-    )
-    headers = auth_headers(auth_mode)
+    app = create_app(database_path=str(tmp_path / "notes-aa.sqlite"))
+    headers: dict[str, str] = {}
 
     with TestClient(app=app) as client:
         tools = rpc(client, "tools/list", headers=headers)["result"]["tools"]
@@ -51,7 +45,7 @@ def test_notes_advanced_alchemy_example_round_trip(tmp_path: Path, auth_mode: Au
         app_info_payload = json.loads(app_info_resource["result"]["contents"][0]["text"])
 
         assert app_info_payload["backend"] == "advanced_alchemy"
-        assert app_info_payload["auth_mode"] == auth_mode
+        assert app_info_payload["auth_mode"] == "none"
 
         created = rpc(
             client,

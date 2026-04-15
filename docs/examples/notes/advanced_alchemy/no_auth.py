@@ -1,7 +1,7 @@
 """No-auth Advanced Alchemy reference notes example."""
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 from uuid import UUID
 
 import msgspec
@@ -30,24 +30,14 @@ from docs.examples.notes.shared.contracts import (
 )
 from litestar_mcp import LitestarMCP, MCPConfig
 
-AuthMode = Literal["none", "bearer"]
 
-
-def create_app(
-    database_path: str | None = None,
-    *,
-    auth_mode: AuthMode = "none",
-) -> Litestar:
-    """Create the Advanced Alchemy reference notes app.
+def create_app(database_path: str | None = None) -> Litestar:
+    """Create the Advanced Alchemy reference notes app (no auth).
 
     Args:
         database_path: Optional SQLite file path. When omitted, a
             ``.reference-notes-aa.sqlite`` file in the current working
             directory is used.
-        auth_mode: Either ``"none"`` (the default) or ``"bearer"``. The
-            bearer variant currently reuses the shared test-only OAuth2
-            backend (see blockers.md for the Phase B ``jwt_auth.py``
-            follow-up).
     """
     sqlite_path = Path(database_path or Path.cwd() / ".reference-notes-aa.sqlite")
     alchemy_config = SQLAlchemyAsyncConfig(
@@ -86,23 +76,11 @@ def create_app(
         return AppInfo(
             name="Reference Notes",
             backend="advanced_alchemy",
-            auth_mode=auth_mode,
+            auth_mode="none",
             supports_dishka=False,
         )
 
-    mcp_config = MCPConfig()
-    on_app_init: list[Any] = []
-    if auth_mode == "bearer":
-        # Phase 2.6 shim kept so the ±bearer matrix test exercises this file's
-        # discovery surface under auth. Real JWT scoping lives in the
-        # sibling ``jwt_auth.py`` (and its Dishka variant).
-        from tests.integration._auth import build_mcp_auth_config, build_oauth_backend
-
-        mcp_config.auth = build_mcp_auth_config()
-        on_app_init.append(build_oauth_backend().on_app_init)
-
     return Litestar(
         route_handlers=[NoteController, notes_schema, get_api_info],
-        plugins=[SQLAlchemyPlugin(config=alchemy_config), LitestarMCP(mcp_config)],
-        on_app_init=on_app_init,
+        plugins=[SQLAlchemyPlugin(config=alchemy_config), LitestarMCP(MCPConfig())],
     )

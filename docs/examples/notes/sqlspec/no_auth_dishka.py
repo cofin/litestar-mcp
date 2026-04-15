@@ -9,7 +9,7 @@ variant — Dishka is a pure DI swap.
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import msgspec
 from dishka import Provider, Scope, make_async_container, provide
@@ -43,8 +43,6 @@ from docs.examples.notes.sqlspec.common import (
 from litestar_mcp import LitestarMCP, MCPConfig
 from litestar_mcp.executor import ToolExecutionContext
 
-AuthMode = Literal["none", "bearer"]
-
 
 class NotesDishkaProvider(Provider):
     """Provide request-scoped SQLSpec sessions + :class:`SQLSpecNoteService`.
@@ -71,19 +69,13 @@ class NotesDishkaProvider(Provider):
         return SQLSpecNoteService(db_session)
 
 
-def create_app(
-    database_path: str | None = None,
-    *,
-    auth_mode: AuthMode = "none",
-) -> Litestar:
-    """Create the Dishka-backed SQLSpec reference notes app.
+def create_app(database_path: str | None = None) -> Litestar:
+    """Create the Dishka-backed SQLSpec reference notes app (no auth).
 
     Args:
         database_path: Optional SQLite file path. When omitted, a
             ``.reference-notes-sqlspec-dishka.sqlite`` file in the current
             working directory is used.
-        auth_mode: Either ``"none"`` (default) or ``"bearer"`` for the
-            shared matrix auth shim.
     """
     sqlite_path = Path(database_path or Path.cwd() / ".reference-notes-sqlspec-dishka.sqlite")
     sqlspec, config = build_sqlspec(str(sqlite_path))
@@ -125,7 +117,7 @@ def create_app(
 
     @get("/app/info", opt={"mcp_resource": APP_INFO_RESOURCE_NAME}, sync_to_thread=False)
     def get_api_info() -> AppInfo:
-        return build_app_info(backend="sqlspec", auth_mode=auth_mode, supports_dishka=True)
+        return build_app_info(backend="sqlspec", auth_mode="none", supports_dishka=True)
 
     @asynccontextmanager
     async def mcp_dependency_provider(context: ToolExecutionContext) -> AsyncIterator[dict[str, Any]]:
@@ -141,12 +133,6 @@ def create_app(
         await bootstrap_schema(sqlspec, config)
 
     mcp_config = MCPConfig(dependency_provider=mcp_dependency_provider)
-    on_app_init: list[Any] = []
-    if auth_mode == "bearer":
-        from tests.integration._auth import build_mcp_auth_config, build_oauth_backend
-
-        mcp_config.auth = build_mcp_auth_config()
-        on_app_init.append(build_oauth_backend().on_app_init)
 
     async def close_container() -> None:
         await container.close()
@@ -155,7 +141,6 @@ def create_app(
         route_handlers=[list_notes, create_note, delete_note, notes_schema, get_api_info],
         on_startup=[on_startup],
         plugins=[SQLSpecPlugin(sqlspec), LitestarMCP(mcp_config)],
-        on_app_init=on_app_init,
         on_shutdown=[close_container],
     )
     setup_dishka(container, app)

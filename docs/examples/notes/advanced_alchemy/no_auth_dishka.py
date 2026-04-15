@@ -9,7 +9,7 @@ is identical to the plain variant.
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 from uuid import UUID
 
 import msgspec
@@ -42,8 +42,6 @@ from docs.examples.notes.shared.contracts import (
 from litestar_mcp import LitestarMCP, MCPConfig
 from litestar_mcp.executor import ToolExecutionContext
 
-AuthMode = Literal["none", "bearer"]
-
 
 class NotesDishkaProvider(Provider):
     """Provide request-scoped AA sessions + the :class:`NoteService`.
@@ -68,19 +66,13 @@ class NotesDishkaProvider(Provider):
         return NoteService(session=db_session)
 
 
-def create_app(
-    database_path: str | None = None,
-    *,
-    auth_mode: AuthMode = "none",
-) -> Litestar:
-    """Create the Dishka-backed Advanced Alchemy reference notes app.
+def create_app(database_path: str | None = None) -> Litestar:
+    """Create the Dishka-backed Advanced Alchemy reference notes app (no auth).
 
     Args:
         database_path: Optional SQLite file path. When omitted, a
             ``.reference-notes-aa-dishka.sqlite`` file in the current
             working directory is used.
-        auth_mode: Either ``"none"`` (the default) or ``"bearer"`` for the
-            Phase 2.6 shim used by the matrix tests.
     """
     sqlite_path = Path(database_path or Path.cwd() / ".reference-notes-aa-dishka.sqlite")
     alchemy_config = SQLAlchemyAsyncConfig(
@@ -127,7 +119,7 @@ def create_app(
 
     @get("/app/info", opt={"mcp_resource": APP_INFO_RESOURCE_NAME}, sync_to_thread=False)
     def get_api_info() -> AppInfo:
-        return build_app_info(backend="advanced_alchemy", auth_mode=auth_mode, supports_dishka=True)
+        return build_app_info(backend="advanced_alchemy", auth_mode="none", supports_dishka=True)
 
     @asynccontextmanager
     async def mcp_dependency_provider(context: ToolExecutionContext) -> AsyncIterator[dict[str, Any]]:
@@ -144,14 +136,6 @@ def create_app(
             yield {"note_service": await request_container.get(NoteService)}
 
     mcp_config = MCPConfig(dependency_provider=mcp_dependency_provider)
-    on_app_init: list[Any] = []
-    if auth_mode == "bearer":
-        # Phase 2.6 shim — see blockers.md. Ch 6 replaces this with a
-        # dedicated ``jwt_auth_dishka.py`` sibling.
-        from tests.integration._auth import build_mcp_auth_config, build_oauth_backend
-
-        mcp_config.auth = build_mcp_auth_config()
-        on_app_init.append(build_oauth_backend().on_app_init)
 
     async def close_container() -> None:
         await container.close()
@@ -159,7 +143,6 @@ def create_app(
     app = Litestar(
         route_handlers=[list_notes, create_note, delete_note, notes_schema, get_api_info],
         plugins=[SQLAlchemyPlugin(config=alchemy_config), LitestarMCP(mcp_config)],
-        on_app_init=on_app_init,
         on_shutdown=[close_container],
     )
     setup_dishka(container, app)

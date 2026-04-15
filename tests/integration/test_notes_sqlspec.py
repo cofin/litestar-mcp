@@ -1,9 +1,10 @@
-"""Integration coverage for the SQLSpec notes reference examples.
+"""Integration coverage for the SQLSpec no-auth notes reference examples.
 
-Parametrized over ``(dishka, auth_mode)`` so the same round-trip assertion
-exercises all four plain+dishka x no-auth+bearer variants. Each test uses a
-fresh ``tmp_path`` SQLite file so schema bootstrap is idempotent per-test
-and no cross-test state leaks through the database file.
+Parametrized over ``dishka`` so the same round-trip assertion exercises the
+plain and Dishka no-auth variants. Each test uses a fresh ``tmp_path`` SQLite
+file so schema bootstrap is idempotent per-test and no cross-test state leaks
+through the database file. Bearer coverage lives in
+``test_notes_sqlspec_jwt.py``.
 """
 
 import importlib
@@ -14,8 +15,7 @@ from typing import Any
 import pytest
 from litestar.testing import TestClient
 
-from tests.integration.apps import AuthMode
-from tests.integration.conftest import AUTH_MODES, auth_headers, parse_tool_payload, rpc
+from tests.integration.conftest import parse_tool_payload, rpc
 
 VARIANTS = [
     pytest.param(False, id="dishka-off"),
@@ -30,15 +30,11 @@ def _load_create_app(*, dishka: bool) -> Any:
 
 
 @pytest.mark.parametrize("dishka", VARIANTS)
-@pytest.mark.parametrize("auth_mode", AUTH_MODES)
-def test_notes_sqlspec_round_trip(tmp_path: Path, dishka: bool, auth_mode: AuthMode) -> None:
-    """Every SQLSpec notes variant exposes the shared notes contract over MCP."""
+def test_notes_sqlspec_round_trip(tmp_path: Path, dishka: bool) -> None:
+    """Every SQLSpec no-auth notes variant exposes the shared contract over MCP."""
     create_app = _load_create_app(dishka=dishka)
-    app = create_app(
-        database_path=str(tmp_path / f"notes-sqlspec-{dishka}-{auth_mode}.sqlite"),
-        auth_mode=auth_mode,
-    )
-    headers = auth_headers(auth_mode)
+    app = create_app(database_path=str(tmp_path / f"notes-sqlspec-{dishka}.sqlite"))
+    headers: dict[str, str] = {}
 
     with TestClient(app=app) as client:
         tools = rpc(client, "tools/list", headers=headers)["result"]["tools"]
@@ -68,7 +64,7 @@ def test_notes_sqlspec_round_trip(tmp_path: Path, dishka: bool, auth_mode: AuthM
         )
         app_info_payload = json.loads(app_info_resource["result"]["contents"][0]["text"])
         assert app_info_payload["backend"] == "sqlspec"
-        assert app_info_payload["auth_mode"] == auth_mode
+        assert app_info_payload["auth_mode"] == "none"
         assert app_info_payload["supports_dishka"] is dishka
 
         created = rpc(
