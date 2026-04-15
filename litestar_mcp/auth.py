@@ -1,5 +1,6 @@
 """MCP OAuth 2.1 authentication and auth bridge."""
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from time import monotonic
@@ -8,6 +9,7 @@ from typing import Any, cast
 from litestar.serialization import encode_json
 
 _JSON_DOCUMENT_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_JSON_DOCUMENT_LOCKS: dict[str, asyncio.Lock] = {}
 
 DEFAULT_CLOCK_SKEW_SECONDS = 30
 DEFAULT_JWKS_CACHE_TTL_SECONDS = 3600
@@ -87,13 +89,22 @@ async def _fetch_json_document(url: str) -> dict[str, Any]:
 
 
 async def _get_cached_json_document(url: str, cache_ttl: int) -> dict[str, Any]:
+    # Fast path: warm cache hit avoids lock acquisition entirely.
     cache_entry = _JSON_DOCUMENT_CACHE.get(url)
     if cache_entry is not None and cache_entry[0] > monotonic():
         return cache_entry[1]
 
-    document = await _fetch_json_document(url)
-    _JSON_DOCUMENT_CACHE[url] = (monotonic() + cache_ttl, document)
-    return document
+    # Single-flight: concurrent cold-cache callers for the same URL coalesce
+    # into one upstream fetch. Distinct URLs use distinct locks and proceed
+    # in parallel.
+    lock = _JSON_DOCUMENT_LOCKS.setdefault(url, asyncio.Lock())
+    async with lock:
+        cache_entry = _JSON_DOCUMENT_CACHE.get(url)
+        if cache_entry is not None and cache_entry[0] > monotonic():
+            return cache_entry[1]
+        document = await _fetch_json_document(url)
+        _JSON_DOCUMENT_CACHE[url] = (monotonic() + cache_ttl, document)
+        return document
 
 
 def _iter_providers(auth_config: MCPAuthConfig) -> list[OIDCProviderConfig]:
