@@ -52,6 +52,25 @@ discovery and caching.
     :end-before: # end-example
     :dedent:
 
+Composable OIDC Factory
+=======================
+
+In addition to the declarative
+:class:`~litestar_mcp.auth.OIDCProviderConfig` path, the plugin exposes
+:func:`~litestar_mcp.oidc.create_oidc_validator`, a public factory that
+returns an async callable suitable for
+:attr:`~litestar_mcp.auth.MCPAuthConfig.token_validator`. Both paths share
+the same validator core, so behavior is identical; the factory is handy
+when you want to compose validators or keep the auth config flat.
+
+Both ``clock_skew`` (seconds of tolerance for ``exp`` / ``iat`` / ``nbf``)
+and ``jwks_cache_ttl`` (seconds to cache the JWKS document) are
+configurable on the factory and on
+:class:`~litestar_mcp.auth.OIDCProviderConfig`.
+
+See the README's "Advanced Integration: OIDC" section for Google IAP and
+Okta / Auth0 / Keycloak examples.
+
 Mapping Claims to Users
 =======================
 

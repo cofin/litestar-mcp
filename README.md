@@ -247,6 +247,62 @@ app = Litestar(
 )
 ```
 
+## Advanced Integration: OIDC
+
+For production workloads you can validate bearer tokens against any OIDC
+identity provider. The :func:`create_oidc_validator` factory returns an
+async callable suitable for
+:attr:`MCPAuthConfig.token_validator`; it shares its validation core with
+the declarative :class:`OIDCProviderConfig` path so behavior is identical.
+
+### Google IAP
+
+```python
+from litestar_mcp import MCPConfig, create_oidc_validator
+from litestar_mcp.auth import MCPAuthConfig
+
+mcp_config = MCPConfig(
+    auth=MCPAuthConfig(
+        issuer="https://cloud.google.com/iap",
+        audience="/projects/PROJECT_NUMBER/global/backendServices/SERVICE_ID",
+        token_validator=create_oidc_validator(
+            issuer="https://cloud.google.com/iap",
+            audience="/projects/PROJECT_NUMBER/global/backendServices/SERVICE_ID",
+            jwks_uri="https://www.gstatic.com/iap/verify/public_key-jwk",
+            algorithms=("ES256",),
+        ),
+    ),
+)
+```
+
+See `docs/examples/notes/sqlspec/google_iap.py` for a runnable example.
+
+### Generic OIDC (Okta / Auth0 / Keycloak)
+
+```python
+from litestar_mcp import MCPConfig, create_oidc_validator
+from litestar_mcp.auth import MCPAuthConfig
+
+mcp_config = MCPConfig(
+    auth=MCPAuthConfig(
+        issuer="https://company.okta.com",
+        audience="api://mcp-tools",
+        token_validator=create_oidc_validator(
+            issuer="https://company.okta.com",
+            audience="api://mcp-tools",
+            clock_skew=60,
+            jwks_cache_ttl=1800,
+        ),
+    ),
+)
+```
+
+The factory auto-discovers the JWKS URI from
+`{issuer}/.well-known/openid-configuration` when `jwks_uri` is omitted,
+and caches the JWKS document for `jwks_cache_ttl` seconds. The
+`clock_skew` argument relaxes `exp` / `iat` / `nbf` checks to absorb
+small clock drift between IdP and application.
+
 ## Development
 
 ```bash

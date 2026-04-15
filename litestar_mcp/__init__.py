@@ -9,7 +9,17 @@ automatically exposed through a single MCP endpoint.
 from litestar_mcp.__metadata__ import __version__
 from litestar_mcp.config import MCPConfig
 from litestar_mcp.decorators import mcp_resource, mcp_tool
+from litestar_mcp.oidc import TokenValidator, create_oidc_validator
 from litestar_mcp.plugin import LitestarMCP
 from litestar_mcp.routes import MCPController
 
-__all__ = ("LitestarMCP", "MCPConfig", "MCPController", "__version__", "mcp_resource", "mcp_tool")
+__all__ = (
+    "LitestarMCP",
+    "MCPConfig",
+    "MCPController",
+    "TokenValidator",
+    "__version__",
+    "create_oidc_validator",
+    "mcp_resource",
+    "mcp_tool",
+)

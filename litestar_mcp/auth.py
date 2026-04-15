@@ -1,24 +1,39 @@
 """MCP OAuth 2.1 authentication and auth bridge."""
 
-import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from time import monotonic
 from typing import Any, cast
 
+from litestar.serialization import encode_json
+
 _JSON_DOCUMENT_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+
+DEFAULT_CLOCK_SKEW_SECONDS = 30
+DEFAULT_JWKS_CACHE_TTL_SECONDS = 3600
 
 
 @dataclass
 class OIDCProviderConfig:
-    """Configuration for validating bearer tokens against an OIDC/JWKS provider."""
+    """Configuration for validating bearer tokens against an OIDC/JWKS provider.
+
+    Attributes:
+        issuer: Expected ``iss`` claim and discovery base URL.
+        audience: Expected ``aud`` claim (string, list, or ``None`` to skip).
+        jwks_uri: Optional explicit JWKS endpoint (overrides discovery).
+        discovery_url: Optional override for the OpenID discovery document URL.
+        algorithms: Allowed JWS algorithms (default: ``["RS256"]``).
+        cache_ttl: JWKS / discovery document cache TTL in seconds.
+        clock_skew: Tolerance in seconds for ``exp`` / ``iat`` / ``nbf`` checks.
+    """
 
     issuer: str
     audience: str | list[str] | None = None
     jwks_uri: str | None = None
     discovery_url: str | None = None
     algorithms: list[str] = field(default_factory=lambda: ["RS256"])
-    cache_ttl: int = 300
+    cache_ttl: int = DEFAULT_JWKS_CACHE_TTL_SECONDS
+    clock_skew: int = DEFAULT_CLOCK_SKEW_SECONDS
 
 
 @dataclass
@@ -93,18 +108,24 @@ def _iter_providers(auth_config: MCPAuthConfig) -> list[OIDCProviderConfig]:
     return providers
 
 
-async def _get_provider_jwks(provider: OIDCProviderConfig) -> dict[str, Any]:
-    jwks_uri = provider.jwks_uri
-    if jwks_uri is None:
+async def _resolve_jwks(
+    issuer: str,
+    *,
+    jwks_uri: str | None,
+    discovery_url: str | None,
+    cache_ttl: int,
+) -> dict[str, Any]:
+    resolved_uri = jwks_uri
+    if resolved_uri is None:
         discovery = await _get_cached_json_document(
-            provider.discovery_url or _default_discovery_url(provider.issuer),
-            provider.cache_ttl,
+            discovery_url or _default_discovery_url(issuer),
+            cache_ttl,
         )
-        jwks_uri = discovery["jwks_uri"]
-    return await _get_cached_json_document(jwks_uri, provider.cache_ttl)
+        resolved_uri = cast("str", discovery["jwks_uri"])
+    return await _get_cached_json_document(resolved_uri, cache_ttl)
 
 
-def _load_signing_key(token: str, jwks: dict[str, Any], algorithms: list[str]) -> Any:
+def _load_signing_key(token: str, jwks: dict[str, Any], algorithms: "tuple[str, ...] | list[str]") -> Any:
     try:
         import jwt
         from jwt import algorithms as jwt_algorithms
@@ -134,10 +155,39 @@ def _load_signing_key(token: str, jwks: dict[str, Any], algorithms: list[str]) -
         raise ValueError(msg)
 
     algorithm = jwt_algorithms.get_default_algorithms()[header_alg]
-    return algorithm.from_jwk(json.dumps(selected_key))
+    return algorithm.from_jwk(encode_json(selected_key).decode("utf-8"))
 
 
-async def _validate_with_oidc_provider(token: str, provider: OIDCProviderConfig) -> dict[str, Any] | None:
+async def _validate_oidc_bearer(
+    token: str,
+    *,
+    issuer: str,
+    audience: str | list[str] | None,
+    jwks_uri: str | None,
+    discovery_url: str | None = None,
+    algorithms: "tuple[str, ...] | list[str]",
+    clock_skew: int = DEFAULT_CLOCK_SKEW_SECONDS,
+    jwks_cache_ttl: int = DEFAULT_JWKS_CACHE_TTL_SECONDS,
+) -> dict[str, Any] | None:
+    """Validate a bearer token against an OIDC issuer.
+
+    This is the single source of truth for OIDC validation used by both
+    :class:`OIDCProviderConfig`-driven enforcement and the public
+    :func:`litestar_mcp.oidc.create_oidc_validator` factory.
+
+    Args:
+        token: Raw bearer token string.
+        issuer: Expected ``iss`` claim and default discovery base.
+        audience: Expected ``aud`` claim; ``None`` disables audience checks.
+        jwks_uri: Optional explicit JWKS endpoint; if ``None`` auto-discovered.
+        discovery_url: Optional override for the OpenID discovery document URL.
+        algorithms: Allowed JWS algorithms.
+        clock_skew: Tolerance in seconds for ``exp`` / ``iat`` / ``nbf``.
+        jwks_cache_ttl: JWKS cache TTL in seconds.
+
+    Returns:
+        Validated claims dict or ``None`` if validation fails.
+    """
     try:
         import jwt
     except ImportError as exc:  # pragma: no cover - optional dependency path
@@ -145,18 +195,37 @@ async def _validate_with_oidc_provider(token: str, provider: OIDCProviderConfig)
         raise RuntimeError(msg) from exc
 
     try:
-        jwks = await _get_provider_jwks(provider)
-        signing_key = _load_signing_key(token, jwks, provider.algorithms)
+        jwks = await _resolve_jwks(
+            issuer,
+            jwks_uri=jwks_uri,
+            discovery_url=discovery_url,
+            cache_ttl=jwks_cache_ttl,
+        )
+        signing_key = _load_signing_key(token, jwks, algorithms)
         return jwt.decode(
             token,
             signing_key,
-            algorithms=provider.algorithms,
-            audience=provider.audience,
-            issuer=_normalize_issuer(provider.issuer),
-            options={"verify_aud": provider.audience is not None},
+            algorithms=list(algorithms),
+            audience=audience,
+            issuer=_normalize_issuer(issuer),
+            leeway=clock_skew,
+            options={"verify_aud": audience is not None},
         )
     except Exception:  # noqa: BLE001
         return None
+
+
+async def _validate_with_oidc_provider(token: str, provider: OIDCProviderConfig) -> dict[str, Any] | None:
+    return await _validate_oidc_bearer(
+        token,
+        issuer=provider.issuer,
+        audience=provider.audience,
+        jwks_uri=provider.jwks_uri,
+        discovery_url=provider.discovery_url,
+        algorithms=provider.algorithms,
+        clock_skew=provider.clock_skew,
+        jwks_cache_ttl=provider.cache_ttl,
+    )
 
 
 async def validate_bearer_token(
