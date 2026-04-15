@@ -25,6 +25,20 @@ _UNSUPPORTED_CLI_DEPENDENCIES = {"request", "socket", "headers", "cookies", "que
 _EXECUTION_CONTEXT_PARAMS = {"resolved_user", "user_claims"}
 
 
+async def _enforce_guards(handler: BaseRouteHandler, request: "Request[Any, Any, Any]") -> None:
+    """Invoke each merged guard against the live request.
+
+    Guards raise ``NotAuthorizedException`` / ``PermissionDeniedException`` (or
+    any other exception) to reject the invocation. First failure aborts.
+    ``resolve_guards()`` walks ``handler.ownership_layers`` (app → router →
+    controller → handler) and wraps every guard via ``ensure_async_callable``.
+    """
+    for guard in handler.resolve_guards():
+        result = guard(request, handler)
+        if inspect.isawaitable(result):
+            await result
+
+
 @dataclass
 class ToolExecutionContext:
     """Context exposed to dependency providers during tool execution.
@@ -368,6 +382,12 @@ async def execute_tool(
 ) -> Any:
     """Execute a given route handler with arguments, handling dependency injection.
 
+    When ``request`` is not ``None``, every guard resolved via
+    ``handler.resolve_guards()`` (app → router → controller → handler) runs
+    against the live request before any dependency resolution. In stdio / CLI
+    mode (``request is None``) guards are skipped because guards are designed
+    around an ``ASGIConnection`` and have no meaning without one.
+
     Args:
         handler: The route handler to execute.
         app: The Litestar app instance.
@@ -409,6 +429,8 @@ async def execute_tool(
             resolved_user=resolved_user,
             request=request,
         )
+        if request is not None:
+            await _enforce_guards(handler, request)
         provided_dependencies = await _resolve_dependency_provider(config, execution_context, exit_stack)
         call_args.update(provided_dependencies)
 

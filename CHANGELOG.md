@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- MCP tool invocations now enforce guards from every layer
+  (app / router / controller / route) via `handler.resolve_guards()`. Guards
+  run before dependency resolution; stdio / CLI mode (no live request) skips
+  guard enforcement. `MCPConfig.guards` continues to gate the `/mcp` router
+  itself.
+
 ## v0.4.0 — 2026-04-15
 
 ### Added
