@@ -74,10 +74,24 @@ class MCPAuthConfig:
         token_validator: Async callable that validates a bearer token string and
             returns user claims dict if valid, or None if invalid. This is the
             pluggable hook that integrates with the app's existing auth backend.
+
+            **Claims-dict contract:** the returned mapping is passed as-is to
+            :attr:`user_resolver` (``user_resolver(claims, app)``) and is
+            otherwise opaque to litestar-mcp — no keys are read or rewritten
+            by the framework. Tool handlers do NOT see claims directly; they
+            see the :attr:`user_resolver` return value injected as
+            ``resolved_user``. Keys prefixed with ``_`` are reserved for
+            downstream use and will be ignored by litestar-mcp in any future
+            version.
+
+            Raise :class:`MCPAuthHardRejectionError` to signal "I own this
+            token and it is invalid" and skip provider fallthrough.
         providers: Optional built-in OIDC/JWKS validation providers. These are
             tried after ``token_validator`` if it declines the token.
         user_resolver: Optional callable that turns validated claims into a
-            user object that is then exposed to MCP tool execution.
+            user object that is then exposed to MCP tool execution. Called as
+            ``user_resolver(claims, app)``; the return value is injected as
+            ``resolved_user`` into tool handlers that request it.
     """
 
     issuer: str | None = None
