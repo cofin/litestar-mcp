@@ -90,7 +90,7 @@ def _ensure_session(client: TestClient[Any]) -> str:
         headers={"Mcp-Session-Id": sid},
     )
     client._mcp_session = sid  # type: ignore[attr-defined]
-    return sid
+    return str(sid)
 
 
 def _rpc(client: TestClient[Any], method: str, params: "dict[str, Any] | None" = None) -> dict[str, Any]:

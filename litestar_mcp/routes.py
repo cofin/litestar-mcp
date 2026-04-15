@@ -1,4 +1,4 @@
-# ruff: noqa: PLR0915, C901
+# ruff: noqa: PLR0915, PLR0911, C901
 """MCP JSON-RPC 2.0 Streamable HTTP transport for Litestar applications."""
 
 import asyncio
@@ -737,9 +737,7 @@ class MCPController(Controller):
         if auth_response is not None:
             return auth_response
 
-        incoming_session_id = request.headers.get(MCP_SESSION_HEADER) or request.headers.get(
-            MCP_SESSION_HEADER.lower()
-        )
+        incoming_session_id = request.headers.get(MCP_SESSION_HEADER) or request.headers.get(MCP_SESSION_HEADER.lower())
         session = None
         response_session_id: str | None = None
 
@@ -774,9 +772,7 @@ class MCPController(Controller):
                     Response(
                         content=error_response(
                             rpc_request.id,
-                            JSONRPCError(
-                                code=SESSION_ERROR, message=f"Missing required header: {MCP_SESSION_HEADER}"
-                            ),
+                            JSONRPCError(code=SESSION_ERROR, message=f"Missing required header: {MCP_SESSION_HEADER}"),
                         ),
                         status_code=HTTP_400_BAD_REQUEST,
                         media_type=MediaType.JSON,
@@ -809,10 +805,8 @@ class MCPController(Controller):
                 )
 
         if rpc_request.method == "notifications/initialized" and incoming_session_id:
-            try:
+            with contextlib.suppress(SessionTerminated):
                 await session_manager.mark_initialized(incoming_session_id)
-            except SessionTerminated:
-                pass
 
         request_context = _build_request_context(request, user_claims=user_claims, resolved_user=resolved_user)
         router = build_jsonrpc_router(
@@ -825,6 +819,7 @@ class MCPController(Controller):
         )
         result = await router.dispatch(rpc_request)
 
+        response: Response[Any]
         if result is None:
             response = Response(content=None, status_code=HTTP_204_NO_CONTENT)
         else:

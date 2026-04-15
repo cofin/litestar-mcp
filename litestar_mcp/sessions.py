@@ -47,7 +47,7 @@ class MCPSession(msgspec.Struct, kw_only=True):
     initialized: bool = False
 
 
-class SessionTerminated(Exception):
+class SessionTerminated(Exception):  # noqa: N818
     """Raised when a session id is unknown, expired, or deleted."""
 
 

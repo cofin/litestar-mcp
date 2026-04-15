@@ -33,7 +33,7 @@ def _ensure_session(client: TestClient[Any], base: str = "/mcp") -> str:
         headers={"Mcp-Session-Id": sid},
     )
     setattr(client, key, sid)
-    return sid
+    return str(sid)
 
 
 def _rpc(

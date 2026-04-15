@@ -75,7 +75,7 @@ def test_delete_session_endpoint_registered() -> None:
 
 
 def test_full_post_only_flow() -> None:
-    """initialize → notifications/initialized → tools/list → DELETE round-trip."""
+    """Initialize → notifications/initialized → tools/list → DELETE round-trip."""
     app = _make_transport_app()
     with TestClient(app=app) as client:
         init = _rpc(

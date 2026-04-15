@@ -73,6 +73,51 @@ def auth_headers(auth_mode: AuthMode) -> dict[str, str]:
     return {}
 
 
+def _ensure_session(client: TestClient[Any], headers: "dict[str, str] | None" = None) -> str:
+    """Lazily initialize an MCP session per (client, auth) pair and cache it."""
+    auth_token = (headers or {}).get("Authorization", "") or (headers or {}).get("authorization", "")
+    key = f"_mcp_session::{auth_token}"
+    sid = getattr(client, key, None)
+    if sid:
+        return cast("str", sid)
+    init_headers = dict(headers or {})
+    init = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "it"}},
+        },
+        headers=init_headers,
+    )
+    sid_val = init.headers.get("mcp-session-id", "")
+    if sid_val:
+        client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+            headers={**init_headers, "Mcp-Session-Id": sid_val},
+        )
+    setattr(client, key, sid_val)
+    return str(sid_val)
+
+
+def _inject_session_header(
+    client: TestClient[Any],
+    method: str,
+    headers: "dict[str, str] | None",
+) -> dict[str, str]:
+    final_headers = dict(headers or {})
+    if method == "initialize":
+        return final_headers
+    if "Mcp-Session-Id" in final_headers or "mcp-session-id" in final_headers:
+        return final_headers
+    sid = _ensure_session(client, headers)
+    if sid:
+        final_headers["Mcp-Session-Id"] = sid
+    return final_headers
+
+
 def rpc(
     client: TestClient[Any],
     method: str,
@@ -86,7 +131,7 @@ def rpc(
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": msg_id, "method": method}
     if params is not None:
         body["params"] = params
-    response = client.post("/mcp", json=body, headers=headers or {})
+    response = client.post("/mcp", json=body, headers=_inject_session_header(client, method, headers))
     return cast("dict[str, Any]", response.json())
 
 
@@ -103,7 +148,7 @@ def rpc_response(
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": msg_id, "method": method}
     if params is not None:
         body["params"] = params
-    return client.post("/mcp", json=body, headers=headers or {})
+    return client.post("/mcp", json=body, headers=_inject_session_header(client, method, headers))
 
 
 def parse_tool_payload(result: dict[str, Any]) -> dict[str, Any]:

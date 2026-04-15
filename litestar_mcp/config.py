@@ -1,14 +1,11 @@
 """Configuration for Litestar MCP Plugin."""
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from litestar.stores.base import Store  # noqa: TC002
+from litestar.stores.base import Store
 
 from litestar_mcp.auth import MCPAuthConfig  # noqa: TC001
-
-if TYPE_CHECKING:
-    from litestar_mcp.sessions import MCPSessionManager
 
 
 @dataclass

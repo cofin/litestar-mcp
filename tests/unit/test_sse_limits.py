@@ -20,14 +20,14 @@ async def test_max_streams_raises() -> None:
 
 
 @pytest.mark.asyncio
-async def test_last_activity_bumps_on_publish() -> None:
+async def test_last_activity_bumps_on_publish(monkeypatch: pytest.MonkeyPatch) -> None:
     manager = SSEManager(max_streams=10, max_idle_seconds=3600.0)
     stream_id, gen = await manager.open_stream(session_id="s1")
     await gen.__anext__()  # prime
     state = manager._streams[stream_id]
     before = state.last_activity
-    # Force a tiny gap
-    time.sleep(0.01)
+    # Advance the clock read by publish/consumer
+    monkeypatch.setattr("litestar_mcp.sse.time.monotonic", lambda: before + 5.0)
     await manager.publish({"ping": True}, session_id="s1")
     await gen.__anext__()
     assert state.last_activity > before

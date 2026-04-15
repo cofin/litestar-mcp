@@ -8,7 +8,6 @@ from litestar.config.app import AppConfig
 from litestar.di import Provide
 from litestar.handlers import BaseRouteHandler
 from litestar.plugins import CLIPlugin, InitPluginProtocol
-
 from litestar.stores.memory import MemoryStore
 
 from litestar_mcp.config import MCPConfig
@@ -41,7 +40,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
             session_store,
             max_idle_seconds=self._config.session_max_idle_seconds,
         )
-        self._config._session_manager = self._session_manager
+        self._config._session_manager = self._session_manager  # noqa: SLF001
         self._task_store: InMemoryTaskStore | None = None
         if self._config.task_config is not None:
             task_config = self._config.task_config

@@ -11,6 +11,30 @@ from litestar_mcp import LitestarMCP, MCPConfig
 from litestar_mcp.decorators import mcp_tool
 
 
+def _ensure_session(client: TestClient[Any]) -> str:
+    sid = getattr(client, "_mcp_session", None)
+    if sid is not None:
+        return sid  # type: ignore[no-any-return]
+    init = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
+        },
+    )
+    sid = init.headers.get("mcp-session-id", "")
+    if sid:
+        client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+            headers={"Mcp-Session-Id": sid},
+        )
+    client._mcp_session = sid  # type: ignore[attr-defined]
+    return str(sid)
+
+
 def _rpc(
     client: TestClient[Any],
     method: str,
@@ -20,7 +44,12 @@ def _rpc(
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
     if params is not None:
         body["params"] = params
-    return client.post("/mcp", json=body, headers=headers or {}).json()  # type: ignore[no-any-return]
+    final_headers = dict(headers or {})
+    if method != "initialize" and "Mcp-Session-Id" not in final_headers and "mcp-session-id" not in final_headers:
+        sid = _ensure_session(client)
+        if sid:
+            final_headers["Mcp-Session-Id"] = sid
+    return client.post("/mcp", json=body, headers=final_headers).json()  # type: ignore[no-any-return]
 
 
 def _make_task_app() -> Litestar:

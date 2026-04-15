@@ -29,7 +29,7 @@ from litestar.serialization import encode_json
 __all__ = ("SSEManager", "SSEMessage", "StreamLimitExceeded")
 
 
-class StreamLimitExceeded(Exception):
+class StreamLimitExceeded(Exception):  # noqa: N818
     """Raised by :meth:`SSEManager.open_stream` when ``max_streams`` is hit."""
 
 

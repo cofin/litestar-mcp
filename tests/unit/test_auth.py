@@ -53,9 +53,10 @@ def _make_auth_app(
 
 
 def _ensure_session(client: TestClient[Any], auth_headers: "dict[str, str] | None" = None) -> str:
-    key = "_mcp_session_v"
+    auth_token = (auth_headers or {}).get("Authorization", "") or (auth_headers or {}).get("authorization", "")
+    key = f"_mcp_session_v::{auth_token}"
     sid = getattr(client, key, None)
-    if sid is not None:
+    if sid:
         return sid  # type: ignore[no-any-return]
     init_headers = dict(auth_headers or {})
     init = client.post(
@@ -77,7 +78,7 @@ def _ensure_session(client: TestClient[Any], auth_headers: "dict[str, str] | Non
             headers=notif_headers,
         )
     setattr(client, key, sid)
-    return sid
+    return sid  # type: ignore[no-any-return]
 
 
 def _rpc(
