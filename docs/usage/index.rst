@@ -51,6 +51,14 @@ examples drawn from :mod:`docs.examples`.
 
         Plugin ordering, guards, OpenAPI, and custom base paths.
 
+    .. grid-item-card:: Reference Examples
+        :link: reference_examples
+        :link-type: doc
+
+        The ``docs/examples/notes/`` family chooser: Advanced Alchemy
+        vs SQLSpec, no-auth/JWT/Cloud Run/IAP, with ``uvx`` run-first
+        guidance.
+
 .. toctree::
     :hidden:
     :maxdepth: 1
@@ -61,3 +69,5 @@ examples drawn from :mod:`docs.examples`.
     discovery
     auth
     framework_integration
+    reference_examples
+    uvx_guide

@@ -1,3 +1,7 @@
+---
+orphan: true
+---
+
 # Advanced Alchemy notes reference family
 
 This family implements the shared notes contract
@@ -29,8 +33,8 @@ calls (`ToolExecutionContext` -> Dishka container).
 ## Running a variant
 
 Each variant exposes a `create_app(...)` factory suitable for
-`litestar.testing.TestClient` and for a plain ASGI server. Smoke-test
-any variant with:
+`litestar.testing.TestClient` and for a plain ASGI server. From a repo
+checkout, smoke-test any variant with:
 
 ```bash
 uv run python -m docs.examples.notes.advanced_alchemy.no_auth
@@ -38,6 +42,17 @@ uv run python -m docs.examples.notes.advanced_alchemy.no_auth_dishka
 uv run python -m docs.examples.notes.advanced_alchemy.jwt_auth       # requires TOKEN_SECRET env
 uv run python -m docs.examples.notes.advanced_alchemy.jwt_auth_dishka
 ```
+
+Without a checkout, run any variant ephemerally with `uvx`:
+
+```bash
+uvx --from litestar-mcp \
+    --with "advanced-alchemy,litestar[standard],pyjwt" \
+    python -m docs.examples.notes.advanced_alchemy.jwt_auth
+```
+
+See the [`uvx` reference guide](../../../usage/uvx_guide.rst) for the
+full set of required extras per variant.
 
 The JWT variants require a caller-supplied `token_secret` argument. The
 defaults for `issuer` and `audience` follow the foundation's locked
@@ -56,8 +71,13 @@ self-contained.
   typed SQL with minimal ORM semantics and first-class async adapters for
   Postgres, DuckDB, and friends.
 
-## Cross-references
+## See also
 
+- [Top-level notes README](../README.md) — family chooser + `uvx` quick-start.
+- [SQLSpec sibling family](../sqlspec/README.md) — same contract with
+  explicit SQL, plus Cloud Run JWT and Google IAP deployment variants.
+- [Reference examples usage page](../../../usage/reference_examples.rst)
+- [`uvx` reference guide](../../../usage/uvx_guide.rst)
 - Foundation spec: `.agents/specs/reference-notes-foundation/spec.md`
 - Auth docs: `docs/usage/auth.rst`
 - Shared contract module: `docs/examples/notes/shared/contracts.py`

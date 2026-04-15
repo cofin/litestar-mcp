@@ -249,6 +249,12 @@ validate-examples:                                  ## Validate docs/examples ma
 	@$(UV_RUN_PY310) python tools/ci/validate_doc_markers.py
 	@echo "${OK} Doc example markers valid ✨"
 
+.PHONY: validate-uvx
+validate-uvx:                                       ## Validate uvx snippets in the reference docs
+	@echo "${INFO} Validating uvx snippets in docs... 🔎"
+	@bash tools/ci/validate_uvx_snippets.sh
+	@echo "${OK} uvx snippets valid ✨"
+
 # =============================================================================
 # Development Targets
 # =============================================================================

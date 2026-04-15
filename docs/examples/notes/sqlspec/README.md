@@ -1,3 +1,7 @@
+---
+orphan: true
+---
+
 # SQLSpec notes reference family
 
 This family implements the shared notes contract
@@ -49,8 +53,8 @@ module demonstrates the core SQLSpec contract:
 ## Running a variant
 
 Each variant exposes a `create_app(...)` factory suitable for
-`litestar.testing.TestClient` and for a plain ASGI server. Smoke-test
-any variant with:
+`litestar.testing.TestClient` and for a plain ASGI server. From a repo
+checkout, smoke-test any variant with:
 
 ```bash
 uv run python -m docs.examples.notes.sqlspec.no_auth
@@ -58,6 +62,21 @@ uv run python -m docs.examples.notes.sqlspec.no_auth_dishka
 uv run python -m docs.examples.notes.sqlspec.jwt_auth       # requires token_secret
 uv run python -m docs.examples.notes.sqlspec.jwt_auth_dishka
 ```
+
+Without a checkout, run any variant ephemerally with `uvx`:
+
+```bash
+uvx --from litestar-mcp \
+    --with "sqlspec[aiosqlite],litestar[standard],pyjwt" \
+    python -m docs.examples.notes.sqlspec.jwt_auth
+
+uvx --from litestar-mcp \
+    --with "sqlspec[aiosqlite],litestar[standard],pyjwt,cryptography" \
+    python -m docs.examples.notes.sqlspec.google_iap
+```
+
+See the [`uvx` reference guide](../../../usage/uvx_guide.rst) for the
+full set of required extras per variant.
 
 ## Deployment-oriented variants
 
@@ -97,8 +116,13 @@ self-contained.
   when you want an ORM-flavored service/repository layer, audit columns
   via `UUIDAuditBase`, and SQLAlchemy session lifecycle integration.
 
-## Cross-references
+## See also
 
+- [Top-level notes README](../README.md) — family chooser + `uvx` quick-start.
+- [Advanced Alchemy sibling family](../advanced_alchemy/README.md) —
+  same contract with an ORM-flavored service/repository layer.
+- [Reference examples usage page](../../../usage/reference_examples.rst)
+- [`uvx` reference guide](../../../usage/uvx_guide.rst)
 - Foundation spec: `.agents/specs/reference-notes-foundation/spec.md`
 - Family spec: `.agents/specs/sqlspec-reference-family/spec.md`
 - Auth docs: `docs/usage/auth.rst`
