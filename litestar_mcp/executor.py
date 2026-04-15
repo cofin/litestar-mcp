@@ -1,7 +1,7 @@
 """Core execution logic for invoking MCP tools."""
 
 import inspect
-from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -17,6 +17,8 @@ from litestar_mcp.utils import get_handler_function
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Iterator
 
+    from litestar import Request
+
     from litestar_mcp.config import MCPConfig
 
 _UNSUPPORTED_CLI_DEPENDENCIES = {"request", "socket", "headers", "cookies", "query", "body"}
@@ -25,13 +27,25 @@ _EXECUTION_CONTEXT_PARAMS = {"resolved_user", "user_claims"}
 
 @dataclass
 class ToolExecutionContext:
-    """Context exposed to dependency providers during tool execution."""
+    """Context exposed to dependency providers during tool execution.
+
+    Attributes:
+        app: The running Litestar application.
+        handler: The MCP-tool-marked route handler being invoked.
+        tool_args: Arguments from the MCP ``tools/call`` request.
+        user_claims: Validated bearer-token claims, if auth is configured.
+        resolved_user: User object returned by ``user_resolver``, if any.
+        request: Inbound :class:`~litestar.Request` for HTTP-mode invocations;
+            ``None`` for CLI / stdio invocations. Guard on ``is not None``
+            before accessing request-scoped state.
+    """
 
     app: Litestar
     handler: BaseRouteHandler
     tool_args: dict[str, Any]
     user_claims: "dict[str, Any] | None" = None
     resolved_user: Any = None
+    request: "Request[Any, Any, Any] | None" = None
 
 
 def _check_unsupported_dependency(dep_name: str, fn: Any) -> None:
@@ -248,26 +262,23 @@ async def _resolve_dependency_provider(
     context: ToolExecutionContext,
     exit_stack: AsyncExitStack,
 ) -> "dict[str, Any]":
-    """Resolve context-managed dependencies from the configured provider hook."""
+    """Resolve context-managed dependencies from the configured provider hook.
+
+    Providers must conform to :class:`~litestar_mcp.types.MCPDependencyProvider`:
+    a callable returning a sync or async context manager that yields a
+    mapping. Teardown is bound to the outer ``exit_stack`` so provider
+    ``finally`` blocks run when the tool invocation completes.
+    """
     if config is None or config.dependency_provider is None:
         return {}
 
     provided = config.dependency_provider(context)
-    if hasattr(provided, "__aenter__"):
+    if isinstance(provided, AbstractAsyncContextManager):
         resolved = await exit_stack.enter_async_context(provided)
-    elif hasattr(provided, "__enter__"):
-        resolved = exit_stack.enter_context(provided)
-    elif hasattr(provided, "__await__"):
-        resolved = await provided
     else:
-        resolved = provided
+        resolved = exit_stack.enter_context(provided)
 
-    if resolved is None:
-        return {}
-    if not isinstance(resolved, dict):
-        msg = "dependency_provider must return a mapping of injected keyword arguments"
-        raise TypeError(msg)
-    return resolved
+    return dict(resolved)
 
 
 def _inject_execution_context(
@@ -353,6 +364,7 @@ async def execute_tool(
     config: "MCPConfig | None" = None,
     user_claims: "dict[str, Any] | None" = None,
     resolved_user: Any = None,
+    request: "Request[Any, Any, Any] | None" = None,
 ) -> Any:
     """Execute a given route handler with arguments, handling dependency injection.
 
@@ -363,6 +375,9 @@ async def execute_tool(
         config: Optional MCP configuration for advanced dependency injection hooks.
         user_claims: Optional validated user claims.
         resolved_user: Optional user object derived from the claims.
+        request: Inbound HTTP :class:`~litestar.Request`, or ``None`` for CLI
+            / stdio invocations. Forwarded to the dependency provider's
+            ``ToolExecutionContext``.
 
     Returns:
         The result of the handler execution.
@@ -392,6 +407,7 @@ async def execute_tool(
             tool_args=tool_args,
             user_claims=user_claims,
             resolved_user=resolved_user,
+            request=request,
         )
         provided_dependencies = await _resolve_dependency_provider(config, execution_context, exit_stack)
         call_args.update(provided_dependencies)

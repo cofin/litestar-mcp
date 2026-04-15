@@ -299,7 +299,7 @@ class TestExecutor:
         handler = get_handler_from_app(app, "/reports")
 
         @asynccontextmanager
-        async def dependency_provider(context: Any) -> AsyncIterator[dict[str, str]]:
+        async def dependency_provider(context: Any) -> AsyncIterator[dict[str, Any]]:
             lifecycle_events.append(f"enter:{context.handler.name}")
             yield {"db_session": "scoped-session"}
             lifecycle_events.append("exit")
@@ -308,7 +308,7 @@ class TestExecutor:
             handler,
             app,
             {},
-            config=MCPConfig(dependency_provider=dependency_provider),
+            config=MCPConfig(dependency_provider=dependency_provider),  # type: ignore[arg-type]
         )
 
         assert result == {"db_session": "scoped-session"}

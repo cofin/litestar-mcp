@@ -66,6 +66,7 @@ class RequestContext:
     owner_id: str
     user_claims: dict[str, Any] | None = None
     resolved_user: Any = None
+    request: "Request[Any, Any, Any] | None" = None
 
 
 def _validate_origin(request: Request[Any, Any, Any], config: MCPConfig) -> Response[Any] | None:
@@ -117,7 +118,13 @@ def _build_request_context(
 ) -> RequestContext:
     client_id = _resolve_client_id(request, user_claims)
     owner_id = f"user:{user_claims['sub']}" if user_claims and user_claims.get("sub") else f"client:{client_id}"
-    return RequestContext(client_id=client_id, owner_id=owner_id, user_claims=user_claims, resolved_user=resolved_user)
+    return RequestContext(
+        client_id=client_id,
+        owner_id=owner_id,
+        user_claims=user_claims,
+        resolved_user=resolved_user,
+        request=request,
+    )
 
 
 def _serialize_tool_content(value: Any) -> str:
@@ -343,6 +350,7 @@ def build_jsonrpc_router(
                 config=config,
                 user_claims=request_context.user_claims,
                 resolved_user=request_context.resolved_user,
+                request=request_context.request,
             )
         except Exception as exc:  # noqa: BLE001
             return _build_tool_result({"error": str(exc)}, is_error=True, task_id=task_id)
@@ -549,6 +557,7 @@ def build_jsonrpc_router(
                 config=config,
                 user_claims=request_context.user_claims,
                 resolved_user=request_context.resolved_user,
+                request=request_context.request,
             )
         except Exception as exc:
             raise JSONRPCErrorException(
