@@ -84,6 +84,37 @@ build:                                              ## Build the project
 	@uv build >/dev/null 2>&1
 	@echo "${OK} Package build complete"
 
+.PHONY: release
+release:                                            ## Bump version for a release (bump=major|minor|patch|pre)
+	@if [ -z "$(bump)" ]; then \
+		echo "${ERROR} Usage: make release bump=major|minor|patch|pre"; \
+		exit 1; \
+	fi
+	@echo "${INFO} Preparing release bump ($(bump))... 📦"
+	@$(MAKE) clean
+	@$(UV_RUN_PY310) bump-my-version bump $(bump)
+	@$(MAKE) build
+	@echo "${OK} Release version bumped successfully 🎉"
+
+.PHONY: pre-release
+pre-release:                                        ## Start a pre-release: make pre-release version=0.5.0-alpha.1
+	@if [ -z "$(version)" ]; then \
+		echo "${ERROR} Usage: make pre-release version=X.Y.Z-alpha.N"; \
+		echo ""; \
+		echo "Pre-release workflow:"; \
+		echo "  1. Start alpha:     make pre-release version=0.5.0-alpha.1"; \
+		echo "  2. Next alpha:      make pre-release version=0.5.0-alpha.2"; \
+		echo "  3. Move to beta:    make pre-release version=0.5.0-beta.1"; \
+		echo "  4. Move to rc:      make pre-release version=0.5.0-rc.1"; \
+		echo "  5. Final release:   make release bump=pre (from rc) OR bump=patch/minor (from stable)"; \
+		exit 1; \
+	fi
+	@echo "${INFO} Preparing pre-release $(version)... 🧪"
+	@$(MAKE) clean
+	@$(UV_RUN_PY310) bump-my-version bump --new-version $(version) pre
+	@$(MAKE) build
+	@echo "${OK} Pre-release version bumped successfully 🧪"
+
 # =============================================================================
 # Cleaning and Maintenance
 # =============================================================================

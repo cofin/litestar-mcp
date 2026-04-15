@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from sphinx.application import Sphinx
 
-from litestar_mcp.__metadata__ import __project__, __version__
+from litestar_mcp.__metadata__ import __version__
 
 # -- Environmental Data ------------------------------------------------------
 warnings.filterwarnings("ignore", category=FutureWarning, module=r"google\..*")
@@ -21,7 +21,7 @@ except ImportError:
 
 # -- Project information -----------------------------------------------------
 current_year = datetime.datetime.now().year
-project = __project__
+project = "Litestar MCP"
 copyright = f"{current_year}, Litestar Organization"  # noqa: A001
 release = os.getenv("_LITESTAR_MCP_DOCS_BUILD_VERSION", __version__.rsplit(".")[0])
 suppress_warnings = [
