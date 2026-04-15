@@ -1,4 +1,4 @@
-"""Tests for stateless Streamable HTTP transport behavior."""
+"""Tests for MCP Streamable HTTP session lifecycle."""
 
 from typing import Any
 
@@ -28,7 +28,7 @@ def _make_transport_app() -> Litestar:
     return Litestar(route_handlers=[list_users], plugins=[LitestarMCP()])
 
 
-def test_initialize_does_not_assign_session_id() -> None:
+def test_initialize_returns_session_header() -> None:
     app = _make_transport_app()
     with TestClient(app=app) as client:
         resp = _rpc(
@@ -41,35 +41,68 @@ def test_initialize_does_not_assign_session_id() -> None:
             },
         )
         assert resp.status_code == 200
-        assert "mcp-session-id" not in resp.headers
+        assert resp.headers.get("mcp-session-id")
 
 
-def test_invalid_session_header_is_ignored_in_stateless_mode() -> None:
+def test_post_without_session_after_initialize_rejected() -> None:
     app = _make_transport_app()
     with TestClient(app=app) as client:
-        resp = _rpc(client, "tools/list", headers={"mcp-session-id": "obsolete-session"})
-        assert resp.status_code == 200
-        assert "result" in resp.json()
+        resp = _rpc(client, "tools/list")
+        assert resp.status_code == 400
 
 
-def test_delete_session_endpoint_removed() -> None:
+def test_post_with_unknown_session_returns_404() -> None:
     app = _make_transport_app()
     with TestClient(app=app) as client:
-        resp = client.delete("/mcp")
-        assert resp.status_code == 405
+        resp = _rpc(client, "tools/list", headers={"Mcp-Session-Id": "does-not-exist"})
+        assert resp.status_code == 404
+        body = resp.json()
+        assert body["error"]["code"] == -32000
 
 
-def test_get_mcp_route_is_registered_without_delete() -> None:
+def test_delete_session_endpoint_registered() -> None:
     app = _make_transport_app()
     methods: set[str] = set()
-
     for route in app.routes:
         if getattr(route, "path", None) != "/mcp":
             continue
         if hasattr(route, "route_handlers"):
             for handler in route.route_handlers:  # pyright: ignore[reportAttributeAccessIssue]
                 methods.update(handler.http_methods or [])
-
     assert "GET" in methods
     assert "POST" in methods
-    assert "DELETE" not in methods
+    assert "DELETE" in methods
+
+
+def test_full_post_only_flow() -> None:
+    """initialize → notifications/initialized → tools/list → DELETE round-trip."""
+    app = _make_transport_app()
+    with TestClient(app=app) as client:
+        init = _rpc(
+            client,
+            "initialize",
+            {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
+        )
+        session_id = init.headers["mcp-session-id"]
+
+        # notifications/initialized (notification: no id)
+        notif = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+            headers={"Mcp-Session-Id": session_id},
+        )
+        assert notif.status_code in {200, 204}
+
+        # tools/list with session header should succeed
+        listed = _rpc(client, "tools/list", headers={"Mcp-Session-Id": session_id})
+        assert listed.status_code == 200
+        assert "result" in listed.json()
+        assert listed.headers.get("mcp-session-id") == session_id
+
+        # DELETE terminates
+        deleted = client.delete("/mcp", headers={"Mcp-Session-Id": session_id})
+        assert deleted.status_code == 204
+
+        # Subsequent POST should 404
+        after = _rpc(client, "tools/list", headers={"Mcp-Session-Id": session_id})
+        assert after.status_code == 404

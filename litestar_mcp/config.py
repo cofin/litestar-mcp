@@ -1,9 +1,14 @@
 """Configuration for Litestar MCP Plugin."""
 
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+
+from litestar.stores.base import Store  # noqa: TC002
 
 from litestar_mcp.auth import MCPAuthConfig  # noqa: TC001
+
+if TYPE_CHECKING:
+    from litestar_mcp.sessions import MCPSessionManager
 
 
 @dataclass
@@ -61,6 +66,11 @@ class MCPConfig:
     auth: "MCPAuthConfig | None" = None
     dependency_provider: Any | None = None
     tasks: "bool | MCPTaskConfig" = False
+    session_store: Store | None = None
+    session_max_idle_seconds: float = 3600.0
+    sse_max_streams: int = 10_000
+    sse_max_idle_seconds: float = 3600.0
+    _session_manager: Any = field(default=None, repr=False, compare=False)
 
     @property
     def task_config(self) -> "MCPTaskConfig | None":

@@ -52,6 +52,34 @@ def _make_auth_app(
     return Litestar(route_handlers=handlers, plugins=[LitestarMCP(mcp_config)])
 
 
+def _ensure_session(client: TestClient[Any], auth_headers: "dict[str, str] | None" = None) -> str:
+    key = "_mcp_session_v"
+    sid = getattr(client, key, None)
+    if sid is not None:
+        return sid  # type: ignore[no-any-return]
+    init_headers = dict(auth_headers or {})
+    init = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
+        },
+        headers=init_headers,
+    )
+    sid = init.headers.get("mcp-session-id", "")
+    if sid:
+        notif_headers = {**init_headers, "Mcp-Session-Id": sid}
+        client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+            headers=notif_headers,
+        )
+    setattr(client, key, sid)
+    return sid
+
+
 def _rpc(
     client: TestClient[Any],
     method: str,
@@ -61,7 +89,12 @@ def _rpc(
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
     if params is not None:
         body["params"] = params
-    return client.post("/mcp", json=body, headers=headers or {})
+    final_headers = dict(headers or {})
+    if method != "initialize" and "Mcp-Session-Id" not in final_headers and "mcp-session-id" not in final_headers:
+        sid = _ensure_session(client, headers)
+        if sid:
+            final_headers["Mcp-Session-Id"] = sid
+    return client.post("/mcp", json=body, headers=final_headers)
 
 
 # ---------------------------------------------------------------------------

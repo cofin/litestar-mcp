@@ -59,6 +59,29 @@ def client(jsonrpc_app: Litestar) -> TestClient[Any]:
 # ---------------------------------------------------------------------------
 
 
+def _ensure_session(client: TestClient[Any]) -> str:
+    sid = getattr(client, "_mcp_session", None)
+    if sid is not None:
+        return sid  # type: ignore[no-any-return]
+    init = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
+        },
+    )
+    sid = init.headers.get("mcp-session-id", "")
+    client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+        headers={"Mcp-Session-Id": sid},
+    )
+    client._mcp_session = sid  # type: ignore[attr-defined]
+    return sid
+
+
 def _rpc(
     client: TestClient[Any], method: str, params: "dict[str, Any] | None" = None, msg_id: int = 1
 ) -> dict[str, Any]:
@@ -66,7 +89,12 @@ def _rpc(
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": msg_id, "method": method}
     if params is not None:
         body["params"] = params
-    resp = client.post("/mcp", json=body)
+    headers: dict[str, str] = {}
+    if method != "initialize":
+        sid = _ensure_session(client)
+        if sid:
+            headers["Mcp-Session-Id"] = sid
+    resp = client.post("/mcp", json=body, headers=headers)
     return resp.json()  # type: ignore[no-any-return]
 
 
@@ -404,8 +432,9 @@ class TestErrorHandling:
 class TestNotifications:
     def test_notifications_initialized_no_response(self, client: TestClient[Any]) -> None:
         """notifications/initialized is a notification (no id) — server should return 204."""
+        sid = _ensure_session(client)
         body = {"jsonrpc": "2.0", "method": "notifications/initialized"}
-        resp = client.post("/mcp", json=body)
+        resp = client.post("/mcp", json=body, headers={"Mcp-Session-Id": sid})
         # Notifications get no response body per JSON-RPC spec
         assert resp.status_code in (200, 202, 204)
 

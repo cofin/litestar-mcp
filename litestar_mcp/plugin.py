@@ -9,11 +9,14 @@ from litestar.di import Provide
 from litestar.handlers import BaseRouteHandler
 from litestar.plugins import CLIPlugin, InitPluginProtocol
 
+from litestar.stores.memory import MemoryStore
+
 from litestar_mcp.config import MCPConfig
 from litestar_mcp.decorators import get_mcp_metadata
 from litestar_mcp.manifests import build_agent_card, build_mcp_server_manifest, build_oauth_protected_resource
 from litestar_mcp.registry import Registry
 from litestar_mcp.routes import MCPController
+from litestar_mcp.sessions import MCPSessionManager
 from litestar_mcp.sse import SSEManager
 from litestar_mcp.tasks import InMemoryTaskStore, TaskRecord
 from litestar_mcp.utils import get_handler_function
@@ -29,7 +32,16 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         """Initialize the MCP plugin."""
         self._config = config or MCPConfig()
         self._registry = Registry()
-        self._sse_manager = SSEManager()
+        self._sse_manager = SSEManager(
+            max_streams=self._config.sse_max_streams,
+            max_idle_seconds=self._config.sse_max_idle_seconds,
+        )
+        session_store = self._config.session_store or MemoryStore()
+        self._session_manager = MCPSessionManager(
+            session_store,
+            max_idle_seconds=self._config.session_max_idle_seconds,
+        )
+        self._config._session_manager = self._session_manager
         self._task_store: InMemoryTaskStore | None = None
         if self._config.task_config is not None:
             task_config = self._config.task_config
@@ -98,7 +110,6 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                 await self._registry.publish_notification(
                     "notifications/tasks/status",
                     record.to_dict(),
-                    client_id=record.owner_id.removeprefix("client:"),
                 )
 
             self._task_store.set_status_callback(publish_task_status)
@@ -112,6 +123,9 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         def provide_task_store() -> InMemoryTaskStore | None:
             return self._task_store
 
+        def provide_session_manager() -> MCPSessionManager:
+            return self._session_manager
+
         router_kwargs: dict[str, Any] = {
             "path": self._config.base_path,
             "route_handlers": [MCPController],
@@ -121,6 +135,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                 "config": Provide(provide_mcp_config, sync_to_thread=False),
                 "registry": Provide(provide_registry, sync_to_thread=False),
                 "task_store": Provide(provide_task_store, sync_to_thread=False),
+                "session_manager": Provide(provide_session_manager, sync_to_thread=False),
                 "discovered_tools": Provide(lambda: self._registry.tools, sync_to_thread=False),
                 "discovered_resources": Provide(lambda: self._registry.resources, sync_to_thread=False),
             },

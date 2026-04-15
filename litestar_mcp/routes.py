@@ -7,7 +7,7 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import Any
 
-from litestar import Controller, MediaType, Request, Response, get, post
+from litestar import Controller, MediaType, Request, Response, delete, get, post
 from litestar.exceptions import SerializationException
 from litestar.handlers import BaseRouteHandler
 from litestar.response import ServerSentEvent, ServerSentEventMessage
@@ -15,9 +15,12 @@ from litestar.serialization import decode_json, encode_json
 from litestar.status_codes import (
     HTTP_200_OK,
     HTTP_204_NO_CONTENT,
+    HTTP_400_BAD_REQUEST,
     HTTP_401_UNAUTHORIZED,
     HTTP_403_FORBIDDEN,
+    HTTP_404_NOT_FOUND,
     HTTP_405_METHOD_NOT_ALLOWED,
+    HTTP_503_SERVICE_UNAVAILABLE,
 )
 
 from litestar_mcp.auth import resolve_user, validate_bearer_token
@@ -39,12 +42,20 @@ from litestar_mcp.jsonrpc import (
 )
 from litestar_mcp.registry import Registry
 from litestar_mcp.schema_builder import generate_schema_for_handler
+from litestar_mcp.sessions import MCPSessionManager, SessionTerminated
+from litestar_mcp.sse import StreamLimitExceeded
 from litestar_mcp.tasks import InMemoryTaskStore, TaskLookupError, TaskRecord, TaskStateError
 from litestar_mcp.utils import get_handler_function
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
+MCP_SESSION_HEADER = "Mcp-Session-Id"
+
+SESSION_ERROR = -32000
+SESSION_NOT_INITIALIZED = -32002
 
 _AUTH_EXEMPT_METHODS = frozenset({"initialize", "ping", "notifications/initialized"})
+_SESSION_EXEMPT_METHODS = frozenset({"initialize", "ping"})
+_PRE_INIT_ALLOWED_METHODS = frozenset({"initialize", "ping", "notifications/initialized"})
 
 
 @dataclass
@@ -583,6 +594,7 @@ class MCPController(Controller):
         request: Request[Any, Any, Any],
         config: MCPConfig,
         registry: Registry,
+        session_manager: MCPSessionManager,
     ) -> Response[Any]:
         """Handle GET-based Streamable HTTP SSE streams on the MCP endpoint."""
         origin_err = _validate_origin(request, config)
@@ -603,11 +615,43 @@ class MCPController(Controller):
         if auth_response is not None:
             return auth_response
 
-        request_context = _build_request_context(request, user_claims=user_claims, resolved_user=resolved_user)
-        stream_id, stream = await registry.sse_manager.open_stream(
-            request_context.client_id,
-            last_event_id=request.headers.get("last-event-id"),
-        )
+        _build_request_context(request, user_claims=user_claims, resolved_user=resolved_user)
+
+        session_id = request.headers.get(MCP_SESSION_HEADER) or request.headers.get(MCP_SESSION_HEADER.lower())
+        if not session_id:
+            return _add_protocol_headers(
+                Response(
+                    content={"error": f"Missing required header: {MCP_SESSION_HEADER}"},
+                    status_code=HTTP_400_BAD_REQUEST,
+                    media_type=MediaType.JSON,
+                )
+            )
+        try:
+            await session_manager.get(session_id)
+        except SessionTerminated:
+            return _add_protocol_headers(
+                Response(
+                    content=error_response(
+                        None, JSONRPCError(code=SESSION_ERROR, message="Session terminated or unknown")
+                    ),
+                    status_code=HTTP_404_NOT_FOUND,
+                    media_type=MediaType.JSON,
+                )
+            )
+
+        try:
+            stream_id, stream = await registry.sse_manager.open_stream(
+                session_id=session_id,
+                last_event_id=request.headers.get("last-event-id"),
+            )
+        except StreamLimitExceeded:
+            return _add_protocol_headers(
+                Response(
+                    content=error_response(None, JSONRPCError(code=SESSION_ERROR, message="SSE stream limit exceeded")),
+                    status_code=HTTP_503_SERVICE_UNAVAILABLE,
+                    media_type=MediaType.JSON,
+                )
+            )
 
         async def event_stream() -> AsyncGenerator[ServerSentEventMessage, None]:
             try:
@@ -616,7 +660,36 @@ class MCPController(Controller):
             finally:
                 registry.sse_manager.disconnect(stream_id)
 
-        return _add_protocol_headers(ServerSentEvent(event_stream()))
+        response = ServerSentEvent(event_stream())
+        response.headers[MCP_SESSION_HEADER] = session_id
+        return _add_protocol_headers(response)
+
+    @delete("/", name="mcp_session_delete", status_code=HTTP_200_OK)
+    async def handle_delete(
+        self,
+        request: Request[Any, Any, Any],
+        config: MCPConfig,
+        registry: Registry,
+        session_manager: MCPSessionManager,
+    ) -> Response[Any]:
+        """Terminate an MCP session and close its attached SSE streams."""
+        origin_err = _validate_origin(request, config)
+        if origin_err is not None:
+            return origin_err
+
+        session_id = request.headers.get(MCP_SESSION_HEADER) or request.headers.get(MCP_SESSION_HEADER.lower())
+        if not session_id:
+            return _add_protocol_headers(
+                Response(
+                    content={"error": f"Missing required header: {MCP_SESSION_HEADER}"},
+                    status_code=HTTP_400_BAD_REQUEST,
+                    media_type=MediaType.JSON,
+                )
+            )
+
+        registry.sse_manager.close_session_streams(session_id)
+        await session_manager.delete(session_id)
+        return _add_protocol_headers(Response(content=None, status_code=HTTP_204_NO_CONTENT))
 
     @post("/", name="mcp_jsonrpc", media_type=MediaType.JSON, status_code=HTTP_200_OK)
     async def handle_jsonrpc(
@@ -626,6 +699,7 @@ class MCPController(Controller):
         discovered_tools: dict[str, Any],
         discovered_resources: dict[str, Any],
         registry: Registry,
+        session_manager: MCPSessionManager,
         task_store: InMemoryTaskStore | None = None,
     ) -> Response[Any]:
         """Handle a JSON-RPC 2.0 request over Streamable HTTP."""
@@ -663,6 +737,83 @@ class MCPController(Controller):
         if auth_response is not None:
             return auth_response
 
+        incoming_session_id = request.headers.get(MCP_SESSION_HEADER) or request.headers.get(
+            MCP_SESSION_HEADER.lower()
+        )
+        session = None
+        response_session_id: str | None = None
+
+        if rpc_request.method == "initialize":
+            params = rpc_request.params if isinstance(rpc_request.params, dict) else {}
+            session = await session_manager.create(
+                protocol_version=params.get("protocolVersion", MCP_PROTOCOL_VERSION),
+                client_info=params.get("clientInfo") if isinstance(params.get("clientInfo"), dict) else None,
+                capabilities=params.get("capabilities") if isinstance(params.get("capabilities"), dict) else None,
+            )
+            response_session_id = session.id
+        elif rpc_request.method in _SESSION_EXEMPT_METHODS:
+            # ping may be issued without a session header
+            if incoming_session_id:
+                try:
+                    session = await session_manager.get(incoming_session_id)
+                    response_session_id = session.id
+                except SessionTerminated:
+                    return _add_protocol_headers(
+                        Response(
+                            content=error_response(
+                                rpc_request.id,
+                                JSONRPCError(code=SESSION_ERROR, message="Session terminated or unknown"),
+                            ),
+                            status_code=HTTP_404_NOT_FOUND,
+                            media_type=MediaType.JSON,
+                        )
+                    )
+        else:
+            if not incoming_session_id:
+                return _add_protocol_headers(
+                    Response(
+                        content=error_response(
+                            rpc_request.id,
+                            JSONRPCError(
+                                code=SESSION_ERROR, message=f"Missing required header: {MCP_SESSION_HEADER}"
+                            ),
+                        ),
+                        status_code=HTTP_400_BAD_REQUEST,
+                        media_type=MediaType.JSON,
+                    )
+                )
+            try:
+                session = await session_manager.get(incoming_session_id)
+            except SessionTerminated:
+                return _add_protocol_headers(
+                    Response(
+                        content=error_response(
+                            rpc_request.id,
+                            JSONRPCError(code=SESSION_ERROR, message="Session terminated or unknown"),
+                        ),
+                        status_code=HTTP_404_NOT_FOUND,
+                        media_type=MediaType.JSON,
+                    )
+                )
+            response_session_id = session.id
+            if not session.initialized and rpc_request.method not in _PRE_INIT_ALLOWED_METHODS:
+                return _add_protocol_headers(
+                    Response(
+                        content=error_response(
+                            rpc_request.id,
+                            JSONRPCError(code=SESSION_NOT_INITIALIZED, message="Session not initialized"),
+                        ),
+                        status_code=HTTP_200_OK,
+                        media_type=MediaType.JSON,
+                    )
+                )
+
+        if rpc_request.method == "notifications/initialized" and incoming_session_id:
+            try:
+                await session_manager.mark_initialized(incoming_session_id)
+            except SessionTerminated:
+                pass
+
         request_context = _build_request_context(request, user_claims=user_claims, resolved_user=resolved_user)
         router = build_jsonrpc_router(
             config,
@@ -675,6 +826,11 @@ class MCPController(Controller):
         result = await router.dispatch(rpc_request)
 
         if result is None:
-            return _add_protocol_headers(Response(content=None, status_code=HTTP_204_NO_CONTENT))
+            response = Response(content=None, status_code=HTTP_204_NO_CONTENT)
+        else:
+            response = Response(content=result, status_code=HTTP_200_OK, media_type=MediaType.JSON)
 
-        return _add_protocol_headers(Response(content=result, status_code=HTTP_200_OK, media_type=MediaType.JSON))
+        if response_session_id is not None:
+            response.headers[MCP_SESSION_HEADER] = response_session_id
+
+        return _add_protocol_headers(response)

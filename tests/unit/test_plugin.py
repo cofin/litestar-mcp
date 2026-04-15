@@ -12,6 +12,30 @@ from litestar_mcp import LitestarMCP
 from litestar_mcp.config import MCPConfig
 
 
+def _ensure_session(client: TestClient[Any], base: str = "/mcp") -> str:
+    key = f"_mcp_session::{base}"
+    sid = getattr(client, key, None)
+    if sid is not None:
+        return sid  # type: ignore[no-any-return]
+    init = client.post(
+        base,
+        json={
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
+        },
+    )
+    sid = init.headers.get("mcp-session-id", "")
+    client.post(
+        base,
+        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+        headers={"Mcp-Session-Id": sid},
+    )
+    setattr(client, key, sid)
+    return sid
+
+
 def _rpc(
     client: TestClient[Any],
     method: str,
@@ -22,7 +46,12 @@ def _rpc(
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": msg_id, "method": method}
     if params is not None:
         body["params"] = params
-    return client.post(base, json=body).json()  # type: ignore[no-any-return]
+    headers: dict[str, str] = {}
+    if method != "initialize":
+        sid = _ensure_session(client, base)
+        if sid:
+            headers["Mcp-Session-Id"] = sid
+    return client.post(base, json=body, headers=headers).json()  # type: ignore[no-any-return]
 
 
 class TestLitestarMCP:

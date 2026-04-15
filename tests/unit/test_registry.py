@@ -45,9 +45,7 @@ async def test_registry_notifications(registry: Registry) -> None:
     sse_manager = SSEManager()
     registry.set_sse_manager(sse_manager)
 
-    # Subscribe a client
-    sse_manager.register_client("client1")
-    stream = await sse_manager.subscribe("client1")
+    stream_id, stream = await sse_manager.open_stream(session_id="session1")
     await stream.__anext__()  # Prime event
 
     # Notify
@@ -58,3 +56,4 @@ async def test_registry_notifications(registry: Registry) -> None:
     data = json.loads(msg.data)
     assert data["method"] == "notifications/resources/updated"
     assert data["params"]["uri"] == "test://res"
+    sse_manager.disconnect(stream_id)
