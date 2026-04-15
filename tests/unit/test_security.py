@@ -312,7 +312,7 @@ class TestSecurity:
     @pytest.mark.skipif(not JWT_AVAILABLE, reason="JWT auth not available")
     def test_oauth2_password_bearer_auth_with_guards(self) -> None:
         """Test MCP endpoints with OAuth2PasswordBearerAuth — the auth backend
-        used by DMA Accelerator and litestar-fullstack-spa.
+        commonly used by production Litestar apps.
 
         This validates the auth bridge pattern: the app uses
         OAuth2PasswordBearerAuth with a retrieve_user_handler that returns a
@@ -351,7 +351,7 @@ class TestSecurity:
             plugins=[plugin],
             route_handlers=[list_databases],
             on_app_init=[oauth2_auth.on_app_init],
-            openapi_config=OpenAPIConfig(title="DMA Accelerator", version="1.0.0"),
+            openapi_config=OpenAPIConfig(title="Example App", version="1.0.0"),
         )
         client = TestClient(app=app)
 
