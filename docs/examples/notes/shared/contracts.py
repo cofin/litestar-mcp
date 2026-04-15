@@ -63,3 +63,24 @@ class AppInfo(msgspec.Struct, kw_only=True):
     backend: str
     auth_mode: str
     supports_dishka: bool = False
+
+
+def build_app_info(
+    *,
+    backend: str,
+    auth_mode: str,
+    supports_dishka: bool = False,
+    name: str = "notes",
+) -> AppInfo:
+    """Construct the shared ``app_info`` payload for reference note variants.
+
+    Every variant MUST call this helper rather than constructing
+    :class:`AppInfo` inline so cross-variant diffs stay focused on the
+    teachable deltas (backend, auth, DI).
+    """
+    return AppInfo(
+        name=name,
+        backend=backend,
+        auth_mode=auth_mode,
+        supports_dishka=supports_dishka,
+    )

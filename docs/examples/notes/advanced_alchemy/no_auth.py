@@ -93,8 +93,9 @@ def create_app(
     mcp_config = MCPConfig()
     on_app_init: list[Any] = []
     if auth_mode == "bearer":
-        # Phase 2.6 shim — see ``.agents/specs/test-matrix-auth-completion/blockers.md``.
-        # Phase B Ch 6 replaces this with a real ``jwt_auth.py`` sibling.
+        # Phase 2.6 shim kept so the ±bearer matrix test exercises this file's
+        # discovery surface under auth. Real JWT scoping lives in the
+        # sibling ``jwt_auth.py`` (and its Dishka variant).
         from tests.integration._auth import build_mcp_auth_config, build_oauth_backend
 
         mcp_config.auth = build_mcp_auth_config()
