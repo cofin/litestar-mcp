@@ -8,8 +8,8 @@ referenced from ``docs/conf.py`` via ``pygments_style`` /
 """
 
 import pytest
-from pygments.style import Style
-from pygments.styles import get_style_by_name
+from pygments.style import Style  # type: ignore[import-untyped]
+from pygments.styles import get_style_by_name  # type: ignore[import-untyped]
 
 
 @pytest.mark.parametrize("style_name", ["litestar-mcp-light", "litestar-mcp-dark"])
