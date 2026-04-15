@@ -20,6 +20,8 @@ exactly the same MCP surface:
 | `no_auth_dishka.py`    | Dishka          | none        | shared public demo data |
 | `jwt_auth.py`          | Litestar native | OAuth2 JWT  | scoped by `sub`         |
 | `jwt_auth_dishka.py`   | Dishka          | OAuth2 JWT  | scoped by `sub`         |
+| `google_iap.py`        | Litestar native | Google IAP  | scoped by IAP `sub`     |
+| `cloud_run_jwt.py`     | Litestar native | OAuth2 JWT  | scoped by `sub`         |
 
 Dishka variants are a pure DI swap: the Litestar auth surface, the note
 service behavior, and the public MCP shapes are all identical to the
@@ -56,6 +58,25 @@ uv run python -m docs.examples.notes.sqlspec.no_auth_dishka
 uv run python -m docs.examples.notes.sqlspec.jwt_auth       # requires token_secret
 uv run python -m docs.examples.notes.sqlspec.jwt_auth_dishka
 ```
+
+## Deployment-oriented variants
+
+Two variants keep the same SQLSpec wiring but focus on a deployment shape
+rather than a DI or auth experiment:
+
+- `google_iap.py` puts the notes app behind **Google Identity-Aware
+  Proxy**. The platform signs an `x-goog-iap-jwt-assertion` header on
+  every request; the app only validates it. Use this when Google
+  manages authentication upstream of Cloud Run.
+- `cloud_run_jwt.py` targets **Google Cloud Run** with ordinary
+  application-managed HS256 JWTs — the same flow as `jwt_auth.py`, but
+  with env-driven configuration (`CloudRunSettings.from_env()`), an
+  unauthenticated `/healthz` liveness route, and a companion
+  `Dockerfile.cloud_run` plus `.cloud_run.env.example`. Use this when
+  the application owns the login/token story and Cloud Run is only the
+  runtime target. **This is *not* a Google IAP example** — pair it with
+  `google_iap.py` only if you want to explicitly compare app-managed
+  JWT against platform auth.
 
 The JWT variants require a caller-supplied `token_secret` argument. The
 defaults for `issuer` and `audience` follow the foundation's locked
