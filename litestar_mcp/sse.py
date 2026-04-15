@@ -1,11 +1,12 @@
 """SSE transport management for MCP."""
 
 import asyncio
-import json
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
+
+from litestar.serialization import encode_json
 
 
 @dataclass
@@ -93,7 +94,7 @@ class SSEManager:
 
     async def publish(self, message: dict[str, Any], client_id: str | None = None) -> None:
         """Publish a JSON payload to one stream per client."""
-        payload = json.dumps(message)
+        payload = encode_json(message).decode("utf-8")
         async with self._lock:
             target_client_ids = [client_id] if client_id is not None else list(self._client_groups.keys())
             for current_client_id in target_client_ids:

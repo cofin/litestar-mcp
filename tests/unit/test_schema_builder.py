@@ -413,11 +413,118 @@ class TestMsgspecToJsonSchema:
                     age: int = 25
 
                 result = msgspec_to_json_schema(TestStruct)
-                assert result["type"] == "object"
-                assert "properties" in result
+                # msgspec.json.schema emits a $ref + $defs envelope by default.
+                assert "$defs" in result
+                target = result["$defs"]["TestStruct"]
+                assert target["type"] == "object"
+                assert "name" in target["properties"]
+                assert "age" in target["properties"]
         except ImportError:
             # If msgspec is not available, just pass
             pass
+
+    def test_msgspec_struct_with_enum_field(self) -> None:
+        """Enum fields should serialize to JSON Schema enum constraints."""
+        import enum
+
+        import msgspec
+
+        class Color(enum.Enum):
+            RED = "red"
+            GREEN = "green"
+            BLUE = "blue"
+
+        class Paint(msgspec.Struct):
+            color: Color
+
+        result = msgspec_to_json_schema(Paint)
+        # msgspec emits Enums into $defs with an "enum" array.
+        defs = result.get("$defs", {})
+        assert any("enum" in value for value in defs.values())
+        enum_values = next(value["enum"] for value in defs.values() if "enum" in value)
+        assert set(enum_values) == {"red", "green", "blue"}
+
+    def test_msgspec_struct_with_nested_struct(self) -> None:
+        """Nested Structs should produce $ref entries in $defs."""
+        import msgspec
+
+        class Inner(msgspec.Struct):
+            x: int
+
+        class Outer(msgspec.Struct):
+            inner: Inner
+
+        result = msgspec_to_json_schema(Outer)
+        assert "$defs" in result
+        assert "Inner" in result["$defs"]
+        assert "Outer" in result["$defs"]
+        # Outer.inner should reference the Inner definition.
+        outer_schema = result["$defs"]["Outer"]
+        assert outer_schema["properties"]["inner"] == {"$ref": "#/$defs/Inner"}
+
+    def test_msgspec_struct_with_meta_constraints(self) -> None:
+        """msgspec.Meta constraints should translate to JSON Schema keywords."""
+        from typing import Annotated
+
+        import msgspec
+
+        class Ranged(msgspec.Struct):
+            score: Annotated[int, msgspec.Meta(ge=0, le=100)]
+
+        result = msgspec_to_json_schema(Ranged)
+        target = result["$defs"]["Ranged"]
+        score_schema = target["properties"]["score"]
+        assert score_schema["minimum"] == 0
+        assert score_schema["maximum"] == 100
+
+    def test_msgspec_struct_with_tagged_union(self) -> None:
+        """Tagged union Structs should produce oneOf/anyOf with discriminator."""
+        from typing import Union
+
+        import msgspec
+
+        class Cat(msgspec.Struct, tag="cat"):
+            name: str
+
+        class Dog(msgspec.Struct, tag="dog"):
+            name: str
+
+        class Carrier(msgspec.Struct):
+            pet: Union[Cat, Dog]  # noqa: UP007
+
+        result = msgspec_to_json_schema(Carrier)
+        defs = result["$defs"]
+        pet_schema = defs["Carrier"]["properties"]["pet"]
+        # msgspec uses anyOf for tagged unions.
+        assert "anyOf" in pet_schema or "oneOf" in pet_schema
+
+
+class TestMsgspecAsHandlerParam:
+    """Schema generation for handlers whose parameters are msgspec.Struct types."""
+
+    def test_generate_schema_for_handler_with_msgspec_struct_param(self) -> None:
+        """A msgspec.Struct handler param should be expanded via msgspec.json.schema."""
+        import msgspec
+
+        class Payload(msgspec.Struct):
+            name: str
+            count: int = 1
+
+        def struct_handler(payload: Payload) -> dict[str, Any]:
+            return {"ok": True, "name": payload.name, "count": payload.count}
+
+        _, handler = create_app_with_handler(struct_handler)
+        schema = generate_schema_for_handler(handler)
+
+        payload_schema = schema["properties"]["payload"]
+        # msgspec.json.schema emits a $ref into $defs.
+        assert "$defs" in payload_schema
+        assert "Payload" in payload_schema["$defs"]
+        target = payload_schema["$defs"]["Payload"]
+        assert target["type"] == "object"
+        assert "name" in target["properties"]
+        assert "count" in target["properties"]
+        assert target["required"] == ["name"]
 
 
 class TestPydanticToJsonSchema:

@@ -62,27 +62,18 @@ def pydantic_to_json_schema(model: Any) -> "dict[str, Any]":
 
 
 def msgspec_to_json_schema(struct_type: Any) -> "dict[str, Any]":
-    """Convert msgspec Struct to JSON Schema format."""
+    """Generate JSON Schema 2020-12 for a msgspec.Struct via msgspec's built-in.
+
+    Delegates to ``msgspec.json.schema`` which provides full JSON Schema
+    2020-12 coverage including ``$defs`` for nested Structs, Enum support,
+    tagged-union discriminators, and ``msgspec.Meta`` constraint translation.
+    """
     if not MSGSPEC_INSTALLED:
         return {"type": "object", "description": "msgspec Struct (msgspec not installed)"}
 
     import msgspec
 
-    properties = {}
-    required = []
-
-    # Get field information using msgspec.structs.fields()
-    fields = msgspec.structs.fields(struct_type)
-    for field in fields:
-        field_schema = type_to_json_schema(field.type)
-        properties[field.name] = field_schema
-        if field.default is msgspec.NODEFAULT:
-            required.append(field.name)
-
-    schema = {"type": "object", "properties": properties}
-    if required:
-        schema["required"] = required
-    return schema
+    return msgspec.json.schema(struct_type)
 
 
 def dataclass_to_json_schema(dataclass_type: Any) -> "dict[str, Any]":

@@ -3,15 +3,15 @@
 
 import asyncio
 import contextlib
-import json
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import Any
 
 from litestar import Controller, MediaType, Request, Response, get, post
+from litestar.exceptions import SerializationException
 from litestar.handlers import BaseRouteHandler
 from litestar.response import ServerSentEvent, ServerSentEventMessage
-from litestar.serialization import encode_json
+from litestar.serialization import decode_json, encode_json
 from litestar.status_codes import (
     HTTP_200_OK,
     HTTP_204_NO_CONTENT,
@@ -634,8 +634,8 @@ class MCPController(Controller):
             return origin_err
 
         try:
-            raw = json.loads(await request.body())
-        except (json.JSONDecodeError, ValueError):
+            raw = decode_json(await request.body())
+        except (SerializationException, ValueError):
             return _add_protocol_headers(
                 Response(
                     content=error_response(None, JSONRPCError(code=PARSE_ERROR, message="Parse error")),
