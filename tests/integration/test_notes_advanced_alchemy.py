@@ -6,11 +6,12 @@ from pathlib import Path
 import pytest
 from litestar.testing import TestClient
 
+from tests.integration.apps import AuthMode
 from tests.integration.conftest import AUTH_MODES, auth_headers, parse_tool_payload, rpc
 
 
 @pytest.mark.parametrize("auth_mode", AUTH_MODES)
-def test_notes_advanced_alchemy_example_round_trip(tmp_path: Path, auth_mode: str) -> None:
+def test_notes_advanced_alchemy_example_round_trip(tmp_path: Path, auth_mode: AuthMode) -> None:
     """The AA notes example should expose the shared notes contract over MCP."""
     from docs.examples.notes.advanced_alchemy.no_auth import create_app
 

@@ -129,9 +129,9 @@ class SQLSpecReportService:
 
     def __init__(self, driver: AsyncpgDriver, *, table_name: str, source: str) -> None:
         self.driver = driver
-        self.insert_sql = f"INSERT INTO {table_name} (title, source) VALUES ($1, $2)"
-        self.select_all_sql = f"SELECT title, source FROM {table_name} ORDER BY title"
-        self.select_one_sql = f"SELECT title, source FROM {table_name} WHERE title = $1"
+        self.insert_sql = f"INSERT INTO {table_name} (title, source) VALUES ($1, $2)"  # noqa: S608
+        self.select_all_sql = f"SELECT title, source FROM {table_name} ORDER BY title"  # noqa: S608
+        self.select_one_sql = f"SELECT title, source FROM {table_name} WHERE title = $1"  # noqa: S608
         self.source = source
 
     async def create_report(self, title: str) -> SQLSpecReportRow:
@@ -152,16 +152,20 @@ class DuckDBReportService:
         self.driver = driver
 
     def create_report(self, title: str) -> DuckDBReportRow:
-        self.driver.execute(f"INSERT INTO {DUCKDB_TABLE_NAME} (title, source) VALUES (?, ?)", title, "duckdb")
-        row = self.driver.select_one(
-            f"SELECT title, source FROM {DUCKDB_TABLE_NAME} WHERE title = ?",
+        self.driver.execute(f"INSERT INTO {DUCKDB_TABLE_NAME} (title, source) VALUES (?, ?)", title, "duckdb")  # noqa: S608
+        return self.driver.select_one(
+            f"SELECT title, source FROM {DUCKDB_TABLE_NAME} WHERE title = ?",  # noqa: S608
             title,
             schema_type=DuckDBReportRow,
         )
-        return row
 
     def list_reports(self) -> list[DuckDBReportRow]:
-        return list(self.driver.select(f"SELECT title, source FROM {DUCKDB_TABLE_NAME} ORDER BY title", schema_type=DuckDBReportRow))
+        return list(
+            self.driver.select(
+                f"SELECT title, source FROM {DUCKDB_TABLE_NAME} ORDER BY title",  # noqa: S608
+                schema_type=DuckDBReportRow,
+            )
+        )
 
 
 async def _prepare_sqlspec_asyncpg_table(sqlspec: SQLSpec, config: AsyncpgConfig, table_name: str) -> None:
@@ -212,7 +216,9 @@ def build_advanced_alchemy_app(
 
     class AlchemyWidgetController(Controller):
         path = "/alchemy/widgets"
-        dependencies = providers.create_service_dependencies(AlchemyWidgetService, "widget_service", config=alchemy_config)
+        dependencies = providers.create_service_dependencies(
+            AlchemyWidgetService, "widget_service", config=alchemy_config
+        )
 
         @get("/", opt={"mcp_tool": "aa_create_widget"})
         async def create_widget(self, name: str, widget_service: AlchemyWidgetService) -> dict[str, str]:

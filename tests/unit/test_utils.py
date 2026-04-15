@@ -19,7 +19,7 @@ def test_get_handler_function_unwraps_dishka_injected_handlers() -> None:
     async def load_widget(service: FromDishka[DummyService]) -> dict[str, bool]:
         return {"ok": service is not None}
 
-    app, handler = create_app_with_handler(load_widget)
+    _app, handler = create_app_with_handler(load_widget)
 
     resolved = get_handler_function(handler)
     params = inspect.signature(resolved).parameters

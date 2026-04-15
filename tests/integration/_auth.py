@@ -84,7 +84,7 @@ async def bearer_token_validator(token: str) -> dict[str, Any] | None:
     except jwt.PyJWTError:
         return None
     if not isinstance(claims, dict):  # pragma: no cover - defensive
-        return None
+        return None  # type: ignore[unreachable]
     return claims
 
 
@@ -98,9 +98,7 @@ class BearerTokenValidator:
         return await bearer_token_validator(token)
 
 
-async def _retrieve_user_handler(
-    token: Token, _connection: ASGIConnection[Any, Any, Any, Any]
-) -> AuthenticatedUser:
+async def _retrieve_user_handler(token: Token, _connection: ASGIConnection[Any, Any, Any, Any]) -> AuthenticatedUser:
     """Resolve the bearer token into an :class:`AuthenticatedUser` instance."""
     extras = token.extras or {}
     scopes = extras.get("scopes") or []
@@ -119,9 +117,7 @@ def build_oauth_backend() -> OAuth2PasswordBearerAuth[AuthenticatedUser, Token]:
         so the plugin's own auth middleware — not the app backend — is the
         authoritative gate for those routes.
     """
-    backend: OAuth2PasswordBearerAuth[AuthenticatedUser, Token] = OAuth2PasswordBearerAuth[
-        AuthenticatedUser, Token
-    ](
+    backend: OAuth2PasswordBearerAuth[AuthenticatedUser, Token] = OAuth2PasswordBearerAuth[AuthenticatedUser, Token](
         token_secret=SECRET,
         token_url=TOKEN_URL,
         retrieve_user_handler=_retrieve_user_handler,

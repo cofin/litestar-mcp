@@ -3,12 +3,12 @@
 import pytest
 from litestar.testing import TestClient
 
-from tests.integration.apps import build_advanced_alchemy_dishka_app
+from tests.integration.apps import AuthMode, build_advanced_alchemy_dishka_app
 from tests.integration.conftest import AUTH_MODES, auth_headers, parse_tool_payload, rpc
 
 
 @pytest.mark.parametrize("auth_mode", AUTH_MODES)
-def test_advanced_alchemy_dishka_tool_round_trip(postgres_sqlalchemy_dsn: str, auth_mode: str) -> None:
+def test_advanced_alchemy_dishka_tool_round_trip(postgres_sqlalchemy_dsn: str, auth_mode: AuthMode) -> None:
     """Dishka-backed Advanced Alchemy handlers should execute through MCP."""
 
     app = build_advanced_alchemy_dishka_app(postgres_sqlalchemy_dsn, auth_mode=auth_mode)

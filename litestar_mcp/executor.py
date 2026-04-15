@@ -15,7 +15,7 @@ from litestar_mcp.typing import schema_dump
 from litestar_mcp.utils import get_handler_function
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import AsyncIterator, Callable, Iterator
 
     from litestar_mcp.config import MCPConfig
 
@@ -57,7 +57,7 @@ async def _call_dependency_provider(dep_provider: Any) -> Any:
 
 
 @asynccontextmanager
-async def _async_generator_dependency_context(generator: Any) -> Any:
+async def _async_generator_dependency_context(generator: Any) -> "AsyncIterator[Any]":
     """Adapt an async generator dependency into an async context manager."""
     try:
         value = await anext(generator)
@@ -78,7 +78,7 @@ async def _async_generator_dependency_context(generator: Any) -> Any:
 
 
 @contextmanager
-def _generator_dependency_context(generator: Any) -> Any:
+def _generator_dependency_context(generator: Any) -> "Iterator[Any]":
     """Adapt a generator dependency into a context manager."""
     try:
         value = next(generator)
@@ -107,7 +107,7 @@ def _get_dependency_signature(dep_provider: Any) -> inspect.Signature:
         return inspect.Signature()
 
 
-async def _invoke_dependency_provider(
+async def _invoke_dependency_provider(  # noqa: PLR0911
     dep_provider: Any,
     provider_kwargs: "dict[str, Any]",
     exit_stack: AsyncExitStack,
@@ -124,7 +124,9 @@ async def _invoke_dependency_provider(
         return await dep_provider(**provider_kwargs)
 
     if inspect.isasyncgenfunction(dep_provider):
-        return await exit_stack.enter_async_context(_async_generator_dependency_context(dep_provider(**provider_kwargs)))
+        return await exit_stack.enter_async_context(
+            _async_generator_dependency_context(dep_provider(**provider_kwargs))
+        )
 
     if inspect.isgeneratorfunction(dep_provider):
         return exit_stack.enter_context(_generator_dependency_context(dep_provider(**provider_kwargs)))
@@ -316,7 +318,7 @@ def _register_scope_cleanup(scope: "dict[str, Any]", exit_stack: AsyncExitStack)
 
         aclose = getattr(resource, "aclose", None)
         if callable(aclose):
-            exit_stack.push_async_callback(aclose)
+            exit_stack.push_async_callback(aclose)  # pyright: ignore[reportArgumentType]
             continue
 
         close = getattr(resource, "close", None)

@@ -3,12 +3,12 @@
 import pytest
 from litestar.testing import TestClient
 
-from tests.integration.apps import build_sqlspec_asyncpg_app
+from tests.integration.apps import AuthMode, build_sqlspec_asyncpg_app
 from tests.integration.conftest import AUTH_MODES, auth_headers, parse_tool_payload, rpc
 
 
 @pytest.mark.parametrize("auth_mode", AUTH_MODES)
-def test_sqlspec_asyncpg_tool_round_trip(postgres_asyncpg_dsn: str, auth_mode: str) -> None:
+def test_sqlspec_asyncpg_tool_round_trip(postgres_asyncpg_dsn: str, auth_mode: AuthMode) -> None:
     """SQLSpec asyncpg-backed handlers should execute real Postgres queries."""
 
     app = build_sqlspec_asyncpg_app(postgres_asyncpg_dsn, auth_mode=auth_mode)

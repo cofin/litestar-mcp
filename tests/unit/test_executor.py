@@ -2,7 +2,7 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -366,15 +366,15 @@ class TestExecutor:
 
         def provide_engine(state: State) -> str:
             lifecycle_events.append("engine")
-            return state["engine"]
+            return cast("str", state["engine"])
 
         def provide_db_session(state: State, scope: Scope) -> FakeSession:
             lifecycle_events.append("session")
             session = scope.get("db_session")
             if session is None:
                 session = state["session_factory"]()
-                scope["db_session"] = session
-            return session
+                scope["db_session"] = session  # type: ignore[typeddict-unknown-key]
+            return cast("FakeSession", session)
 
         async def provide_service(db_session: FakeSession) -> AsyncIterator[str]:
             lifecycle_events.append(f"enter:service:{db_session.label}")

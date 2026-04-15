@@ -5,12 +5,12 @@ import json
 import pytest
 from litestar.testing import TestClient
 
-from tests.integration.apps import build_advanced_alchemy_app
+from tests.integration.apps import AuthMode, build_advanced_alchemy_app
 from tests.integration.conftest import AUTH_MODES, auth_headers, parse_tool_payload, rpc
 
 
 @pytest.mark.parametrize("auth_mode", AUTH_MODES)
-def test_advanced_alchemy_tool_and_resource_round_trip(postgres_sqlalchemy_dsn: str, auth_mode: str) -> None:
+def test_advanced_alchemy_tool_and_resource_round_trip(postgres_sqlalchemy_dsn: str, auth_mode: AuthMode) -> None:
     """Advanced Alchemy-backed tools and resources should execute against Postgres."""
 
     app = build_advanced_alchemy_app(postgres_sqlalchemy_dsn, auth_mode=auth_mode)

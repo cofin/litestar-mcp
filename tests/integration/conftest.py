@@ -2,14 +2,14 @@
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import psycopg
 import pytest
 from litestar.testing import TestClient
 from pytest_databases.docker.postgres import PostgresService
 
-from tests.integration.apps import POSTGRES_TEST_TABLES
+from tests.integration.apps import POSTGRES_TEST_TABLES, AuthMode
 
 
 def _postgres_dsn(postgres_service: PostgresService) -> str:
@@ -56,10 +56,10 @@ def duckdb_database_path(tmp_path: Path) -> str:
     return str(tmp_path / "integration-matrix.duckdb")
 
 
-AUTH_MODES = ("none", "bearer")
+AUTH_MODES: tuple[AuthMode, ...] = ("none", "bearer")
 
 
-def auth_headers(auth_mode: str) -> dict[str, str]:
+def auth_headers(auth_mode: AuthMode) -> dict[str, str]:
     """Return the HTTP ``Authorization`` header(s) for the given auth mode.
 
     In ``"none"`` mode this returns an empty dict; in ``"bearer"`` mode it
@@ -87,7 +87,7 @@ def rpc(
     if params is not None:
         body["params"] = params
     response = client.post("/mcp", json=body, headers=headers or {})
-    return response.json()
+    return cast("dict[str, Any]", response.json())
 
 
 def rpc_response(
@@ -109,4 +109,4 @@ def rpc_response(
 def parse_tool_payload(result: dict[str, Any]) -> dict[str, Any]:
     """Decode the JSON payload returned in an MCP tool response."""
 
-    return json.loads(result["result"]["content"][0]["text"])
+    return cast("dict[str, Any]", json.loads(result["result"]["content"][0]["text"]))
