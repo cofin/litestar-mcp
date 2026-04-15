@@ -2,6 +2,7 @@
 """MCP JSON-RPC 2.0 Streamable HTTP transport for Litestar applications."""
 
 import asyncio
+import contextlib
 import json
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
@@ -124,20 +125,66 @@ def _build_tool_result(value: Any, *, is_error: bool, task_id: str | None = None
     return result
 
 
-def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: dict[str, Any]) -> list[str]:
-    try:
-        from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
-    except ImportError as exc:  # pragma: no cover - dependency failure path
-        msg = "Tool argument validation requires the 'jsonschema' dependency."
-        raise RuntimeError(msg) from exc
+_VALIDATION_CONTEXT_PARAMS = {"resolved_user", "user_claims"}
 
-    schema = generate_schema_for_handler(handler)
-    validator = Draft202012Validator(schema)
-    errors = []
-    for error in validator.iter_errors(tool_args):
-        path = ".".join(str(part) for part in error.absolute_path)
-        prefix = f"{path}: " if path else ""
-        errors.append(f"{prefix}{error.message}")
+
+def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: dict[str, Any]) -> list[str]:
+    """Validate ``tool_args`` against the handler's typed signature via msgspec.
+
+    Each user-facing parameter (i.e. not a DI dependency and not an execution
+    context key) is checked: required params must be present and every
+    provided value is coerced through ``msgspec.convert`` so type mismatches
+    and ``msgspec.Meta`` constraints produce structured errors. Parameters
+    whose annotation is missing or unsupported by msgspec are skipped rather
+    than failing closed — that matches the previous schema-based behaviour
+    for exotic types.
+    """
+    import inspect
+
+    import msgspec
+
+    from litestar_mcp.utils import get_handler_function
+
+    fn: Any
+    try:
+        fn = get_handler_function(handler)
+    except AttributeError:
+        fn = handler
+    try:
+        signature = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return []
+
+    di_params: set[str] = set()
+    with contextlib.suppress(AttributeError, TypeError):
+        di_params = set(handler.resolve_dependencies().keys())
+
+    errors: list[str] = []
+
+    for name, parameter in signature.parameters.items():
+        if name in di_params or name in _VALIDATION_CONTEXT_PARAMS:
+            continue
+        if name in tool_args:
+            continue
+        if parameter.default is inspect.Parameter.empty:
+            errors.append(f"{name}: required")
+
+    for name, value in tool_args.items():
+        declared = signature.parameters.get(name)
+        if declared is None or name in di_params or name in _VALIDATION_CONTEXT_PARAMS:
+            if declared is None:
+                errors.append(f"{name}: unexpected argument")
+            continue
+        annotation = declared.annotation
+        if annotation is inspect.Parameter.empty:
+            continue
+        try:
+            msgspec.convert(value, annotation, strict=False)
+        except msgspec.ValidationError as exc:
+            errors.append(f"{name}: {exc}")
+        except TypeError:
+            continue
+
     return sorted(errors)
 
 

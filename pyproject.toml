@@ -23,7 +23,7 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
 ]
-dependencies = ["litestar>=2.0.0", "typing-extensions>=4.0.0", "jsonschema>=4.23.0"]
+dependencies = ["litestar>=2.0.0", "typing-extensions>=4.0.0"]
 description = "Litestar plugin for Model Context Protocol (MCP) integration"
 keywords = ["litestar", "mcp", "model-context-protocol", "ai", "plugin"]
 license = { text = "MIT" }
