@@ -12,7 +12,7 @@ This plugin automatically discovers routes marked with the `opt` attribute and e
 
 ## Features
 
-- 🚀 **Minimal Runtime Dependencies** - Litestar plus lightweight helpers like `jsonschema` and `typing-extensions`
+- 🚀 **Minimal Runtime Dependencies** - Litestar plus `typing-extensions`; tool-argument validation uses the `msgspec` bundled with Litestar
 - 📡 **Protocol-Native Transport** - MCP Streamable HTTP with JSON-RPC requests and SSE streams
 - 🔧 **Simple Route Marking** - Use Litestar's `opt` attribute pattern
 - 🛡️ **Type Safe** - Full type hints with dataclasses

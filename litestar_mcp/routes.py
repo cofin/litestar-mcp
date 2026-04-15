@@ -151,7 +151,55 @@ _VALIDATION_CONTEXT_PARAMS = {
 }
 
 
-def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: dict[str, Any]) -> list[str]:
+def _to_pointer(name: str, msgspec_path: str) -> str:
+    """Turn ``name`` + ``$.age.limit`` into ``/arguments/age/limit`` JSON Pointer.
+
+    ``msgspec.ValidationError`` messages include a trailing ``$.<path>`` marker
+    indicating which nested field failed validation. We translate that into a
+    JSON Pointer rooted at ``/arguments/<name>`` so downstream UIs can render
+    field-level errors.
+    """
+    suffix = msgspec_path.removeprefix("$").lstrip(".")
+    parts = ["arguments", name]
+    if suffix:
+        parts.extend(p for p in suffix.split(".") if p and p != name)
+    return "/" + "/".join(parts)
+
+
+def _split_msgspec_error(exc: "Exception") -> tuple[str, str]:
+    """Split a ``msgspec.ValidationError`` string into (reason, path).
+
+    msgspec formats messages as ``"<reason> - at `$.path`"``. When no path is
+    present we return an empty path.
+    """
+    text = str(exc)
+    marker = " - at `"
+    if marker in text and text.endswith("`"):
+        reason, _, tail = text.rpartition(marker)
+        path = tail[:-1]
+        return reason, path
+    return text, ""
+
+
+def _resolve_annotated_types(handler: "BaseRouteHandler") -> dict[str, Any]:
+    """Return ``{param_name: annotated_type}`` from the original handler function.
+
+    Litestar's ``signature_model`` strips user-supplied ``msgspec.Meta``
+    constraints (``ge``/``le``/``pattern``/``min_length`` …) and replaces them
+    with its own ``KwargDefinition`` metadata. To enforce those constraints via
+    ``msgspec.convert`` we resolve type hints directly off the original
+    function, preserving the full ``Annotated[...]`` chain.
+    """
+    import typing as _typing
+
+    fn = get_handler_function(handler)
+    try:
+        return _typing.get_type_hints(fn, include_extras=True)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: dict[str, Any]) -> list[dict[str, str]]:
     """Validate ``tool_args`` against the handler's Litestar signature model.
 
     Litestar attaches a ``signature_model`` (a msgspec Struct) to every
@@ -165,6 +213,9 @@ def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: dict[str, A
     Per-field iteration (instead of one-shot ``msgspec.convert(args, model)``)
     lets us ignore DI-injected fields and reject extras, both of which the
     bare signature model cannot express.
+
+    Returns a list of ``{"path": <json-pointer>, "message": <reason>}`` dicts,
+    sorted by path for deterministic output.
     """
     import msgspec
 
@@ -182,7 +233,8 @@ def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: dict[str, A
         di_params = set(handler.resolve_dependencies().keys())
 
     declared_by_name = {field.name: field for field in fields}
-    errors: list[str] = []
+    annotated_types = _resolve_annotated_types(handler)
+    errors: list[dict[str, str]] = []
 
     for field in fields:
         if field.name in di_params or field.name in _VALIDATION_CONTEXT_PARAMS:
@@ -190,23 +242,29 @@ def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: dict[str, A
         if field.name in tool_args:
             continue
         if field.default is msgspec.NODEFAULT and field.default_factory is msgspec.NODEFAULT:
-            errors.append(f"{field.name}: required")
+            errors.append({"path": _to_pointer(field.name, ""), "message": "Missing required argument"})
 
     for name, value in tool_args.items():
         declared = declared_by_name.get(name)
         if declared is None:
-            errors.append(f"{name}: unexpected argument")
+            errors.append({"path": "/arguments", "message": f"Unexpected argument: {name}"})
             continue
         if name in di_params or name in _VALIDATION_CONTEXT_PARAMS:
             continue
+        # Prefer the original handler annotation so user-supplied
+        # ``msgspec.Meta`` constraints survive Litestar's signature-model
+        # normalisation. Fall back to the signature-model field type when the
+        # annotation is unavailable.
+        convert_type = annotated_types.get(name, declared.type)
         try:
-            msgspec.convert(value, declared.type, strict=False)
+            msgspec.convert(value, convert_type, strict=False)
         except msgspec.ValidationError as exc:
-            errors.append(f"{name}: {exc}")
+            reason, path = _split_msgspec_error(exc)
+            errors.append({"path": _to_pointer(name, path), "message": reason})
         except TypeError:
             continue
 
-    return sorted(errors)
+    return sorted(errors, key=lambda entry: (entry["path"], entry["message"]))
 
 
 async def _authenticate_request(
@@ -272,7 +330,7 @@ def build_jsonrpc_router(
         validation_errors = _validate_tool_arguments(handler, tool_args)
         if validation_errors:
             return _build_tool_result(
-                {"error": "Invalid tool arguments", "details": validation_errors},
+                {"error": "Invalid tool arguments", "errors": validation_errors},
                 is_error=True,
                 task_id=task_id,
             )

@@ -301,6 +301,8 @@ class TestToolsCall:
             assert "count" in result["result"]["content"][0]["text"]
 
     def test_tools_call_rejects_additional_properties_via_tool_error(self) -> None:
+        import json as _json
+
         @get("/typed", opt={"mcp_tool": "strict_tool"}, sync_to_thread=False)
         def strict_tool(name: str) -> dict[str, str]:
             return {"name": name}
@@ -314,7 +316,11 @@ class TestToolsCall:
             )
             assert "result" in result
             assert result["result"]["isError"] is True
-            assert "unexpected" in result["result"]["content"][0]["text"]
+            payload = _json.loads(result["result"]["content"][0]["text"])
+            assert payload["error"] == "Invalid tool arguments"
+            assert isinstance(payload["errors"], list)
+            assert payload["errors"][0]["path"] == "/arguments"
+            assert "unexpected" in payload["errors"][0]["message"].lower()
 
     def test_tools_call_handler_exception_returns_call_tool_error(self) -> None:
         @get("/boom", opt={"mcp_tool": "boom"}, sync_to_thread=False)
