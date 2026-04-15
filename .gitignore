@@ -188,3 +188,4 @@ CLAUDE.md
 AGENTS.md
 .geminiignore
 .gemini
+.claude/settings.json

@@ -6,12 +6,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from advanced_alchemy.base import UUIDAuditBase
-from advanced_alchemy.extensions.litestar import AsyncSessionConfig, SQLAlchemyAsyncConfig, SQLAlchemyPlugin
+from advanced_alchemy.extensions.litestar import AsyncSessionConfig, SQLAlchemyAsyncConfig, SQLAlchemyPlugin, providers
 from advanced_alchemy.repository import SQLAlchemyAsyncRepository
 from advanced_alchemy.service import SQLAlchemyAsyncRepositoryService
 from dishka import Provider, Scope, make_async_container, provide
 from dishka.integrations.litestar import FromDishka, LitestarProvider, inject, setup_dishka
-from litestar import Litestar, get
+from litestar import Controller, Litestar, get
 from litestar.di import Provide
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlspec import SQLSpec
@@ -174,37 +174,27 @@ def build_advanced_alchemy_app(connection_string: str) -> Litestar:
     alchemy_config = SQLAlchemyAsyncConfig(
         connection_string=connection_string,
         create_all=True,
-        metadata=AlchemyWidget.metadata,
         before_send_handler="autocommit",
         session_config=AsyncSessionConfig(expire_on_commit=False),
     )
 
-    @asynccontextmanager
-    async def dependency_provider(_context: ToolExecutionContext) -> AsyncIterator[dict[str, Any]]:
-        async with alchemy_config.get_session() as db_session:
-            yield {"widget_service": AlchemyWidgetService(session=db_session)}
+    class AlchemyWidgetController(Controller):
+        path = "/alchemy/widgets"
+        dependencies = providers.create_service_dependencies(AlchemyWidgetService, "widget_service", config=alchemy_config)
 
-    @get(
-        "/alchemy/widgets",
-        opt={"mcp_tool": "aa_create_widget"},
-        dependencies={"widget_service": _unexpected_dependency_provider("widget_service")},
-    )
-    async def create_widget(name: str, widget_service: AlchemyWidgetService) -> dict[str, str]:
-        widget = await widget_service.create({"name": name}, auto_commit=True)
-        return {"id": str(widget.id), "name": widget.name}
+        @get("/", opt={"mcp_tool": "aa_create_widget"})
+        async def create_widget(self, name: str, widget_service: AlchemyWidgetService) -> dict[str, str]:
+            widget = await widget_service.create({"name": name}, auto_commit=True)
+            return {"id": str(widget.id), "name": widget.name}
 
-    @get(
-        "/alchemy/widgets/resource",
-        opt={"mcp_resource": "aa_widget_snapshot"},
-        dependencies={"widget_service": _unexpected_dependency_provider("widget_service")},
-    )
-    async def list_widgets(widget_service: AlchemyWidgetService) -> list[dict[str, str]]:
-        widgets = await widget_service.list()
-        return [{"id": str(widget.id), "name": widget.name} for widget in widgets]
+        @get("/resource", opt={"mcp_resource": "aa_widget_snapshot"})
+        async def list_widgets(self, widget_service: AlchemyWidgetService) -> list[dict[str, str]]:
+            widgets = await widget_service.list()
+            return [{"id": str(widget.id), "name": widget.name} for widget in widgets]
 
     return Litestar(
-        route_handlers=[create_widget, list_widgets],
-        plugins=[SQLAlchemyPlugin(config=alchemy_config), _mcp_plugin(dependency_provider)],
+        route_handlers=[AlchemyWidgetController],
+        plugins=[SQLAlchemyPlugin(config=alchemy_config), LitestarMCP()],
     )
 
 
@@ -272,7 +262,6 @@ def build_advanced_alchemy_dishka_app(connection_string: str) -> Litestar:
     alchemy_config = SQLAlchemyAsyncConfig(
         connection_string=connection_string,
         create_all=True,
-        metadata=AlchemyDishkaWidget.metadata,
         before_send_handler="autocommit",
         session_config=AsyncSessionConfig(expire_on_commit=False),
     )

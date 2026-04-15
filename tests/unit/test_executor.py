@@ -7,7 +7,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 from litestar import Litestar, get
+from litestar.datastructures import State
 from litestar.di import Provide
+from litestar.types import Scope
 
 from litestar_mcp.config import MCPConfig
 from litestar_mcp.executor import NotCallableInCLIContextError, execute_tool
@@ -311,6 +313,99 @@ class TestExecutor:
 
         assert result == {"db_session": "scoped-session"}
         assert lifecycle_events == [f"enter:{handler.name}", "exit"]
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_resolves_nested_generator_dependencies(self) -> None:
+        """Generator-backed Litestar dependencies should resolve transitively for MCP tools."""
+        lifecycle_events: list[str] = []
+
+        async def provide_db_session() -> AsyncIterator[str]:
+            lifecycle_events.append("enter:db_session")
+            yield "session-1"
+            lifecycle_events.append("exit:db_session")
+
+        async def provide_service(db_session: str) -> AsyncIterator[str]:
+            lifecycle_events.append(f"enter:service:{db_session}")
+            yield f"service:{db_session}"
+            lifecycle_events.append("exit:service")
+
+        @get("/reports")
+        async def load_report(report_service: str) -> dict[str, str]:
+            return {"report_service": report_service}
+
+        app = Litestar(
+            route_handlers=[load_report],
+            dependencies={
+                "db_session": Provide(provide_db_session),
+                "report_service": Provide(provide_service),
+            },
+        )
+        handler = get_handler_from_app(app, "/reports")
+
+        result = await execute_tool(handler, app, {})
+
+        assert result == {"report_service": "service:session-1"}
+        assert lifecycle_events == [
+            "enter:db_session",
+            "enter:service:session-1",
+            "exit:service",
+            "exit:db_session",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_resolves_plugin_style_state_and_scope_dependencies(self) -> None:
+        """Plugin dependencies requiring Litestar state and scope should resolve in MCP execution."""
+        lifecycle_events: list[str] = []
+
+        class FakeSession:
+            def __init__(self, label: str) -> None:
+                self.label = label
+
+            async def close(self) -> None:
+                lifecycle_events.append(f"close:{self.label}")
+
+        def provide_engine(state: State) -> str:
+            lifecycle_events.append("engine")
+            return state["engine"]
+
+        def provide_db_session(state: State, scope: Scope) -> FakeSession:
+            lifecycle_events.append("session")
+            session = scope.get("db_session")
+            if session is None:
+                session = state["session_factory"]()
+                scope["db_session"] = session
+            return session
+
+        async def provide_service(db_session: FakeSession) -> AsyncIterator[str]:
+            lifecycle_events.append(f"enter:service:{db_session.label}")
+            yield f"service:{db_session.label}"
+            lifecycle_events.append("exit:service")
+
+        @get("/reports")
+        async def load_report(report_service: str) -> dict[str, str]:
+            return {"report_service": report_service}
+
+        app = Litestar(
+            route_handlers=[load_report],
+            dependencies={
+                "db_engine": Provide(provide_engine, sync_to_thread=False),
+                "db_session": Provide(provide_db_session, sync_to_thread=False),
+                "report_service": Provide(provide_service),
+            },
+        )
+        app.state["engine"] = "engine-1"
+        app.state["session_factory"] = lambda: FakeSession("session-2")
+        handler = get_handler_from_app(app, "/reports")
+
+        result = await execute_tool(handler, app, {})
+
+        assert result == {"report_service": "service:session-2"}
+        assert lifecycle_events == [
+            "session",
+            "enter:service:session-2",
+            "exit:service",
+            "close:session-2",
+        ]
 
     @pytest.mark.asyncio
     async def test_execute_tool_injects_authenticated_context(self) -> None:
