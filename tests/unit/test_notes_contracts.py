@@ -5,7 +5,7 @@ import msgspec
 
 def test_reference_notes_shared_contract_defines_stable_mcp_surface() -> None:
     """The shared notes contract should expose stable MCP names and msgspec shapes."""
-    from docs.examples.reference_notes.shared.contracts import (
+    from docs.examples.notes.shared.contracts import (
         APP_INFO_RESOURCE_NAME,
         CREATE_NOTE_TOOL_NAME,
         DELETE_NOTE_TOOL_NAME,
@@ -35,7 +35,7 @@ def test_reference_notes_shared_contract_defines_stable_mcp_surface() -> None:
 
 def test_reference_notes_shared_auth_normalizes_validated_identity_claims() -> None:
     """Validated JWT and IAP claims should map to one shared identity shape."""
-    from docs.examples.reference_notes.shared.auth import AuthenticatedIdentity, identity_from_claims
+    from docs.examples.notes.shared.auth import AuthenticatedIdentity, identity_from_claims
 
     identity = identity_from_claims(
         {

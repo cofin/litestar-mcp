@@ -1,7 +1,7 @@
 """No-auth Advanced Alchemy reference notes example."""
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 import msgspec
@@ -15,24 +15,40 @@ from advanced_alchemy.service import OffsetPagination
 from litestar import Controller, Litestar, delete, get, post
 from litestar.status_codes import HTTP_200_OK
 
-from docs.examples.reference_notes.advanced_alchemy.common import NoteService
-from docs.examples.reference_notes.shared.contracts import (
+from docs.examples.notes.advanced_alchemy.common import NoteService
+from docs.examples.notes.shared.contracts import (
     APP_INFO_RESOURCE_NAME,
-    AppInfo,
     CREATE_NOTE_TOOL_NAME,
-    CreateNoteInput,
-    DeleteNoteResult,
     DELETE_NOTE_TOOL_NAME,
     LIST_NOTES_TOOL_NAME,
-    Note,
     NOTES_SCHEMA_RESOURCE_NAME,
+    AppInfo,
+    CreateNoteInput,
+    DeleteNoteResult,
+    Note,
     NotesSchema,
 )
-from litestar_mcp import LitestarMCP
+from litestar_mcp import LitestarMCP, MCPConfig
+
+AuthMode = Literal["none", "bearer"]
 
 
-def create_app(database_path: str | None = None) -> Litestar:
-    """Create the no-auth Advanced Alchemy reference notes app."""
+def create_app(
+    database_path: str | None = None,
+    *,
+    auth_mode: AuthMode = "none",
+) -> Litestar:
+    """Create the Advanced Alchemy reference notes app.
+
+    Args:
+        database_path: Optional SQLite file path. When omitted, a
+            ``.reference-notes-aa.sqlite`` file in the current working
+            directory is used.
+        auth_mode: Either ``"none"`` (the default) or ``"bearer"``. The
+            bearer variant currently reuses the shared test-only OAuth2
+            backend (see blockers.md for the Phase B ``jwt_auth.py``
+            follow-up).
+    """
     sqlite_path = Path(database_path or Path.cwd() / ".reference-notes-aa.sqlite")
     alchemy_config = SQLAlchemyAsyncConfig(
         connection_string=f"sqlite+aiosqlite:///{sqlite_path}",
@@ -70,11 +86,22 @@ def create_app(database_path: str | None = None) -> Litestar:
         return AppInfo(
             name="Reference Notes",
             backend="advanced_alchemy",
-            auth_mode="none",
+            auth_mode=auth_mode,
             supports_dishka=False,
         )
 
+    mcp_config = MCPConfig()
+    on_app_init: list[Any] = []
+    if auth_mode == "bearer":
+        # Phase 2.6 shim — see ``.agents/specs/test-matrix-auth-completion/blockers.md``.
+        # Phase B Ch 6 replaces this with a real ``jwt_auth.py`` sibling.
+        from tests.integration._auth import build_mcp_auth_config, build_oauth_backend
+
+        mcp_config.auth = build_mcp_auth_config()
+        on_app_init.append(build_oauth_backend().on_app_init)
+
     return Litestar(
         route_handlers=[NoteController, notes_schema, get_api_info],
-        plugins=[SQLAlchemyPlugin(config=alchemy_config), LitestarMCP()],
+        plugins=[SQLAlchemyPlugin(config=alchemy_config), LitestarMCP(mcp_config)],
+        on_app_init=on_app_init,
     )

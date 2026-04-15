@@ -56,20 +56,54 @@ def duckdb_database_path(tmp_path: Path) -> str:
     return str(tmp_path / "integration-matrix.duckdb")
 
 
+AUTH_MODES = ("none", "bearer")
+
+
+def auth_headers(auth_mode: str) -> dict[str, str]:
+    """Return the HTTP ``Authorization`` header(s) for the given auth mode.
+
+    In ``"none"`` mode this returns an empty dict; in ``"bearer"`` mode it
+    returns a ``{"Authorization": "Bearer <token>"}`` dict using the
+    pre-minted ``VALID_TOKEN`` from ``tests/integration/_auth.py``.
+    """
+    if auth_mode == "bearer":
+        from tests.integration._auth import VALID_TOKEN
+
+        return {"Authorization": f"Bearer {VALID_TOKEN}"}
+    return {}
+
+
 def rpc(
     client: TestClient[Any],
     method: str,
     params: "dict[str, Any] | None" = None,
     *,
     msg_id: int = 1,
+    headers: "dict[str, str] | None" = None,
 ) -> dict[str, Any]:
     """Execute an MCP JSON-RPC request against the test app."""
 
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": msg_id, "method": method}
     if params is not None:
         body["params"] = params
-    response = client.post("/mcp", json=body)
+    response = client.post("/mcp", json=body, headers=headers or {})
     return response.json()
+
+
+def rpc_response(
+    client: TestClient[Any],
+    method: str,
+    params: "dict[str, Any] | None" = None,
+    *,
+    msg_id: int = 1,
+    headers: "dict[str, str] | None" = None,
+) -> Any:
+    """Execute an MCP JSON-RPC request and return the raw HTTP response."""
+
+    body: dict[str, Any] = {"jsonrpc": "2.0", "id": msg_id, "method": method}
+    if params is not None:
+        body["params"] = params
+    return client.post("/mcp", json=body, headers=headers or {})
 
 
 def parse_tool_payload(result: dict[str, Any]) -> dict[str, Any]:

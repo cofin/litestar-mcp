@@ -3,7 +3,7 @@
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from advanced_alchemy.base import UUIDAuditBase
 from advanced_alchemy.extensions.litestar import AsyncSessionConfig, SQLAlchemyAsyncConfig, SQLAlchemyPlugin, providers
@@ -11,6 +11,7 @@ from advanced_alchemy.repository import SQLAlchemyAsyncRepository
 from advanced_alchemy.service import SQLAlchemyAsyncRepositoryService
 from dishka import Provider, Scope, make_async_container, provide
 from dishka.integrations.litestar import FromDishka, LitestarProvider, inject, setup_dishka
+from dishka.integrations.litestar import FromDishka as Inject  # Phase 2.7: annotation alias
 from litestar import Controller, Litestar, get
 from litestar.di import Provide
 from sqlalchemy.orm import Mapped, mapped_column
@@ -21,6 +22,9 @@ from sqlspec.extensions.litestar import SQLSpecPlugin
 
 from litestar_mcp import LitestarMCP, MCPConfig
 from litestar_mcp.executor import ToolExecutionContext
+from tests.integration._auth import build_mcp_auth_config, build_oauth_backend
+
+AuthMode = Literal["none", "bearer"]
 
 AA_TABLE_NAME = "mcp_test_aa_widget"
 AA_DISHKA_TABLE_NAME = "mcp_test_aa_dishka_widget"
@@ -44,8 +48,26 @@ def _unexpected_dependency_provider(name: str) -> Provide:
     return Provide(_provider, sync_to_thread=False)
 
 
-def _mcp_plugin(dependency_provider: Any) -> LitestarMCP:
-    return LitestarMCP(MCPConfig(dependency_provider=dependency_provider))
+def _mcp_plugin(dependency_provider: Any, *, auth_mode: AuthMode = "none") -> LitestarMCP:
+    config = MCPConfig(dependency_provider=dependency_provider)
+    if auth_mode == "bearer":
+        config.auth = build_mcp_auth_config()
+    return LitestarMCP(config)
+
+
+def _mcp_plugin_no_deps(*, auth_mode: AuthMode = "none") -> LitestarMCP:
+    config = MCPConfig()
+    if auth_mode == "bearer":
+        config.auth = build_mcp_auth_config()
+    return LitestarMCP(config)
+
+
+def _auth_on_app_init(auth_mode: AuthMode) -> list[Any]:
+    """Return the ``on_app_init`` list appropriate for ``auth_mode``."""
+    if auth_mode == "bearer":
+        backend = build_oauth_backend()
+        return [backend.on_app_init]
+    return []
 
 
 class AlchemyWidget(UUIDAuditBase):
@@ -168,8 +190,18 @@ def _prepare_sqlspec_duckdb_table(sqlspec: SQLSpec, config: DuckDBConfig) -> Non
         )
 
 
-def build_advanced_alchemy_app(connection_string: str) -> Litestar:
-    """Build a Litestar app using Advanced Alchemy against Postgres."""
+def build_advanced_alchemy_app(
+    connection_string: str,
+    *,
+    auth_mode: AuthMode = "none",
+) -> Litestar:
+    """Build a Litestar app using Advanced Alchemy against Postgres.
+
+    Args:
+        connection_string: Async SQLAlchemy connection string for Postgres.
+        auth_mode: Either ``"none"`` (the default, no auth) or ``"bearer"``
+            to wire the shared OAuth2 bearer backend plus MCP auth config.
+    """
 
     alchemy_config = SQLAlchemyAsyncConfig(
         connection_string=connection_string,
@@ -194,11 +226,16 @@ def build_advanced_alchemy_app(connection_string: str) -> Litestar:
 
     return Litestar(
         route_handlers=[AlchemyWidgetController],
-        plugins=[SQLAlchemyPlugin(config=alchemy_config), LitestarMCP()],
+        plugins=[SQLAlchemyPlugin(config=alchemy_config), _mcp_plugin_no_deps(auth_mode=auth_mode)],
+        on_app_init=_auth_on_app_init(auth_mode),
     )
 
 
-def build_sqlspec_asyncpg_app(database_dsn: str) -> Litestar:
+def build_sqlspec_asyncpg_app(
+    database_dsn: str,
+    *,
+    auth_mode: AuthMode = "none",
+) -> Litestar:
     """Build a Litestar app using SQLSpec AsyncPG against Postgres."""
 
     sqlspec = SQLSpec()
@@ -235,7 +272,8 @@ def build_sqlspec_asyncpg_app(database_dsn: str) -> Litestar:
     return Litestar(
         route_handlers=[create_report],
         on_startup=[on_startup],
-        plugins=[SQLSpecPlugin(sqlspec), _mcp_plugin(dependency_provider)],
+        plugins=[SQLSpecPlugin(sqlspec), _mcp_plugin(dependency_provider, auth_mode=auth_mode)],
+        on_app_init=_auth_on_app_init(auth_mode),
     )
 
 
@@ -256,7 +294,11 @@ class AdvancedAlchemyDishkaProvider(Provider):
         return AlchemyDishkaWidgetService(session=db_session)
 
 
-def build_advanced_alchemy_dishka_app(connection_string: str) -> Litestar:
+def build_advanced_alchemy_dishka_app(
+    connection_string: str,
+    *,
+    auth_mode: AuthMode = "none",
+) -> Litestar:
     """Build a Litestar app using Advanced Alchemy and Dishka against Postgres."""
 
     alchemy_config = SQLAlchemyAsyncConfig(
@@ -278,7 +320,10 @@ def build_advanced_alchemy_dishka_app(connection_string: str) -> Litestar:
         dependencies={"widget_service": _unexpected_dependency_provider("widget_service")},
     )
     @inject
-    async def create_widget(name: str, widget_service: FromDishka[AlchemyDishkaWidgetService]) -> dict[str, str]:
+    async def create_widget(name: str, widget_service: Inject[AlchemyDishkaWidgetService]) -> dict[str, str]:
+        # Uses the `FromDishka as Inject` alias (Phase 2.7) to prove the
+        # plugin's ``__dishka_orig_func__`` unwrap is annotation-alias
+        # insensitive.
         widget = await widget_service.create({"name": name}, auto_commit=True)
         return {"id": str(widget.id), "name": widget.name, "source": "dishka"}
 
@@ -288,7 +333,8 @@ def build_advanced_alchemy_dishka_app(connection_string: str) -> Litestar:
     app = Litestar(
         route_handlers=[create_widget],
         on_shutdown=[close_container],
-        plugins=[SQLAlchemyPlugin(config=alchemy_config), _mcp_plugin(dependency_provider)],
+        plugins=[SQLAlchemyPlugin(config=alchemy_config), _mcp_plugin(dependency_provider, auth_mode=auth_mode)],
+        on_app_init=_auth_on_app_init(auth_mode),
     )
     setup_dishka(container, app)
     return app
@@ -312,7 +358,11 @@ class SQLSpecDishkaProvider(Provider):
         return SQLSpecReportService(db_session, table_name=SQLSPEC_DISHKA_TABLE_NAME, source="sqlspec-dishka")
 
 
-def build_sqlspec_dishka_app(database_dsn: str) -> Litestar:
+def build_sqlspec_dishka_app(
+    database_dsn: str,
+    *,
+    auth_mode: AuthMode = "none",
+) -> Litestar:
     """Build a Litestar app using SQLSpec and Dishka against Postgres."""
 
     sqlspec = SQLSpec()
@@ -349,13 +399,18 @@ def build_sqlspec_dishka_app(database_dsn: str) -> Litestar:
         route_handlers=[create_report],
         on_startup=[on_startup],
         on_shutdown=[close_container],
-        plugins=[SQLSpecPlugin(sqlspec), _mcp_plugin(dependency_provider)],
+        plugins=[SQLSpecPlugin(sqlspec), _mcp_plugin(dependency_provider, auth_mode=auth_mode)],
+        on_app_init=_auth_on_app_init(auth_mode),
     )
     setup_dishka(container, app)
     return app
 
 
-def build_sqlspec_duckdb_app(database_path: str) -> Litestar:
+def build_sqlspec_duckdb_app(
+    database_path: str,
+    *,
+    auth_mode: AuthMode = "none",
+) -> Litestar:
     """Build a Litestar app using SQLSpec's sync DuckDB adapter."""
 
     sqlspec = SQLSpec()
@@ -387,5 +442,6 @@ def build_sqlspec_duckdb_app(database_path: str) -> Litestar:
     return Litestar(
         route_handlers=[create_report],
         on_startup=[on_startup],
-        plugins=[SQLSpecPlugin(sqlspec), _mcp_plugin(dependency_provider)],
+        plugins=[SQLSpecPlugin(sqlspec), _mcp_plugin(dependency_provider, auth_mode=auth_mode)],
+        on_app_init=_auth_on_app_init(auth_mode),
     )
