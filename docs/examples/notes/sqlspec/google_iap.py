@@ -59,6 +59,7 @@ from typing import Any
 import msgspec
 from litestar import Controller, Litestar, delete, get, post
 from litestar.di import Provide
+from litestar.exceptions import NotAuthorizedException
 from litestar.status_codes import HTTP_200_OK
 from sqlspec.extensions.litestar import SQLSpecPlugin
 
@@ -68,6 +69,7 @@ from docs.examples.notes.shared.auth import (
     AuthenticatedIdentity,
     build_iap_header_alias_middleware,
     build_iap_mcp_auth_config,
+    build_iap_token_validator,
     identity_from_claims,
 )
 from docs.examples.notes.shared.contracts import (
@@ -131,9 +133,6 @@ def create_app(
         the identity through ``user_resolver`` and does not need this
         dependency.
         """
-        from litestar.exceptions import NotAuthorizedException
-
-        from docs.examples.notes.shared.auth import build_iap_token_validator
 
         auth_header = request.headers.get("authorization", "")
         if not auth_header.lower().startswith("bearer "):
@@ -198,7 +197,15 @@ def create_app(
 
     @asynccontextmanager
     async def mcp_dependency_provider(context: ToolExecutionContext) -> AsyncIterator[dict[str, Any]]:
-        """Provide a fresh SQLSpec-backed ``note_service`` per MCP tool call."""
+        """Provide a fresh SQLSpec-backed ``note_service`` per MCP tool call.
+
+        Yields:
+            dict[str, Any]: The dependencies to inject into the MCP tool's
+                execution context. For tools marked with the appropriate
+                ``mcp_tool`` opt, a ``note_service`` key is included with a
+                live service instance connected to the configured database.
+                For other tools, an empty dict is yielded.
+        """
         opt = getattr(context.handler, "opt", {}) or {}
         if opt.get("mcp_tool") not in {
             LIST_NOTES_TOOL_NAME,
@@ -213,8 +220,10 @@ def create_app(
     async def on_startup() -> None:
         await bootstrap_schema(sqlspec, config)
 
-    mcp_config = MCPConfig(dependency_provider=mcp_dependency_provider)
-    mcp_config.auth = build_iap_mcp_auth_config(audience=audience, issuer=issuer, jwks_url=jwks_url)
+    mcp_config = MCPConfig(
+        dependency_provider=mcp_dependency_provider,
+        auth=build_iap_mcp_auth_config(audience=audience, issuer=issuer, jwks_url=jwks_url),
+    )
 
     return Litestar(
         route_handlers=[NoteController, notes_schema, get_api_info],
