@@ -16,7 +16,7 @@ import pytest
 if sys.version_info >= (3, 11):
     import tomllib
 else:  # pragma: no cover - Python 3.10 fallback
-    import tomli as tomllib  # type: ignore[import-not-found, no-redef]
+    import tomli as tomllib
 
 from tools.ci.validate_pep723_blocks import EXAMPLES, extract_block, validate_file
 

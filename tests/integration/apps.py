@@ -352,7 +352,7 @@ def build_sqlspec_duckdb_app(
         )
     )
 
-    from typing import Iterator
+    from collections.abc import Iterator
 
     def provide_report_service() -> Iterator[DuckDBReportService]:
         with sqlspec.provide_session(config) as db_session:

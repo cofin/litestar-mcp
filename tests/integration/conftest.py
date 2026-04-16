@@ -9,7 +9,7 @@ import pytest
 from litestar.testing import TestClient
 from pytest_databases.docker.postgres import PostgresService
 
-from tests.integration.apps import AA_DISHKA_TABLE_NAME, AA_TABLE_NAME, POSTGRES_TEST_TABLES, AuthMode
+from tests.integration.apps import POSTGRES_TEST_TABLES, AuthMode
 
 
 def _postgres_dsn(postgres_service: PostgresService) -> str:
@@ -17,6 +17,7 @@ def _postgres_dsn(postgres_service: PostgresService) -> str:
         f"postgresql://{postgres_service.user}:{postgres_service.password}"
         f"@{postgres_service.host}:{postgres_service.port}/{postgres_service.database}"
     )
+
 
 @pytest.fixture(scope="session", autouse=True)
 def _ensure_postgres_tables(postgres_service: PostgresService) -> None:
@@ -32,27 +33,27 @@ def reset_postgres_tables(request: pytest.FixtureRequest) -> None:
     if "postgres_asyncpg_dsn" not in request.fixturenames and "postgres_sqlalchemy_dsn" not in request.fixturenames:
         return
 
+    from psycopg import sql
+
     postgres_service = request.getfixturevalue("postgres_service")
     dsn = _postgres_dsn(postgres_service)
-    with psycopg.connect(dsn, autocommit=True) as connection:
-        with connection.cursor() as cursor:
-            # Terminate other sessions to this database to prevent locking
-            cursor.execute(
-                """
+    with psycopg.connect(dsn, autocommit=True) as connection, connection.cursor() as cursor:
+        # Terminate other sessions to this database to prevent locking
+        cursor.execute(
+            """
                 SELECT pg_terminate_backend(pg_stat_activity.pid)
                 FROM pg_stat_activity
                 WHERE pg_stat_activity.datname = current_database()
                   AND pid <> pg_backend_pid();
                 """
-            )
-            for table_name in POSTGRES_TEST_TABLES:
-                # Use DELETE FROM instead of DROP or TRUNCATE as requested
-                try:
-                    cursor.execute(f"DELETE FROM {table_name}")
-                except psycopg.errors.UndefinedTable:
-                    # Table might not be created yet by a specific app factory
-                    continue
-
+        )
+        for table_name in POSTGRES_TEST_TABLES:
+            # Use DELETE FROM instead of DROP or TRUNCATE as requested
+            try:
+                cursor.execute(sql.SQL("DELETE FROM {}").format(sql.Identifier(table_name)))
+            except psycopg.errors.UndefinedTable:
+                # Table might not be created yet by a specific app factory
+                continue
 
 
 @pytest.fixture(scope="session")
