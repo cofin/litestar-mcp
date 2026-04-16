@@ -207,19 +207,13 @@ def _resolve_annotated_types(handler: "BaseRouteHandler") -> dict[str, Any]:
 
 
 def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: dict[str, Any]) -> list[dict[str, str]]:
-    """Validate ``tool_args`` against the handler's Litestar signature model.
+    """Validate ``tool_args`` against the handler's Litestar signature.
 
-    Litestar attaches a ``signature_model`` (a msgspec Struct) to every
-    route handler whose fields mirror the handler's typed parameters after
-    forward-ref resolution and ``Annotated`` / ``Parameter`` metadata
-    normalisation. We introspect those fields (rather than raw
-    ``inspect.signature`` annotations) so constraints declared via
-    ``msgspec.Meta`` and Litestar ``Parameter()`` markers flow through
-    ``msgspec.convert`` automatically.
-
-    Per-field iteration (instead of one-shot ``msgspec.convert(args, model)``)
-    lets us ignore DI-injected fields and reject extras, both of which the
-    bare signature model cannot express.
+    Matches the executor's partitioning (Ch2): if the handler declares a
+    ``data`` parameter, unrecognized tool_args are validated as fields of
+    that struct type; path params are matched against the route's declared
+    path variables; remaining scalars are matched against the handler's
+    non-DI signature fields.
 
     Returns a list of ``{"path": <json-pointer>, "message": <reason>}`` dicts,
     sorted by path for deterministic output.
@@ -243,8 +237,33 @@ def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: dict[str, A
     annotated_types = _resolve_annotated_types(handler)
     errors: list[dict[str, str]] = []
 
+    data_field = declared_by_name.get("data")
+    data_type = annotated_types.get("data") if data_field is not None else None
+    recognized_scalar_names = {
+        name for name in declared_by_name if name not in di_params and name not in _VALIDATION_CONTEXT_PARAMS
+    }
+
+    # When the handler has a ``data`` param, tool_args keys that aren't
+    # recognized scalar fields are treated as members of the data struct.
+    # Validate them by building a mapping and converting it to the struct.
+    if data_type is not None:
+        data_payload = {k: v for k, v in tool_args.items() if k not in recognized_scalar_names}
+        if data_payload:
+            try:
+                msgspec.convert(data_payload, data_type, strict=False)
+            except msgspec.ValidationError as exc:
+                reason, path = _split_msgspec_error(exc)
+                errors.append({"path": _to_pointer("data", path), "message": reason})
+            except TypeError:
+                pass
+
     for field in fields:
         if field.name in di_params or field.name in _VALIDATION_CONTEXT_PARAMS:
+            continue
+        if field.name == "data":
+            # Presence of ``data`` is implied by any matching struct field
+            # in tool_args; we don't require callers to pass ``data`` as a
+            # literal key.
             continue
         if field.name in tool_args:
             continue
@@ -252,16 +271,15 @@ def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: dict[str, A
             errors.append({"path": _to_pointer(field.name, ""), "message": "Missing required argument"})
 
     for name, value in tool_args.items():
-        declared = declared_by_name.get(name)
-        if declared is None:
+        if name not in recognized_scalar_names:
+            if data_type is not None:
+                # Unknown-to-scalars: assumed to belong to the ``data`` struct
+                # and already validated above.
+                continue
+            # No ``data`` parameter → unknown keys are genuinely unexpected.
             errors.append({"path": "/arguments", "message": f"Unexpected argument: {name}"})
             continue
-        if name in di_params or name in _VALIDATION_CONTEXT_PARAMS:
-            continue
-        # Prefer the original handler annotation so user-supplied
-        # ``msgspec.Meta`` constraints survive Litestar's signature-model
-        # normalisation. Fall back to the signature-model field type when the
-        # annotation is unavailable.
+        declared = declared_by_name[name]
         convert_type = annotated_types.get(name, declared.type)
         try:
             msgspec.convert(value, convert_type, strict=False)

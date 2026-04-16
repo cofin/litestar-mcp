@@ -358,6 +358,9 @@ class TestAuthEnforcement:
         )
         assert resp.status_code == 200
 
+    @pytest.mark.skip(
+        reason="Ch2 removed resolved_user/user_claims injection; Ch3 replaces via request.user from auth middleware"
+    )
     def test_user_resolver_runs_after_successful_validation(self) -> None:
         resolver_calls: list[dict[str, Any]] = []
 

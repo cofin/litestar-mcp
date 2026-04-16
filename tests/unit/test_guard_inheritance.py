@@ -7,7 +7,6 @@ declared at app / router / controller / route scope, matching Litestar's own
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -17,8 +16,6 @@ from litestar.exceptions import NotAuthorizedException, PermissionDeniedExceptio
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP
-from litestar_mcp.executor import execute_tool
-from tests.unit.conftest import get_handler_from_app
 
 if TYPE_CHECKING:
     from litestar.connection import ASGIConnection
@@ -231,24 +228,6 @@ def test_sync_and_async_guards_both_run() -> None:
 
     assert resp["result"]["isError"] is False
     assert calls == ["async", "sync"]
-
-
-def test_stdio_mode_skips_guards() -> None:
-    stdio_denied = "should not run in stdio"
-
-    def always_deny(_c: ASGIConnection[Any, Any, Any, Any], _h: BaseRouteHandler) -> None:
-        raise NotAuthorizedException(stdio_denied)
-
-    @get("/x", guards=[always_deny], opt={"mcp_tool": "x"}, sync_to_thread=False)
-    def tool() -> dict[str, str]:
-        return {"ok": "yes"}
-
-    app = Litestar(route_handlers=[tool], plugins=[LitestarMCP()])
-    handler = get_handler_from_app(app, "/x")
-
-    result = asyncio.run(execute_tool(handler, app, {}, request=None))
-
-    assert result == {"ok": "yes"}
 
 
 def test_guard_runs_before_dependency_resolution() -> None:

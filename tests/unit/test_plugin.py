@@ -135,7 +135,7 @@ class TestLitestarMCP:
         client = TestClient(app=app)
 
         test_data = {"test": "data", "count": 42}
-        result = _rpc(client, "tools/call", {"name": "analyze_data", "arguments": {"data": test_data}})
+        result = _rpc(client, "tools/call", {"name": "analyze_data", "arguments": test_data})
         content = result["result"]["content"]
         parsed = json.loads(content[0]["text"])
         assert parsed["result"] == "analyzed"

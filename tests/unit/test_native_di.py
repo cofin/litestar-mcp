@@ -298,15 +298,40 @@ class _ServiceProvider(Provider):
 
 
 def _build_dishka_app() -> Litestar:
-    @get("/svc", opt={"mcp_tool": "get_service"}, sync_to_thread=False)
-    @inject
-    def get_service(service: FromDishka[_Service]) -> dict[str, str]:
-        return {"token": service.token}
-
-    app = Litestar(route_handlers=[get_service], plugins=[LitestarMCP()])
+    app = Litestar(route_handlers=[_get_service], plugins=[LitestarMCP()])
     container = make_async_container(_ServiceProvider())
     setup_dishka(container=container, app=app)
     return app
+
+
+@get("/svc", opt={"mcp_tool": "get_service"})
+@inject
+async def _get_service(service: FromDishka[_Service]) -> dict[str, str]:
+    return {"token": service.token}
+
+
+class _Resource:
+    pass
+
+
+_CLEANUP_LOG: list[bool] = []
+
+
+class _InstrumentedProvider(Provider):
+    scope = Scope.REQUEST
+
+    @provide
+    async def resource(self) -> AsyncIterator[_Resource]:
+        try:
+            yield _Resource()
+        finally:
+            _CLEANUP_LOG.append(True)
+
+
+@get("/res", opt={"mcp_tool": "use_res"})
+@inject
+async def _use_resource(res: FromDishka[_Resource]) -> dict[str, str]:
+    return {"ok": "yes"}
 
 
 def test_fromdishka_resolves_without_mcp_hook() -> None:
@@ -362,33 +387,15 @@ def test_stdio_mode_opens_dishka_child_container() -> None:
 
 def test_stdio_mode_cleans_up_dishka_child_container() -> None:
     """Child container closes after the call — verified via an instrumented provider."""
-    closed: list[bool] = []
+    _CLEANUP_LOG.clear()
 
-    class _Resource:
-        pass
-
-    class InstrumentedProvider(Provider):
-        scope = Scope.REQUEST
-
-        @provide
-        async def resource(self) -> AsyncIterator[_Resource]:
-            try:
-                yield _Resource()
-            finally:
-                closed.append(True)
-
-    @get("/res", opt={"mcp_tool": "use_res"}, sync_to_thread=False)
-    @inject
-    def use_res(res: FromDishka[_Resource]) -> dict[str, str]:
-        return {"ok": "yes"}
-
-    app = Litestar(route_handlers=[use_res], plugins=[LitestarMCP()])
-    container = make_async_container(InstrumentedProvider())
+    app = Litestar(route_handlers=[_use_resource], plugins=[LitestarMCP()])
+    container = make_async_container(_InstrumentedProvider())
     setup_dishka(container=container, app=app)
     handler = get_handler_from_app(app, "/res")
 
     asyncio.run(execute_tool(handler, app, {}, request=None))
-    assert closed == [True]
+    assert _CLEANUP_LOG == [True]
 
 
 def test_guards_run_in_stdio_mode() -> None:

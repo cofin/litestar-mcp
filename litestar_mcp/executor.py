@@ -1,37 +1,78 @@
-"""Core execution logic for invoking MCP tools."""
+"""Execute MCP tools through Litestar's native request-pipeline.
+
+Each ``tools/call`` synthesizes a Litestar ``Request`` shaped like a real HTTP
+request for the handler's declared route, then runs the framework's own
+``KwargsModel`` / ``SignatureModel`` / dependency-resolution pipeline against
+it. Path params, query kwargs, ``data: StructT`` bodies, ``FromDishka[T]``,
+``request: Request``, guards, and ``Provide(...)`` dependencies all work the
+way they would for a normal HTTP handler — no MCP-specific DI plumbing.
+"""
+
+from __future__ import annotations
 
 import inspect
-from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
+import re
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import urlencode
 
-from litestar import Litestar
+import msgspec
+from litestar import Litestar, Request
 from litestar.exceptions import ImproperlyConfiguredException
-from litestar.handlers.base import BaseRouteHandler
-from litestar.utils.helpers import get_name
 from litestar.utils.sync import ensure_async_callable
 
 from litestar_mcp.typing import schema_dump
-from litestar_mcp.utils import get_handler_function
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable, Iterator
+    from collections.abc import Awaitable, Callable
 
-    from litestar import Request
+    from litestar.handlers.base import BaseRouteHandler
 
     from litestar_mcp.config import MCPConfig
 
-_UNSUPPORTED_CLI_DEPENDENCIES = {"request", "socket", "headers", "cookies", "query", "body"}
-_EXECUTION_CONTEXT_PARAMS = {"resolved_user", "user_claims"}
+__all__ = ("NotCallableInCLIContextError", "ToolExecutionContext", "execute_tool")
 
 
-async def _enforce_guards(handler: BaseRouteHandler, request: "Request[Any, Any, Any]") -> None:
-    """Invoke each merged guard against the live request.
+@dataclass
+class ToolExecutionContext:
+    """Observability snapshot of the dispatched tool invocation.
 
-    Guards raise ``NotAuthorizedException`` / ``PermissionDeniedException`` (or
-    any other exception) to reject the invocation. First failure aborts.
-    ``resolve_guards()`` walks ``handler.ownership_layers`` (app → router →
-    controller → handler) and wraps every guard via ``ensure_async_callable``.
+    Handlers receive user / claims / DI through the synthesized ``request``
+    exactly as they would for an HTTP request.
+
+    Attributes:
+        app: The running Litestar application.
+        handler: The MCP-tool-marked route handler being invoked.
+        tool_args: Arguments from the MCP ``tools/call`` request.
+        request: The live (HTTP mode) or synthesized (stdio mode) Request the
+            handler dispatches against.
+    """
+
+    app: Litestar
+    handler: BaseRouteHandler
+    tool_args: dict[str, Any]
+    request: Request[Any, Any, Any]
+
+
+class NotCallableInCLIContextError(ImproperlyConfiguredException):
+    """Raised when a tool cannot be dispatched in stdio / CLI mode."""
+
+    def __init__(self, handler_name: str, reason: str) -> None:
+        """Initialize the exception.
+
+        Args:
+            handler_name: Name of the handler that cannot be called.
+            reason: Human-readable explanation.
+        """
+        super().__init__(f"Tool '{handler_name}' cannot be called from the CLI: {reason}")
+
+
+async def _enforce_guards(handler: BaseRouteHandler, request: Request[Any, Any, Any]) -> None:
+    """Run each guard resolved from ``handler.ownership_layers`` against ``request``.
+
+    Walks app → router → controller → handler guards, same as Litestar's own
+    HTTP dispatch. First failure aborts the invocation.
     """
     for guard in handler.resolve_guards():
         result = guard(request, handler)
@@ -39,431 +80,237 @@ async def _enforce_guards(handler: BaseRouteHandler, request: "Request[Any, Any,
             await result
 
 
-@dataclass
-class ToolExecutionContext:
-    """Context exposed to dependency providers during tool execution.
+def _find_route_path_parameters(app: Litestar, handler: BaseRouteHandler) -> dict[str, Any]:
+    """Look up ``path_parameters`` for the route owning ``handler``.
 
-    Attributes:
-        app: The running Litestar application.
-        handler: The MCP-tool-marked route handler being invoked.
-        tool_args: Arguments from the MCP ``tools/call`` request.
-        user_claims: Validated bearer-token claims, if auth is configured.
-        resolved_user: User object returned by ``user_resolver``, if any.
-        request: Inbound :class:`~litestar.Request` for HTTP-mode invocations;
-            ``None`` for CLI / stdio invocations. Guard on ``is not None``
-            before accessing request-scoped state.
+    The MCP registry stores handlers but not their owning route, so we walk
+    ``app.routes`` on each dispatch. Path-parameter metadata is small and
+    ``app.routes`` is modest in size; caching hasn't shown up as a hot spot.
     """
-
-    app: Litestar
-    handler: BaseRouteHandler
-    tool_args: dict[str, Any]
-    user_claims: "dict[str, Any] | None" = None
-    resolved_user: Any = None
-    request: "Request[Any, Any, Any] | None" = None
-
-
-def _check_unsupported_dependency(dep_name: str, fn: Any) -> None:
-    """Check if a dependency is unsupported in CLI context and raise error if so."""
-    if dep_name in _UNSUPPORTED_CLI_DEPENDENCIES:
-        raise NotCallableInCLIContextError(get_name(fn), dep_name)
+    for route in app.routes:
+        for candidate in getattr(route, "route_handlers", []):
+            if candidate is handler:
+                return dict(getattr(route, "path_parameters", {}))
+        candidate = getattr(route, "route_handler", None)
+        if candidate is handler:
+            return dict(getattr(route, "path_parameters", {}))
+    return {}
 
 
-async def _call_dependency_provider(dep_provider: Any) -> Any:
-    if hasattr(dep_provider, "dependency"):
-        dependency_fn = dep_provider.dependency
-        if inspect.iscoroutinefunction(dependency_fn):
-            return await dependency_fn()
-        return dependency_fn()
+def _substitute_path(template: str, path_params: dict[str, Any]) -> str:
+    """Replace ``{name}`` / ``{name:type}`` placeholders in ``template``.
 
-    if inspect.iscoroutinefunction(dep_provider):
-        return await dep_provider()
-
-    if callable(dep_provider):
-        return dep_provider()
-
-    return dep_provider
+    Matches the exact parameter name (with optional ``:type`` suffix) so a
+    param named ``id`` doesn't accidentally rewrite ``{identifier}``.
+    """
+    result = template
+    for key, value in path_params.items():
+        pattern = re.compile(r"\{" + re.escape(key) + r"(?::[^}]*)?\}")
+        result = pattern.sub(str(value), result)
+    return result
 
 
-@asynccontextmanager
-async def _async_generator_dependency_context(generator: Any) -> "AsyncIterator[Any]":
-    """Adapt an async generator dependency into an async context manager."""
-    try:
-        value = await anext(generator)
-    except StopAsyncIteration as exc:
-        msg = "Async generator dependency did not yield a value"
-        raise RuntimeError(msg) from exc
-
-    try:
-        yield value
-    finally:
-        try:
-            await anext(generator)
-        except StopAsyncIteration:
-            return
-
-        msg = "Async generator dependency yielded more than one value"
-        raise RuntimeError(msg)
-
-
-@contextmanager
-def _generator_dependency_context(generator: Any) -> "Iterator[Any]":
-    """Adapt a generator dependency into a context manager."""
-    try:
-        value = next(generator)
-    except StopIteration as exc:
-        msg = "Generator dependency did not yield a value"
-        raise RuntimeError(msg) from exc
-
-    try:
-        yield value
-    finally:
-        try:
-            next(generator)
-        except StopIteration:
-            return
-
-        msg = "Generator dependency yielded more than one value"
-        raise RuntimeError(msg)
-
-
-def _get_dependency_signature(dep_provider: Any) -> inspect.Signature:
-    """Return the callable signature for a dependency provider."""
-    provider_fn = dep_provider.dependency if hasattr(dep_provider, "dependency") else dep_provider
-    try:
-        return inspect.signature(provider_fn)
-    except (TypeError, ValueError):
-        return inspect.Signature()
-
-
-async def _invoke_dependency_provider(  # noqa: PLR0911
-    dep_provider: Any,
-    provider_kwargs: "dict[str, Any]",
-    exit_stack: AsyncExitStack,
-) -> Any:
-    """Invoke a dependency provider, entering generator dependencies when needed."""
-    if hasattr(dep_provider, "dependency"):
-        dependency_fn = dep_provider.dependency
-        if getattr(dep_provider, "has_async_generator_dependency", False):
-            generator = dependency_fn(**provider_kwargs)
-            return await exit_stack.enter_async_context(_async_generator_dependency_context(generator))
-        if getattr(dep_provider, "has_sync_generator_dependency", False):
-            generator = dependency_fn(**provider_kwargs)
-            return exit_stack.enter_context(_generator_dependency_context(generator))
-        return await dep_provider(**provider_kwargs)
-
-    if inspect.isasyncgenfunction(dep_provider):
-        return await exit_stack.enter_async_context(
-            _async_generator_dependency_context(dep_provider(**provider_kwargs))
-        )
-
-    if inspect.isgeneratorfunction(dep_provider):
-        return exit_stack.enter_context(_generator_dependency_context(dep_provider(**provider_kwargs)))
-
-    if inspect.iscoroutinefunction(dep_provider):
-        return await dep_provider(**provider_kwargs)
-
-    if callable(dep_provider):
-        return dep_provider(**provider_kwargs)
-
-    return dep_provider
-
-
-async def _resolve_dependency_value(
-    *,
-    dep_name: str,
-    dep_provider: Any,
-    fn: Any,
-    resolved_deps: "dict[str, Any]",
-    resolved_values: "dict[str, Any]",
-    tool_args: "dict[str, Any]",
-    exit_stack: AsyncExitStack,
-    in_progress: "set[str]",
-) -> Any:
-    """Recursively resolve a dependency value and its transitive inputs."""
-    if dep_name in resolved_values:
-        return resolved_values[dep_name]
-
-    if dep_name in in_progress:
-        msg = f"Circular dependency detected while resolving '{dep_name}'"
-        raise RuntimeError(msg)
-
-    in_progress.add(dep_name)
-    try:
-        provider_kwargs: dict[str, Any] = {}
-        provider_signature = _get_dependency_signature(dep_provider)
-        for parameter_name, parameter in provider_signature.parameters.items():
-            if parameter.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}:
-                continue
-
-            if parameter_name in resolved_values:
-                provider_kwargs[parameter_name] = resolved_values[parameter_name]
-                continue
-
-            if parameter_name in tool_args:
-                provider_kwargs[parameter_name] = tool_args[parameter_name]
-                continue
-
-            if parameter_name in resolved_deps:
-                _check_unsupported_dependency(parameter_name, fn)
-                provider_kwargs[parameter_name] = await _resolve_dependency_value(
-                    dep_name=parameter_name,
-                    dep_provider=resolved_deps[parameter_name],
-                    fn=fn,
-                    resolved_deps=resolved_deps,
-                    resolved_values=resolved_values,
-                    tool_args=tool_args,
-                    exit_stack=exit_stack,
-                    in_progress=in_progress,
-                )
-                continue
-
-            if parameter.default is inspect.Parameter.empty:
-                msg = f"Missing dependency input: {parameter_name}"
-                raise ValueError(msg)
-
-        value = await _invoke_dependency_provider(dep_provider, provider_kwargs, exit_stack)
-        resolved_values[dep_name] = value
-        return value
-    finally:
-        in_progress.remove(dep_name)
-
-
-async def _resolve_dependencies(
+def _split_tool_args(
     handler: BaseRouteHandler,
-    fn: Any,
-    signature: inspect.Signature,
-    pre_resolved_dependencies: "dict[str, Any]",
-    tool_args: "dict[str, Any]",
-    exit_stack: AsyncExitStack,
-) -> "dict[str, Any]":
-    """Resolve only the dependencies that the handler actually consumes."""
-    consumed_dependency_names = set(signature.parameters).difference(pre_resolved_dependencies)
-    dependencies: dict[str, Any] = {}
-    resolved_values = dict(pre_resolved_dependencies)
+    tool_args: dict[str, Any],
+    path_parameters: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], bytes]:
+    """Partition ``tool_args`` into (path_params, query_params, body_bytes).
 
-    try:
-        resolved_deps = handler.resolve_dependencies()
-    except NotCallableInCLIContextError:
-        raise
-    except (AttributeError, TypeError):
-        return {}
+    Precedence for each key:
 
-    for dep_name, dep_provider in resolved_deps.items():
-        if dep_name not in consumed_dependency_names:
-            continue
-
-        _check_unsupported_dependency(dep_name, fn)
-
-        try:
-            dependencies[dep_name] = await _resolve_dependency_value(
-                dep_name=dep_name,
-                dep_provider=dep_provider,
-                fn=fn,
-                resolved_deps=resolved_deps,
-                resolved_values=resolved_values,
-                tool_args=tool_args,
-                exit_stack=exit_stack,
-                in_progress=set(),
-            )
-        except Exception as exc:
-            raise NotCallableInCLIContextError(get_name(fn), dep_name) from exc
-
-    return dependencies
-
-
-async def _resolve_dependency_provider(
-    config: "MCPConfig | None",
-    context: ToolExecutionContext,
-    exit_stack: AsyncExitStack,
-) -> "dict[str, Any]":
-    """Resolve context-managed dependencies from the configured provider hook.
-
-    Providers must conform to :class:`~litestar_mcp.types.MCPDependencyProvider`:
-    a callable returning a sync or async context manager that yields a
-    mapping. Teardown is bound to the outer ``exit_stack`` so provider
-    ``finally`` blocks run when the tool invocation completes.
+    1. Path parameter — if the name appears in the route's path template.
+    2. Scalar handler kwarg — if the name matches a non-``data`` signature
+       parameter, it's bound as a query parameter so the native extractor
+       parses it via the signature model.
+    3. Body — if the handler declares a ``data`` parameter, leftover keys
+       become members of the JSON body that Litestar decodes into the
+       ``data`` struct.
+    4. Dropped — if none of the above match. (A later framework-level
+       error surfaces on handlers whose signatures genuinely can't accept
+       the key.)
     """
-    if config is None or config.dependency_provider is None:
-        return {}
+    sig_params = handler.parsed_fn_signature.parameters
+    has_data = "data" in sig_params
+    scalar_sig_names = {name for name in sig_params if name != "data"}
 
-    provided = config.dependency_provider(context)
-    if isinstance(provided, AbstractAsyncContextManager):
-        resolved = await exit_stack.enter_async_context(provided)
-    else:
-        resolved = exit_stack.enter_context(provided)
+    path_values = {k: tool_args[k] for k in path_parameters if k in tool_args}
+    remaining = {k: v for k, v in tool_args.items() if k not in path_values}
 
-    return dict(resolved)
+    query_payload = {k: v for k, v in remaining.items() if k in scalar_sig_names}
+    body_payload = {k: v for k, v in remaining.items() if k not in query_payload} if has_data else {}
+
+    body = msgspec.json.encode(body_payload) if body_payload else b""
+    return path_values, query_payload, body
 
 
-def _inject_execution_context(
-    signature: inspect.Signature,
+def _blank_http_scope(app: Litestar) -> dict[str, Any]:
+    """Return a minimum ASGI HTTP scope for stdio-mode dispatch.
+
+    Keys mirror what ``litestar.testing.RequestFactory`` populates so
+    Litestar's native dispatch pipeline finds everything it expects.
+    """
+    return {
+        "type": "http",
+        "app": app,
+        "litestar_app": app,
+        "asgi": {"version": "3.0", "spec_version": "2.4"},
+        "http_version": "1.1",
+        "scheme": "http",
+        "root_path": "",
+        "server": ("mcp-stdio", 0),
+        "client": ("mcp-stdio", 0),
+        "state": {},
+        "session": {},
+        "user": None,
+        "auth": None,
+        "extensions": {},
+    }
+
+
+def _build_dispatch_scope(
+    handler: BaseRouteHandler,
+    tool_args: dict[str, Any],
     *,
-    user_claims: "dict[str, Any] | None",
-    resolved_user: Any,
-) -> "dict[str, Any]":
-    """Inject reserved execution context parameters when the handler requests them."""
-    injected: dict[str, Any] = {}
+    base_scope: dict[str, Any] | None,
+    app: Litestar,
+    path_parameters: dict[str, Any],
+) -> tuple[dict[str, Any], Callable[[], Awaitable[dict[str, Any]]]]:
+    """Shape ``tool_args`` into an ASGI scope + receive for ``handler``.
 
-    if "user_claims" in signature.parameters and user_claims is not None:
-        injected["user_claims"] = user_claims
-    if "resolved_user" in signature.parameters and resolved_user is not None:
-        injected["resolved_user"] = resolved_user
+    HTTP mode (``base_scope`` from the inbound /mcp request) inherits
+    middleware-populated state (``scope["state"]`` — e.g. Dishka's request
+    container, Ch3's auth-middleware user) so request-scoped DI flows through.
+    Stdio mode starts from a blank scope.
+    """
+    path_values, query_values, body = _split_tool_args(handler, tool_args, path_parameters)
+    path_template = next(iter(handler.paths)) if handler.paths else "/"
+    path = _substitute_path(path_template, path_values)
+    query_string = urlencode(query_values, doseq=True).encode("ascii") if query_values else b""
 
-    return injected
+    scope = _blank_http_scope(app)
+    if base_scope is not None:
+        # Cherry-pick middleware-populated keys from the inbound request so
+        # auth / Dishka / session context flows through, but skip cached body
+        # / header / path state that would confuse the dispatch pipeline.
+        inherited_state = dict(base_scope.get("state", {}))
+        inherited_state.pop("_ls_connection_state", None)
+        scope["state"] = inherited_state
+        for passthrough in ("user", "auth", "session"):
+            if passthrough in base_scope:
+                scope[passthrough] = base_scope[passthrough]
 
+    http_methods = getattr(handler, "http_methods", None) or ("POST",)
+    method = next(iter(http_methods))
+    headers: list[tuple[bytes, bytes]] = [(b"content-type", b"application/json")] if body else []
 
-def _create_cli_scope(app: Litestar) -> "dict[str, Any]":
-    """Create a minimal synthetic ASGI scope for CLI-driven dependency resolution."""
-    return {"type": "http", "app": app, "state": {}}
+    scope.update(
+        {
+            "method": method,
+            "path": path,
+            "raw_path": path.encode("ascii"),
+            "query_string": query_string,
+            "headers": headers,
+            "path_params": path_values,
+            "route_handler": handler,
+            "path_template": path_template,
+        },
+    )
 
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": body, "more_body": False}
 
-def _iter_scope_resources(scope: "dict[str, Any]", *, root: bool = False) -> "list[Any]":
-    """Collect resources stored inside the synthetic scope for later cleanup."""
-    resources: list[Any] = []
-    reserved_root_keys = {"type", "app", "state"}
-
-    for key, value in scope.items():
-        if root and key in reserved_root_keys:
-            continue
-        if isinstance(value, dict):
-            resources.extend(_iter_scope_resources(value))
-        else:
-            resources.append(value)
-    return resources
-
-
-def _register_scope_cleanup(scope: "dict[str, Any]", exit_stack: AsyncExitStack) -> None:
-    """Register cleanup callbacks for closable resources stored in the synthetic scope."""
-    seen: set[int] = set()
-    for resource in _iter_scope_resources(scope, root=True):
-        resource_id = id(resource)
-        if resource_id in seen:
-            continue
-        seen.add(resource_id)
-
-        aclose = getattr(resource, "aclose", None)
-        if callable(aclose):
-            exit_stack.push_async_callback(aclose)  # pyright: ignore[reportArgumentType]
-            continue
-
-        close = getattr(resource, "close", None)
-        if callable(close):
-            if inspect.iscoroutinefunction(close):
-                exit_stack.push_async_callback(close)
-            else:
-                exit_stack.callback(close)
+    return scope, receive
 
 
-class NotCallableInCLIContextError(ImproperlyConfiguredException):
-    """Raised when a tool is not callable from the CLI due to its dependencies."""
+async def _open_stdio_dishka_container(app: Litestar, scope: dict[str, Any], stack: AsyncExitStack) -> None:
+    """Open a request-scoped child Dishka container for stdio dispatch.
 
-    def __init__(self, handler_name: str, parameter_name: str) -> None:
-        """Initialize the exception.
-
-        Args:
-            handler_name: Name of the handler that cannot be called.
-            parameter_name: Name of the parameter causing the issue.
-        """
-        super().__init__(
-            f"Tool '{handler_name}' cannot be called from the CLI because it depends on the request-scoped "
-            f"dependency '{parameter_name}', which is not available in a CLI context."
-        )
+    The ``setup_dishka`` integration stores a root container factory on
+    ``app.state.dishka_container``. HTTP mode has a middleware that opens a
+    child per request; stdio needs to open one manually so ``FromDishka[T]``
+    resolves identically in both modes.
+    """
+    container_factory = getattr(app.state, "dishka_container", None)
+    if container_factory is None:
+        return
+    child = await stack.enter_async_context(container_factory())
+    scope.setdefault("state", {})["dishka_container"] = child
 
 
 async def execute_tool(
     handler: BaseRouteHandler,
     app: Litestar,
-    tool_args: "dict[str, Any]",
+    tool_args: dict[str, Any],
     *,
-    config: "MCPConfig | None" = None,
-    user_claims: "dict[str, Any] | None" = None,
-    resolved_user: Any = None,
-    request: "Request[Any, Any, Any] | None" = None,
+    config: MCPConfig | None = None,  # noqa: ARG001 (kept for callsite compat; Ch3 deletes)
+    user_claims: dict[str, Any] | None = None,  # noqa: ARG001 (kept for callsite compat; Ch3 deletes)
+    resolved_user: Any = None,  # noqa: ARG001 (kept for callsite compat; Ch3 deletes)
+    request: Request[Any, Any, Any] | None = None,
 ) -> Any:
-    """Execute a given route handler with arguments, handling dependency injection.
+    """Execute an MCP tool handler through Litestar's native dispatch pipeline.
 
-    When ``request`` is not ``None``, every guard resolved via
-    ``handler.resolve_guards()`` (app → router → controller → handler) runs
-    against the live request before any dependency resolution. In stdio / CLI
-    mode (``request is None``) guards are skipped because guards are designed
-    around an ``ASGIConnection`` and have no meaning without one.
+    In HTTP mode (``request`` provided), the executor synthesizes a sibling
+    ``Request`` shaped like a real HTTP request for ``handler``'s declared
+    route, inheriting middleware-populated state from the inbound request. In
+    stdio mode (``request=None``), it builds a fresh scope and opens a child
+    Dishka container when the app has one. Both modes run the same dispatch
+    pipeline: ``create_kwargs_model`` → ``to_kwargs`` → ``resolve_dependencies``
+    → ``parse_values_from_connection_kwargs`` → ``handler.fn(**parsed)``.
+
+    Guards from every ownership layer (app → router → controller → handler)
+    run against the dispatch request before any dependency resolution.
 
     Args:
-        handler: The route handler to execute.
-        app: The Litestar app instance.
-        tool_args: A dictionary of arguments to pass to the tool.
-        config: Optional MCP configuration for advanced dependency injection hooks.
-        user_claims: Optional validated user claims.
-        resolved_user: Optional user object derived from the claims.
-        request: Inbound HTTP :class:`~litestar.Request`, or ``None`` for CLI
-            / stdio invocations. Forwarded to the dependency provider's
-            ``ToolExecutionContext``.
+        handler: The MCP-tool-marked route handler.
+        app: The running Litestar application.
+        tool_args: Arguments from the MCP ``tools/call`` request; routed
+            into path / query / body based on the handler's signature.
+        config: Kept for caller-site compatibility with Ch0 code paths;
+            unused by the native pipeline. Will be removed in Ch3.
+        user_claims: Kept for caller-site compatibility; will be removed in
+            Ch3 once auth moves to a Litestar middleware.
+        resolved_user: Kept for caller-site compatibility; will be removed
+            in Ch3.
+        request: Inbound :class:`~litestar.Request` in HTTP mode, ``None``
+            for CLI / stdio invocations.
 
     Returns:
-        The result of the handler execution.
-
-    Raises:
-        ValueError: If required arguments are missing.
+        The handler's return value, ``schema_dump``-ed when not a primitive.
     """
-    try:
-        fn: Callable[..., Any] = get_handler_function(handler)
-    except AttributeError:
-        fn = cast("Callable[..., Any]", handler)
+    path_parameters = _find_route_path_parameters(app, handler)
 
-    signature = inspect.signature(fn)
-    cli_scope = _create_cli_scope(app)
-    dependency_context = {"state": app.state, "scope": cli_scope}
-    call_args = _inject_execution_context(signature, user_claims=user_claims, resolved_user=resolved_user)
-
-    for parameter_name in signature.parameters:
-        _check_unsupported_dependency(parameter_name, fn)
-
-    async with AsyncExitStack() as exit_stack:
-        scope_cleanup_stack = AsyncExitStack()
-        await exit_stack.enter_async_context(scope_cleanup_stack)
-        execution_context = ToolExecutionContext(
+    async with AsyncExitStack() as stack:
+        base_scope: dict[str, Any] | None = cast("dict[str, Any]", request.scope) if request is not None else None
+        dispatch_scope, receive = _build_dispatch_scope(
+            handler,
+            tool_args,
+            base_scope=base_scope,
             app=app,
-            handler=handler,
-            tool_args=tool_args,
-            user_claims=user_claims,
-            resolved_user=resolved_user,
-            request=request,
+            path_parameters=path_parameters,
         )
-        if request is not None:
-            await _enforce_guards(handler, request)
-        provided_dependencies = await _resolve_dependency_provider(config, execution_context, exit_stack)
-        call_args.update(provided_dependencies)
+        if request is None:
+            await _open_stdio_dishka_container(app, dispatch_scope, stack)
 
-        resolved_inputs = {**dependency_context, **call_args}
-        dependencies = await _resolve_dependencies(handler, fn, signature, resolved_inputs, tool_args, exit_stack)
-        call_args.update(dependencies)
-        _register_scope_cleanup(cli_scope, scope_cleanup_stack)
+        dispatch_request: Request[Any, Any, Any] = Request(
+            cast("Any", dispatch_scope),
+            receive=cast("Any", receive),
+        )
 
-        for parameter_name in signature.parameters:
-            if parameter_name in call_args or parameter_name in _EXECUTION_CONTEXT_PARAMS:
-                continue
-            if parameter_name in tool_args:
-                call_args[parameter_name] = tool_args[parameter_name]
+        await _enforce_guards(handler, dispatch_request)
 
-        required_params = {
-            parameter_name
-            for parameter_name, parameter in signature.parameters.items()
-            if parameter.default is inspect.Parameter.empty and parameter_name not in call_args
-        }
-        if required_params:
-            missing_args = ", ".join(sorted(required_params))
-            msg = f"Missing required arguments: {missing_args}"
-            raise ValueError(msg)
+        kwargs_model = handler.create_kwargs_model(path_parameters=path_parameters)
+        kwargs = await kwargs_model.to_kwargs(connection=dispatch_request)
+        cleanup_group = await kwargs_model.resolve_dependencies(dispatch_request, kwargs)
+        await stack.enter_async_context(cleanup_group)
+        parsed_kwargs = handler.signature_model.parse_values_from_connection_kwargs(
+            connection=dispatch_request,
+            kwargs=kwargs,
+        )
 
-        if getattr(handler, "sync_to_thread", False):
-            async_fn = ensure_async_callable(fn)
-            result = await async_fn(**call_args)
-        elif inspect.iscoroutinefunction(fn):
-            result = await fn(**call_args)
-        else:
-            result = fn(**call_args)
+        handler_fn = ensure_async_callable(handler.fn)
+        result = await handler_fn(**parsed_kwargs)
 
     if not isinstance(result, (str, int, float, bool, list, dict, type(None))):
         return schema_dump(result)
-
     return result
