@@ -2,157 +2,116 @@
 Configuration
 =============
 
-The Litestar MCP Plugin uses a minimal configuration approach. This guide covers how to configure the plugin for different use cases.
+The Litestar MCP plugin is configured through :class:`~litestar_mcp.MCPConfig`.
+This page walks through each knob the plugin exposes, from a default
+registration to task-lifecycle support.
 
-Basic Configuration
--------------------
+Minimal Setup
+=============
 
-The plugin can be added to your Litestar application with default settings:
+The plugin registers with sensible defaults when no configuration is passed.
+Every marked route is picked up and served from ``/mcp``.
 
-.. code-block:: python
-
-    from litestar import Litestar
-    from litestar_mcp import LitestarMCP
-
-    app = Litestar(
-        route_handlers=[],
-        plugins=[LitestarMCP()]
-    )
+.. literalinclude:: /examples/snippets/configuration_minimal.py
+    :language: python
+    :caption: ``docs/examples/snippets/configuration_minimal.py``
+    :start-after: # start-example
+    :end-before: # end-example
+    :dedent:
 
 Custom Configuration
---------------------
+====================
 
-Use :class:`MCPConfig <litestar_mcp.config.MCPConfig>` to customize plugin behavior:
+Override the base path, server name, or OpenAPI visibility via
+:class:`~litestar_mcp.MCPConfig`.
 
-.. code-block:: python
+.. literalinclude:: /examples/snippets/configuration_custom.py
+    :language: python
+    :caption: ``docs/examples/snippets/configuration_custom.py``
+    :start-after: # start-example
+    :end-before: # end-example
+    :dedent:
 
-    from litestar import Litestar
-    from litestar_mcp import LitestarMCP, MCPConfig
+Auth-Enabled Configuration
+==========================
 
-    config = MCPConfig(
-        base_path="/api/mcp",          # Custom API base path
-        include_in_schema=True,        # Include in OpenAPI schema
-        name="My MCP Server",          # Custom server name
-        include_tags=["public"],       # Only expose selected tags
-    )
+Attach an :class:`~litestar_mcp.auth.MCPAuthConfig` to require bearer tokens
+on MCP endpoints and publish ``/.well-known/oauth-protected-resource``.
+See :doc:`auth` for the full authentication story.
 
-    app = Litestar(
-        route_handlers=[],
-        plugins=[LitestarMCP(config)]
-    )
+.. literalinclude:: /examples/snippets/configuration_auth.py
+    :language: python
+    :caption: ``docs/examples/snippets/configuration_auth.py``
+    :start-after: # start-example
+    :end-before: # end-example
+    :dedent:
+
+Task Lifecycle
+==============
+
+Enable the experimental in-memory task endpoints by passing an
+:class:`~litestar_mcp.config.MCPTaskConfig`. Tasks let MCP clients submit
+long-running work and poll for completion.
+
+.. literalinclude:: /examples/snippets/configuration_tasks.py
+    :language: python
+    :caption: ``docs/examples/snippets/configuration_tasks.py``
+    :start-after: # start-example
+    :end-before: # end-example
+    :dedent:
 
 Configuration Options
----------------------
+=====================
 
 .. list-table::
-   :widths: 25 25 50
-   :header-rows: 1
+    :widths: 25 25 50
+    :header-rows: 1
 
-   * - Option
-     - Default
-     - Description
-   * - ``base_path``
-     - ``"/mcp"``
-     - Base path for the MCP Streamable HTTP endpoint
-   * - ``include_in_schema``
-     - ``False``
-     - Whether to include MCP routes in OpenAPI schema
-   * - ``name``
-     - ``None``
-     - Server name override (uses OpenAPI title if not set)
-   * - ``guards``
-     - ``None``
-     - Litestar guards applied to the MCP router
-   * - ``allowed_origins``
-     - ``None``
-     - Restrict accepted ``Origin`` header values
-   * - ``include_operations`` / ``exclude_operations``
-     - ``None``
-     - Filter exposure by Litestar operation name
-   * - ``include_tags`` / ``exclude_tags``
-     - ``None``
-     - Filter exposure by OpenAPI tags
-   * - ``auth``
-     - ``None``
-     - Enable bearer-token validation and OAuth protected resource metadata
-   * - ``tasks``
-     - ``False``
-     - Enable experimental in-memory MCP task support
+    * - Option
+      - Default
+      - Description
+    * - ``base_path``
+      - ``"/mcp"``
+      - Base path for the MCP Streamable HTTP endpoint.
+    * - ``include_in_schema``
+      - ``False``
+      - Whether to include MCP routes in the OpenAPI schema.
+    * - ``name``
+      - ``None``
+      - Server name override (falls back to the OpenAPI title).
+    * - ``guards``
+      - ``None``
+      - Litestar guards applied to the MCP router.
+    * - ``allowed_origins``
+      - ``None``
+      - Restrict accepted ``Origin`` header values.
+    * - ``include_operations`` / ``exclude_operations``
+      - ``None``
+      - Filter exposure by Litestar operation name.
+    * - ``include_tags`` / ``exclude_tags``
+      - ``None``
+      - Filter exposure by OpenAPI tags.
+    * - ``auth``
+      - ``None``
+      - Enable bearer-token validation and OAuth protected-resource metadata.
+    * - ``tasks``
+      - ``False``
+      - Enable experimental in-memory MCP task support.
 
-Auth Configuration
-------------------
+Environment Overrides
+=====================
 
-Use :class:`MCPAuthConfig <litestar_mcp.auth.MCPAuthConfig>` when you want MCP endpoints
-to enforce bearer-token validation and publish OAuth protected resource metadata.
+:class:`~litestar_mcp.MCPConfig` is a plain dataclass, so the ordinary
+Litestar pattern applies: read the environment before constructing it and
+pass the resolved values through. For example, to keep ``base_path`` and
+``name`` configurable at deploy time:
 
-.. code-block:: python
+.. code-block:: bash
 
-    from litestar import Litestar
-    from litestar_mcp import LitestarMCP, MCPConfig
-    from litestar_mcp.auth import MCPAuthConfig
+    export MCP_BASE_PATH=/api/mcp
+    export MCP_SERVER_NAME="My MCP Server"
 
-    async def validate_token(token: str) -> dict[str, str] | None:
-        if token == "dev-token":
-            return {"sub": "demo-user"}
-        return None
-
-    config = MCPConfig(
-        auth=MCPAuthConfig(
-            issuer="https://auth.example.com",
-            audience="https://api.example.com",
-            token_validator=validate_token,
-        )
-    )
-
-    app = Litestar(
-        route_handlers=[],
-        plugins=[LitestarMCP(config)]
-    )
-
-Task Configuration
-------------------
-
-Use :class:`MCPTaskConfig <litestar_mcp.config.MCPTaskConfig>` to enable the
-experimental in-memory task lifecycle endpoints.
-
-.. code-block:: python
-
-    from litestar import Litestar
-    from litestar_mcp import LitestarMCP, MCPConfig, MCPTaskConfig
-
-    config = MCPConfig(
-        tasks=MCPTaskConfig(
-            enabled=True,
-            list_enabled=True,
-            cancel_enabled=True,
-            default_ttl=300_000,
-            max_ttl=3_600_000,
-            poll_interval=1_000,
-        )
-    )
-
-    app = Litestar(
-        route_handlers=[],
-        plugins=[LitestarMCP(config)]
-    )
-
-Environment Integration
------------------------
-
-The plugin integrates with Litestar's configuration system and can use environment variables through standard Litestar patterns:
-
-.. code-block:: python
-
-    import os
-    from litestar import Litestar
-    from litestar_mcp import LitestarMCP, MCPConfig
-
-    config = MCPConfig(
-        base_path=os.getenv("MCP_BASE_PATH", "/mcp"),
-        name=os.getenv("MCP_SERVER_NAME")
-    )
-
-    app = Litestar(
-        route_handlers=[],
-        plugins=[LitestarMCP(config)]
-    )
+Then build ``MCPConfig`` using ``os.getenv`` for each option - the shape
+is identical to the :ref:`Custom Configuration <usage/configuration:Custom
+Configuration>` snippet above, just with environment lookups replacing
+literal values.

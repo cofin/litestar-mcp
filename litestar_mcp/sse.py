@@ -1,11 +1,36 @@
-"""SSE transport management for MCP."""
+"""In-process SSE stream bookkeeping for MCP Streamable HTTP.
+
+This module is deliberately narrow: it owns per-stream queues and a
+Last-Event-ID replay buffer for clients that reconnect to ``GET /mcp``
+after a network blip. Session identity and persistence live in
+:mod:`litestar_mcp.sessions`; session ids are used here only as
+in-process fan-out keys so a notification can be delivered to every
+stream opened under the same ``Mcp-Session-Id``.
+
+Resource caps:
+
+- ``max_streams`` caps the total number of concurrent open streams.
+  Exceeding it raises :class:`StreamLimitExceeded`, which the HTTP
+  layer maps to ``503 Service Unavailable`` + JSON-RPC ``-32000``.
+- ``max_idle_seconds`` prunes streams that have had no activity for
+  longer than the window. Pruning is lazy: it runs on
+  :meth:`SSEManager.open_stream` before admitting a new stream.
+"""
 
 import asyncio
-import json
+import time
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
+
+from litestar.serialization import encode_json
+
+__all__ = ("SSEManager", "SSEMessage", "StreamLimitExceeded")
+
+
+class StreamLimitExceeded(Exception):  # noqa: N818
+    """Raised by :meth:`SSEManager.open_stream` when ``max_streams`` is hit."""
 
 
 @dataclass
@@ -20,122 +45,191 @@ class SSEMessage:
 @dataclass
 class _StreamState:
     stream_id: str
-    client_id: str
+    session_id: str | None
     queue: asyncio.Queue[SSEMessage] = field(default_factory=asyncio.Queue)
     history: list[SSEMessage] = field(default_factory=list)
     active: bool = True
-
-
-@dataclass
-class _ClientGroup:
-    stream_ids: list[str] = field(default_factory=list)
-    next_index: int = 0
+    last_activity: float = field(default_factory=time.monotonic)
 
 
 class SSEManager:
-    """Manages Streamable HTTP SSE connections and message delivery."""
+    """Manages Streamable HTTP SSE connections and message delivery.
 
-    def __init__(self) -> None:
-        self._client_groups: dict[str, _ClientGroup] = {}
+    The manager keeps one :class:`_StreamState` per open stream and a
+    side index from ``session_id`` to the set of stream ids currently
+    attached to that session, so notifications can be fanned out to
+    every stream belonging to a given MCP session.
+    """
+
+    def __init__(
+        self,
+        *,
+        max_streams: int = 10_000,
+        max_idle_seconds: float = 3600.0,
+    ) -> None:
+        """Initialize the SSE manager.
+
+        Args:
+            max_streams: Hard cap on concurrent open streams. Excess
+                raises :class:`StreamLimitExceeded`.
+            max_idle_seconds: Idle window (seconds) after which a stream
+                is eligible for lazy pruning on the next ``open_stream``.
+        """
         self._streams: dict[str, _StreamState] = {}
+        self._session_streams: dict[str, set[str]] = {}
         self._lock = asyncio.Lock()
-
-    def register_client(self, client_id: str) -> None:
-        """Ensure a client group exists."""
-        self._client_groups.setdefault(client_id, _ClientGroup())
+        self._max_streams = max_streams
+        self._max_idle_seconds = max_idle_seconds
 
     async def open_stream(
         self,
-        client_id: str,
+        session_id: str | None = None,
         last_event_id: str | None = None,
     ) -> tuple[str, AsyncGenerator[SSEMessage, None]]:
-        """Open a stream for a client and return its ID and event generator."""
+        """Open a new stream (or resume from ``last_event_id``).
+
+        Args:
+            session_id: Optional session id to bind this stream to. When
+                provided, the manager updates the session→streams index
+                so :meth:`publish` can fan out to all streams belonging
+                to the session.
+            last_event_id: Optional ``Last-Event-ID`` value. On a match,
+                pending messages from the existing stream's history are
+                replayed before normal delivery resumes.
+
+        Returns:
+            A ``(stream_id, async_generator)`` pair.
+        """
         async with self._lock:
-            state, replay_messages = self._get_or_create_stream(client_id, last_event_id)
+            self._prune_idle_locked()
+            state, replay_messages = self._get_or_create_stream_locked(session_id, last_event_id)
 
         async def stream() -> AsyncGenerator[SSEMessage, None]:
             try:
                 for message in replay_messages:
                     yield message
                 while True:
-                    yield await state.queue.get()
+                    message = await state.queue.get()
+                    state.last_activity = time.monotonic()
+                    yield message
             finally:
                 async with self._lock:
-                    if state.stream_id in self._streams:
-                        self._streams[state.stream_id].active = False
+                    self._close_stream_locked(state.stream_id)
 
         return state.stream_id, stream()
 
-    async def enqueue_message(self, client_id: str, message: dict[str, Any]) -> None:
-        """Enqueue a message for a specific client."""
-        await self.publish(message, client_id=client_id)
-
-    async def broadcast(self, message: dict[str, Any]) -> None:
-        """Send a message to all connected clients."""
-        await self.publish(message)
-
-    async def subscribe(self, client_id: str) -> AsyncGenerator[SSEMessage, None]:
-        """Backwards-compatible subscription helper."""
-        _, stream = await self.open_stream(client_id)
-        return stream
-
     def disconnect(self, stream_id: str) -> None:
         """Explicitly remove a stream and its buffered state."""
-        state = self._streams.pop(stream_id, None)
-        if state is None:
-            return
+        self._close_stream_locked(stream_id)
 
-        group = self._client_groups.get(state.client_id)
-        if group is not None:
-            group.stream_ids = [candidate for candidate in group.stream_ids if candidate != stream_id]
-            if not group.stream_ids:
-                self._client_groups.pop(state.client_id, None)
-
-    async def publish(self, message: dict[str, Any], client_id: str | None = None) -> None:
-        """Publish a JSON payload to one stream per client."""
-        payload = json.dumps(message)
+    async def enqueue(self, stream_id: str, message: dict[str, Any]) -> None:
+        """Enqueue a raw JSON payload onto a single stream."""
+        payload = encode_json(message).decode("utf-8")
         async with self._lock:
-            target_client_ids = [client_id] if client_id is not None else list(self._client_groups.keys())
-            for current_client_id in target_client_ids:
-                group = self._client_groups.get(current_client_id)
-                if group is None or not group.stream_ids:
-                    continue
-                stream_state = self._pick_stream_for_group(group)
-                message_id = f"{stream_state.stream_id}:{len(stream_state.history)}"
-                sse_message = SSEMessage(data=payload, id=message_id)
-                stream_state.history.append(sse_message)
-                await stream_state.queue.put(sse_message)
+            state = self._streams.get(stream_id)
+            if state is None:
+                return
+            sse_message = SSEMessage(data=payload, id=f"{stream_id}:{len(state.history)}")
+            state.history.append(sse_message)
+            state.last_activity = time.monotonic()
+            await state.queue.put(sse_message)
 
-    def _get_or_create_stream(
+    async def publish(self, message: dict[str, Any], session_id: str | None = None) -> None:
+        """Publish a JSON payload to one or all sessions.
+
+        When ``session_id`` is provided the message fans out to every
+        stream attached to that session; otherwise it fans out to every
+        stream attached to any session.
+        """
+        payload = encode_json(message).decode("utf-8")
+        async with self._lock:
+            if session_id is not None:
+                target_stream_ids = list(self._session_streams.get(session_id, set()))
+            else:
+                target_stream_ids = [sid for ids in self._session_streams.values() for sid in ids]
+            for stream_id in target_stream_ids:
+                state = self._streams.get(stream_id)
+                if state is None or not state.active:
+                    continue
+                sse_message = SSEMessage(data=payload, id=f"{stream_id}:{len(state.history)}")
+                state.history.append(sse_message)
+                state.last_activity = time.monotonic()
+                await state.queue.put(sse_message)
+
+    async def replay_from(self, stream_id: str, last_event_id: str) -> list[SSEMessage]:
+        """Return buffered messages after ``last_event_id`` for a stream."""
+        async with self._lock:
+            state = self._streams.get(stream_id)
+            if state is None:
+                return []
+            _, event_index = self._parse_event_id(last_event_id)
+            state.last_activity = time.monotonic()
+            return list(state.history[event_index + 1 :])
+
+    def close_session_streams(self, session_id: str) -> list[str]:
+        """Close every stream attached to ``session_id``. Returns closed ids."""
+        stream_ids = list(self._session_streams.get(session_id, set()))
+        for stream_id in stream_ids:
+            self._close_stream_locked(stream_id)
+        self._session_streams.pop(session_id, None)
+        return stream_ids
+
+    def _prune_idle_locked(self) -> None:
+        if self._max_idle_seconds <= 0:
+            return
+        cutoff = time.monotonic() - self._max_idle_seconds
+        to_remove = [sid for sid, state in self._streams.items() if state.last_activity < cutoff]
+        for stream_id in to_remove:
+            self._close_stream_locked(stream_id)
+
+    def _get_or_create_stream_locked(
         self,
-        client_id: str,
+        session_id: str | None,
         last_event_id: str | None,
     ) -> tuple[_StreamState, list[SSEMessage]]:
         if last_event_id:
-            stream_id, event_index = self._parse_event_id(last_event_id)
-            existing = self._streams.get(stream_id)
-            if existing is not None and existing.client_id == client_id:
-                existing.active = True
-                replay_messages = existing.history[event_index + 1 :]
-                return existing, replay_messages
+            try:
+                stream_id, event_index = self._parse_event_id(last_event_id)
+            except ValueError:
+                stream_id, event_index = None, -1
+            if stream_id is not None:
+                existing = self._streams.get(stream_id)
+                if existing is not None and (session_id is None or existing.session_id == session_id):
+                    existing.active = True
+                    existing.last_activity = time.monotonic()
+                    if session_id is not None:
+                        self._session_streams.setdefault(session_id, set()).add(stream_id)
+                    replay_messages = existing.history[event_index + 1 :]
+                    return existing, replay_messages
+
+        if len(self._streams) >= self._max_streams:
+            msg = f"SSE stream limit exceeded (max_streams={self._max_streams})"
+            raise StreamLimitExceeded(msg)
 
         stream_id = str(uuid4())
-        state = _StreamState(stream_id=stream_id, client_id=client_id)
+        state = _StreamState(stream_id=stream_id, session_id=session_id)
         prime_message = SSEMessage(data="", id=f"{stream_id}:0")
         state.history.append(prime_message)
         state.queue.put_nowait(prime_message)
         self._streams[stream_id] = state
-        self._client_groups.setdefault(client_id, _ClientGroup()).stream_ids.append(stream_id)
+        if session_id is not None:
+            self._session_streams.setdefault(session_id, set()).add(stream_id)
         return state, []
 
-    def _pick_stream_for_group(self, group: _ClientGroup) -> _StreamState:
-        active_stream_ids = [stream_id for stream_id in group.stream_ids if self._streams[stream_id].active]
-        candidate_stream_ids = active_stream_ids or group.stream_ids
-        selected_index = group.next_index % len(candidate_stream_ids)
-        group.next_index += 1
-        return self._streams[candidate_stream_ids[selected_index]]
+    def _close_stream_locked(self, stream_id: str) -> None:
+        state = self._streams.pop(stream_id, None)
+        if state is None:
+            return
+        state.active = False
+        if state.session_id is not None:
+            streams = self._session_streams.get(state.session_id)
+            if streams is not None:
+                streams.discard(stream_id)
+                if not streams:
+                    self._session_streams.pop(state.session_id, None)
 
-    def _parse_event_id(self, value: str) -> tuple[str, int]:
+    @staticmethod
+    def _parse_event_id(value: str) -> tuple[str, int]:
         stream_id, _, raw_index = value.rpartition(":")
         if not stream_id:
             msg = "Invalid Last-Event-ID header"

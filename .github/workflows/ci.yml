@@ -188,15 +188,17 @@ jobs:
           LITESTAR_DOCS_IGNORE_MISSING_EXAMPLE_OUTPUT: 1
         run: uv run make docs-linkcheck
 
-      - name: Save PR number
-        run: |
-          echo "${{ github.event.number }}" > .pr_number
-
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: docs-preview
-          path: |
-            docs/_build/html
-            .pr_number
-          include-hidden-files: true
+          path: docs/_build/html
+
+      - name: Summarize docs preview artifact
+        run: |
+          {
+            echo "## Documentation Preview"
+            echo
+            echo "PR documentation is available as the \`docs-preview\` workflow artifact for this run."
+            echo "Download it from the Actions run summary to inspect the rendered HTML locally."
+          } >> "$GITHUB_STEP_SUMMARY"

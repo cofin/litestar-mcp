@@ -11,7 +11,10 @@ def get_handler_function(handler: "BaseRouteHandler") -> Callable[..., Any]:
     """Extract the actual function from a handler.
 
     Litestar wraps functions in AnyCallable containers with .value attribute.
-    We access it directly - no defensive checks needed.
+    Dishka-injected handlers also wrap the original function and expose it via
+    ``__dishka_orig_func__``. MCP execution needs the original callable
+    signature so dependency injection hooks can see the actual handler
+    parameters instead of Dishka's synthetic ``request`` wrapper.
 
     Args:
         handler: The Litestar route handler.
@@ -22,7 +25,8 @@ def get_handler_function(handler: "BaseRouteHandler") -> Callable[..., Any]:
     fn = handler.fn
     # AnyCallable has .value, regular functions don't
     # Check the type instead of using hasattr
-    return getattr(fn, "value", fn)
+    resolved = getattr(fn, "value", fn)
+    return getattr(resolved, "__dishka_orig_func__", resolved)
 
 
 __all__ = ("get_handler_function",)

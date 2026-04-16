@@ -1,7 +1,9 @@
 """Configuration for Litestar MCP Plugin."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
+
+from litestar.stores.base import Store
 
 from litestar_mcp.auth import MCPAuthConfig  # noqa: TC001
 
@@ -43,8 +45,6 @@ class MCPConfig:
             are accepted. When set, requests with a non-matching Origin are rejected with 403.
         auth: Optional OAuth 2.1 auth configuration. When set, bearer token validation
             is enforced on MCP endpoints.
-        dependency_provider: Optional context-managed hook for request-scoped dependency
-            injection during tool execution.
         tasks: Optional task configuration or ``True`` to enable the default
             experimental in-memory task implementation.
     """
@@ -59,8 +59,12 @@ class MCPConfig:
     include_tags: list[str] | None = None
     exclude_tags: list[str] | None = None
     auth: "MCPAuthConfig | None" = None
-    dependency_provider: Any | None = None
     tasks: "bool | MCPTaskConfig" = False
+    session_store: Store | None = None
+    session_max_idle_seconds: float = 3600.0
+    sse_max_streams: int = 10_000
+    sse_max_idle_seconds: float = 3600.0
+    _session_manager: Any = field(default=None, repr=False, compare=False)
 
     @property
     def task_config(self) -> "MCPTaskConfig | None":

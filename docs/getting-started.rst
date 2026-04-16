@@ -153,11 +153,10 @@ Examples
 
 See the ``examples/`` directory for complete working examples:
 
-- ``docs/examples/basic/`` - Simple integration with marked routes
+- ``docs/examples/hello_world/`` - Simple integration with marked routes
 
 Next Steps
 ----------
 
-- :doc:`examples` - See practical usage examples
-- :doc:`usage/index` - Learn more about configuration options
+- :doc:`usage/index` - Detailed usage guides for every plugin feature
 - :doc:`reference/index` - API reference documentation

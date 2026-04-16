@@ -84,6 +84,37 @@ build:                                              ## Build the project
 	@uv build >/dev/null 2>&1
 	@echo "${OK} Package build complete"
 
+.PHONY: release
+release:                                            ## Bump version for a release (bump=major|minor|patch|pre)
+	@if [ -z "$(bump)" ]; then \
+		echo "${ERROR} Usage: make release bump=major|minor|patch|pre"; \
+		exit 1; \
+	fi
+	@echo "${INFO} Preparing release bump ($(bump))... 📦"
+	@$(MAKE) clean
+	@$(UV_RUN_PY310) bump-my-version bump $(bump)
+	@$(MAKE) build
+	@echo "${OK} Release version bumped successfully 🎉"
+
+.PHONY: pre-release
+pre-release:                                        ## Start a pre-release: make pre-release version=0.5.0-alpha.1
+	@if [ -z "$(version)" ]; then \
+		echo "${ERROR} Usage: make pre-release version=X.Y.Z-alpha.N"; \
+		echo ""; \
+		echo "Pre-release workflow:"; \
+		echo "  1. Start alpha:     make pre-release version=0.5.0-alpha.1"; \
+		echo "  2. Next alpha:      make pre-release version=0.5.0-alpha.2"; \
+		echo "  3. Move to beta:    make pre-release version=0.5.0-beta.1"; \
+		echo "  4. Move to rc:      make pre-release version=0.5.0-rc.1"; \
+		echo "  5. Final release:   make release bump=pre (from rc) OR bump=patch/minor (from stable)"; \
+		exit 1; \
+	fi
+	@echo "${INFO} Preparing pre-release $(version)... 🧪"
+	@$(MAKE) clean
+	@$(UV_RUN_PY310) bump-my-version bump --new-version $(version) pre
+	@$(MAKE) build
+	@echo "${OK} Pre-release version bumped successfully 🧪"
+
 # =============================================================================
 # Cleaning and Maintenance
 # =============================================================================
@@ -161,13 +192,13 @@ pre-commit:                                         ## Run pre-commit hooks
 .PHONY: ruff-check
 ruff-check:                                         ## Run ruff linting
 	@echo "${INFO} Running ruff checks... 🔄"
-	@$(UV_RUN_PY310) ruff check --fix litestar_mcp tests
+	@$(UV_RUN_PY310) ruff check --fix litestar_mcp tests docs/examples tools/ci
 	@echo "${OK} Ruff checks passed ✨"
 
 .PHONY: ruff-format
 ruff-format:                                        ## Run ruff formatting
 	@echo "${INFO} Running ruff formatting... 🎨"
-	@$(UV_RUN_PY310) ruff format litestar_mcp tests
+	@$(UV_RUN_PY310) ruff format litestar_mcp tests docs/examples tools/ci
 	@echo "${OK} Ruff formatting complete ✨"
 
 .PHONY: slotscheck
@@ -242,6 +273,24 @@ example-run:                                        ## Run basic example
 	@echo "${INFO} Running basic example... 🚀"
 	@$(UV_RUN_PY310) python examples/basic_usage.py
 	@echo "${OK} Example completed ✨"
+
+.PHONY: validate-examples
+validate-examples:                                  ## Validate docs/examples marker blocks
+	@echo "${INFO} Validating doc example markers... 🔎"
+	@$(UV_RUN_PY310) python tools/ci/validate_doc_markers.py
+	@echo "${OK} Doc example markers valid ✨"
+
+.PHONY: validate-uvx
+validate-uvx:                                       ## Validate uvx snippets in the reference docs
+	@echo "${INFO} Validating uvx snippets in docs... 🔎"
+	@bash tools/ci/validate_uvx_snippets.sh
+	@echo "${OK} uvx snippets valid ✨"
+
+.PHONY: validate-pep723
+validate-pep723:                                    ## Validate PEP 723 blocks in runnable examples
+	@echo "${INFO} Validating PEP 723 script blocks... 🔎"
+	@$(UV_RUN_PY310) python tools/ci/validate_pep723_blocks.py
+	@echo "${OK} PEP 723 blocks valid ✨"
 
 # =============================================================================
 # Development Targets

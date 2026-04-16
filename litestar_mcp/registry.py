@@ -64,14 +64,15 @@ class Registry:
         self,
         method: str,
         params: dict[str, Any],
-        client_id: str | None = None,
+        session_id: str | None = None,
     ) -> None:
-        """Publish a JSON-RPC 2.0 notification to all connected clients.
+        """Publish a JSON-RPC 2.0 notification to connected clients.
 
         Args:
             method: The notification method (e.g., 'notifications/resources/updated').
             params: The notification parameters.
-            client_id: Optional client group to target.
+            session_id: Optional session to target; when omitted the
+                notification fans out to every attached session.
         """
         if self._sse_manager:
             # Wrap in JSON-RPC 2.0 notification envelope (no id)
@@ -81,7 +82,7 @@ class Registry:
                     "method": method,
                     "params": params,
                 },
-                client_id=client_id,
+                session_id=session_id,
             )
 
     async def notify_resource_updated(self, uri: str) -> None:

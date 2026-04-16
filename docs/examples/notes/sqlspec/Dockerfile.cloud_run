@@ -1,0 +1,70 @@
+# Cloud Run-ready container for the reference notes Cloud Run JWT example.
+#
+# This image is intentionally shaped for Google Cloud Run:
+#
+#   * multi-stage build with ``uv`` in the build stage and a slim runtime
+#     stage that only ships the resolved wheels + application code;
+#   * non-root user in the runtime stage;
+#   * ``PORT`` honored via the env var Cloud Run injects at container start;
+#   * ``CMD`` points at ``create_app`` with ``uvicorn --factory`` so the
+#     env-driven settings class is read on boot;
+#   * no ``HEALTHCHECK`` — Cloud Run probes ``/healthz`` directly.
+#
+# Build locally:
+#
+#     docker build \
+#       -f docs/examples/notes/sqlspec/Dockerfile.cloud_run \
+#       -t notes-cloud-run-jwt .
+#
+# Deploy to Cloud Run (env-vars-file generated from .cloud_run.env.example):
+#
+#     gcloud run deploy notes-cloud-run-jwt \
+#       --source=. \
+#       --env-vars-file=docs/examples/notes/sqlspec/.cloud_run.env \
+#       --allow-unauthenticated   # end-user auth is handled by app JWT
+
+ARG PYTHON_VERSION=3.12
+
+# ---------- build stage ----------
+FROM python:${PYTHON_VERSION}-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /build
+
+# Install runtime dependencies into a dedicated prefix so the runtime
+# stage can copy a clean site-packages tree without build tooling.
+COPY pyproject.toml uv.lock README.md ./
+RUN uv export --format requirements-txt --no-dev --no-emit-project > /tmp/requirements.txt \
+    && uv pip install --system --no-cache --prefix=/install -r /tmp/requirements.txt \
+    && uv pip install --system --no-cache --prefix=/install uvicorn
+
+COPY litestar_mcp /install/lib/python${PYTHON_VERSION}/site-packages/litestar_mcp
+COPY docs/examples /install/lib/python${PYTHON_VERSION}/site-packages/docs/examples
+
+# ---------- runtime stage ----------
+FROM python:${PYTHON_VERSION}-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    PORT=8080
+
+# Create an unprivileged user — Cloud Run does not require this, but the
+# example encodes the habit of never running application code as root.
+RUN groupadd --system --gid 1001 app \
+    && useradd --system --uid 1001 --gid app --home /app --shell /usr/sbin/nologin app
+
+COPY --from=builder /install /usr/local
+
+WORKDIR /app
+USER app:app
+
+# Cloud Run injects PORT at container start; honor it via env expansion.
+# --host 0.0.0.0 is required so Cloud Run can reach the process.
+CMD ["sh", "-c", "exec uvicorn docs.examples.notes.sqlspec.cloud_run_jwt:create_app --factory --host 0.0.0.0 --port ${PORT:-8080}"]
