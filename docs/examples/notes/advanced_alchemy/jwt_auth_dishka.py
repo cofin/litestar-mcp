@@ -1,10 +1,4 @@
-"""JWT-authenticated Advanced Alchemy + Dishka reference notes example.
-
-Same public behavior as :mod:`docs.examples.notes.advanced_alchemy.jwt_auth`,
-but the :class:`NoteService` is resolved through a Dishka container. The
-authenticated identity still comes from Litestar's normal auth surface —
-Dishka is only responsible for domain-service wiring.
-"""
+"""JWT-authenticated Advanced Alchemy + Dishka reference notes example."""
 
 # /// script
 # requires-python = ">=3.10"
@@ -20,7 +14,6 @@ Dishka is only responsible for domain-service wiring.
 # ///
 
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -45,7 +38,7 @@ from docs.examples.notes.shared.auth import (
     DEFAULT_ISSUER,
     AuthenticatedIdentity,
     build_login_controller,
-    build_mcp_auth_config,
+    build_mcp_auth_metadata,
     build_oauth_backend,
     mint_hs256_token,
 )
@@ -63,7 +56,6 @@ from docs.examples.notes.shared.contracts import (
     build_app_info,
 )
 from litestar_mcp import LitestarMCP, MCPConfig
-from litestar_mcp.executor import ToolExecutionContext
 
 DEFAULT_USER_DIRECTORY = {"alice": "alice-password", "bob": "bob-password"}
 
@@ -106,29 +98,18 @@ def create_app(
     def _sign(sub: str) -> str:
         return mint_hs256_token(sub, secret=token_secret, issuer=issuer, audience=audience)
 
-    login_controller = build_login_controller(
-        user_directory=user_directory or DEFAULT_USER_DIRECTORY,
-        token_signer=_sign,
-    )
     oauth_backend = build_oauth_backend(secret=token_secret, issuer=issuer, audience=audience)
 
     async def _provide_resolved_user(request: Request[Any, Any, Any]) -> AuthenticatedIdentity:
         user = request.user
         if not isinstance(user, AuthenticatedIdentity):
-            msg = "Authenticated identity is required for this endpoint"
+            msg = "Authenticated identity is required"
             raise NotAuthorizedException(msg)
         return user
 
-    def _unexpected() -> Any:
-        msg = "note_service must be provided by Dishka (HTTP) or the MCP dependency provider (tools)"
-        raise RuntimeError(msg)
+    resolved_user_dep = {"resolved_user": Provide(_provide_resolved_user)}
 
-    handler_dependencies = {
-        "note_service": Provide(_unexpected, sync_to_thread=False),
-        "resolved_user": Provide(_provide_resolved_user),
-    }
-
-    @get("/notes", opt={"mcp_tool": LIST_NOTES_TOOL_NAME}, dependencies=handler_dependencies)
+    @get("/notes", opt={"mcp_tool": LIST_NOTES_TOOL_NAME}, dependencies=resolved_user_dep)
     @inject
     async def list_notes(
         note_service: FromDishka[NoteService], resolved_user: AuthenticatedIdentity
@@ -136,7 +117,7 @@ def create_app(
         notes = await note_service.list(NoteRecord.owner_sub == resolved_user.sub)
         return note_service.to_schema(notes, schema_type=Note)
 
-    @post("/notes", opt={"mcp_tool": CREATE_NOTE_TOOL_NAME}, dependencies=handler_dependencies)
+    @post("/notes", opt={"mcp_tool": CREATE_NOTE_TOOL_NAME}, dependencies=resolved_user_dep)
     @inject
     async def create_note(
         data: dict[str, Any],
@@ -154,7 +135,7 @@ def create_app(
         "/notes/{note_id:str}",
         status_code=HTTP_200_OK,
         opt={"mcp_tool": DELETE_NOTE_TOOL_NAME},
-        dependencies=handler_dependencies,
+        dependencies=resolved_user_dep,
     )
     @inject
     async def delete_note(
@@ -178,27 +159,20 @@ def create_app(
     def get_api_info() -> AppInfo:
         return build_app_info(backend="advanced_alchemy", auth_mode="jwt", supports_dishka=True)
 
-    @asynccontextmanager
-    async def mcp_dependency_provider(context: ToolExecutionContext) -> AsyncIterator[dict[str, Any]]:
-        """Resolve tool dependencies from the Dishka container for MCP tool calls."""
-        opt = getattr(context.handler, "opt", {}) or {}
-        if opt.get("mcp_tool") not in {LIST_NOTES_TOOL_NAME, CREATE_NOTE_TOOL_NAME, DELETE_NOTE_TOOL_NAME}:
-            yield {}
-            return
-        async with container() as request_container:
-            yield {"note_service": await request_container.get(NoteService)}
-
-    mcp_config = MCPConfig(dependency_provider=mcp_dependency_provider)
-    mcp_config.auth = build_mcp_auth_config(secret=token_secret, issuer=issuer, audience=audience)
-
-    async def close_container() -> None:
-        await container.close()
+    mcp_config = MCPConfig(auth=build_mcp_auth_metadata(issuer=issuer, audience=audience))
 
     app = Litestar(
-        route_handlers=[login_controller, list_notes, create_note, delete_note, notes_schema, get_api_info],
+        route_handlers=[
+            build_login_controller(user_directory=user_directory or DEFAULT_USER_DIRECTORY, token_signer=_sign),
+            list_notes,
+            create_note,
+            delete_note,
+            notes_schema,
+            get_api_info,
+        ],
         plugins=[SQLAlchemyPlugin(config=alchemy_config), LitestarMCP(mcp_config)],
         on_app_init=[oauth_backend.on_app_init],
-        on_shutdown=[close_container],
+        on_shutdown=[container.close],
     )
     setup_dishka(container, app)
     return app

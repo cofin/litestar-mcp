@@ -18,7 +18,6 @@ variant — Dishka is a pure DI swap.
 # ///
 
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +25,6 @@ import msgspec
 from dishka import Provider, Scope, make_async_container, provide
 from dishka.integrations.litestar import FromDishka, LitestarProvider, inject, setup_dishka
 from litestar import Litestar, delete, get, post
-from litestar.di import Provide
 from litestar.status_codes import HTTP_200_OK
 from sqlspec import SQLSpec
 from sqlspec.adapters.aiosqlite import AiosqliteConfig
@@ -52,7 +50,6 @@ from docs.examples.notes.sqlspec.common import (
     note_row_to_public,
 )
 from litestar_mcp import LitestarMCP, MCPConfig
-from litestar_mcp.executor import ToolExecutionContext
 
 
 class NotesDishkaProvider(Provider):
@@ -81,42 +78,25 @@ class NotesDishkaProvider(Provider):
 
 
 def create_app(database_path: str | None = None) -> Litestar:
-    """Create the Dishka-backed SQLSpec reference notes app (no auth).
-
-    Args:
-        database_path: Optional SQLite file path. When omitted, a
-            ``.reference-notes-sqlspec-dishka.sqlite`` file in the current
-            working directory is used.
-    """
+    """Create the Dishka-backed SQLSpec reference notes app (no auth)."""
     sqlite_path = Path(database_path or Path.cwd() / ".reference-notes-sqlspec-dishka.sqlite")
     sqlspec, config = build_sqlspec(str(sqlite_path))
     container = make_async_container(LitestarProvider(), NotesDishkaProvider(sqlspec, config))
 
-    def _unexpected() -> Any:
-        msg = "note_service must be provided by Dishka (HTTP) or the MCP dependency provider (tools)"
-        raise RuntimeError(msg)
-
-    note_service_placeholder = {"note_service": Provide(_unexpected, sync_to_thread=False)}
-
-    @get("/notes", opt={"mcp_tool": LIST_NOTES_TOOL_NAME}, dependencies=note_service_placeholder)
+    @get("/notes", opt={"mcp_tool": LIST_NOTES_TOOL_NAME})
     @inject
     async def list_notes(note_service: FromDishka[SQLSpecNoteService]) -> list[Note]:
         rows = await note_service.list_public()
         return [msgspec.convert(note_row_to_public(row), Note) for row in rows]
 
-    @post("/notes", opt={"mcp_tool": CREATE_NOTE_TOOL_NAME}, dependencies=note_service_placeholder)
+    @post("/notes", opt={"mcp_tool": CREATE_NOTE_TOOL_NAME})
     @inject
     async def create_note(data: dict[str, Any], note_service: FromDishka[SQLSpecNoteService]) -> Note:
         payload = msgspec.convert(data, CreateNoteInput)
         row = await note_service.create(title=payload.title, body=payload.body)
         return msgspec.convert(note_row_to_public(row), Note)
 
-    @delete(
-        "/notes/{note_id:str}",
-        status_code=HTTP_200_OK,
-        opt={"mcp_tool": DELETE_NOTE_TOOL_NAME},
-        dependencies=note_service_placeholder,
-    )
+    @delete("/notes/{note_id:str}", status_code=HTTP_200_OK, opt={"mcp_tool": DELETE_NOTE_TOOL_NAME})
     @inject
     async def delete_note(note_id: str, note_service: FromDishka[SQLSpecNoteService]) -> DeleteNoteResult:
         await note_service.delete(note_id)
@@ -130,20 +110,8 @@ def create_app(database_path: str | None = None) -> Litestar:
     def get_api_info() -> AppInfo:
         return build_app_info(backend="sqlspec", auth_mode="none", supports_dishka=True)
 
-    @asynccontextmanager
-    async def mcp_dependency_provider(context: ToolExecutionContext) -> AsyncIterator[dict[str, Any]]:
-        """Resolve the MCP tool ``note_service`` from the Dishka container."""
-        opt = getattr(context.handler, "opt", {}) or {}
-        if opt.get("mcp_tool") not in {LIST_NOTES_TOOL_NAME, CREATE_NOTE_TOOL_NAME, DELETE_NOTE_TOOL_NAME}:
-            yield {}
-            return
-        async with container() as request_container:
-            yield {"note_service": await request_container.get(SQLSpecNoteService)}
-
     async def on_startup() -> None:
         await bootstrap_schema(sqlspec, config)
-
-    mcp_config = MCPConfig(dependency_provider=mcp_dependency_provider)
 
     async def close_container() -> None:
         await container.close()
@@ -151,7 +119,7 @@ def create_app(database_path: str | None = None) -> Litestar:
     app = Litestar(
         route_handlers=[list_notes, create_note, delete_note, notes_schema, get_api_info],
         on_startup=[on_startup],
-        plugins=[SQLSpecPlugin(sqlspec), LitestarMCP(mcp_config)],
+        plugins=[SQLSpecPlugin(sqlspec), LitestarMCP(MCPConfig())],
         on_shutdown=[close_container],
     )
     setup_dishka(container, app)

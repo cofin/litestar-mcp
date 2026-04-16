@@ -19,7 +19,6 @@ is identical to the plain variant.
 # ///
 
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -34,7 +33,6 @@ from advanced_alchemy.service import OffsetPagination
 from dishka import Provider, Scope, make_async_container, provide
 from dishka.integrations.litestar import FromDishka, LitestarProvider, inject, setup_dishka
 from litestar import Litestar, delete, get, post
-from litestar.di import Provide
 from litestar.status_codes import HTTP_200_OK
 
 from docs.examples.notes.advanced_alchemy.common import NoteService
@@ -52,7 +50,6 @@ from docs.examples.notes.shared.contracts import (
     build_app_info,
 )
 from litestar_mcp import LitestarMCP, MCPConfig
-from litestar_mcp.executor import ToolExecutionContext
 
 
 class NotesDishkaProvider(Provider):
@@ -95,19 +92,13 @@ def create_app(database_path: str | None = None) -> Litestar:
     )
     container = make_async_container(LitestarProvider(), NotesDishkaProvider(alchemy_config))
 
-    def _unexpected() -> Any:
-        msg = "note_service must be provided by Dishka (HTTP) or the MCP dependency provider (tools)"
-        raise RuntimeError(msg)
-
-    note_service_placeholder = {"note_service": Provide(_unexpected, sync_to_thread=False)}
-
-    @get("/notes", opt={"mcp_tool": LIST_NOTES_TOOL_NAME}, dependencies=note_service_placeholder)
+    @get("/notes", opt={"mcp_tool": LIST_NOTES_TOOL_NAME})
     @inject
     async def list_notes(note_service: FromDishka[NoteService]) -> OffsetPagination[Note]:
         notes = await note_service.list()
         return note_service.to_schema(notes, schema_type=Note)
 
-    @post("/notes", opt={"mcp_tool": CREATE_NOTE_TOOL_NAME}, dependencies=note_service_placeholder)
+    @post("/notes", opt={"mcp_tool": CREATE_NOTE_TOOL_NAME})
     @inject
     async def create_note(data: dict[str, Any], note_service: FromDishka[NoteService]) -> Note:
         payload = msgspec.convert(data, CreateNoteInput)
@@ -118,7 +109,6 @@ def create_app(database_path: str | None = None) -> Litestar:
         "/notes/{note_id:str}",
         status_code=HTTP_200_OK,
         opt={"mcp_tool": DELETE_NOTE_TOOL_NAME},
-        dependencies=note_service_placeholder,
     )
     @inject
     async def delete_note(note_id: str, note_service: FromDishka[NoteService]) -> DeleteNoteResult:
@@ -133,28 +123,12 @@ def create_app(database_path: str | None = None) -> Litestar:
     def get_api_info() -> AppInfo:
         return build_app_info(backend="advanced_alchemy", auth_mode="none", supports_dishka=True)
 
-    @asynccontextmanager
-    async def mcp_dependency_provider(context: ToolExecutionContext) -> AsyncIterator[dict[str, Any]]:
-        """Resolve tool dependencies from the Dishka container for MCP tool calls.
-
-        Only the note CRUD tools need the service; the ``notes_schema`` and
-        ``app_info`` resources are static and would reject extra kwargs.
-        """
-        opt = getattr(context.handler, "opt", {}) or {}
-        if opt.get("mcp_tool") not in {LIST_NOTES_TOOL_NAME, CREATE_NOTE_TOOL_NAME, DELETE_NOTE_TOOL_NAME}:
-            yield {}
-            return
-        async with container() as request_container:
-            yield {"note_service": await request_container.get(NoteService)}
-
-    mcp_config = MCPConfig(dependency_provider=mcp_dependency_provider)
-
     async def close_container() -> None:
         await container.close()
 
     app = Litestar(
         route_handlers=[list_notes, create_note, delete_note, notes_schema, get_api_info],
-        plugins=[SQLAlchemyPlugin(config=alchemy_config), LitestarMCP(mcp_config)],
+        plugins=[SQLAlchemyPlugin(config=alchemy_config), LitestarMCP(MCPConfig())],
         on_shutdown=[close_container],
     )
     setup_dishka(container, app)

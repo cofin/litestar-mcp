@@ -17,7 +17,6 @@ HTTP/MCP surface is handed the shared public :class:`Note` shape.
 # ///
 
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -48,17 +47,10 @@ from docs.examples.notes.sqlspec.common import (
     provide_note_service,
 )
 from litestar_mcp import LitestarMCP, MCPConfig
-from litestar_mcp.executor import ToolExecutionContext
 
 
 def create_app(database_path: str | None = None) -> Litestar:
-    """Create the SQLSpec reference notes app (no auth).
-
-    Args:
-        database_path: Optional SQLite file path. When omitted, a
-            ``.reference-notes-sqlspec.sqlite`` file in the current working
-            directory is used.
-    """
+    """Create the SQLSpec reference notes app (no auth)."""
     sqlite_path = Path(database_path or Path.cwd() / ".reference-notes-sqlspec.sqlite")
     sqlspec, config = build_sqlspec(str(sqlite_path))
 
@@ -94,26 +86,11 @@ def create_app(database_path: str | None = None) -> Litestar:
     def get_api_info() -> AppInfo:
         return build_app_info(backend="sqlspec", auth_mode="none", supports_dishka=False)
 
-    @asynccontextmanager
-    async def mcp_dependency_provider(context: ToolExecutionContext) -> AsyncIterator[dict[str, Any]]:
-        """Provide the per-tool ``note_service`` from a fresh SQLSpec session.
-
-        The static ``notes_schema`` / ``app_info`` resources take no extra
-        kwargs, so this provider only yields the service for the tool
-        handlers that declare it.
-        """
-        opt = getattr(context.handler, "opt", {}) or {}
-        if opt.get("mcp_tool") not in {LIST_NOTES_TOOL_NAME, CREATE_NOTE_TOOL_NAME, DELETE_NOTE_TOOL_NAME}:
-            yield {}
-            return
-        async with provide_note_service(sqlspec, config) as service:
-            yield {"note_service": service}
-
     async def on_startup() -> None:
         await bootstrap_schema(sqlspec, config)
 
     return Litestar(
         route_handlers=[NoteController, notes_schema, get_api_info],
         on_startup=[on_startup],
-        plugins=[SQLSpecPlugin(sqlspec), LitestarMCP(MCPConfig(dependency_provider=mcp_dependency_provider))],
+        plugins=[SQLSpecPlugin(sqlspec), LitestarMCP(MCPConfig())],
     )

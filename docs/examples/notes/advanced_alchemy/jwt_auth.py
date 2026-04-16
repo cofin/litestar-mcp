@@ -1,13 +1,4 @@
-"""JWT-authenticated Advanced Alchemy reference notes example.
-
-Scopes notes by the validated ``sub`` claim of the bearer token. The app
-exposes a tiny ``/auth/login`` controller that accepts a username/password
-pair and returns an HS256-signed access token, so the example is runnable
-end-to-end without extra infrastructure.
-
-The same variant is reused by :mod:`docs.examples.notes.advanced_alchemy.jwt_auth_dishka`;
-see that module for the Dishka-backed variant.
-"""
+"""JWT-authenticated Advanced Alchemy reference notes example."""
 
 # /// script
 # requires-python = ">=3.10"
@@ -44,7 +35,7 @@ from docs.examples.notes.shared.auth import (
     DEFAULT_ISSUER,
     AuthenticatedIdentity,
     build_login_controller,
-    build_mcp_auth_config,
+    build_mcp_auth_metadata,
     build_oauth_backend,
     mint_hs256_token,
 )
@@ -74,21 +65,7 @@ def create_app(
     audience: str = DEFAULT_AUDIENCE,
     user_directory: dict[str, str] | None = None,
 ) -> Litestar:
-    """Create the JWT-authenticated Advanced Alchemy reference notes app.
-
-    Args:
-        database_path: Optional SQLite file path. When omitted, a
-            ``.reference-notes-aa-jwt.sqlite`` file in the current working
-            directory is used.
-        token_secret: HS256 secret used by both the login endpoint and the
-            token validator. Callers MUST pass a stable secret; there is no
-            default so the example fails loudly rather than signing tokens
-            with a placeholder.
-        issuer: JWT ``iss`` claim. Defaults to the locked foundation value.
-        audience: JWT ``aud`` claim. Defaults to the locked foundation value.
-        user_directory: Optional mapping of ``sub -> password`` used by the
-            demo login controller. Defaults to a pair of demo users.
-    """
+    """Create the JWT-authenticated Advanced Alchemy reference notes app."""
     sqlite_path = Path(database_path or Path.cwd() / ".reference-notes-aa-jwt.sqlite")
     alchemy_config = SQLAlchemyAsyncConfig(
         connection_string=f"sqlite+aiosqlite:///{sqlite_path}",
@@ -107,7 +84,6 @@ def create_app(
     oauth_backend = build_oauth_backend(secret=token_secret, issuer=issuer, audience=audience)
 
     async def _provide_resolved_user(request: Request[Any, Any, Any]) -> AuthenticatedIdentity:
-        """HTTP-side dependency that exposes the same identity the MCP executor injects."""
         user = request.user
         if not isinstance(user, AuthenticatedIdentity):
             msg = "Authenticated identity is required for this endpoint"
@@ -167,8 +143,7 @@ def create_app(
     def get_api_info() -> AppInfo:
         return build_app_info(backend="advanced_alchemy", auth_mode="jwt", supports_dishka=False)
 
-    mcp_config = MCPConfig()
-    mcp_config.auth = build_mcp_auth_config(secret=token_secret, issuer=issuer, audience=audience)
+    mcp_config = MCPConfig(auth=build_mcp_auth_metadata(issuer=issuer, audience=audience))
 
     return Litestar(
         route_handlers=[login_controller, NoteController, notes_schema, get_api_info],

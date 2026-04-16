@@ -30,7 +30,7 @@ exactly the same MCP surface:
 Dishka variants are a pure DI swap: the Litestar auth surface, the note
 service behavior, and the public MCP shapes are all identical to the
 plain variants. Dishka wires `SQLSpecNoteService` at request scope; the
-MCP plugin's `dependency_provider` hook resolves the same service for
+MCP tool execution uses Litestar's native DI pipeline to resolve the same service for
 tool calls (`ToolExecutionContext` -> Dishka container).
 
 ## SQLSpec conventions

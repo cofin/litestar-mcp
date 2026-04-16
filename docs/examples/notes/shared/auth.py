@@ -9,10 +9,11 @@ import msgspec
 from litestar import Controller, post
 from litestar.connection import ASGIConnection
 from litestar.exceptions import NotAuthorizedException
+from litestar.middleware import DefineMiddleware
 from litestar.security.jwt import OAuth2PasswordBearerAuth, Token
 from litestar.types import ASGIApp, Receive, Scope, Send
 
-from litestar_mcp.auth import MCPAuthConfig
+from litestar_mcp.auth import MCPAuthBackend, MCPAuthConfig
 from litestar_mcp.auth._oidc import _get_cached_json_document
 
 DEFAULT_ISSUER: Final = "http://localhost:8000/auth"
@@ -49,15 +50,12 @@ class LoginResponse(msgspec.Struct, kw_only=True):
 
 
 def _normalize_email(value: object) -> str | None:
-    """Normalize provider-prefixed email values into plain email addresses."""
     if not isinstance(value, str) or not value:
         return None
-
     if ":" in value:
         _, suffix = value.split(":", 1)
         if "@" in suffix:
             return suffix
-
     return value
 
 
@@ -67,11 +65,7 @@ def identity_from_claims(claims: dict[str, Any]) -> AuthenticatedIdentity:
     if not isinstance(sub, str) or not sub:
         msg = "Validated claims must include a non-empty 'sub' value"
         raise ValueError(msg)
-
-    return AuthenticatedIdentity(
-        sub=sub,
-        email=_normalize_email(claims.get("email")),
-    )
+    return AuthenticatedIdentity(sub=sub, email=_normalize_email(claims.get("email")))
 
 
 def mint_hs256_token(
@@ -83,11 +77,7 @@ def mint_hs256_token(
     expires_in: int = 3600,
     extra_claims: Mapping[str, Any] | None = None,
 ) -> str:
-    """Mint an HS256-signed bearer token with the shared claim set.
-
-    This helper exists primarily so the reference examples and their
-    tests do not drift on claim conventions.
-    """
+    """Mint an HS256-signed bearer token with the shared claim set."""
     now = datetime.now(tz=timezone.utc)
     payload: dict[str, Any] = {
         "sub": subject,
@@ -104,17 +94,11 @@ def mint_hs256_token(
 def build_token_validator(
     *, secret: str, issuer: str = DEFAULT_ISSUER, audience: str = DEFAULT_AUDIENCE
 ) -> Callable[[str], Any]:
-    """Build an async HS256 token validator used by both MCP and app auth."""
+    """Build an async HS256 token validator."""
 
     async def _validate(token: str) -> dict[str, Any] | None:
         try:
-            claims = jwt.decode(
-                token,
-                secret,
-                algorithms=[DEFAULT_ALGORITHM],
-                audience=audience,
-                issuer=issuer,
-            )
+            claims = jwt.decode(token, secret, algorithms=[DEFAULT_ALGORITHM], audience=audience, issuer=issuer)
         except jwt.PyJWTError:
             return None
         if not isinstance(claims, dict):  # pragma: no cover - defensive
@@ -127,9 +111,13 @@ def build_token_validator(
 async def _retrieve_identity_from_token(
     token: Token, _connection: ASGIConnection[Any, Any, Any, Any]
 ) -> AuthenticatedIdentity:
-    """Resolve a validated Litestar :class:`Token` into an identity."""
     extras = token.extras or {}
     return AuthenticatedIdentity(sub=token.sub, email=_normalize_email(extras.get("email")))
+
+
+async def _mcp_user_resolver(claims: dict[str, Any], _app: Any) -> AuthenticatedIdentity:
+    """Resolve MCP-validated claims into :class:`AuthenticatedIdentity`."""
+    return identity_from_claims(claims)
 
 
 def build_oauth_backend(
@@ -140,38 +128,29 @@ def build_oauth_backend(
     token_url: str = DEFAULT_TOKEN_PATH,
     exclude: list[str] | None = None,
 ) -> OAuth2PasswordBearerAuth[AuthenticatedIdentity, Token]:
-    """Build the Litestar OAuth2 bearer backend for the reference notes examples.
-
-    The MCP plugin exposes its own auth middleware for ``/mcp/*`` and the
-    ``/.well-known/`` discovery routes, so the OAuth2 backend excludes those
-    paths and leaves the app auth backend in charge of the rest of the app.
-    """
-    backend: OAuth2PasswordBearerAuth[AuthenticatedIdentity, Token] = OAuth2PasswordBearerAuth[
-        AuthenticatedIdentity, Token
-    ](
+    """Build the Litestar OAuth2 bearer backend for the reference notes examples."""
+    return OAuth2PasswordBearerAuth[AuthenticatedIdentity, Token](
         token_secret=secret,
         token_url=token_url,
         retrieve_user_handler=_retrieve_identity_from_token,
         algorithm=DEFAULT_ALGORITHM,
-        exclude=exclude or ["^/mcp(/.*)?$", "^/.well-known/"],
+        exclude=exclude or ["^/.well-known/"],
         accepted_issuers=[issuer],
         accepted_audiences=[audience],
     )
-    return backend
 
 
-async def _mcp_user_resolver(claims: dict[str, Any], _app: Any) -> AuthenticatedIdentity:
-    """Resolve MCP-validated claims into :class:`AuthenticatedIdentity`."""
-    return identity_from_claims(claims)
+def build_mcp_auth_metadata(*, issuer: str = DEFAULT_ISSUER, audience: str = DEFAULT_AUDIENCE) -> MCPAuthConfig:
+    """Build the metadata-only auth config for /.well-known/oauth-protected-resource."""
+    return MCPAuthConfig(issuer=issuer, audience=audience)
 
 
-def build_mcp_auth_config(
+def build_mcp_auth_middleware(
     *, secret: str, issuer: str = DEFAULT_ISSUER, audience: str = DEFAULT_AUDIENCE
-) -> MCPAuthConfig:
-    """Build the MCP-side auth config paired with :func:`build_oauth_backend`."""
-    return MCPAuthConfig(
-        issuer=issuer,
-        audience=audience,
+) -> DefineMiddleware:
+    """Build a ``DefineMiddleware(MCPAuthBackend, ...)`` for HS256 token validation."""
+    return DefineMiddleware(
+        MCPAuthBackend,
         token_validator=build_token_validator(secret=secret, issuer=issuer, audience=audience),
         user_resolver=_mcp_user_resolver,
     )
@@ -183,24 +162,11 @@ def build_login_controller(
     token_signer: Callable[[str], str],
     path: str = DEFAULT_TOKEN_PATH,
 ) -> type[Controller]:
-    """Build the minimal ``/auth/login`` controller used by JWT variants.
-
-    Args:
-        user_directory: Mapping of ``sub`` -> password. Demo only; real apps
-            MUST replace this with a real user store.
-        token_signer: Callable that turns a ``sub`` into a signed JWT string.
-        path: Path for the controller. Defaults to ``/auth/login``.
-
-    Returns:
-        A :class:`Controller` subclass exposing a single ``POST`` endpoint
-        that returns :class:`LoginResponse`.
-    """
+    """Build the minimal ``/auth/login`` controller used by JWT variants."""
     directory: dict[str, str] = dict(user_directory)
     controller_path = path
 
     class LoginController(Controller):
-        """Demo-only login controller for the reference notes examples."""
-
         path = controller_path
 
         @post("/", sync_to_thread=False)
@@ -242,19 +208,7 @@ def build_iap_token_validator(
     jwks_url: str = DEFAULT_IAP_JWKS_URL,
     leeway_seconds: int = 30,
 ) -> Callable[[str], Awaitable[dict[str, Any] | None]]:
-    """Build a validator for Google IAP signed assertions.
-
-    The returned coroutine verifies the ``ES256`` signature against Google's
-    published IAP JWKS, then checks ``iss`` and ``aud``. On Cloud Run the
-    ``audience`` is the backend service audience reported by IAP (for
-    example ``/projects/<PROJECT_NUMBER>/global/backendServices/<SERVICE_ID>``).
-
-    IAP tokens are short-lived (~10 minutes) and a small ``leeway_seconds``
-    keeps validation stable against ordinary clock drift. No real Google
-    metadata is fetched in tests — patch
-    :func:`litestar_mcp.auth._fetch_json_document` or pre-seed
-    :data:`litestar_mcp.auth._JSON_DOCUMENT_CACHE`.
-    """
+    """Build a validator for Google IAP signed assertions."""
 
     async def _validate(token: str) -> dict[str, Any] | None:
         try:
@@ -277,34 +231,22 @@ def build_iap_token_validator(
     return _validate
 
 
-def build_iap_mcp_auth_config(
+def build_iap_auth_middleware(
     *,
     audience: str,
     issuer: str = DEFAULT_IAP_ISSUER,
     jwks_url: str = DEFAULT_IAP_JWKS_URL,
-) -> MCPAuthConfig:
-    """Build an :class:`MCPAuthConfig` backed by the IAP signed-header validator."""
-    return MCPAuthConfig(
-        issuer=issuer,
-        audience=audience,
+) -> DefineMiddleware:
+    """Build a ``DefineMiddleware(MCPAuthBackend, ...)`` for IAP token validation."""
+    return DefineMiddleware(
+        MCPAuthBackend,
         token_validator=build_iap_token_validator(audience=audience, issuer=issuer, jwks_url=jwks_url),
         user_resolver=_mcp_user_resolver,
     )
 
 
 def build_iap_header_alias_middleware(app: ASGIApp) -> ASGIApp:
-    """Wrap ``app`` to alias ``x-goog-iap-jwt-assertion`` as ``Authorization``.
-
-    Google IAP injects the signed assertion in its own header rather than
-    ``Authorization``. The MCP plugin and the wider Litestar auth surface
-    consume ``Authorization: Bearer <token>``, so this middleware bridges
-    the two without weakening the trust boundary — the downstream validator
-    still verifies the signature before any request is authorized.
-
-    If an ``Authorization`` header is already present it is preserved; the
-    IAP header takes precedence only when the caller has not supplied one,
-    matching production topologies where IAP strips client-supplied bearers.
-    """
+    """Alias ``x-goog-iap-jwt-assertion`` as ``Authorization: Bearer`` for downstream middleware."""
 
     async def _middleware(scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in {"http", "websocket"}:

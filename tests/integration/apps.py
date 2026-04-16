@@ -1,7 +1,6 @@
 """Shared integration app factories for the database-backed MCP test matrix."""
 
-from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager, contextmanager
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -21,7 +20,6 @@ from sqlspec.adapters.duckdb import DuckDBConfig, DuckDBDriver
 from sqlspec.extensions.litestar import SQLSpecPlugin
 
 from litestar_mcp import LitestarMCP, MCPConfig
-from litestar_mcp.executor import ToolExecutionContext
 from tests.integration._auth import build_mcp_auth_config, build_oauth_backend
 
 AuthMode = Literal["none", "bearer"]
@@ -40,24 +38,7 @@ POSTGRES_TEST_TABLES = (
 )
 
 
-def _unexpected_dependency_provider(name: str) -> Provide:
-    def _provider() -> Any:
-        msg = f"{name} must be provided by the MCP dependency provider"
-        raise RuntimeError(msg)
-
-    return Provide(_provider, sync_to_thread=False)
-
-
-def _mcp_plugin(_dependency_provider: Any, *, auth_mode: AuthMode = "none") -> LitestarMCP:
-    # Ch2 removed MCPConfig.dependency_provider; Ch4 rewrites these fixtures
-    # to use native Litestar `Provide(...)` / Dishka `@inject` wiring.
-    config = MCPConfig()
-    if auth_mode == "bearer":
-        config.auth = build_mcp_auth_config()
-    return LitestarMCP(config)
-
-
-def _mcp_plugin_no_deps(*, auth_mode: AuthMode = "none") -> LitestarMCP:
+def _mcp_plugin(*, auth_mode: AuthMode = "none") -> LitestarMCP:
     config = MCPConfig()
     if auth_mode == "bearer":
         config.auth = build_mcp_auth_config()
@@ -65,7 +46,6 @@ def _mcp_plugin_no_deps(*, auth_mode: AuthMode = "none") -> LitestarMCP:
 
 
 def _auth_on_app_init(auth_mode: AuthMode) -> list[Any]:
-    """Return the ``on_app_init`` list appropriate for ``auth_mode``."""
     if auth_mode == "bearer":
         backend = build_oauth_backend()
         return [backend.on_app_init]
@@ -73,24 +53,16 @@ def _auth_on_app_init(auth_mode: AuthMode) -> list[Any]:
 
 
 class AlchemyWidget(UUIDAuditBase):
-    """Advanced Alchemy model used by the plain Postgres integration suite."""
-
     __tablename__ = AA_TABLE_NAME
-
     name: Mapped[str] = mapped_column(unique=True, index=True)
 
 
 class AlchemyDishkaWidget(UUIDAuditBase):
-    """Advanced Alchemy model used by the Dishka-backed Postgres suite."""
-
     __tablename__ = AA_DISHKA_TABLE_NAME
-
     name: Mapped[str] = mapped_column(unique=True, index=True)
 
 
 class AlchemyWidgetService(SQLAlchemyAsyncRepositoryService[AlchemyWidget]):
-    """Service used by the plain Advanced Alchemy integration suite."""
-
     class Repo(SQLAlchemyAsyncRepository[AlchemyWidget]):
         model_type = AlchemyWidget
 
@@ -99,8 +71,6 @@ class AlchemyWidgetService(SQLAlchemyAsyncRepositoryService[AlchemyWidget]):
 
 
 class AlchemyDishkaWidgetService(SQLAlchemyAsyncRepositoryService[AlchemyDishkaWidget]):
-    """Service used by the Dishka-backed Advanced Alchemy integration suite."""
-
     class Repo(SQLAlchemyAsyncRepository[AlchemyDishkaWidget]):
         model_type = AlchemyDishkaWidget
 
@@ -110,23 +80,17 @@ class AlchemyDishkaWidgetService(SQLAlchemyAsyncRepositoryService[AlchemyDishkaW
 
 @dataclass
 class SQLSpecReportRow:
-    """Typed SQLSpec row model for async Postgres-backed suites."""
-
     title: str
     source: str
 
 
 @dataclass
 class DuckDBReportRow:
-    """Typed SQLSpec row model for the sync DuckDB suite."""
-
     title: str
     source: str
 
 
 class SQLSpecReportService:
-    """SQLSpec service wrapper for async Postgres-backed report suites."""
-
     __slots__ = ("driver", "insert_sql", "select_all_sql", "select_one_sql", "source")
 
     def __init__(self, driver: AsyncpgDriver, *, table_name: str, source: str) -> None:
@@ -146,8 +110,6 @@ class SQLSpecReportService:
 
 
 class DuckDBReportService:
-    """SQLSpec service wrapper for the sync DuckDB suite."""
-
     __slots__ = ("driver",)
 
     def __init__(self, driver: DuckDBDriver) -> None:
@@ -201,14 +163,7 @@ def build_advanced_alchemy_app(
     *,
     auth_mode: AuthMode = "none",
 ) -> Litestar:
-    """Build a Litestar app using Advanced Alchemy against Postgres.
-
-    Args:
-        connection_string: Async SQLAlchemy connection string for Postgres.
-        auth_mode: Either ``"none"`` (the default, no auth) or ``"bearer"``
-            to wire the shared OAuth2 bearer backend plus MCP auth config.
-    """
-
+    """Build a Litestar app using Advanced Alchemy against Postgres."""
     alchemy_config = SQLAlchemyAsyncConfig(
         connection_string=connection_string,
         create_all=True,
@@ -234,7 +189,7 @@ def build_advanced_alchemy_app(
 
     return Litestar(
         route_handlers=[AlchemyWidgetController],
-        plugins=[SQLAlchemyPlugin(config=alchemy_config), _mcp_plugin_no_deps(auth_mode=auth_mode)],
+        plugins=[SQLAlchemyPlugin(config=alchemy_config), _mcp_plugin(auth_mode=auth_mode)],
         on_app_init=_auth_on_app_init(auth_mode),
     )
 
@@ -245,7 +200,6 @@ def build_sqlspec_asyncpg_app(
     auth_mode: AuthMode = "none",
 ) -> Litestar:
     """Build a Litestar app using SQLSpec AsyncPG against Postgres."""
-
     sqlspec = SQLSpec()
     config = sqlspec.add_config(
         AsyncpgConfig(
@@ -254,21 +208,14 @@ def build_sqlspec_asyncpg_app(
         )
     )
 
-    @asynccontextmanager
-    async def dependency_provider(_context: ToolExecutionContext) -> AsyncIterator[dict[str, Any]]:
+    async def provide_report_service() -> AsyncIterator[SQLSpecReportService]:
         async with sqlspec.provide_session(config) as db_session:
-            yield {
-                "report_service": SQLSpecReportService(
-                    db_session,
-                    table_name=SQLSPEC_TABLE_NAME,
-                    source="sqlspec",
-                )
-            }
+            yield SQLSpecReportService(db_session, table_name=SQLSPEC_TABLE_NAME, source="sqlspec")
 
     @get(
         "/sqlspec/reports",
         opt={"mcp_tool": "sqlspec_create_report"},
-        dependencies={"report_service": _unexpected_dependency_provider("report_service")},
+        dependencies={"report_service": Provide(provide_report_service)},
     )
     async def create_report(title: str, report_service: SQLSpecReportService) -> dict[str, str]:
         record = await report_service.create_report(title)
@@ -280,14 +227,12 @@ def build_sqlspec_asyncpg_app(
     return Litestar(
         route_handlers=[create_report],
         on_startup=[on_startup],
-        plugins=[SQLSpecPlugin(sqlspec), _mcp_plugin(dependency_provider, auth_mode=auth_mode)],
+        plugins=[SQLSpecPlugin(sqlspec), _mcp_plugin(auth_mode=auth_mode)],
         on_app_init=_auth_on_app_init(auth_mode),
     )
 
 
 class AdvancedAlchemyDishkaProvider(Provider):
-    """Dishka providers for the Advanced Alchemy integration suite."""
-
     def __init__(self, alchemy_config: SQLAlchemyAsyncConfig) -> None:
         super().__init__()
         self.alchemy_config = alchemy_config
@@ -308,7 +253,6 @@ def build_advanced_alchemy_dishka_app(
     auth_mode: AuthMode = "none",
 ) -> Litestar:
     """Build a Litestar app using Advanced Alchemy and Dishka against Postgres."""
-
     alchemy_config = SQLAlchemyAsyncConfig(
         connection_string=connection_string,
         create_all=True,
@@ -317,31 +261,16 @@ def build_advanced_alchemy_dishka_app(
     )
     container = make_async_container(LitestarProvider(), AdvancedAlchemyDishkaProvider(alchemy_config))
 
-    @asynccontextmanager
-    async def dependency_provider(_context: ToolExecutionContext) -> AsyncIterator[dict[str, Any]]:
-        async with container() as request_container:
-            yield {"widget_service": await request_container.get(AlchemyDishkaWidgetService)}
-
-    @get(
-        "/alchemy/dishka/widgets",
-        opt={"mcp_tool": "aa_dishka_create_widget"},
-        dependencies={"widget_service": _unexpected_dependency_provider("widget_service")},
-    )
+    @get("/alchemy/dishka/widgets", opt={"mcp_tool": "aa_dishka_create_widget"})
     @inject
     async def create_widget(name: str, widget_service: Inject[AlchemyDishkaWidgetService]) -> dict[str, str]:
-        # Uses the `FromDishka as Inject` alias (Phase 2.7) to prove the
-        # plugin's ``__dishka_orig_func__`` unwrap is annotation-alias
-        # insensitive.
         widget = await widget_service.create({"name": name}, auto_commit=True)
         return {"id": str(widget.id), "name": widget.name, "source": "dishka"}
 
-    async def close_container() -> None:
-        await container.close()
-
     app = Litestar(
         route_handlers=[create_widget],
-        on_shutdown=[close_container],
-        plugins=[SQLAlchemyPlugin(config=alchemy_config), _mcp_plugin(dependency_provider, auth_mode=auth_mode)],
+        on_shutdown=[container.close],
+        plugins=[SQLAlchemyPlugin(config=alchemy_config), _mcp_plugin(auth_mode=auth_mode)],
         on_app_init=_auth_on_app_init(auth_mode),
     )
     setup_dishka(container, app)
@@ -349,8 +278,6 @@ def build_advanced_alchemy_dishka_app(
 
 
 class SQLSpecDishkaProvider(Provider):
-    """Dishka providers for the SQLSpec integration suite."""
-
     def __init__(self, sqlspec: SQLSpec, config: AsyncpgConfig) -> None:
         super().__init__()
         self.sqlspec = sqlspec
@@ -372,7 +299,6 @@ def build_sqlspec_dishka_app(
     auth_mode: AuthMode = "none",
 ) -> Litestar:
     """Build a Litestar app using SQLSpec and Dishka against Postgres."""
-
     sqlspec = SQLSpec()
     config = sqlspec.add_config(
         AsyncpgConfig(
@@ -382,16 +308,7 @@ def build_sqlspec_dishka_app(
     )
     container = make_async_container(LitestarProvider(), SQLSpecDishkaProvider(sqlspec, config))
 
-    @asynccontextmanager
-    async def dependency_provider(_context: ToolExecutionContext) -> AsyncIterator[dict[str, Any]]:
-        async with container() as request_container:
-            yield {"report_service": await request_container.get(SQLSpecReportService)}
-
-    @get(
-        "/sqlspec/dishka/reports",
-        opt={"mcp_tool": "sqlspec_dishka_create_report"},
-        dependencies={"report_service": _unexpected_dependency_provider("report_service")},
-    )
+    @get("/sqlspec/dishka/reports", opt={"mcp_tool": "sqlspec_dishka_create_report"})
     @inject
     async def create_report(title: str, report_service: FromDishka[SQLSpecReportService]) -> dict[str, str]:
         record = await report_service.create_report(title)
@@ -400,14 +317,11 @@ def build_sqlspec_dishka_app(
     async def on_startup() -> None:
         await _prepare_sqlspec_asyncpg_table(sqlspec, config, SQLSPEC_DISHKA_TABLE_NAME)
 
-    async def close_container() -> None:
-        await container.close()
-
     app = Litestar(
         route_handlers=[create_report],
         on_startup=[on_startup],
-        on_shutdown=[close_container],
-        plugins=[SQLSpecPlugin(sqlspec), _mcp_plugin(dependency_provider, auth_mode=auth_mode)],
+        on_shutdown=[container.close],
+        plugins=[SQLSpecPlugin(sqlspec), _mcp_plugin(auth_mode=auth_mode)],
         on_app_init=_auth_on_app_init(auth_mode),
     )
     setup_dishka(container, app)
@@ -420,7 +334,6 @@ def build_sqlspec_duckdb_app(
     auth_mode: AuthMode = "none",
 ) -> Litestar:
     """Build a Litestar app using SQLSpec's sync DuckDB adapter."""
-
     sqlspec = SQLSpec()
     config = sqlspec.add_config(
         DuckDBConfig(
@@ -429,15 +342,14 @@ def build_sqlspec_duckdb_app(
         )
     )
 
-    @contextmanager
-    def dependency_provider(_context: ToolExecutionContext) -> Iterator[dict[str, Any]]:
+    def provide_report_service() -> DuckDBReportService:
         with sqlspec.provide_session(config) as db_session:
-            yield {"report_service": DuckDBReportService(db_session)}
+            return DuckDBReportService(db_session)
 
     @get(
         "/sqlspec/duckdb/reports",
         opt={"mcp_tool": "sqlspec_duckdb_create_report"},
-        dependencies={"report_service": _unexpected_dependency_provider("report_service")},
+        dependencies={"report_service": Provide(provide_report_service, sync_to_thread=False)},
         sync_to_thread=False,
     )
     def create_report(title: str, report_service: DuckDBReportService) -> dict[str, str]:
@@ -450,6 +362,6 @@ def build_sqlspec_duckdb_app(
     return Litestar(
         route_handlers=[create_report],
         on_startup=[on_startup],
-        plugins=[SQLSpecPlugin(sqlspec), _mcp_plugin(dependency_provider, auth_mode=auth_mode)],
+        plugins=[SQLSpecPlugin(sqlspec), _mcp_plugin(auth_mode=auth_mode)],
         on_app_init=_auth_on_app_init(auth_mode),
     )
