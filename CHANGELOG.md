@@ -33,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **Removed `ToolExecutionContext` dataclass and exports from `litestar_mcp/executor.py`.**
+  This legacy observability marker is no longer used by the native
+  request-pipeline.
+- **Removed `attach_stream` and `detach_stream` methods from `SSEManager` in `litestar_mcp/sse.py`.**
+  Stream association is now handled automatically within `open_stream`.
 - **Removed `MCPConfig.dependency_provider` and the `MCPDependencyProvider`
   protocol (`litestar_mcp/types.py` deleted).** Tool handlers now receive
   dependencies through Litestar's native DI pipeline
@@ -151,10 +156,6 @@ DefineMiddleware(MCPAuthBackend, providers=[OIDCProviderConfig(issuer="...", aud
 - `MCPDependencyProvider` Protocol in new `litestar_mcp.types` module.
   Runtime-checkable; accepts sync or async context managers returning a
   mapping of injected kwargs.
-- `ToolExecutionContext.request` — the inbound Litestar `Request` on HTTP
-  invocations (or `None` for CLI / stdio). Dependency providers needing
-  request-scoped state (headers, `request.state`, DI containers bound to
-  the request) can now reach it.
 - Per-URL single-flight locking on the JWKS / OIDC discovery cache.
   Concurrent cold-cache callers for the same URL coalesce into one
   upstream fetch; distinct URLs keep parallel throughput.
