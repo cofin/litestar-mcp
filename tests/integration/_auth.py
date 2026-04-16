@@ -11,9 +11,10 @@ from typing import Any
 
 import jwt
 from litestar.connection import ASGIConnection
+from litestar.middleware import DefineMiddleware
 from litestar.security.jwt import OAuth2PasswordBearerAuth, Token
 
-from litestar_mcp.auth import MCPAuthConfig
+from litestar_mcp.auth import MCPAuthBackend, MCPAuthConfig
 
 ISSUER = "https://auth.test.invalid"
 AUDIENCE = "https://api.test.invalid"
@@ -136,10 +137,19 @@ async def _mcp_user_resolver(claims: dict[str, Any], _app: Any) -> Authenticated
 
 
 def build_mcp_auth_config() -> MCPAuthConfig:
-    """Build the :class:`MCPAuthConfig` used when apps run in bearer mode."""
-    return MCPAuthConfig(
-        issuer=ISSUER,
-        audience=AUDIENCE,
+    """Build the metadata-only :class:`MCPAuthConfig` used when apps run in bearer mode.
+
+    Post-Ch3, this is pure metadata surfaced in
+    ``/.well-known/oauth-protected-resource``. Auth enforcement is installed
+    separately via :func:`build_mcp_auth_middleware`.
+    """
+    return MCPAuthConfig(issuer=ISSUER, audience=AUDIENCE)
+
+
+def build_mcp_auth_middleware() -> DefineMiddleware:
+    """Build the :class:`DefineMiddleware` wrapping MCPAuthBackend for integration apps."""
+    return DefineMiddleware(
+        MCPAuthBackend,
         token_validator=BearerTokenValidator(),
         user_resolver=_mcp_user_resolver,
     )
@@ -178,6 +188,7 @@ __all__ = (
     "BearerTokenValidator",
     "bearer_token_validator",
     "build_mcp_auth_config",
+    "build_mcp_auth_middleware",
     "build_oauth_backend",
     "mint_access_token",
 )

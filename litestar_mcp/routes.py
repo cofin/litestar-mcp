@@ -16,14 +16,12 @@ from litestar.status_codes import (
     HTTP_200_OK,
     HTTP_204_NO_CONTENT,
     HTTP_400_BAD_REQUEST,
-    HTTP_401_UNAUTHORIZED,
     HTTP_403_FORBIDDEN,
     HTTP_404_NOT_FOUND,
     HTTP_405_METHOD_NOT_ALLOWED,
     HTTP_503_SERVICE_UNAVAILABLE,
 )
 
-from litestar_mcp.auth import resolve_user, validate_bearer_token
 from litestar_mcp.config import MCPConfig
 from litestar_mcp.decorators import get_mcp_metadata
 from litestar_mcp.executor import execute_tool
@@ -53,19 +51,22 @@ MCP_SESSION_HEADER = "Mcp-Session-Id"
 SESSION_ERROR = -32000
 SESSION_NOT_INITIALIZED = -32002
 
-_AUTH_EXEMPT_METHODS = frozenset({"initialize", "ping", "notifications/initialized"})
 _SESSION_EXEMPT_METHODS = frozenset({"initialize", "ping"})
 _PRE_INIT_ALLOWED_METHODS = frozenset({"initialize", "ping", "notifications/initialized"})
 
 
 @dataclass
 class RequestContext:
-    """Authenticated request context used across tool and task execution."""
+    """Request context threaded through tool and task execution.
+
+    Authentication lives in Litestar middleware; ``request.user`` and
+    ``request.auth`` are the per-request source of truth for tool handlers.
+    This struct only carries the scope identifiers used by MCP itself
+    (client id, task-owner id, and the live request handle).
+    """
 
     client_id: str
     owner_id: str
-    user_claims: dict[str, Any] | None = None
-    resolved_user: Any = None
     request: "Request[Any, Any, Any] | None" = None
 
 
@@ -90,11 +91,23 @@ def _add_protocol_headers(response: Response[Any]) -> Response[Any]:
     return response
 
 
-def _auth_config_is_enabled(config: MCPConfig) -> bool:
-    return bool(config.auth and (config.auth.token_validator or config.auth.providers or config.auth.issuer))
+def _request_subject(request: Request[Any, Any, Any]) -> str | None:
+    """Best-effort ``sub``-like identifier from ``request.auth`` claims dict.
+
+    Middleware populates ``scope["auth"]`` with whatever shape it sets — this
+    helper reads the raw scope value (avoiding the ``request.auth`` property
+    which raises when no auth middleware is installed) and treats it as a
+    mapping, pulling ``"sub"`` if present. Non-mapping values are ignored.
+    """
+    auth = request.scope.get("auth")
+    if isinstance(auth, dict):
+        sub = auth.get("sub")
+        if isinstance(sub, str) and sub:
+            return sub
+    return None
 
 
-def _resolve_client_id(request: Request[Any, Any, Any], user_claims: dict[str, Any] | None) -> str:
+def _resolve_client_id(request: Request[Any, Any, Any]) -> str:
     explicit_client_id = (
         request.headers.get("x-mcp-client-id")
         or request.headers.get("mcp-client-id")
@@ -103,28 +116,19 @@ def _resolve_client_id(request: Request[Any, Any, Any], user_claims: dict[str, A
     )
     if explicit_client_id:
         return explicit_client_id
-    if user_claims and user_claims.get("sub"):
-        return f"user:{user_claims['sub']}"
+    sub = _request_subject(request)
+    if sub is not None:
+        return f"user:{sub}"
     if request.client and request.client.host:
         return f"remote:{request.client.host}"
     return "anonymous"
 
 
-def _build_request_context(
-    request: Request[Any, Any, Any],
-    *,
-    user_claims: dict[str, Any] | None,
-    resolved_user: Any,
-) -> RequestContext:
-    client_id = _resolve_client_id(request, user_claims)
-    owner_id = f"user:{user_claims['sub']}" if user_claims and user_claims.get("sub") else f"client:{client_id}"
-    return RequestContext(
-        client_id=client_id,
-        owner_id=owner_id,
-        user_claims=user_claims,
-        resolved_user=resolved_user,
-        request=request,
-    )
+def _build_request_context(request: Request[Any, Any, Any]) -> RequestContext:
+    client_id = _resolve_client_id(request)
+    sub = _request_subject(request)
+    owner_id = f"user:{sub}" if sub is not None else f"client:{client_id}"
+    return RequestContext(client_id=client_id, owner_id=owner_id, request=request)
 
 
 def _serialize_tool_content(value: Any) -> str:
@@ -144,8 +148,6 @@ def _build_tool_result(value: Any, *, is_error: bool, task_id: str | None = None
 
 
 _VALIDATION_CONTEXT_PARAMS = {
-    "resolved_user",
-    "user_claims",
     "request",
     "socket",
     "state",
@@ -292,47 +294,6 @@ def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: dict[str, A
     return sorted(errors, key=lambda entry: (entry["path"], entry["message"]))
 
 
-async def _authenticate_request(
-    request: Request[Any, Any, Any],
-    config: MCPConfig,
-    *,
-    method_name: str,
-) -> tuple[dict[str, Any] | None, Any, Response[Any] | None]:
-    auth_config = config.auth
-    if auth_config is None or not _auth_config_is_enabled(config) or method_name in _AUTH_EXEMPT_METHODS:
-        return None, None, None
-
-    auth_header = request.headers.get("authorization", "")
-    if not auth_header.startswith("Bearer "):
-        return (
-            None,
-            None,
-            Response(
-                content={"error": "Missing or invalid Authorization header"},
-                status_code=HTTP_401_UNAUTHORIZED,
-                media_type=MediaType.JSON,
-                headers={"WWW-Authenticate": "Bearer"},
-            ),
-        )
-
-    token = auth_header[7:]
-    user_claims = await validate_bearer_token(token, auth_config)
-    if user_claims is None:
-        return (
-            None,
-            None,
-            Response(
-                content={"error": "Invalid token"},
-                status_code=HTTP_401_UNAUTHORIZED,
-                media_type=MediaType.JSON,
-                headers={"WWW-Authenticate": "Bearer"},
-            ),
-        )
-
-    resolved_user = await resolve_user(user_claims, auth_config, request.app)
-    return user_claims, resolved_user, None
-
-
 def build_jsonrpc_router(
     config: MCPConfig,
     discovered_tools: dict[str, BaseRouteHandler],
@@ -361,15 +322,7 @@ def build_jsonrpc_router(
             )
 
         try:
-            result = await execute_tool(
-                handler,
-                app_ref,
-                tool_args,
-                config=config,
-                user_claims=request_context.user_claims,
-                resolved_user=request_context.resolved_user,
-                request=request_context.request,
-            )
+            result = await execute_tool(handler, app_ref, tool_args, request=request_context.request)
         except Exception as exc:  # noqa: BLE001
             return _build_tool_result({"error": str(exc)}, is_error=True, task_id=task_id)
 
@@ -475,12 +428,13 @@ def build_jsonrpc_router(
             return _build_tool_result({"error": "Tool arguments must be an object"}, is_error=True)
 
         if metadata.get("scopes") is not None:
-            if request_context.user_claims is None:
+            auth_claims = request_context.request.scope.get("auth") if request_context.request else None
+            if not isinstance(auth_claims, dict):
                 raise JSONRPCErrorException(
                     JSONRPCError(code=INVALID_PARAMS, message="This tool requires an authenticated request context.")
                 )
             required_scopes = set(metadata["scopes"])
-            user_scopes = set(request_context.user_claims.get("scopes", []))
+            user_scopes = set(auth_claims.get("scopes", []))
             if not required_scopes.issubset(user_scopes):
                 missing_scopes = sorted(required_scopes - user_scopes)
                 raise JSONRPCErrorException(
@@ -572,9 +526,6 @@ def build_jsonrpc_router(
                 handler,
                 app_ref,
                 {},
-                config=config,
-                user_claims=request_context.user_claims,
-                resolved_user=request_context.resolved_user,
                 request=request_context.request,
             )
         except Exception as exc:
@@ -696,11 +647,7 @@ class MCPController(Controller):
                 )
             )
 
-        user_claims, resolved_user, auth_response = await _authenticate_request(request, config, method_name="__sse__")
-        if auth_response is not None:
-            return auth_response
-
-        _build_request_context(request, user_claims=user_claims, resolved_user=resolved_user)
+        _build_request_context(request)
 
         session_id = request.headers.get(MCP_SESSION_HEADER) or request.headers.get(MCP_SESSION_HEADER.lower())
         if not session_id:
@@ -814,14 +761,6 @@ class MCPController(Controller):
                 )
             )
 
-        user_claims, resolved_user, auth_response = await _authenticate_request(
-            request,
-            config,
-            method_name=rpc_request.method,
-        )
-        if auth_response is not None:
-            return auth_response
-
         incoming_session_id = request.headers.get(MCP_SESSION_HEADER) or request.headers.get(MCP_SESSION_HEADER.lower())
         session = None
         response_session_id: str | None = None
@@ -893,7 +832,7 @@ class MCPController(Controller):
             with contextlib.suppress(SessionTerminated):
                 await session_manager.mark_initialized(incoming_session_id)
 
-        request_context = _build_request_context(request, user_claims=user_claims, resolved_user=resolved_user)
+        request_context = _build_request_context(request)
         router = build_jsonrpc_router(
             config,
             discovered_tools,

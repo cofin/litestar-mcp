@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from litestar_mcp import auth as auth_module
+from litestar_mcp.auth import _oidc as auth_module
 
 
 @pytest.fixture(autouse=True)

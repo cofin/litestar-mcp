@@ -25,7 +25,7 @@ from docs.examples.notes.sqlspec.google_iap import create_app
 from jwt.algorithms import ECAlgorithm
 from litestar.testing import TestClient
 
-import litestar_mcp.auth as mcp_auth
+import litestar_mcp.auth._oidc as mcp_auth
 from tests.integration.conftest import parse_tool_payload, rpc, rpc_response
 
 TEST_AUDIENCE = "/projects/000000000000/global/backendServices/111111111111"

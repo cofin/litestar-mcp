@@ -64,10 +64,13 @@ def test_build_oauth_backend_excludes_mcp_and_well_known_paths() -> None:
     assert any("well-known" in rule for rule in exclude)
 
 
-def test_build_mcp_auth_config_is_wired_with_shared_validator() -> None:
-    config = build_mcp_auth_config()
+def test_build_mcp_auth_config_exposes_metadata() -> None:
+    """Ch3: MCPAuthConfig is pure metadata; enforcement is in the separate middleware helper."""
+    from tests.integration._auth import build_mcp_auth_middleware
 
+    config = build_mcp_auth_config()
     assert config.issuer == ISSUER
     assert config.audience == AUDIENCE
-    assert config.token_validator is not None
-    assert config.user_resolver is not None
+
+    middleware = build_mcp_auth_middleware()
+    assert middleware is not None

@@ -12,7 +12,8 @@ from litestar.exceptions import NotAuthorizedException
 from litestar.security.jwt import OAuth2PasswordBearerAuth, Token
 from litestar.types import ASGIApp, Receive, Scope, Send
 
-from litestar_mcp.auth import MCPAuthConfig, _get_cached_json_document
+from litestar_mcp.auth import MCPAuthConfig
+from litestar_mcp.auth._oidc import _get_cached_json_document
 
 DEFAULT_ISSUER: Final = "http://localhost:8000/auth"
 DEFAULT_AUDIENCE: Final = "http://localhost:8000/api"

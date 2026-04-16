@@ -14,6 +14,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run before dependency resolution; stdio / CLI mode (no live request) skips
   guard enforcement. `MCPConfig.guards` continues to gate the `/mcp` router
   itself.
+- **`litestar_mcp.auth.MCPAuthBackend`** — the built-in
+  `AbstractAuthenticationMiddleware` that validates bearer tokens via OIDC
+  providers and/or a custom `token_validator` and populates
+  `connection.user` / `connection.auth`. Install via
+  `DefineMiddleware(MCPAuthBackend, providers=[...], user_resolver=...)`.
+  Apps that already ship their own auth middleware (DMA's IAP,
+  Litestar's JWT backends, etc.) don't need this — MCP tool handlers
+  read `request.user` / `request.auth` populated by whichever middleware
+  the app installed.
+
+### Changed
+
+- **Module layout:** `litestar_mcp.auth` is now a package. Public exports
+  (`MCPAuthConfig`, `OIDCProviderConfig`, `MCPAuthBackend`,
+  `create_oidc_validator`, `TokenValidator`) are unchanged at the package
+  level. `litestar_mcp.oidc` moved to `litestar_mcp.auth.oidc`.
 
 ### Breaking
 
@@ -24,6 +40,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Migrate by declaring dependencies with standard `Provide(...)` on the
   handler / router / app, or with `@inject` + `FromDishka[T]` when using the
   Dishka integration — the same way you would for any other Litestar route.
+- **`MCPAuthConfig` collapsed to pure metadata.** Only `issuer`, `audience`,
+  and `scopes` survive — these describe the auth surface advertised by
+  `/.well-known/oauth-protected-resource`. Removed fields:
+  `token_validator`, `user_resolver`, `providers`, `on_validation_error`.
+  Migrate enforcement into a Litestar middleware (the new `MCPAuthBackend`
+  or your own `AbstractAuthenticationMiddleware`); tool handlers read
+  `request.user` / `request.auth`.
+- **Removed `MCPAuthHardRejectionError`**, `validate_bearer_token`,
+  `resolve_user`, and the bespoke `routes.py:_authenticate_request` path.
+  Each middleware now owns its token space; failures raise
+  `NotAuthorizedException` and Litestar returns HTTP 401.
+- **`initialize`, `ping`, and `notifications/initialized` are no longer
+  exempt from auth.** Clients must present a bearer token before any
+  JSON-RPC call. The unauthenticated
+  `/.well-known/oauth-protected-resource` endpoint remains available for
+  discovery clients to bootstrap.
+- **`MCPConfig.auth` now accepts only the collapsed metadata struct.**
 
 ## v0.4.0 — 2026-04-15
 

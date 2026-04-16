@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 import pytest
 
-import litestar_mcp.auth as mcp_auth
+import litestar_mcp.auth._oidc as mcp_auth
 from litestar_mcp import TokenValidator, create_oidc_validator
 
 pytestmark = pytest.mark.anyio
@@ -68,7 +68,7 @@ async def test_factory_returns_claims_for_valid_token() -> None:
         assert url == "https://issuer.example.com/keys"
         return jwks
 
-    with patch("litestar_mcp.auth._fetch_json_document", side_effect=fake_fetch):
+    with patch("litestar_mcp.auth._oidc._fetch_json_document", side_effect=fake_fetch):
         claims = await validator(token)
 
     assert claims is not None
@@ -89,7 +89,7 @@ async def test_factory_rejects_wrong_signature() -> None:
     async def fake_fetch(url: str) -> dict[str, Any]:
         return jwks
 
-    with patch("litestar_mcp.auth._fetch_json_document", side_effect=fake_fetch):
+    with patch("litestar_mcp.auth._oidc._fetch_json_document", side_effect=fake_fetch):
         claims = await validator(token)
 
     assert claims is None
@@ -108,7 +108,7 @@ async def test_factory_rejects_wrong_issuer() -> None:
     async def fake_fetch(url: str) -> dict[str, Any]:
         return jwks
 
-    with patch("litestar_mcp.auth._fetch_json_document", side_effect=fake_fetch):
+    with patch("litestar_mcp.auth._oidc._fetch_json_document", side_effect=fake_fetch):
         claims = await validator(token)
 
     assert claims is None
@@ -127,7 +127,7 @@ async def test_factory_rejects_wrong_audience() -> None:
     async def fake_fetch(url: str) -> dict[str, Any]:
         return jwks
 
-    with patch("litestar_mcp.auth._fetch_json_document", side_effect=fake_fetch):
+    with patch("litestar_mcp.auth._oidc._fetch_json_document", side_effect=fake_fetch):
         claims = await validator(token)
 
     assert claims is None
@@ -155,7 +155,7 @@ async def test_factory_clock_skew_accepts_recently_expired() -> None:
     async def fake_fetch(url: str) -> dict[str, Any]:
         return jwks
 
-    with patch("litestar_mcp.auth._fetch_json_document", side_effect=fake_fetch):
+    with patch("litestar_mcp.auth._oidc._fetch_json_document", side_effect=fake_fetch):
         claims = await validator(token)
 
     assert claims is not None
@@ -184,7 +184,7 @@ async def test_factory_clock_skew_rejects_far_expired() -> None:
     async def fake_fetch(url: str) -> dict[str, Any]:
         return jwks
 
-    with patch("litestar_mcp.auth._fetch_json_document", side_effect=fake_fetch):
+    with patch("litestar_mcp.auth._oidc._fetch_json_document", side_effect=fake_fetch):
         claims = await validator(token)
 
     assert claims is None
@@ -207,7 +207,7 @@ async def test_factory_jwks_cache_ttl_respected(monkeypatch: pytest.MonkeyPatch)
     def fake_monotonic() -> float:
         return current_time[0]
 
-    monkeypatch.setattr("litestar_mcp.auth.monotonic", fake_monotonic)
+    monkeypatch.setattr("litestar_mcp.auth._oidc.monotonic", fake_monotonic)
 
     validator = create_oidc_validator(
         ISSUER,
@@ -218,7 +218,7 @@ async def test_factory_jwks_cache_ttl_respected(monkeypatch: pytest.MonkeyPatch)
     )
     token = _encode({"sub": "alice", "iss": ISSUER, "aud": AUDIENCE}, secret)
 
-    with patch("litestar_mcp.auth._fetch_json_document", side_effect=fake_fetch):
+    with patch("litestar_mcp.auth._oidc._fetch_json_document", side_effect=fake_fetch):
         # First call -> fetches once.
         assert await validator(token) is not None
         assert fetch_count == 1
@@ -250,7 +250,7 @@ async def test_factory_auto_discovery_when_no_jwks_uri() -> None:
     validator = create_oidc_validator(ISSUER, AUDIENCE, algorithms=("HS256",))
     token = _encode({"sub": "alice", "iss": ISSUER, "aud": AUDIENCE}, secret)
 
-    with patch("litestar_mcp.auth._fetch_json_document", side_effect=fake_fetch):
+    with patch("litestar_mcp.auth._oidc._fetch_json_document", side_effect=fake_fetch):
         claims = await validator(token)
 
     assert claims is not None

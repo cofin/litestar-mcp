@@ -29,8 +29,6 @@ if TYPE_CHECKING:
 
     from litestar.handlers.base import BaseRouteHandler
 
-    from litestar_mcp.config import MCPConfig
-
 __all__ = ("NotCallableInCLIContextError", "ToolExecutionContext", "execute_tool")
 
 
@@ -243,9 +241,6 @@ async def execute_tool(
     app: Litestar,
     tool_args: dict[str, Any],
     *,
-    config: MCPConfig | None = None,  # noqa: ARG001 (kept for callsite compat; Ch3 deletes)
-    user_claims: dict[str, Any] | None = None,  # noqa: ARG001 (kept for callsite compat; Ch3 deletes)
-    resolved_user: Any = None,  # noqa: ARG001 (kept for callsite compat; Ch3 deletes)
     request: Request[Any, Any, Any] | None = None,
 ) -> Any:
     """Execute an MCP tool handler through Litestar's native dispatch pipeline.
@@ -266,12 +261,6 @@ async def execute_tool(
         app: The running Litestar application.
         tool_args: Arguments from the MCP ``tools/call`` request; routed
             into path / query / body based on the handler's signature.
-        config: Kept for caller-site compatibility with Ch0 code paths;
-            unused by the native pipeline. Will be removed in Ch3.
-        user_claims: Kept for caller-site compatibility; will be removed in
-            Ch3 once auth moves to a Litestar middleware.
-        resolved_user: Kept for caller-site compatibility; will be removed
-            in Ch3.
         request: Inbound :class:`~litestar.Request` in HTTP mode, ``None``
             for CLI / stdio invocations.
 
