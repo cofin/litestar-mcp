@@ -13,7 +13,6 @@ from __future__ import annotations
 import inspect
 import re
 from contextlib import AsyncExitStack
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlencode
 
@@ -29,28 +28,7 @@ if TYPE_CHECKING:
 
     from litestar.handlers.base import BaseRouteHandler
 
-__all__ = ("NotCallableInCLIContextError", "ToolExecutionContext", "execute_tool")
-
-
-@dataclass
-class ToolExecutionContext:
-    """Observability snapshot of the dispatched tool invocation.
-
-    Handlers receive user / claims / DI through the synthesized ``request``
-    exactly as they would for an HTTP request.
-
-    Attributes:
-        app: The running Litestar application.
-        handler: The MCP-tool-marked route handler being invoked.
-        tool_args: Arguments from the MCP ``tools/call`` request.
-        request: The live (HTTP mode) or synthesized (stdio mode) Request the
-            handler dispatches against.
-    """
-
-    app: Litestar
-    handler: BaseRouteHandler
-    tool_args: dict[str, Any]
-    request: Request[Any, Any, Any]
+__all__ = ("NotCallableInCLIContextError", "execute_tool")
 
 
 class NotCallableInCLIContextError(ImproperlyConfiguredException):
@@ -136,7 +114,13 @@ def _split_tool_args(
     remaining = {k: v for k, v in tool_args.items() if k not in path_values}
 
     query_payload = {k: v for k, v in remaining.items() if k in scalar_sig_names}
-    body_payload = {k: v for k, v in remaining.items() if k not in query_payload} if has_data else {}
+
+    body_payload: Any = {}
+    if has_data:
+        if "data" in remaining:
+            body_payload = remaining["data"]
+        else:
+            body_payload = {k: v for k, v in remaining.items() if k not in query_payload}
 
     body = msgspec.json.encode(body_payload) if body_payload else b""
     return path_values, query_payload, body

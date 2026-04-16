@@ -63,3 +63,27 @@ async def test_sse_manager_broadcast_to_all_sessions() -> None:
     assert json.loads(r2.data) == message
     manager.disconnect(s1_id)
     manager.disconnect(s2_id)
+
+
+@pytest.mark.asyncio
+async def test_sse_manager_enqueue_direct() -> None:
+    """Verify that enqueue targets a specific stream ID, skipping others in the same session."""
+    manager = SSEManager()
+    s1_id, s1 = await manager.open_stream(session_id="session-a")
+    s2_id, s2 = await manager.open_stream(session_id="session-a")
+    await s1.__anext__()  # Prime
+    await s2.__anext__()  # Prime
+
+    message = {"data": "direct-to-s1"}
+    await manager.enqueue(s1_id, message)
+
+    # s1 should receive it
+    r1 = await asyncio.wait_for(s1.__anext__(), timeout=0.1)
+    assert json.loads(r1.data) == message
+
+    # s2 should NOT receive it
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(s2.__anext__(), timeout=0.1)
+
+    manager.disconnect(s1_id)
+    manager.disconnect(s2_id)

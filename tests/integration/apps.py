@@ -20,7 +20,7 @@ from sqlspec.adapters.duckdb import DuckDBConfig, DuckDBDriver
 from sqlspec.extensions.litestar import SQLSpecPlugin
 
 from litestar_mcp import LitestarMCP, MCPConfig
-from tests.integration._auth import build_mcp_auth_config, build_oauth_backend
+from tests.integration._auth import build_mcp_auth_config, build_mcp_auth_middleware, build_oauth_backend
 
 AuthMode = Literal["none", "bearer"]
 
@@ -49,6 +49,12 @@ def _auth_on_app_init(auth_mode: AuthMode) -> list[Any]:
     if auth_mode == "bearer":
         backend = build_oauth_backend()
         return [backend.on_app_init]
+    return []
+
+
+def _auth_middleware(auth_mode: AuthMode) -> list[Any]:
+    if auth_mode == "bearer":
+        return [build_mcp_auth_middleware()]
     return []
 
 
@@ -191,6 +197,7 @@ def build_advanced_alchemy_app(
         route_handlers=[AlchemyWidgetController],
         plugins=[SQLAlchemyPlugin(config=alchemy_config), _mcp_plugin(auth_mode=auth_mode)],
         on_app_init=_auth_on_app_init(auth_mode),
+        middleware=_auth_middleware(auth_mode),
     )
 
 
@@ -229,6 +236,7 @@ def build_sqlspec_asyncpg_app(
         on_startup=[on_startup],
         plugins=[SQLSpecPlugin(sqlspec), _mcp_plugin(auth_mode=auth_mode)],
         on_app_init=_auth_on_app_init(auth_mode),
+        middleware=_auth_middleware(auth_mode),
     )
 
 
@@ -272,6 +280,7 @@ def build_advanced_alchemy_dishka_app(
         on_shutdown=[container.close],
         plugins=[SQLAlchemyPlugin(config=alchemy_config), _mcp_plugin(auth_mode=auth_mode)],
         on_app_init=_auth_on_app_init(auth_mode),
+        middleware=_auth_middleware(auth_mode),
     )
     setup_dishka(container, app)
     return app
@@ -323,6 +332,7 @@ def build_sqlspec_dishka_app(
         on_shutdown=[container.close],
         plugins=[SQLSpecPlugin(sqlspec), _mcp_plugin(auth_mode=auth_mode)],
         on_app_init=_auth_on_app_init(auth_mode),
+        middleware=_auth_middleware(auth_mode),
     )
     setup_dishka(container, app)
     return app
@@ -342,9 +352,11 @@ def build_sqlspec_duckdb_app(
         )
     )
 
-    def provide_report_service() -> DuckDBReportService:
+    from typing import Iterator
+
+    def provide_report_service() -> Iterator[DuckDBReportService]:
         with sqlspec.provide_session(config) as db_session:
-            return DuckDBReportService(db_session)
+            yield DuckDBReportService(db_session)
 
     @get(
         "/sqlspec/duckdb/reports",
@@ -364,4 +376,5 @@ def build_sqlspec_duckdb_app(
         on_startup=[on_startup],
         plugins=[SQLSpecPlugin(sqlspec), _mcp_plugin(auth_mode=auth_mode)],
         on_app_init=_auth_on_app_init(auth_mode),
+        middleware=_auth_middleware(auth_mode),
     )

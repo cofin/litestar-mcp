@@ -81,27 +81,6 @@ class SSEManager:
         self._max_streams = max_streams
         self._max_idle_seconds = max_idle_seconds
 
-    def attach_stream(self, session_id: str, stream_id: str) -> None:
-        """Record an association between a session and a stream id.
-
-        Called by the route layer after the session is validated and a
-        stream is opened, so subsequent notifications can find every
-        stream belonging to the session.
-        """
-        self._session_streams.setdefault(session_id, set()).add(stream_id)
-        state = self._streams.get(stream_id)
-        if state is not None:
-            state.session_id = session_id
-
-    def detach_stream(self, session_id: str, stream_id: str) -> None:
-        """Remove the session→stream association. Idempotent."""
-        streams = self._session_streams.get(session_id)
-        if streams is None:
-            return
-        streams.discard(stream_id)
-        if not streams:
-            self._session_streams.pop(session_id, None)
-
     async def open_stream(
         self,
         session_id: str | None = None,
@@ -120,10 +99,6 @@ class SSEManager:
 
         Returns:
             A ``(stream_id, async_generator)`` pair.
-
-        Raises:
-            StreamLimitExceeded: When admitting the new stream would
-                exceed ``max_streams`` even after idle pruning.
         """
         async with self._lock:
             self._prune_idle_locked()
