@@ -58,6 +58,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   discovery clients to bootstrap.
 - **`MCPConfig.auth` now accepts only the collapsed metadata struct.**
 
+### Moved
+
+- `litestar_mcp.oidc` → `litestar_mcp.auth.oidc`.
+- `litestar_mcp/auth.py` → `litestar_mcp/auth/` package.
+- `litestar_mcp/types.py` deleted entirely.
+
+### Migration
+
+**Dependency injection** — replace `MCPConfig(dependency_provider=...)` with
+standard Litestar DI on handlers/controllers/app:
+
+```python
+# Before
+MCPConfig(dependency_provider=my_context_manager)
+
+# After — handler uses Provide() or @inject + FromDishka[T]
+MCPConfig()  # no dependency_provider needed
+```
+
+**Authentication** — replace `MCPAuthConfig(token_validator=..., user_resolver=...)`
+with a Litestar middleware:
+
+```python
+# Before
+MCPConfig(auth=MCPAuthConfig(token_validator=my_validator, user_resolver=my_resolver))
+
+# After — install MCPAuthBackend as middleware
+Litestar(
+    middleware=[DefineMiddleware(MCPAuthBackend, token_validator=my_validator, user_resolver=my_resolver)],
+    plugins=[LitestarMCP(MCPConfig(auth=MCPAuthConfig(issuer="...", audience="...")))],
+)
+```
+
+**OIDC providers** — move from `MCPAuthConfig.providers` to `MCPAuthBackend`:
+
+```python
+# Before
+MCPAuthConfig(providers=[OIDCProviderConfig(issuer="...", audience="...")])
+
+# After
+DefineMiddleware(MCPAuthBackend, providers=[OIDCProviderConfig(issuer="...", audience="...")])
+```
+
 ## v0.4.0 — 2026-04-15
 
 ### Added

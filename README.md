@@ -170,7 +170,7 @@ config = MCPConfig()
 | `exclude_operations` | `list[str] \| None` | `None` | Exclude matching operation names |
 | `include_tags` | `list[str] \| None` | `None` | Only expose routes with matching OpenAPI tags |
 | `exclude_tags` | `list[str] \| None` | `None` | Exclude routes with matching OpenAPI tags |
-| `auth` | `MCPAuthConfig \| None` | `None` | Enable bearer-token validation and OAuth metadata |
+| `auth` | `MCPAuthConfig \| None` | `None` | Metadata for `/.well-known/oauth-protected-resource` discovery |
 | `tasks` | `bool \| MCPTaskConfig` | `False` | Enable experimental in-memory MCP task support |
 
 ## Complete Example
@@ -247,61 +247,76 @@ app = Litestar(
 )
 ```
 
-## Advanced Integration: OIDC
+## Authentication
 
-For production workloads you can validate bearer tokens against any OIDC
-identity provider. The :func:`create_oidc_validator` factory returns an
-async callable suitable for
-:attr:`MCPAuthConfig.token_validator`; it shares its validation core with
-the declarative :class:`OIDCProviderConfig` path so behavior is identical.
+Authentication is a **Litestar middleware** concern. Apps with an existing auth
+middleware get MCP authentication for free — `request.user` and `request.auth`
+are populated before tool handlers run. Three integration paths:
 
-### Google IAP
+### Path A — Bring Your Own Middleware
+
+If your Litestar app already ships an `AbstractAuthenticationMiddleware` (or
+Litestar's built-in JWT backends), MCP inherits it automatically:
 
 ```python
-from litestar_mcp import MCPConfig, create_oidc_validator
-from litestar_mcp.auth import MCPAuthConfig
+from litestar import Litestar
+from litestar.middleware import DefineMiddleware
+from litestar_mcp import LitestarMCP, MCPConfig
 
-mcp_config = MCPConfig(
-    auth=MCPAuthConfig(
-        issuer="https://cloud.google.com/iap",
-        audience="/projects/PROJECT_NUMBER/global/backendServices/SERVICE_ID",
-        token_validator=create_oidc_validator(
-            issuer="https://cloud.google.com/iap",
-            audience="/projects/PROJECT_NUMBER/global/backendServices/SERVICE_ID",
-            jwks_uri="https://www.gstatic.com/iap/verify/public_key-jwk",
-            algorithms=("ES256",),
-        ),
-    ),
+app = Litestar(
+    route_handlers=[...],
+    plugins=[LitestarMCP(MCPConfig())],
+    middleware=[DefineMiddleware(YourAuthMiddleware)],  # MCP gets this for free
 )
 ```
 
 See `docs/examples/notes/sqlspec/google_iap.py` for a runnable example.
 
-### Generic OIDC (Okta / Auth0 / Keycloak)
+### Path B — Built-in MCPAuthBackend
+
+For OIDC workloads, install the built-in `MCPAuthBackend`:
 
 ```python
-from litestar_mcp import MCPConfig, create_oidc_validator
+from litestar import Litestar
+from litestar.middleware import DefineMiddleware
+from litestar_mcp import LitestarMCP, MCPAuthBackend, MCPConfig, OIDCProviderConfig
 from litestar_mcp.auth import MCPAuthConfig
 
-mcp_config = MCPConfig(
-    auth=MCPAuthConfig(
+app = Litestar(
+    route_handlers=[...],
+    plugins=[LitestarMCP(MCPConfig(auth=MCPAuthConfig(
         issuer="https://company.okta.com",
         audience="api://mcp-tools",
-        token_validator=create_oidc_validator(
+    )))],
+    middleware=[DefineMiddleware(
+        MCPAuthBackend,
+        providers=[OIDCProviderConfig(
             issuer="https://company.okta.com",
             audience="api://mcp-tools",
-            clock_skew=60,
-            jwks_cache_ttl=1800,
-        ),
-    ),
+        )],
+        user_resolver=lambda claims, app: MyUser(sub=claims["sub"]),
+    )],
 )
 ```
 
-The factory auto-discovers the JWKS URI from
-`{issuer}/.well-known/openid-configuration` when `jwks_uri` is omitted,
-and caches the JWKS document for `jwks_cache_ttl` seconds. The
-`clock_skew` argument relaxes `exp` / `iat` / `nbf` checks to absorb
-small clock drift between IdP and application.
+JWKS auto-discovery, caching, and `clock_skew` tolerance are built in.
+See `docs/examples/notes/sqlspec/cloud_run_jwt.py` for the full pattern.
+
+### Path C — Composable OIDC Factory
+
+`create_oidc_validator()` returns an async callable for use as
+`MCPAuthBackend(token_validator=...)` or inside your own middleware:
+
+```python
+from litestar_mcp import create_oidc_validator
+
+validator = create_oidc_validator(
+    "https://cloud.google.com/iap",
+    "/projects/PROJECT_NUMBER/global/backendServices/SERVICE_ID",
+    algorithms=("ES256",),
+    jwks_cache_ttl=1800,
+)
+```
 
 ## Development
 
