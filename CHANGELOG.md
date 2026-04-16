@@ -15,6 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   guard enforcement. `MCPConfig.guards` continues to gate the `/mcp` router
   itself.
 
+### Breaking
+
+- **Removed `MCPConfig.dependency_provider` and the `MCPDependencyProvider`
+  protocol (`litestar_mcp/types.py` deleted).** Tool handlers now receive
+  dependencies through Litestar's native DI pipeline
+  (`create_kwargs_model` → `resolve_dependencies` → `parse_values_from_connection_kwargs`).
+  Migrate by declaring dependencies with standard `Provide(...)` on the
+  handler / router / app, or with `@inject` + `FromDishka[T]` when using the
+  Dishka integration — the same way you would for any other Litestar route.
+
 ## v0.4.0 — 2026-04-15
 
 ### Added

@@ -48,8 +48,10 @@ def _unexpected_dependency_provider(name: str) -> Provide:
     return Provide(_provider, sync_to_thread=False)
 
 
-def _mcp_plugin(dependency_provider: Any, *, auth_mode: AuthMode = "none") -> LitestarMCP:
-    config = MCPConfig(dependency_provider=dependency_provider)
+def _mcp_plugin(_dependency_provider: Any, *, auth_mode: AuthMode = "none") -> LitestarMCP:
+    # Ch2 removed MCPConfig.dependency_provider; Ch4 rewrites these fixtures
+    # to use native Litestar `Provide(...)` / Dishka `@inject` wiring.
+    config = MCPConfig()
     if auth_mode == "bearer":
         config.auth = build_mcp_auth_config()
     return LitestarMCP(config)

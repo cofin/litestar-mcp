@@ -6,7 +6,6 @@ from typing import Any
 from litestar.stores.base import Store
 
 from litestar_mcp.auth import MCPAuthConfig  # noqa: TC001
-from litestar_mcp.types import MCPDependencyProvider  # noqa: TC001
 
 
 @dataclass
@@ -46,12 +45,6 @@ class MCPConfig:
             are accepted. When set, requests with a non-matching Origin are rejected with 403.
         auth: Optional OAuth 2.1 auth configuration. When set, bearer token validation
             is enforced on MCP endpoints.
-        dependency_provider: Optional context-managed hook for request-scoped dependency
-            injection during tool execution. Must match
-            :class:`~litestar_mcp.types.MCPDependencyProvider`. Receives a
-            :class:`~litestar_mcp.executor.ToolExecutionContext` whose
-            ``request`` attribute is the inbound HTTP ``Request`` (or
-            ``None`` for CLI / stdio invocations).
         tasks: Optional task configuration or ``True`` to enable the default
             experimental in-memory task implementation.
     """
@@ -66,7 +59,6 @@ class MCPConfig:
     include_tags: list[str] | None = None
     exclude_tags: list[str] | None = None
     auth: "MCPAuthConfig | None" = None
-    dependency_provider: "MCPDependencyProvider | None" = None
     tasks: "bool | MCPTaskConfig" = False
     session_store: Store | None = None
     session_max_idle_seconds: float = 3600.0
