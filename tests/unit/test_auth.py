@@ -92,7 +92,7 @@ class TestProtectedResourceMetadata:
             assert resp.status_code == 200
             data = resp.json()
             assert data["resource"] == "my-mcp-server"
-            assert "https://auth.example.com" in data["authorization_servers"]
+            assert data["authorization_servers"] == ["https://auth.example.com"]
 
     def test_well_known_with_scopes(self) -> None:
         auth = MCPAuthConfig(

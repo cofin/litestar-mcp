@@ -22,7 +22,7 @@ except ImportError:
 # -- Project information -----------------------------------------------------
 current_year = datetime.datetime.now().year
 project = "Litestar MCP"
-copyright = f"{current_year}, Litestar Organization"  # noqa: A001
+copyright = f"{current_year}, Litestar Organization"
 release = os.getenv("_LITESTAR_MCP_DOCS_BUILD_VERSION", __version__.rsplit(".")[0])
 suppress_warnings = [
     "autosectionlabel.*",

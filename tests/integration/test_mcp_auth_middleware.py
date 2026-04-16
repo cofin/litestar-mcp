@@ -229,7 +229,7 @@ class TestCollapsedAuthConfigMetadata:
             assert resp.status_code == 200
             body = resp.json()
             assert body["resource"] == "my-mcp"
-            assert "https://idp.example.com" in body["authorization_servers"]
+            assert body["authorization_servers"] == ["https://idp.example.com"]
             assert set(body["scopes_supported"]) == {"mcp:read", "mcp:write"}
 
             # With no middleware installed, there's no enforcement → initialize succeeds.
