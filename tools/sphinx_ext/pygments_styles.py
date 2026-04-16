@@ -214,3 +214,9 @@ class LitestarMcpDarkStyle(Style):
         Generic.Subheading: "bold",
         Generic.Traceback: "#ef9a9a",
     }
+
+
+# Aliases to prevent collisions with sqlspec documentation builds when both
+# are present in the same development environment.
+SQLSpecDarkStyle = LitestarMcpDarkStyle
+SQLSpecLightStyle = LitestarMcpLightStyle

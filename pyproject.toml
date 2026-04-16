@@ -78,7 +78,14 @@ doc = [
     "sphinx-autodoc-typehints",
     "shibuya",
 ]
-lint = ["mypy>=1.13.0", "pre-commit>=3.5.0", "pyright>=1.1.386", "ruff>=0.7.1", "slotscheck>=0.16.5"]
+lint = [
+    "mypy>=1.13.0",
+    "pre-commit>=3.5.0",
+    "pyright>=1.1.386",
+    "ruff>=0.7.1",
+    "slotscheck>=0.16.5",
+    "tomli>=2.4.1",
+]
 test = [
     "litestar[standard,jwt]",
     "pytest>=7.4.1",
@@ -98,6 +105,7 @@ test = [
     "attrs",
     "cattrs",
     "pydantic",
+    "tomli>=2.4.1",
 ]
 
 [tool.bumpversion]
@@ -244,7 +252,7 @@ warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
 follow_imports = "skip"
-module = ["_pytest.*", "pytest.*"]
+module = ["_pytest.*", "pytest.*", "sphinx.*"]
 
 [[tool.mypy.overrides]]
 disallow_untyped_decorators = false
