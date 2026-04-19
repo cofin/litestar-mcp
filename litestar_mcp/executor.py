@@ -28,6 +28,7 @@ from urllib.parse import urlencode
 
 import msgspec
 from litestar import Litestar, Request
+from litestar._asgi.routing_trie.traversal import parse_path_params
 from litestar.exceptions import ImproperlyConfiguredException
 from litestar.response import Response
 from litestar.types.empty import Empty
@@ -38,8 +39,14 @@ if TYPE_CHECKING:
 
     from litestar.handlers.base import BaseRouteHandler
     from litestar.handlers.http_handlers.base import HTTPRouteHandler
+    from litestar.types.internal_types import PathParameterDefinition
 
-__all__ = ("MCPToolErrorResult", "NotCallableInCLIContextError", "execute_tool")
+__all__ = (
+    "MCPPathParamCoercionError",
+    "MCPToolErrorResult",
+    "NotCallableInCLIContextError",
+    "execute_tool",
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -58,6 +65,28 @@ class NotCallableInCLIContextError(ImproperlyConfiguredException):
             reason: Human-readable explanation.
         """
         super().__init__(f"Tool '{handler_name}' cannot be called from the CLI: {reason}")
+
+
+class MCPPathParamCoercionError(ValueError):
+    """Raised when a typed path parameter cannot be coerced from its raw value.
+
+    Mirrors the failure mode Litestar's HTTP router surfaces when a URL
+    segment fails its declared parser (``{wid:uuid}`` with ``"not-a-uuid"``).
+    The MCP executor catches this so the JSON-RPC blanket catch can report a
+    structured error that names the offending argument.
+    """
+
+    def __init__(self, name: str, raw: Any, cause: Exception) -> None:
+        """Initialize the error.
+
+        Args:
+            name: Name of the path parameter that failed to coerce.
+            raw: The raw value passed in the ``tools/call`` arguments.
+            cause: Underlying parser exception.
+        """
+        super().__init__(f"Invalid value for path parameter {name!r}: {raw!r} ({cause})")
+        self.name = name
+        self.raw = raw
 
 
 class MCPToolErrorResult(Exception):  # noqa: N818
@@ -269,6 +298,59 @@ def _find_route_path_parameters(app: Litestar, handler: BaseRouteHandler) -> dic
     return {}
 
 
+def _coerce_path_params(
+    path_parameters: dict[str, PathParameterDefinition],
+    raw_values: dict[str, Any],
+) -> dict[str, Any]:
+    """Coerce raw path-param strings to their declared types via Litestar.
+
+    Uses :func:`litestar._asgi.routing_trie.traversal.parse_path_params`, the
+    same ``@lru_cache(1024)``-memoized helper Litestar's ASGI router runs on
+    every inbound request. Covers every built-in parser (``uuid``, ``int``,
+    ``float``, ``decimal``, ``date``, ``datetime``, ``time``, ``timedelta``,
+    ``path``) plus custom parsers registered on the app.
+
+    Args:
+        path_parameters: The owning route's ``path_parameters`` dict — each
+            value is a :class:`~litestar.types.internal_types.PathParameterDefinition`
+            carrying the parser callable (``None`` for plain ``str``).
+        raw_values: Subset of ``tool_args`` that matched path-parameter names.
+
+    Returns:
+        A new dict with each value parsed to its declared type. Values for
+        which the route declares no parser (e.g. ``{name:str}``) pass through
+        unchanged because ``PathParameterDefinition.parser`` is ``None``.
+
+    Raises:
+        MCPPathParamCoercionError: When a value cannot be parsed.
+    """
+    if not path_parameters or not raw_values:
+        return dict(raw_values)
+    present = tuple(defn for name, defn in path_parameters.items() if name in raw_values)
+    if not present:
+        return {}
+    try:
+        values_tuple = tuple(str(raw_values[defn.name]) for defn in present)
+        return parse_path_params(present, values_tuple)
+    except (ValueError, TypeError) as exc:
+        offending = next(
+            (defn.name for defn in present if _parser_would_reject(defn, raw_values[defn.name])),
+            present[0].name,
+        )
+        raise MCPPathParamCoercionError(offending, raw_values[offending], exc) from exc
+
+
+def _parser_would_reject(defn: PathParameterDefinition, raw: Any) -> bool:
+    """Return True when ``defn.parser`` raises on ``raw``. ``str``-typed params never reject."""
+    if defn.parser is None:
+        return False
+    try:
+        defn.parser(str(raw))
+    except (ValueError, TypeError):
+        return True
+    return False
+
+
 def _substitute_path(template: str, path_params: dict[str, Any]) -> str:
     """Replace ``{name}`` / ``{name:type}`` placeholders in ``template``.
 
@@ -362,8 +444,9 @@ def _build_dispatch_scope(
     Stdio mode starts from a blank scope.
     """
     path_values, query_values, body = _split_tool_args(handler, tool_args, path_parameters)
+    coerced_path_values = _coerce_path_params(path_parameters, path_values)
     path_template = next(iter(handler.paths)) if handler.paths else "/"
-    path = _substitute_path(path_template, path_values)
+    path = _substitute_path(path_template, coerced_path_values)
     query_string = urlencode(query_values, doseq=True).encode("ascii") if query_values else b""
 
     scope = _blank_http_scope(app)
@@ -389,7 +472,7 @@ def _build_dispatch_scope(
             "raw_path": path.encode("ascii"),
             "query_string": query_string,
             "headers": headers,
-            "path_params": path_values,
+            "path_params": coerced_path_values,
             "route_handler": handler,
             "path_template": path_template,
         },
