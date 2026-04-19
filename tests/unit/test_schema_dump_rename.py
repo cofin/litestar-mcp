@@ -102,22 +102,28 @@ def test_schema_dump_exclude_unset_strips_unset_with_rename() -> None:
     assert dumped == {"alwaysSet": "x"}
 
 
-def test_schema_dump_include_unset_keeps_unset_with_rename() -> None:
-    """``exclude_unset=False`` preserves UNSET values under the renamed key."""
+def test_schema_dump_include_unset_still_filters_unset_for_msgspec() -> None:
+    """``exclude_unset=False`` is a no-op for msgspec Structs.
+
+    msgspec's native encoder unconditionally filters ``UNSET`` at the wire
+    level — matching Litestar's HTTP dispatch behavior. The flag is accepted
+    for back-compat and honored for pydantic (via ``model_dump(exclude_unset=...)``)
+    but cannot re-insert ``UNSET`` into the msgspec wire output.
+    """
     dumped = schema_dump(CamelWithUnset(), exclude_unset=False)
-    assert dumped == {"fooBar": UNSET, "alwaysSet": "x"}
+    assert dumped == {"alwaysSet": "x"}
+    assert "fooBar" not in dumped
 
 
-def test_schema_dump_nested_renamed_struct_stays_as_struct_instance() -> None:
-    """Nested Structs are NOT recursed into by ``schema_dump``.
+def test_schema_dump_nested_renamed_struct_recurses_via_native_encoder() -> None:
+    """Nested Structs now serialize as nested dicts (matches HTTP wire output).
 
-    The outer dict has camelCased keys, but the inner value remains a Struct
-    instance. This pins current behavior; deep recursion is not in scope.
+    Previous bespoke dumpers stopped at the top-level Struct and left nested
+    Struct instances in place; Litestar's native encoder (and HTTP dispatch)
+    recurses into them automatically. MCP now matches that wire shape.
     """
     dumped = schema_dump(Outer(inner_field=InnerCamel(nested_name="hi")), exclude_unset=True)
-    assert isinstance(dumped, dict)
-    assert "innerField" in dumped
-    assert isinstance(dumped["innerField"], InnerCamel)
+    assert dumped == {"innerField": {"nestedName": "hi"}}
 
 
 def test_schema_dump_dataclass_unchanged() -> None:

@@ -1,9 +1,4 @@
-"""Red-phase tests for :mod:`litestar_mcp.utils.serialization` cache semantics.
-
-Every test imports from ``litestar_mcp._serializer``, which does not exist
-yet — Phase 2 creates it. All tests are expected to fail at collection time
-with ``ImportError`` until the module lands.
-"""
+"""Cache semantics for :mod:`litestar_mcp.utils.serialization`."""
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -142,11 +137,12 @@ def test_dump_many_respects_rename() -> None:
 
 def test_schema_serializer_key_property_reports_cache_key() -> None:
     pipeline = get_collection_serializer(_CamelItem(), exclude_unset=True)
-    assert pipeline.key == (_CamelItem, True)
+    # Cache key shape: (type, exclude_unset, encoder_map_id) — None map → trailing None.
+    assert pipeline.key == (_CamelItem, True, None)
 
 
 def test_schema_dump_for_attrs_instance_falls_through_pipeline() -> None:
-    """attrs path must round-trip through ``_dump_attrs`` (not ``__dict__`` fallback)."""
+    """Attrs path round-trips via Litestar's native encoder (no ``__dict__`` fallback needed)."""
     try:
         import attrs
     except ImportError:  # pragma: no cover - attrs is a dev dep
@@ -161,15 +157,25 @@ def test_schema_dump_for_attrs_instance_falls_through_pipeline() -> None:
     assert dumped == {"x": 3, "y": 4}
 
 
-def test_schema_dump_plain_object_uses_dict_fallback() -> None:
-    """Objects without dataclass/msgspec/attrs identity fall back to ``__dict__``."""
+def test_schema_dump_plain_object_requires_type_encoder() -> None:
+    """Plain classes (no dataclass/msgspec/attrs/pydantic identity) raise TypeError.
+
+    Matches Litestar's own HTTP wire behavior: an unknown type must be
+    explicitly registered via ``type_encoders={MyType: fn}`` on the route.
+    The previous silent ``__dict__`` fallback leaked private attributes and
+    was not aligned with HTTP dispatch — now users get an actionable error.
+    """
 
     class Plain:
         def __init__(self) -> None:
             self.alpha = 1
             self.beta = "two"
 
-    dumped = schema_dump(Plain())
+    with pytest.raises(TypeError, match="Plain"):
+        schema_dump(Plain())
+
+    # Registering an encoder produces the expected shape.
+    dumped = schema_dump(Plain(), type_encoders={Plain: lambda p: {"alpha": p.alpha, "beta": p.beta}})
     assert dumped == {"alpha": 1, "beta": "two"}
 
 
@@ -185,5 +191,6 @@ def test_serialize_collection_routes_bare_dict_through_primitive_shortcut() -> N
 def test_get_collection_serializer_for_dict_produces_identity_pipeline() -> None:
     """Dispatching on a dict sample caches the identity dumper."""
     pipeline = get_collection_serializer({"a": 1})
-    assert pipeline.key == (None, True)
+    # (type=None for dict/None samples, exclude_unset=True default, no encoder map).
+    assert pipeline.key == (None, True, None)
     assert pipeline.dump_one({"z": 9}) == {"z": 9}
