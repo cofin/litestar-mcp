@@ -41,11 +41,13 @@ Callers that want plain output regardless — for example the CLI — pass
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from litestar_mcp.config import MCPOptKeys
 from litestar_mcp.decorators import get_mcp_metadata
 
 Kind = Literal["tool", "resource"]
 
 _STRUCTURED_FIELDS: tuple[str, str, str] = ("when_to_use", "returns", "agent_instructions")
+_DEFAULT_OPT_KEYS: MCPOptKeys = MCPOptKeys()
 
 
 @dataclass(frozen=True)
@@ -68,12 +70,6 @@ class DescriptionSources:
     agent_instructions: str | None
 
 
-def _opt_key(field: str, kind: Kind) -> str:
-    if field == "description" and kind == "resource":
-        return "mcp_resource_description"
-    return f"mcp_{field}"
-
-
 def _clean(value: Any) -> str | None:
     if isinstance(value, str):
         stripped = value.strip()
@@ -82,14 +78,20 @@ def _clean(value: Any) -> str | None:
     return None
 
 
-def _read_field(handler: Any, fn: Any, field: str, kind: Kind) -> str | None:
+def _read_field(
+    handler: Any,
+    fn: Any,
+    field_name: str,
+    kind: Kind,
+    opt_keys: MCPOptKeys,
+) -> str | None:
     opt = getattr(handler, "opt", None) or {}
-    opt_value = _clean(opt.get(_opt_key(field, kind)))
+    opt_value = _clean(opt.get(opt_keys.for_field(field_name, kind)))
     if opt_value is not None:
         return opt_value
 
     metadata = get_mcp_metadata(handler) or get_mcp_metadata(fn) or {}
-    return _clean(metadata.get(field))
+    return _clean(metadata.get(field_name))
 
 
 def extract_description_sources(
@@ -98,6 +100,7 @@ def extract_description_sources(
     *,
     kind: Kind,
     fallback_name: str,
+    opt_keys: MCPOptKeys | None = None,
 ) -> DescriptionSources:
     """Resolve every description field for a handler.
 
@@ -109,19 +112,23 @@ def extract_description_sources(
         kind: Whether to resolve as ``"tool"`` or ``"resource"``.
         fallback_name: The final fallback used when no description source
             is set.
+        opt_keys: Optional :class:`~litestar_mcp.config.MCPOptKeys` that
+            renames the ``mcp_*`` opt keys read from ``handler.opt``.
+            Defaults to the built-in ``mcp_<purpose>`` names.
 
     Returns:
         A :class:`DescriptionSources` with ``description`` always populated.
     """
-    description = _read_field(handler, fn, "description", kind)
+    keys = opt_keys if opt_keys is not None else _DEFAULT_OPT_KEYS
+    description = _read_field(handler, fn, "description", kind, keys)
     if description is None:
         doc = _clean(getattr(fn, "__doc__", None))
         description = doc if doc is not None else f"{kind.title()}: {fallback_name}"
     return DescriptionSources(
         description=description,
-        when_to_use=_read_field(handler, fn, "when_to_use", kind),
-        returns=_read_field(handler, fn, "returns", kind),
-        agent_instructions=_read_field(handler, fn, "agent_instructions", kind),
+        when_to_use=_read_field(handler, fn, "when_to_use", kind, keys),
+        returns=_read_field(handler, fn, "returns", kind, keys),
+        agent_instructions=_read_field(handler, fn, "agent_instructions", kind, keys),
     )
 
 
@@ -132,6 +139,7 @@ def render_description(
     kind: Kind,
     fallback_name: str,
     structured: bool = True,
+    opt_keys: MCPOptKeys | None = None,
 ) -> str:
     """Render the final description string for a handler.
 
@@ -145,11 +153,14 @@ def render_description(
             ``## Instructions`` sections. When ``False``, only the plain
             description source is returned — callers that render to plain
             terminals or clients that don't handle markdown pass ``False``.
+        opt_keys: Optional :class:`~litestar_mcp.config.MCPOptKeys` that
+            renames the ``mcp_*`` opt keys read from ``handler.opt``.
+            Defaults to the built-in ``mcp_<purpose>`` names.
 
     Returns:
         The rendered description string.
     """
-    sources = extract_description_sources(handler, fn, kind=kind, fallback_name=fallback_name)
+    sources = extract_description_sources(handler, fn, kind=kind, fallback_name=fallback_name, opt_keys=opt_keys)
     if not structured:
         return sources.description
 

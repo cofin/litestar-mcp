@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behaviour keep their existing output unchanged. CLI output
   (`litestar mcp list-tools` / `list-resources` / `run`) stays plain-text.
   Closes [#39](https://github.com/cofin/litestar-mcp/issues/39).
+- `MCPConfig.opt_keys: MCPOptKeys` lets apps rename any `handler.opt[...]`
+  key the plugin reads — tool/resource discovery (`mcp_tool`, `mcp_resource`)
+  and the five description-rendering keys introduced above. Pattern
+  mirrors first-party Litestar conventions (see
+  `litestar.security.jwt.auth.JWTAuth.exclude_opt_key`). Defaults are
+  unchanged, so existing apps need no code changes.
 - MCP tool invocations now enforce guards from every layer
   (app / router / controller / route) via `handler.resolve_guards()`. Guards
   run before dependency resolution; stdio / CLI mode (no live request) skips

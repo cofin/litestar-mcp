@@ -140,7 +140,14 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
 
         # Use the description helper in plain (unstructured) mode so CLI
         # output stays terminal-friendly — no ``##`` markdown headers.
-        fn_doc = render_description(handler, fn, kind=kind, fallback_name=cmd_name, structured=False)
+        fn_doc = render_description(
+            handler,
+            fn,
+            kind=kind,
+            fallback_name=cmd_name,
+            structured=False,
+            opt_keys=plugin.config.opt_keys,
+        )
 
         from typing import cast
 
@@ -176,7 +183,12 @@ def list_tools(ctx: click.Context) -> None:
         fn = get_handler_function(handler)  # pragma: no cover
         # Plain description so terminal output never shows ``##`` headers.  # pragma: no cover
         description = render_description(
-            handler, fn, kind="tool", fallback_name=name, structured=False
+            handler,
+            fn,
+            kind="tool",
+            fallback_name=name,
+            structured=False,
+            opt_keys=plugin.config.opt_keys,
         )  # pragma: no cover
         first_line = description.split("\n")[0].strip()  # pragma: no cover
         console.print(f"- [bold]{name}[/bold]: {first_line}")  # pragma: no cover
@@ -200,7 +212,12 @@ def list_resources(ctx: click.Context) -> None:
         fn = get_handler_function(handler)  # pragma: no cover
         # Plain description so terminal output never shows ``##`` headers.  # pragma: no cover
         description = render_description(  # pragma: no cover
-            handler, fn, kind="resource", fallback_name=name, structured=False
+            handler,
+            fn,
+            kind="resource",
+            fallback_name=name,
+            structured=False,
+            opt_keys=plugin.config.opt_keys,
         )
         first_line = description.split("\n")[0].strip()  # pragma: no cover
         console.print(f"- [bold]{name}[/bold]: {first_line}")  # pragma: no cover

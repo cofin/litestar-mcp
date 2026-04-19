@@ -181,6 +181,70 @@ class TestResourceDescriptionPrecedence:
         assert render_description(handler, fn, kind="resource", fallback_name="bar") == "res-docstring."
 
 
+class TestCustomOptKeys:
+    """Downstream apps can rename opt keys via ``MCPConfig.opt_keys``."""
+
+    def test_renamed_tool_description_opt_key_is_honoured(self) -> None:
+        from litestar_mcp.config import MCPOptKeys
+
+        opt_keys = MCPOptKeys(description="x_mcp_description")
+
+        @mcp_tool("foo")
+        @get("/", opt={"x_mcp_description": "opt-prose"})
+        def handler() -> str:
+            """Docstring."""
+            return ""
+
+        fn = get_handler_function(handler)
+        assert render_description(handler, fn, kind="tool", fallback_name="foo", opt_keys=opt_keys) == "opt-prose"
+        # Default opt key is ignored when renamed
+        assert opt_keys.description != "mcp_description"
+        default_result = render_description(handler, fn, kind="tool", fallback_name="foo")
+        assert default_result == "Docstring."
+
+    def test_renamed_resource_description_opt_key(self) -> None:
+        from litestar_mcp.config import MCPOptKeys
+
+        opt_keys = MCPOptKeys(resource_description="x_mcp_resource_description")
+
+        @mcp_resource("bar")
+        @get("/", opt={"x_mcp_resource_description": "opt-res"})
+        def handler() -> str:
+            return ""
+
+        fn = get_handler_function(handler)
+        assert render_description(handler, fn, kind="resource", fallback_name="bar", opt_keys=opt_keys) == "opt-res"
+
+    def test_renamed_structured_field_opt_keys(self) -> None:
+        from litestar_mcp.config import MCPOptKeys
+
+        opt_keys = MCPOptKeys(
+            description="x_desc",
+            when_to_use="x_wtu",
+            returns="x_ret",
+            agent_instructions="x_ai",
+        )
+
+        @get(
+            "/",
+            opt={
+                "x_desc": "d",
+                "x_wtu": "wtu",
+                "x_ret": "ret",
+                "x_ai": "ai",
+            },
+        )
+        def handler() -> str:
+            return ""
+
+        fn = get_handler_function(handler)
+        result = render_description(handler, fn, kind="tool", fallback_name="foo", opt_keys=opt_keys)
+        assert result.startswith("d")
+        assert "## When to use\nwtu" in result
+        assert "## Returns\nret" in result
+        assert "## Instructions\nai" in result
+
+
 class TestExtractDescriptionSources:
     def test_returns_structured_dataclass(self) -> None:
         @mcp_tool("foo", description="d", when_to_use="wtu", returns="r", agent_instructions="ai")

@@ -14,7 +14,7 @@ from litestar_mcp.auth import (
     TokenValidator,
     create_oidc_validator,
 )
-from litestar_mcp.config import MCPConfig
+from litestar_mcp.config import MCPConfig, MCPOptKeys
 from litestar_mcp.decorators import mcp_resource, mcp_tool
 from litestar_mcp.plugin import LitestarMCP
 from litestar_mcp.routes import MCPController
@@ -25,6 +25,7 @@ __all__ = (
     "MCPAuthConfig",
     "MCPConfig",
     "MCPController",
+    "MCPOptKeys",
     "OIDCProviderConfig",
     "TokenValidator",
     "__version__",
