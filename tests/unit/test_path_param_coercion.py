@@ -12,7 +12,7 @@ like ``UUID == str`` silently fail, producing wrong ``PermissionDenied`` /
 These tests pin the fix: the dispatch scope must carry the coerced value for
 every built-in parser (``uuid``, ``int``, ``float``, ``datetime`` …), leave
 untyped ``str`` params alone, and surface structured ``INVALID_PARAMS`` errors
-for unparseable values.
+for unparsable values.
 """
 
 from datetime import datetime
