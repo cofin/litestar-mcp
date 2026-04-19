@@ -6,7 +6,7 @@ from litestar import Controller, Litestar, get
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP
-from litestar_mcp.decorators import mcp_tool
+from litestar_mcp.utils import mcp_tool
 
 
 def _ensure_session(client: TestClient[Any]) -> str:

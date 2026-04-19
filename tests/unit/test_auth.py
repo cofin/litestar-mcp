@@ -18,7 +18,7 @@ from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig
 from litestar_mcp.auth import MCPAuthConfig, OIDCProviderConfig
-from litestar_mcp.decorators import mcp_tool
+from litestar_mcp.utils import mcp_tool
 
 
 def _make_app(auth_config: MCPAuthConfig | None = None) -> Litestar:

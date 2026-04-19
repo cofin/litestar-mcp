@@ -14,7 +14,7 @@ import jwt
 import pytest
 
 from litestar_mcp.auth import DefaultJWKSCache, create_oidc_validator
-from litestar_mcp.auth._cache import reset_default_cache
+from litestar_mcp.auth.oidc import reset_default_cache
 
 pytestmark = pytest.mark.integration
 
@@ -56,7 +56,7 @@ def _token(audience: str) -> str:
 @pytest.fixture(autouse=True)
 def _reset_default_cache_fixture() -> Iterator[None]:
     reset_default_cache()
-    from litestar_mcp.auth import _oidc as oidc_internals
+    from litestar_mcp.auth import oidc as oidc_internals
 
     oidc_internals._FETCH_LOCKS.clear()
     yield
@@ -76,7 +76,7 @@ async def test_shared_cache_deduplicates_jwks_fetches() -> None:
         fetch_count += 1
         return _jwks()
 
-    with patch("litestar_mcp.auth._oidc._fetch_json_document", side_effect=fake_fetch):
+    with patch("litestar_mcp.auth.oidc._fetch_json_document", side_effect=fake_fetch):
         validator_a = create_oidc_validator(
             ISSUER, AUDIENCE_A, jwks_uri=JWKS_URL, algorithms=("HS256",), jwks_cache=shared
         )
@@ -102,7 +102,7 @@ async def test_default_cache_deduplicates_jwks_fetches() -> None:
         fetch_count += 1
         return _jwks()
 
-    with patch("litestar_mcp.auth._oidc._fetch_json_document", side_effect=fake_fetch):
+    with patch("litestar_mcp.auth.oidc._fetch_json_document", side_effect=fake_fetch):
         validator_a = create_oidc_validator(ISSUER, AUDIENCE_A, jwks_uri=JWKS_URL, algorithms=("HS256",))
         validator_b = create_oidc_validator(ISSUER, AUDIENCE_B, jwks_uri=JWKS_URL, algorithms=("HS256",))
         claims_a = await validator_a(_token(AUDIENCE_A))
@@ -125,7 +125,7 @@ async def test_separate_caches_isolate_fetches() -> None:
         fetch_count += 1
         return _jwks()
 
-    with patch("litestar_mcp.auth._oidc._fetch_json_document", side_effect=fake_fetch):
+    with patch("litestar_mcp.auth.oidc._fetch_json_document", side_effect=fake_fetch):
         validator_a = create_oidc_validator(
             ISSUER, AUDIENCE_A, jwks_uri=JWKS_URL, algorithms=("HS256",), jwks_cache=cache_a
         )

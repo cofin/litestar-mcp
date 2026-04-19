@@ -2,7 +2,7 @@
 
 from litestar.handlers import get
 
-from litestar_mcp.decorators import get_mcp_metadata, mcp_resource, mcp_tool
+from litestar_mcp.utils import get_mcp_metadata, mcp_resource, mcp_tool
 
 
 def test_mcp_tool_decorator_storage() -> None:

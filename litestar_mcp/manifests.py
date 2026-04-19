@@ -4,12 +4,10 @@ from typing import Any
 
 from litestar import Litestar
 
-from litestar_mcp._descriptions import render_description
 from litestar_mcp.auth import MCPAuthConfig  # noqa: TC001
 from litestar_mcp.config import MCPConfig
-from litestar_mcp.decorators import get_mcp_metadata
 from litestar_mcp.schema_builder import generate_schema_for_handler
-from litestar_mcp.utils import get_handler_function
+from litestar_mcp.utils import get_handler_function, get_mcp_metadata, render_description
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
 

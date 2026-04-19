@@ -15,7 +15,7 @@ from litestar import Litestar, get
 from litestar.testing import AsyncTestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig
-from litestar_mcp.decorators import mcp_tool
+from litestar_mcp.utils import mcp_tool
 
 pytestmark = pytest.mark.unit
 

@@ -2,7 +2,7 @@
 
 import pytest
 
-from litestar_mcp._uri_template import expand_template, match_uri, parse_template
+from litestar_mcp.utils import expand_template, match_uri, parse_template
 
 pytestmark = pytest.mark.unit
 

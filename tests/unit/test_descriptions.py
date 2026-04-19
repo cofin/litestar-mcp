@@ -7,9 +7,13 @@ structured-field rendering (``## When to use`` / ``## Returns`` /
 
 from litestar.handlers import get
 
-from litestar_mcp._descriptions import extract_description_sources, render_description
-from litestar_mcp.decorators import mcp_resource, mcp_tool
-from litestar_mcp.utils import get_handler_function
+from litestar_mcp.utils import (
+    extract_description_sources,
+    get_handler_function,
+    mcp_resource,
+    mcp_tool,
+    render_description,
+)
 
 
 class TestToolDescriptionPrecedence:

@@ -18,10 +18,8 @@ Exports:
 
 from __future__ import annotations
 
-from litestar_mcp.auth._cache import DefaultJWKSCache, JWKSCache
-from litestar_mcp.auth.backend import MCPAuthBackend
-from litestar_mcp.auth.config import MCPAuthConfig, OIDCProviderConfig
-from litestar_mcp.auth.oidc import TokenValidator, create_oidc_validator
+from litestar_mcp.auth.backend import MCPAuthBackend, MCPAuthConfig, OIDCProviderConfig
+from litestar_mcp.auth.oidc import DefaultJWKSCache, JWKSCache, TokenValidator, create_oidc_validator
 
 __all__ = (
     "DefaultJWKSCache",

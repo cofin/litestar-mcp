@@ -22,12 +22,8 @@ from litestar.status_codes import (
     HTTP_503_SERVICE_UNAVAILABLE,
 )
 
-from litestar_mcp._descriptions import render_description
-from litestar_mcp._uri_template import match_uri
 from litestar_mcp.config import MCPConfig
-from litestar_mcp.decorators import get_mcp_metadata
 from litestar_mcp.executor import execute_tool
-from litestar_mcp.filters import should_include_handler
 from litestar_mcp.jsonrpc import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
@@ -45,7 +41,13 @@ from litestar_mcp.schema_builder import generate_schema_for_handler
 from litestar_mcp.sessions import MCPSessionManager, SessionTerminated
 from litestar_mcp.sse import StreamLimitExceeded
 from litestar_mcp.tasks import InMemoryTaskStore, TaskLookupError, TaskRecord, TaskStateError
-from litestar_mcp.utils import get_handler_function
+from litestar_mcp.utils import (
+    get_handler_function,
+    get_mcp_metadata,
+    match_uri,
+    render_description,
+    should_include_handler,
+)
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
 MCP_SESSION_HEADER = "Mcp-Session-Id"

@@ -6,7 +6,7 @@ from litestar import Litestar, get
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig
-from litestar_mcp.filters import should_include_handler
+from litestar_mcp.utils import should_include_handler
 
 # ---------------------------------------------------------------------------
 # Unit tests for should_include_handler

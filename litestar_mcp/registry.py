@@ -5,8 +5,8 @@ from typing import Any
 
 from litestar.handlers import BaseRouteHandler
 
-from litestar_mcp._uri_template import parse_template
 from litestar_mcp.sse import SSEManager
+from litestar_mcp.utils import parse_template
 
 
 @dataclass(frozen=True, slots=True)

@@ -10,9 +10,8 @@ from litestar.cli._utils import LitestarGroup
 from rich.console import Console
 from rich.json import JSON
 
-from litestar_mcp._descriptions import render_description
 from litestar_mcp.executor import NotCallableInCLIContextError, execute_tool
-from litestar_mcp.utils import get_handler_function
+from litestar_mcp.utils import get_handler_function, render_description
 
 try:
     import rich_click as click

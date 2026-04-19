@@ -59,7 +59,7 @@ async def test_default_cache_roundtrip() -> None:
 async def test_default_cache_ttl_expiry(monkeypatch: pytest.MonkeyPatch) -> None:
     cache = DefaultJWKSCache()
     now = [100.0]
-    monkeypatch.setattr("litestar_mcp.auth._cache.monotonic", lambda: now[0])
+    monkeypatch.setattr("litestar_mcp.auth.oidc.monotonic", lambda: now[0])
 
     await cache.set("u", {"k": 1}, ttl=5)
     assert (await cache.get("u")) == {"k": 1}
@@ -100,14 +100,14 @@ async def test_default_cache_concurrent_writes_last_wins() -> None:
 
 @pytest.mark.anyio
 async def test_get_default_cache_returns_singleton() -> None:
-    from litestar_mcp.auth._cache import get_default_cache
+    from litestar_mcp.auth.oidc import get_default_cache
 
     assert get_default_cache() is get_default_cache()
 
 
 @pytest.mark.anyio
 async def test_reset_default_cache_clears_state() -> None:
-    from litestar_mcp.auth._cache import get_default_cache, reset_default_cache
+    from litestar_mcp.auth.oidc import get_default_cache, reset_default_cache
 
     cache = get_default_cache()
     await cache.set("u", {"k": 1}, ttl=60)
@@ -122,7 +122,7 @@ async def test_injected_cache_consulted_before_fetch(monkeypatch: pytest.MonkeyP
 
     import jwt
 
-    from litestar_mcp.auth._oidc import _validate_oidc_bearer
+    from litestar_mcp.auth.oidc import _validate_oidc_bearer
 
     secret = b"secret"
     kid = "test-key"
@@ -150,7 +150,7 @@ async def test_injected_cache_consulted_before_fetch(monkeypatch: pytest.MonkeyP
         msg = "Network fetch must not be called when cache hits"
         raise AssertionError(msg)
 
-    monkeypatch.setattr("litestar_mcp.auth._oidc._fetch_json_document", fail_fetch)
+    monkeypatch.setattr("litestar_mcp.auth.oidc._fetch_json_document", fail_fetch)
 
     claims = await _validate_oidc_bearer(
         token,

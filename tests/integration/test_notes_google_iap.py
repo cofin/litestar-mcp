@@ -24,7 +24,7 @@ from docs.examples.notes.sqlspec.google_iap import create_app
 from jwt.algorithms import ECAlgorithm
 from litestar.testing import TestClient
 
-from litestar_mcp.auth._cache import get_default_cache
+from litestar_mcp.auth.oidc import get_default_cache
 from tests.integration.conftest import parse_tool_payload, rpc, rpc_response
 
 TEST_AUDIENCE = "/projects/000000000000/global/backendServices/111111111111"

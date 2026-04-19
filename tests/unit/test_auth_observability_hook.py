@@ -14,9 +14,8 @@ from unittest.mock import patch
 
 import pytest
 
-from litestar_mcp.auth import _oidc as oidc_internals
-from litestar_mcp.auth._cache import reset_default_cache
-from litestar_mcp.auth._oidc import _validate_oidc_bearer
+from litestar_mcp.auth import oidc as oidc_internals
+from litestar_mcp.auth.oidc import _validate_oidc_bearer, reset_default_cache
 
 
 @pytest.fixture(autouse=True)

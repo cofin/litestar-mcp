@@ -63,6 +63,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`MCPAuthConfig`, `OIDCProviderConfig`, `MCPAuthBackend`,
   `create_oidc_validator`, `TokenValidator`) are unchanged at the package
   level. `litestar_mcp.oidc` moved to `litestar_mcp.auth.oidc`.
+- **Internal package layout flattened.** `filters.py`, `decorators.py`,
+  `_descriptions.py`, and `_uri_template.py` fold into `utils.py`;
+  `auth/config.py`, `auth/_oidc.py`, and `auth/_cache.py` fold into
+  `auth/backend.py` + `auth/oidc.py`. Public exports (`from litestar_mcp
+  import ...` and `from litestar_mcp.auth import ...`) are unchanged —
+  purely a source-organisation change. Direct imports from deleted
+  submodules (`from litestar_mcp.decorators import ...` etc.) no longer
+  resolve; re-import from the public package surface or from the new
+  module paths.
 - **Core runtime dependencies** expanded to `litestar[jwt]>=2.0.0` and
   `httpx>=0.24.1`. This folds the previous optional `auth` extra into the
   base install — `pip install litestar-mcp` now ships with everything

@@ -11,14 +11,13 @@ from litestar.plugins import CLIPlugin, InitPluginProtocol
 from litestar.stores.memory import MemoryStore
 
 from litestar_mcp.config import MCPConfig
-from litestar_mcp.decorators import get_mcp_metadata
 from litestar_mcp.manifests import build_agent_card, build_mcp_server_manifest, build_oauth_protected_resource
 from litestar_mcp.registry import Registry
 from litestar_mcp.routes import MCPController
 from litestar_mcp.sessions import MCPSessionManager
 from litestar_mcp.sse import SSEManager
 from litestar_mcp.tasks import InMemoryTaskStore, TaskRecord
-from litestar_mcp.utils import get_handler_function
+from litestar_mcp.utils import get_handler_function, get_mcp_metadata
 
 if TYPE_CHECKING:
     from click import Group

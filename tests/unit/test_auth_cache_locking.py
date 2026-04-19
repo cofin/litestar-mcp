@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from litestar_mcp.auth import _oidc as auth_module
-from litestar_mcp.auth._cache import reset_default_cache
+from litestar_mcp.auth import oidc as auth_module
+from litestar_mcp.auth.oidc import reset_default_cache
 
 
 @pytest.fixture(autouse=True)
@@ -96,7 +96,7 @@ async def test_expired_cache_entry_triggers_single_refetch() -> None:
 
     # Seed an already-expired entry.
     url = "https://expired.example/jwks"
-    from litestar_mcp.auth._cache import get_default_cache
+    from litestar_mcp.auth.oidc import get_default_cache
 
     cache = get_default_cache()
     # Inject an expired entry by writing straight to the internal store — the
