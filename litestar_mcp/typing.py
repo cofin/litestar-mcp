@@ -54,7 +54,7 @@ class DictLike(Protocol):
     def __len__(self) -> int: ...
 
 
-SupportedSchemaModel: TypeAlias = "DictLike | StructStub | BaseModelStub | DataclassProtocol | AttrsInstanceStub"
+SupportedSchemaModel: TypeAlias = DictLike | StructStub | BaseModelStub | DataclassProtocol | AttrsInstanceStub
 """Type alias for supported schema models.
 
 :class:`msgspec.Struct` | :class:`pydantic.BaseModel` | :class:`DataclassProtocol` | :class:`AttrsInstance`
