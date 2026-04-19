@@ -53,6 +53,11 @@ _REGISTRY = MetadataRegistry()
 
 def mcp_tool(
     name: str,
+    *,
+    description: str | None = None,
+    agent_instructions: str | None = None,
+    when_to_use: str | None = None,
+    returns: str | None = None,
     output_schema: dict[str, Any] | None = None,
     annotations: dict[str, Any] | None = None,
     scopes: list[str] | None = None,
@@ -62,6 +67,16 @@ def mcp_tool(
 
     Args:
         name: The name of the MCP tool.
+        description: LLM-facing description. Overrides ``fn.__doc__``.
+            Ignored when ``handler.opt["mcp_description"]`` is set (opt wins).
+            Empty string is treated as absent so the docstring fallback still
+            applies.
+        agent_instructions: Mandatory-context block rendered in the
+            ``## Instructions`` section of the combined description.
+        when_to_use: Optional structured hint for LLM clients — rendered as
+            the ``## When to use`` section.
+        returns: Optional return-shape hint — rendered as the ``## Returns``
+            section.
         output_schema: Optional JSON Schema for the tool's structured output.
         annotations: Optional metadata annotations (audience, priority, etc.).
         scopes: Optional list of OAuth scopes required to call this tool.
@@ -82,6 +97,14 @@ def mcp_tool(
 
     def decorator(fn: F) -> F:
         metadata: dict[str, Any] = {"type": "tool", "name": name}
+        if description is not None:
+            metadata["description"] = description
+        if agent_instructions is not None:
+            metadata["agent_instructions"] = agent_instructions
+        if when_to_use is not None:
+            metadata["when_to_use"] = when_to_use
+        if returns is not None:
+            metadata["returns"] = returns
         if output_schema is not None:
             metadata["output_schema"] = output_schema
         if annotations is not None:
@@ -99,11 +122,29 @@ def mcp_tool(
     return decorator
 
 
-def mcp_resource(name: str) -> Callable[[F], F]:
+def mcp_resource(
+    name: str,
+    *,
+    description: str | None = None,
+    agent_instructions: str | None = None,
+    when_to_use: str | None = None,
+    returns: str | None = None,
+) -> Callable[[F], F]:
     """Decorator to mark a route handler as an MCP resource.
 
     Args:
         name: The name of the MCP resource.
+        description: LLM-facing description. Overrides ``fn.__doc__``. The
+            opt-form key is ``mcp_resource_description`` (not
+            ``mcp_description``) so handlers that expose both a tool and a
+            resource on the same route can target each independently. Empty
+            string is treated as absent.
+        agent_instructions: Mandatory-context block rendered in the
+            ``## Instructions`` section of the combined description.
+        when_to_use: Optional structured hint rendered as the
+            ``## When to use`` section.
+        returns: Optional return-shape hint rendered as the ``## Returns``
+            section.
 
     Returns:
         Decorator function that adds MCP metadata to the handler.
@@ -118,7 +159,16 @@ def mcp_resource(name: str) -> Callable[[F], F]:
     """
 
     def decorator(fn: F) -> F:
-        _REGISTRY.set(fn, {"type": "resource", "name": name})
+        metadata: dict[str, Any] = {"type": "resource", "name": name}
+        if description is not None:
+            metadata["description"] = description
+        if agent_instructions is not None:
+            metadata["agent_instructions"] = agent_instructions
+        if when_to_use is not None:
+            metadata["when_to_use"] = when_to_use
+        if returns is not None:
+            metadata["returns"] = returns
+        _REGISTRY.set(fn, metadata)
         return fn
 
     return decorator

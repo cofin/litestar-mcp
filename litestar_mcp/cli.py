@@ -4,12 +4,13 @@ import asyncio
 import contextlib
 import inspect
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from litestar.cli._utils import LitestarGroup
 from rich.console import Console
 from rich.json import JSON
 
+from litestar_mcp._descriptions import render_description
 from litestar_mcp.executor import NotCallableInCLIContextError, execute_tool
 from litestar_mcp.utils import get_handler_function
 
@@ -77,6 +78,7 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
         handler = plugin.discovered_tools.get(cmd_name) or plugin.discovered_resources.get(cmd_name)
         if not handler:
             return None
+        kind: Literal["tool", "resource"] = "tool" if cmd_name in plugin.discovered_tools else "resource"
         fn = get_handler_function(handler)
         sig = inspect.signature(fn)
 
@@ -136,8 +138,9 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
                 self._console.print(str(e))
                 ctx.exit(1)
 
-        # Get docstring from the underlying function
-        fn_doc = fn.__doc__ or "No description provided."
+        # Use the description helper in plain (unstructured) mode so CLI
+        # output stays terminal-friendly — no ``##`` markdown headers.
+        fn_doc = render_description(handler, fn, kind=kind, fallback_name=cmd_name, structured=False)
 
         from typing import cast
 
@@ -170,10 +173,11 @@ def list_tools(ctx: click.Context) -> None:
     console.print(f"[bold green]Discovered {len(plugin.discovered_tools)} tools:[/bold green]")  # pragma: no cover
     for name in sorted(plugin.discovered_tools.keys()):  # pragma: no cover
         handler = plugin.discovered_tools[name]  # pragma: no cover
-        # Get the underlying function and its docstring  # pragma: no cover
         fn = get_handler_function(handler)  # pragma: no cover
-        description = fn.__doc__ or "No description"  # pragma: no cover
-        # Clean up the description - take first line only  # pragma: no cover
+        # Plain description so terminal output never shows ``##`` headers.  # pragma: no cover
+        description = render_description(
+            handler, fn, kind="tool", fallback_name=name, structured=False
+        )  # pragma: no cover
         first_line = description.split("\n")[0].strip()  # pragma: no cover
         console.print(f"- [bold]{name}[/bold]: {first_line}")  # pragma: no cover
 
@@ -193,10 +197,11 @@ def list_resources(ctx: click.Context) -> None:
     )  # pragma: no cover
     for name in sorted(plugin.discovered_resources.keys()):  # pragma: no cover
         handler = plugin.discovered_resources[name]  # pragma: no cover
-        # Get the underlying function and its docstring  # pragma: no cover
         fn = get_handler_function(handler)  # pragma: no cover
-        description = fn.__doc__ or "No description"  # pragma: no cover
-        # Clean up the description - take first line only  # pragma: no cover
+        # Plain description so terminal output never shows ``##`` headers.  # pragma: no cover
+        description = render_description(  # pragma: no cover
+            handler, fn, kind="resource", fallback_name=name, structured=False
+        )
         first_line = description.split("\n")[0].strip()  # pragma: no cover
         console.print(f"- [bold]{name}[/bold]: {first_line}")  # pragma: no cover
 

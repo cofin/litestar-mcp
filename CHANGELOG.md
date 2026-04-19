@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `@mcp_tool` and `@mcp_resource` accept `description`, `agent_instructions`,
+  `when_to_use`, and `returns` keyword arguments. The matching Litestar
+  `opt`-form keys `mcp_description` / `mcp_resource_description`,
+  `mcp_agent_instructions`, `mcp_when_to_use`, and `mcp_returns` are
+  recognised on route handlers — use them when declaring MCP tools via
+  `@get("/x", opt={...})` rather than the decorators. `tools/list`,
+  `resources/list`, `/.well-known/agent-card.json`, and
+  `/.well-known/mcp-server.json` render a combined description with
+  `## When to use` / `## Returns` / `## Instructions` sections whenever
+  any structured field is set. Apps that rely on the default `fn.__doc__`
+  behaviour keep their existing output unchanged. CLI output
+  (`litestar mcp list-tools` / `list-resources` / `run`) stays plain-text.
+  Closes [#39](https://github.com/cofin/litestar-mcp/issues/39).
 - MCP tool invocations now enforce guards from every layer
   (app / router / controller / route) via `handler.resolve_guards()`. Guards
   run before dependency resolution; stdio / CLI mode (no live request) skips

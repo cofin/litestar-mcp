@@ -22,6 +22,7 @@ from litestar.status_codes import (
     HTTP_503_SERVICE_UNAVAILABLE,
 )
 
+from litestar_mcp._descriptions import render_description
 from litestar_mcp.config import MCPConfig
 from litestar_mcp.decorators import get_mcp_metadata
 from litestar_mcp.executor import execute_tool
@@ -398,7 +399,7 @@ def build_jsonrpc_router(
             metadata = get_mcp_metadata(handler) or get_mcp_metadata(fn) or {}
             tool_entry: dict[str, Any] = {
                 "name": name,
-                "description": (fn.__doc__ or f"Tool: {name}").strip(),
+                "description": render_description(handler, fn, kind="tool", fallback_name=name),
                 "inputSchema": generate_schema_for_handler(handler),
             }
             if "output_schema" in metadata:
@@ -490,7 +491,7 @@ def build_jsonrpc_router(
                 {
                     "uri": f"litestar://{name}",
                     "name": name,
-                    "description": (fn.__doc__ or f"Resource: {name}").strip(),
+                    "description": render_description(handler, fn, kind="resource", fallback_name=name),
                     "mimeType": "application/json",
                 }
             )
