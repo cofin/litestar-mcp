@@ -138,3 +138,52 @@ def test_dump_many_respects_rename() -> None:
         {"fieldA": 1, "fieldB": ""},
         {"fieldA": 2, "fieldB": ""},
     ]
+
+
+def test_schema_serializer_key_property_reports_cache_key() -> None:
+    pipeline = get_collection_serializer(_CamelItem(), exclude_unset=True)
+    assert pipeline.key == (_CamelItem, True)
+
+
+def test_schema_dump_for_attrs_instance_falls_through_pipeline() -> None:
+    """attrs path must round-trip through ``_dump_attrs`` (not ``__dict__`` fallback)."""
+    try:
+        import attrs
+    except ImportError:  # pragma: no cover - attrs is a dev dep
+        pytest.skip("attrs not installed")
+
+    @attrs.define
+    class AttrsPoint:
+        x: int = 0
+        y: int = 0
+
+    dumped = schema_dump(AttrsPoint(x=3, y=4))
+    assert dumped == {"x": 3, "y": 4}
+
+
+def test_schema_dump_plain_object_uses_dict_fallback() -> None:
+    """Objects without dataclass/msgspec/attrs identity fall back to ``__dict__``."""
+
+    class Plain:
+        def __init__(self) -> None:
+            self.alpha = 1
+            self.beta = "two"
+
+    dumped = schema_dump(Plain())
+    assert dumped == {"alpha": 1, "beta": "two"}
+
+
+def test_serialize_collection_routes_bare_dict_through_primitive_shortcut() -> None:
+    """Dicts bypass ``get_collection_serializer`` and return as-is."""
+    original = {"a": 1}
+    serialized = serialize_collection([original])
+    assert serialized == [original]
+    # The returned dict is the identical object (no copy).
+    assert serialized[0] is original
+
+
+def test_get_collection_serializer_for_dict_produces_identity_pipeline() -> None:
+    """Dispatching on a dict sample caches the identity dumper."""
+    pipeline = get_collection_serializer({"a": 1})
+    assert pipeline.key == (None, True)
+    assert pipeline.dump_one({"z": 9}) == {"z": 9}
