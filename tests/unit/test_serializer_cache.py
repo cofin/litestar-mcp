@@ -12,7 +12,7 @@ from typing import Any, cast
 import pytest
 from msgspec import Struct
 
-from litestar_mcp._serializer import (  # type: ignore[import-not-found]
+from litestar_mcp._serializer import (
     SchemaSerializer,
     get_collection_serializer,
     reset_serializer_cache,

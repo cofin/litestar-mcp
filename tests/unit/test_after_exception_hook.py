@@ -117,8 +117,14 @@ def test_after_exception_failure_is_logged_and_swallowed(caplog: pytest.LogCaptu
     def tool() -> dict[str, str]:
         raise _ObservedError(original)
 
-    app = Litestar(route_handlers=[tool], plugins=[LitestarMCP()], after_exception=[broken])
-    with caplog.at_level(logging.ERROR, logger="litestar_mcp.executor"), TestClient(app=app) as client:
+    app = Litestar(
+        route_handlers=[tool],
+        plugins=[LitestarMCP()],
+        after_exception=[broken],
+        logging_config=None,
+    )
+    caplog.set_level(logging.ERROR)
+    with TestClient(app=app) as client:
         resp = _call_tool(client, "x")
 
     # The ORIGINAL exception must still bubble to the blanket catch.

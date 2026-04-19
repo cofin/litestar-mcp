@@ -211,8 +211,12 @@ def test_after_response_failure_is_logged_and_swallowed(caplog: pytest.LogCaptur
     def tool() -> dict[str, str]:
         return {"ok": "yes"}
 
-    app = Litestar(route_handlers=[tool], plugins=[LitestarMCP()])
-    with caplog.at_level(logging.ERROR, logger="litestar_mcp.executor"), TestClient(app=app) as client:
+    # ``logging_config=None`` keeps Litestar from replacing the root logger's
+    # handlers — caplog's handler must survive to capture the executor's
+    # exception log.
+    app = Litestar(route_handlers=[tool], plugins=[LitestarMCP()], logging_config=None)
+    caplog.set_level(logging.ERROR)
+    with TestClient(app=app) as client:
         resp = _call_tool(client, "x")
 
     # Handler succeeded; after_response failure must not surface as an error.
@@ -246,10 +250,16 @@ def test_after_request_mutates_tool_result_content() -> None:
 
 # ---------------------------------------------------------------------------
 # Layer inheritance — closest-wins matches Litestar HTTP semantics
+#
+# Only router / controller / route layers fire through the tool dispatch.
+# App-level ``before_request`` / ``after_response`` hooks are already
+# invoked by Litestar's handler pipeline on the outer ``/mcp`` HTTP request,
+# so the executor skips them to avoid double-firing. App-level behavior is
+# covered separately below.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("layer", ["app", "router", "controller", "route"])
+@pytest.mark.parametrize("layer", ["router", "controller", "route"])
 def test_before_request_resolves_from_ownership_layer(layer: str) -> None:
     seen: list[str] = []
 
@@ -276,7 +286,7 @@ def test_before_request_resolves_from_ownership_layer(layer: str) -> None:
 
         app = Litestar(route_handlers=[Notes], plugins=[LitestarMCP()])
 
-    elif layer == "router":
+    else:  # layer == "router"
 
         @post("/x", mcp_tool="x", sync_to_thread=False)
         def rt_tool() -> dict[str, str]:
@@ -285,14 +295,6 @@ def test_before_request_resolves_from_ownership_layer(layer: str) -> None:
         router = Router(path="/api", before_request=hook, route_handlers=[rt_tool])
         app = Litestar(route_handlers=[router], plugins=[LitestarMCP()])
 
-    else:
-
-        @post("/x", mcp_tool="x", sync_to_thread=False)
-        def app_tool() -> dict[str, str]:
-            return {"ok": "yes"}
-
-        app = Litestar(route_handlers=[app_tool], plugins=[LitestarMCP()], before_request=hook)
-
     with TestClient(app=app) as client:
         resp = _call_tool(client, "x")
 
@@ -300,7 +302,7 @@ def test_before_request_resolves_from_ownership_layer(layer: str) -> None:
     assert seen == [f"before:{layer}"]
 
 
-@pytest.mark.parametrize("layer", ["app", "router", "controller", "route"])
+@pytest.mark.parametrize("layer", ["router", "controller", "route"])
 def test_after_response_resolves_from_ownership_layer(layer: str) -> None:
     seen: list[str] = []
 
@@ -327,7 +329,7 @@ def test_after_response_resolves_from_ownership_layer(layer: str) -> None:
 
         app = Litestar(route_handlers=[Notes], plugins=[LitestarMCP()])
 
-    elif layer == "router":
+    else:  # layer == "router"
 
         @post("/x", mcp_tool="x", sync_to_thread=False)
         def rt_tool() -> dict[str, str]:
@@ -336,18 +338,58 @@ def test_after_response_resolves_from_ownership_layer(layer: str) -> None:
         router = Router(path="/api", after_response=hook, route_handlers=[rt_tool])
         app = Litestar(route_handlers=[router], plugins=[LitestarMCP()])
 
-    else:
-
-        @post("/x", mcp_tool="x", sync_to_thread=False)
-        def app_tool() -> dict[str, str]:
-            return {"ok": "yes"}
-
-        app = Litestar(route_handlers=[app_tool], plugins=[LitestarMCP()], after_response=hook)
-
     with TestClient(app=app) as client:
         _call_tool(client, "x")
 
     assert seen == [f"after:{layer}"]
+
+
+def test_app_level_before_request_fires_via_outer_mcp_request_not_tool_dispatch() -> None:
+    """App-level ``before_request`` applies via the outer ``/mcp`` HTTP request.
+
+    The executor deliberately skips the hook during tool dispatch to avoid
+    double-firing. Covers the semantic that HTTP parity is preserved at the
+    ``/mcp`` envelope level.
+    """
+    seen: list[str] = []
+
+    async def hook(_request: Request[Any, Any, Any]) -> None:
+        seen.append("app")
+
+    @post("/x", mcp_tool="x", sync_to_thread=False)
+    def tool() -> dict[str, str]:
+        return {"ok": "yes"}
+
+    app = Litestar(route_handlers=[tool], plugins=[LitestarMCP()], before_request=hook)
+    with TestClient(app=app) as client:
+        _call_tool(client, "x")
+
+    # Hook fired at least once per /mcp HTTP request (init + tools/call +
+    # optionally notifications). No extra firings from the tool dispatch.
+    assert seen.count("app") >= 1
+    # Count must equal the number of /mcp HTTP POSTs, not 2x that.
+    mcp_request_count = 3  # initialize + notifications/initialized + tools/call
+    assert len(seen) <= mcp_request_count, f"expected ≤{mcp_request_count} firings, got {len(seen)}"
+
+
+def test_app_level_after_response_fires_via_outer_mcp_request_not_tool_dispatch() -> None:
+    """Same principle as ``before_request``: app-level hooks run via ``/mcp``, not via dispatch."""
+    seen: list[str] = []
+
+    async def hook(_request: Request[Any, Any, Any]) -> None:
+        seen.append("app")
+
+    @post("/x", mcp_tool="x", sync_to_thread=False)
+    def tool() -> dict[str, str]:
+        return {"ok": "yes"}
+
+    app = Litestar(route_handlers=[tool], plugins=[LitestarMCP()], after_response=hook)
+    with TestClient(app=app) as client:
+        _call_tool(client, "x")
+
+    assert seen.count("app") >= 1
+    mcp_request_count = 3
+    assert len(seen) <= mcp_request_count, f"expected ≤{mcp_request_count} firings, got {len(seen)}"
 
 
 # ---------------------------------------------------------------------------
