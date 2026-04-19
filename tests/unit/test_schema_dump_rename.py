@@ -133,7 +133,7 @@ def test_schema_dump_dataclass_unchanged() -> None:
 
 def test_schema_dump_primitive_passthrough() -> None:
     for value in (42, "hello", 3.14, True, None):
-        assert schema_dump(value) == value  # type: ignore[comparison-overlap]
+        assert schema_dump(value) == value
 
 
 def test_schema_dump_dict_passthrough() -> None:
