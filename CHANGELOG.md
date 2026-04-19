@@ -52,6 +52,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **Removed inline OAuth-scope enforcement in `tools/call`.** `@mcp_tool(scopes=[...])`
+  now records scopes as discovery metadata only — they are surfaced under
+  `tools[].annotations.scopes` in `tools/list` and in
+  `/.well-known/oauth-protected-resource`. MCP tool dispatch runs
+  `handler.resolve_guards()`, so authorization for MCP tool calls is driven
+  by the same Litestar guards that protect the HTTP route. The previous
+  inline check double-enforced on top of guards and produced false rejections
+  for auth backends that encode scopes under non-standard claims (`scp`,
+  `permissions`, custom). **Migration:** wherever you relied on `scopes=[...]`
+  as an enforcement gate, add a Litestar `Guard` to the controller / router /
+  route that owns the handler. The guard receives the same `ASGIConnection`
+  an HTTP request does, so existing `require_x` guards work unchanged on MCP.
 - **Removed `ToolExecutionContext` dataclass and exports from `litestar_mcp/executor.py`.**
   This legacy observability marker is no longer used by the native
   request-pipeline.

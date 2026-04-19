@@ -408,6 +408,11 @@ def build_jsonrpc_router(
                 tool_entry["outputSchema"] = metadata["output_schema"]
             if "annotations" in metadata:
                 tool_entry["annotations"] = metadata["annotations"]
+            if "scopes" in metadata:
+                annotations = tool_entry.get("annotations") or {}
+                # Explicit annotations.scopes wins when both are supplied.
+                annotations.setdefault("scopes", list(metadata["scopes"]))
+                tool_entry["annotations"] = annotations
             if task_config is not None and metadata.get("task_support") is not None:
                 tool_entry["execution"] = {"taskSupport": metadata["task_support"]}
             tools.append(tool_entry)
@@ -429,20 +434,6 @@ def build_jsonrpc_router(
         tool_args = params.get("arguments", {})
         if not isinstance(tool_args, dict):
             return _build_tool_result({"error": "Tool arguments must be an object"}, is_error=True)
-
-        if metadata.get("scopes") is not None:
-            auth_claims = request_context.request.scope.get("auth") if request_context.request else None
-            if not isinstance(auth_claims, dict):
-                raise JSONRPCErrorException(
-                    JSONRPCError(code=INVALID_PARAMS, message="This tool requires an authenticated request context.")
-                )
-            required_scopes = set(metadata["scopes"])
-            user_scopes = set(auth_claims.get("scopes", []))
-            if not required_scopes.issubset(user_scopes):
-                missing_scopes = sorted(required_scopes - user_scopes)
-                raise JSONRPCErrorException(
-                    JSONRPCError(code=INVALID_PARAMS, message=f"Insufficient scope. Required: {missing_scopes}")
-                )
 
         task_request = params.get("task")
         task_support = metadata.get("task_support")
