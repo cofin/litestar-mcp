@@ -1,5 +1,5 @@
 # pyright: ignore[reportAttributeAccessIssue]
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, TypeGuard
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, TypeGuard, cast
 
 from typing_extensions import TypeVar
 
@@ -14,7 +14,6 @@ from litestar_mcp._typing import (
     DataclassProtocol,
     Struct,
     StructStub,
-    attrs_asdict,
     attrs_fields,
     attrs_has,
 )
@@ -158,9 +157,12 @@ def is_dict(obj: Any) -> "TypeGuard[dict[str, Any]]":
 
 
 def schema_dump(data: Any, exclude_unset: bool = True) -> "dict[str, Any] | None":
-    """Dump a data object to a dictionary.
+    """Dump a data object to a dictionary via the cached serializer pipeline.
 
-    Based on SQLSpec's clean pattern without defensive hasattr checks.
+    Thin delegator preserving back-compat for existing
+    ``from litestar_mcp.typing import schema_dump`` imports. The
+    heavy lifting — type dispatch, caching, msgspec ``rename`` fidelity —
+    lives in :mod:`litestar_mcp._serializer`.
 
     Args:
         data: :type:`dict[str, Any]` | :class:`DataclassProtocol` | :class:`msgspec.Struct` | :class:`pydantic.BaseModel` | :class:`AttrsInstance`
@@ -169,33 +171,9 @@ def schema_dump(data: Any, exclude_unset: bool = True) -> "dict[str, Any] | None
     Returns:
         :type:`dict[str, Any] | None`
     """
-    from litestar_mcp._typing import UNSET
+    from litestar_mcp._serializer import schema_dump as _cached_dump
 
-    result: dict[str, Any] | None = None
-
-    if data is None:
-        result = None
-    elif is_dict(data):
-        result = data
-    elif is_dataclass(data):
-        result = _dataclass_to_dict(data, exclude_empty=exclude_unset)
-    elif is_pydantic_model(data):
-        result = data.model_dump(exclude_unset=exclude_unset)
-    elif is_msgspec_struct(data):
-        if exclude_unset:
-            result = {f: val for f in data.__struct_fields__ if (val := getattr(data, f, None)) != UNSET}
-        else:
-            result = {f: getattr(data, f, None) for f in data.__struct_fields__}
-    elif is_attrs_instance(data):
-        result = attrs_asdict(data)
-    else:
-        # Try __dict__ as fallback
-        try:
-            result = data.__dict__
-        except AttributeError:
-            result = {}
-
-    return result
+    return cast("dict[str, Any] | None", _cached_dump(data, exclude_unset=exclude_unset))
 
 
 def _dataclass_to_dict(
