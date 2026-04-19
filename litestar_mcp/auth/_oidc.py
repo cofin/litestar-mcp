@@ -213,6 +213,6 @@ async def _validate_with_oidc_provider(
         algorithms=provider.algorithms,
         clock_skew=provider.clock_skew,
         jwks_cache_ttl=provider.cache_ttl,
-        jwks_cache=getattr(provider, "jwks_cache", None),
+        jwks_cache=provider.jwks_cache,
         on_validation_error=on_validation_error,
     )
