@@ -23,9 +23,7 @@ from litestar.status_codes import (
 )
 
 from litestar_mcp.config import MCPConfig
-from litestar_mcp.decorators import get_mcp_metadata
 from litestar_mcp.executor import execute_tool
-from litestar_mcp.filters import should_include_handler
 from litestar_mcp.jsonrpc import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
@@ -43,7 +41,13 @@ from litestar_mcp.schema_builder import generate_schema_for_handler
 from litestar_mcp.sessions import MCPSessionManager, SessionTerminated
 from litestar_mcp.sse import StreamLimitExceeded
 from litestar_mcp.tasks import InMemoryTaskStore, TaskLookupError, TaskRecord, TaskStateError
-from litestar_mcp.utils import get_handler_function
+from litestar_mcp.utils import (
+    get_handler_function,
+    get_mcp_metadata,
+    match_uri,
+    render_description,
+    should_include_handler,
+)
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
 MCP_SESSION_HEADER = "Mcp-Session-Id"
@@ -302,6 +306,7 @@ def build_jsonrpc_router(
     app_ref: Any,
     request_context: RequestContext,
     task_store: InMemoryTaskStore | None = None,
+    registry: Registry | None = None,
 ) -> JSONRPCRouter:
     """Build and return a JSONRPCRouter wired to MCP method handlers."""
     router = JSONRPCRouter()
@@ -398,13 +403,20 @@ def build_jsonrpc_router(
             metadata = get_mcp_metadata(handler) or get_mcp_metadata(fn) or {}
             tool_entry: dict[str, Any] = {
                 "name": name,
-                "description": (fn.__doc__ or f"Tool: {name}").strip(),
+                "description": render_description(
+                    handler, fn, kind="tool", fallback_name=name, opt_keys=config.opt_keys
+                ),
                 "inputSchema": generate_schema_for_handler(handler),
             }
             if "output_schema" in metadata:
                 tool_entry["outputSchema"] = metadata["output_schema"]
             if "annotations" in metadata:
                 tool_entry["annotations"] = metadata["annotations"]
+            if "scopes" in metadata:
+                annotations = tool_entry.get("annotations") or {}
+                # Explicit annotations.scopes wins when both are supplied.
+                annotations.setdefault("scopes", list(metadata["scopes"]))
+                tool_entry["annotations"] = annotations
             if task_config is not None and metadata.get("task_support") is not None:
                 tool_entry["execution"] = {"taskSupport": metadata["task_support"]}
             tools.append(tool_entry)
@@ -426,20 +438,6 @@ def build_jsonrpc_router(
         tool_args = params.get("arguments", {})
         if not isinstance(tool_args, dict):
             return _build_tool_result({"error": "Tool arguments must be an object"}, is_error=True)
-
-        if metadata.get("scopes") is not None:
-            auth_claims = request_context.request.scope.get("auth") if request_context.request else None
-            if not isinstance(auth_claims, dict):
-                raise JSONRPCErrorException(
-                    JSONRPCError(code=INVALID_PARAMS, message="This tool requires an authenticated request context.")
-                )
-            required_scopes = set(metadata["scopes"])
-            user_scopes = set(auth_claims.get("scopes", []))
-            if not required_scopes.issubset(user_scopes):
-                missing_scopes = sorted(required_scopes - user_scopes)
-                raise JSONRPCErrorException(
-                    JSONRPCError(code=INVALID_PARAMS, message=f"Insufficient scope. Required: {missing_scopes}")
-                )
 
         task_request = params.get("task")
         task_support = metadata.get("task_support")
@@ -490,7 +488,9 @@ def build_jsonrpc_router(
                 {
                     "uri": f"litestar://{name}",
                     "name": name,
-                    "description": (fn.__doc__ or f"Resource: {name}").strip(),
+                    "description": render_description(
+                        handler, fn, kind="resource", fallback_name=name, opt_keys=config.opt_keys
+                    ),
                     "mimeType": "application/json",
                 }
             )
@@ -498,52 +498,115 @@ def build_jsonrpc_router(
 
     router.register("resources/list", handle_resources_list)
 
+    async def handle_resources_templates_list(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
+        if registry is None:
+            return {"resourceTemplates": []}
+        templates = []
+        for entry in registry.templates.values():
+            handler_tags = set(getattr(entry.handler, "tags", None) or [])
+            if not should_include_handler(entry.name, handler_tags, config):
+                continue
+            fn = get_handler_function(entry.handler)
+            templates.append(
+                {
+                    "uriTemplate": entry.template,
+                    "name": entry.name,
+                    "description": render_description(
+                        entry.handler, fn, kind="resource", fallback_name=entry.name, opt_keys=config.opt_keys
+                    ),
+                    "mimeType": "application/json",
+                }
+            )
+        return {"resourceTemplates": templates}
+
+    router.register("resources/templates/list", handle_resources_templates_list)
+
     async def handle_resources_read(params: dict[str, Any]) -> dict[str, Any]:
         uri = params.get("uri", "")
-        if not uri.startswith("litestar://"):
+        if not isinstance(uri, str) or not uri:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=f"Invalid resource URI: {uri}"))
 
-        resource_name = uri[len("litestar://") :]
-        if resource_name == "openapi" and app_ref is not None:
+        if uri.startswith("litestar://"):
+            resource_name = uri[len("litestar://") :]
+            if resource_name == "openapi" and app_ref is not None:
+                return {
+                    "contents": [
+                        {
+                            "uri": "litestar://openapi",
+                            "mimeType": "application/json",
+                            "text": encode_json(app_ref.openapi_schema).decode("utf-8"),
+                        }
+                    ]
+                }
+
+            handler = discovered_resources.get(resource_name)
+            if handler is None:
+                raise JSONRPCErrorException(
+                    JSONRPCError(code=INVALID_PARAMS, message=f"Resource not found: {resource_name}")
+                )
+
+            try:
+                result = await execute_tool(
+                    handler,
+                    app_ref,
+                    {},
+                    request=request_context.request,
+                )
+            except Exception as exc:
+                raise JSONRPCErrorException(
+                    JSONRPCError(code=INTERNAL_ERROR, message=f"Resource read failed: {exc!s}")
+                ) from exc
+
             return {
                 "contents": [
                     {
-                        "uri": "litestar://openapi",
+                        "uri": uri,
                         "mimeType": "application/json",
-                        "text": encode_json(app_ref.openapi_schema).decode("utf-8"),
+                        "text": encode_json(result).decode("utf-8"),
                     }
                 ]
             }
 
-        handler = discovered_resources.get(resource_name)
-        if handler is None:
-            raise JSONRPCErrorException(
-                JSONRPCError(code=INVALID_PARAMS, message=f"Resource not found: {resource_name}")
-            )
+        # Non-``litestar://`` URIs: match against registered templates.
+        # First template that matches wins (documented: registration order).
+        template_entries = registry.templates.values() if registry is not None else ()
+        for entry in template_entries:
+            extracted = match_uri(entry.template, uri)
+            if extracted is None:
+                continue
+            try:
+                result = await execute_tool(
+                    entry.handler,
+                    app_ref,
+                    dict(extracted),
+                    request=request_context.request,
+                )
+            except Exception as exc:
+                raise JSONRPCErrorException(
+                    JSONRPCError(code=INTERNAL_ERROR, message=f"Resource read failed: {exc!s}")
+                ) from exc
 
-        try:
-            result = await execute_tool(
-                handler,
-                app_ref,
-                {},
-                request=request_context.request,
-            )
-        except Exception as exc:
-            raise JSONRPCErrorException(
-                JSONRPCError(code=INTERNAL_ERROR, message=f"Resource read failed: {exc!s}")
-            ) from exc
+            return {
+                "contents": [
+                    {
+                        "uri": uri,
+                        "mimeType": "application/json",
+                        "text": encode_json(result).decode("utf-8"),
+                    }
+                ]
+            }
 
-        return {
-            "contents": [
-                {
-                    "uri": uri,
-                    "mimeType": "application/json",
-                    "text": encode_json(result).decode("utf-8"),
-                }
-            ]
-        }
+        raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=f"Resource not found: {uri}"))
 
     router.register("resources/read", handle_resources_read)
+
+    async def handle_completion_complete(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
+        # v0.5.0 default: every ref returns an empty completion. A future
+        # ``@mcp_resource_completion`` decorator will dispatch through this
+        # method; for now, unknown refs must not error per MCP spec.
+        return {"completion": {"values": [], "total": 0, "hasMore": False}}
+
+    router.register("completion/complete", handle_completion_complete)
 
     if task_store is not None:
 
@@ -840,6 +903,7 @@ class MCPController(Controller):
             app_ref=request.app,
             request_context=request_context,
             task_store=task_store,
+            registry=registry,
         )
         result = await router.dispatch(rpc_request)
 

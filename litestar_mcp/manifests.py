@@ -6,9 +6,8 @@ from litestar import Litestar
 
 from litestar_mcp.auth import MCPAuthConfig  # noqa: TC001
 from litestar_mcp.config import MCPConfig
-from litestar_mcp.decorators import get_mcp_metadata
 from litestar_mcp.schema_builder import generate_schema_for_handler
-from litestar_mcp.utils import get_handler_function
+from litestar_mcp.utils import get_handler_function, get_mcp_metadata, render_description
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
 
@@ -80,12 +79,13 @@ def build_agent_card(
     for name, handler in discovered_tools.items():
         fn = get_handler_function(handler)
         metadata = get_mcp_metadata(handler) or get_mcp_metadata(fn) or {}
-        description = (fn.__doc__ or f"Tool: {name}").strip()
         skills.append(
             {
                 "id": name,
                 "name": name,
-                "description": description,
+                "description": render_description(
+                    handler, fn, kind="tool", fallback_name=name, opt_keys=config.opt_keys
+                ),
                 "tags": sorted(getattr(handler, "tags", []) or []),
                 "examples": metadata.get("examples", []),
             }
@@ -124,7 +124,7 @@ def build_mcp_server_manifest(
         metadata = get_mcp_metadata(handler) or get_mcp_metadata(fn) or {}
         tool_entry: dict[str, Any] = {
             "name": name,
-            "description": (fn.__doc__ or f"Tool: {name}").strip(),
+            "description": render_description(handler, fn, kind="tool", fallback_name=name, opt_keys=config.opt_keys),
             "inputSchema": generate_schema_for_handler(handler),
         }
         if metadata.get("task_support") is not None:

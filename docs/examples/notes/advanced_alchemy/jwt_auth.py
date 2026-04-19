@@ -99,14 +99,14 @@ def create_app(
         path = "/notes"
         dependencies = note_dependencies
 
-        @get("/", opt={"mcp_tool": LIST_NOTES_TOOL_NAME})
+        @get("/", mcp_tool=LIST_NOTES_TOOL_NAME)
         async def list_notes(
             self, note_service: NoteService, resolved_user: AuthenticatedIdentity
         ) -> OffsetPagination[Note]:
             notes = await note_service.list(NoteRecord.owner_sub == resolved_user.sub)
             return note_service.to_schema(notes, schema_type=Note)
 
-        @post("/", opt={"mcp_tool": CREATE_NOTE_TOOL_NAME})
+        @post("/", mcp_tool=CREATE_NOTE_TOOL_NAME)
         async def create_note(
             self,
             data: dict[str, Any],
@@ -120,7 +120,7 @@ def create_app(
             )
             return note_service.to_schema(note, schema_type=Note)
 
-        @delete("/{note_id:str}", status_code=HTTP_200_OK, opt={"mcp_tool": DELETE_NOTE_TOOL_NAME})
+        @delete("/{note_id:str}", status_code=HTTP_200_OK, mcp_tool=DELETE_NOTE_TOOL_NAME)
         async def delete_note(
             self,
             note_id: str,
@@ -135,11 +135,11 @@ def create_app(
             await note_service.delete(existing.id, auto_commit=True)
             return DeleteNoteResult(deleted=True, note_id=note_id)
 
-    @get("/notes/schema", opt={"mcp_resource": NOTES_SCHEMA_RESOURCE_NAME}, sync_to_thread=False)
+    @get("/notes/schema", mcp_resource=NOTES_SCHEMA_RESOURCE_NAME, sync_to_thread=False)
     def notes_schema() -> NotesSchema:
         return NotesSchema()
 
-    @get("/app/info", opt={"mcp_resource": APP_INFO_RESOURCE_NAME}, sync_to_thread=False)
+    @get("/app/info", mcp_resource=APP_INFO_RESOURCE_NAME, sync_to_thread=False)
     def get_api_info() -> AppInfo:
         return build_app_info(backend="advanced_alchemy", auth_mode="jwt", supports_dishka=False)
 

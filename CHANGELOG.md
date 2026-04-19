@@ -5,10 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [0.5.0] — 2026-04-19
 
 ### Added
 
+- `@mcp_tool` and `@mcp_resource` accept `description`, `agent_instructions`,
+  `when_to_use`, and `returns` keyword arguments. The matching Litestar
+  kwargs `mcp_description` / `mcp_resource_description`,
+  `mcp_agent_instructions`, `mcp_when_to_use`, and `mcp_returns` are
+  recognised directly on route handlers — pass them straight through to
+  `@get(...)` / `@post(...)` etc., and Litestar funnels them into
+  `handler.opt` for the plugin to read. `tools/list`,
+  `resources/list`, `/.well-known/agent-card.json`, and
+  `/.well-known/mcp-server.json` render a combined description with
+  `## When to use` / `## Returns` / `## Instructions` sections whenever
+  any structured field is set. Apps that rely on the default `fn.__doc__`
+  behaviour keep their existing output unchanged. CLI output
+  (`litestar mcp list-tools` / `list-resources` / `run`) stays plain-text.
+  Closes [#39](https://github.com/cofin/litestar-mcp/issues/39).
+- Resource templates per RFC 6570 Level 1. `@mcp_resource(uri_template="scheme://path/{var}")`
+  and the matching kwarg `mcp_resource_template="..."` on any Litestar route
+  decorator register a template-shaped resource. Concrete URIs matching the
+  template dispatch to the handler with extracted variables passed as kwargs —
+  the same way the matching path parameters would bind on an HTTP request.
+  New JSON-RPC methods `resources/templates/list` and `completion/complete`
+  (MCP spec 2025-11-25). `completion/complete` returns an empty completion by
+  default for 0.5.0; a `@mcp_resource_completion` decorator will arrive in a
+  future release.
+- `JWKSCache` protocol and `DefaultJWKSCache` implementation for injectable
+  JWKS / OIDC discovery caches. `OIDCProviderConfig(jwks_cache=...)` and
+  `create_oidc_validator(jwks_cache=...)` accept any `JWKSCache` instance so
+  applications can share one document cache across their own auth stack and
+  `litestar-mcp`. Closes [#38](https://github.com/cofin/litestar-mcp/issues/38).
+- `MCPConfig.opt_keys: MCPOptKeys` lets apps rename any `handler.opt[...]`
+  key the plugin reads — tool/resource discovery (`mcp_tool`, `mcp_resource`)
+  and the five description-rendering keys introduced above. Pattern
+  mirrors first-party Litestar conventions (see
+  `litestar.security.jwt.auth.JWTAuth.exclude_opt_key`). Defaults are
+  unchanged, so existing apps need no code changes.
 - MCP tool invocations now enforce guards from every layer
   (app / router / controller / route) via `handler.resolve_guards()`. Guards
   run before dependency resolution; stdio / CLI mode (no live request) skips
@@ -30,9 +64,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`MCPAuthConfig`, `OIDCProviderConfig`, `MCPAuthBackend`,
   `create_oidc_validator`, `TokenValidator`) are unchanged at the package
   level. `litestar_mcp.oidc` moved to `litestar_mcp.auth.oidc`.
+- **Internal package layout flattened.** `filters.py`, `decorators.py`,
+  `_descriptions.py`, and `_uri_template.py` fold into `utils.py`;
+  `auth/config.py`, `auth/_oidc.py`, and `auth/_cache.py` fold into
+  `auth/backend.py` + `auth/oidc.py`. Public exports (`from litestar_mcp
+  import ...` and `from litestar_mcp.auth import ...`) are unchanged —
+  purely a source-organisation change. Direct imports from deleted
+  submodules (`from litestar_mcp.decorators import ...` etc.) no longer
+  resolve; re-import from the public package surface or from the new
+  module paths.
+- **Core runtime dependencies** expanded to `litestar[jwt]>=2.0.0` and
+  `httpx>=0.24.1`. This folds the previous optional `auth` extra into the
+  base install — `pip install litestar-mcp` now ships with everything
+  required for OIDC validation out of the box.
 
 ### Breaking
 
+- **Removed the `auth` optional dependency extra.** OIDC dependencies
+  (`httpx`, `litestar[jwt]` which pulls in `pyjwt[crypto]`) are now part of
+  the core install. **Migration:** replace `pip install litestar-mcp[auth]`
+  with `pip install litestar-mcp`. Consumers who kept `[auth]` in their
+  requirements will see a harmless pip warning; remove the suffix at your
+  convenience.
+- **Removed inline OAuth-scope enforcement in `tools/call`.** `@mcp_tool(scopes=[...])`
+  now records scopes as discovery metadata only — they are surfaced under
+  `tools[].annotations.scopes` in `tools/list` and in
+  `/.well-known/oauth-protected-resource`. MCP tool dispatch runs
+  `handler.resolve_guards()`, so authorization for MCP tool calls is driven
+  by the same Litestar guards that protect the HTTP route. The previous
+  inline check double-enforced on top of guards and produced false rejections
+  for auth backends that encode scopes under non-standard claims (`scp`,
+  `permissions`, custom). **Migration:** wherever you relied on `scopes=[...]`
+  as an enforcement gate, add a Litestar `Guard` to the controller / router /
+  route that owns the handler. The guard receives the same `ASGIConnection`
+  an HTTP request does, so existing `require_x` guards work unchanged on MCP.
 - **Removed `ToolExecutionContext` dataclass and exports from `litestar_mcp/executor.py`.**
   This legacy observability marker is no longer used by the native
   request-pipeline.

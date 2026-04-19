@@ -10,7 +10,6 @@ No live Google metadata fetches are performed.
 import json
 from collections.abc import Iterator
 from pathlib import Path
-from time import monotonic
 from typing import Any
 from uuid import uuid4
 
@@ -25,7 +24,7 @@ from docs.examples.notes.sqlspec.google_iap import create_app
 from jwt.algorithms import ECAlgorithm
 from litestar.testing import TestClient
 
-import litestar_mcp.auth._oidc as mcp_auth
+from litestar_mcp.auth.oidc import get_default_cache
 from tests.integration.conftest import parse_tool_payload, rpc, rpc_response
 
 TEST_AUDIENCE = "/projects/000000000000/global/backendServices/111111111111"
@@ -64,11 +63,15 @@ def iap_key() -> Iterator[tuple[ec.EllipticCurvePrivateKey, str]]:
     """Generate an ES256 keypair and seed the shared JWKS cache."""
     kid = f"iap-test-{uuid4().hex[:8]}"
     private_key, jwk = _make_keypair(kid)
-    # Pre-seed the litestar_mcp.auth document cache with our JWKS so no
-    # real HTTP call is made during validation.
-    mcp_auth._JSON_DOCUMENT_CACHE[TEST_JWKS_URL] = (monotonic() + 3600, {"keys": [jwk]})
+    # Pre-seed the default JWKS cache with our JWKS so no real HTTP call is
+    # made during validation. ``pytest-asyncio`` isn't active in this module,
+    # so bypass the async setter by writing straight to the internal store.
+    cache = get_default_cache()
+    from time import monotonic
+
+    cache._store[TEST_JWKS_URL] = (monotonic() + 3600, {"keys": [jwk]})
     yield private_key, kid
-    mcp_auth._JSON_DOCUMENT_CACHE.pop(TEST_JWKS_URL, None)
+    cache._store.pop(TEST_JWKS_URL, None)
 
 
 def _make_app(tmp_path: Path) -> Any:

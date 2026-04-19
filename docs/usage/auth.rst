@@ -58,6 +58,45 @@ callable that validates a single token against an OIDC issuer. Pass it
 as ``MCPAuthBackend(token_validator=...)`` or use it inside your own
 middleware. Both ``clock_skew`` and ``jwks_cache_ttl`` are configurable.
 
+Injectable JWKS Cache
+=====================
+
+:class:`~litestar_mcp.auth.JWKSCache` is a protocol-shaped seam for
+apps that already run their own JWKS / OIDC discovery cache. Pass a
+shared instance to every validator to avoid redundant network fetches:
+
+.. literalinclude:: /examples/snippets/jwks_cache_shared.py
+    :language: python
+    :caption: ``docs/examples/snippets/jwks_cache_shared.py``
+    :start-after: # start-example
+    :end-before: # end-example
+    :dedent:
+
+When no cache is passed, the validator uses a process-wide default —
+matching 0.4.0 behaviour — so existing apps need no code changes. Any
+object implementing ``async get`` / ``async set(*, ttl=int)`` /
+``async invalidate`` satisfies the protocol, so a Redis-backed or
+application-specific cache can drop in cleanly.
+
+Authorization via Guards
+========================
+
+Scopes declared on ``@mcp_tool(scopes=[...])`` are **discovery
+metadata only** — they surface under
+``tools[].annotations.scopes`` in ``tools/list`` and in
+``/.well-known/oauth-protected-resource``. MCP tool dispatch does not
+enforce scopes inline; attach a Litestar :class:`~litestar.types.Guard`
+to the route / router / controller for authorization. Guards receive
+the same :class:`~litestar.connection.ASGIConnection` that an HTTP
+request does, so existing ``requires_x`` guards work unchanged on MCP:
+
+.. literalinclude:: /examples/snippets/authorization_guard.py
+    :language: python
+    :caption: ``docs/examples/snippets/authorization_guard.py``
+    :start-after: # start-example
+    :end-before: # end-example
+    :dedent:
+
 Discovery Metadata
 ==================
 

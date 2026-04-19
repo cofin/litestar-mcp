@@ -7,20 +7,18 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from litestar_mcp.auth import _oidc as auth_module
+from litestar_mcp.auth import oidc as auth_module
+from litestar_mcp.auth.oidc import reset_default_cache
 
 
 @pytest.fixture(autouse=True)
 def _reset_cache() -> Any:
-    """Clear module-global cache and locks between tests."""
-    auth_module._JSON_DOCUMENT_CACHE.clear()
-    locks = getattr(auth_module, "_JSON_DOCUMENT_LOCKS", None)
-    if locks is not None:
-        locks.clear()
+    """Clear the default JWKS cache and fetch locks between tests."""
+    reset_default_cache()
+    auth_module._FETCH_LOCKS.clear()
     yield
-    auth_module._JSON_DOCUMENT_CACHE.clear()
-    if locks is not None:
-        locks.clear()
+    reset_default_cache()
+    auth_module._FETCH_LOCKS.clear()
 
 
 @pytest.mark.asyncio
@@ -98,7 +96,12 @@ async def test_expired_cache_entry_triggers_single_refetch() -> None:
 
     # Seed an already-expired entry.
     url = "https://expired.example/jwks"
-    auth_module._JSON_DOCUMENT_CACHE[url] = (0.0, {"fetch": 0})
+    from litestar_mcp.auth.oidc import get_default_cache
+
+    cache = get_default_cache()
+    # Inject an expired entry by writing straight to the internal store — the
+    # test expressly asserts that an expired entry behaves like a cache miss.
+    cache._store[url] = (0.0, {"fetch": 0})
 
     with patch.object(auth_module, "_fetch_json_document", side_effect=counting_fetch):
         await asyncio.gather(*(auth_module._get_cached_json_document(url, 3600) for _ in range(10)))
