@@ -22,6 +22,7 @@ from __future__ import annotations
 import inspect
 import logging
 import re
+import weakref
 from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlencode
@@ -281,20 +282,32 @@ async def _dispatch_via_exception_handlers(
     return raw, True
 
 
+_PATH_PARAMETERS_CACHE: weakref.WeakKeyDictionary[Any, dict[str, Any]] = weakref.WeakKeyDictionary()
+
+
 def _find_route_path_parameters(app: Litestar, handler: BaseRouteHandler) -> dict[str, Any]:
     """Look up ``path_parameters`` for the route owning ``handler``.
 
-    The MCP registry stores handlers but not their owning route, so we walk
-    ``app.routes`` on each dispatch. Path-parameter metadata is small and
-    ``app.routes`` is modest in size; caching hasn't shown up as a hot spot.
+    Memoized on ``handler`` via :class:`weakref.WeakKeyDictionary` so each
+    handler's path-parameter map is discovered exactly once per process.
+    Path parameters are derived from ``handler.paths``, so they're stable
+    across any app the handler is registered on. The weakref keys release
+    cache entries automatically when handlers are collected.
     """
+    cached = _PATH_PARAMETERS_CACHE.get(handler)
+    if cached is not None:
+        return dict(cached)
     for route in app.routes:
         for candidate in getattr(route, "route_handlers", []):
             if candidate is handler:
-                return dict(getattr(route, "path_parameters", {}))
+                found = dict(getattr(route, "path_parameters", {}))
+                _PATH_PARAMETERS_CACHE[handler] = found
+                return dict(found)
         candidate = getattr(route, "route_handler", None)
         if candidate is handler:
-            return dict(getattr(route, "path_parameters", {}))
+            found = dict(getattr(route, "path_parameters", {}))
+            _PATH_PARAMETERS_CACHE[handler] = found
+            return dict(found)
     return {}
 
 
@@ -407,8 +420,14 @@ def _split_tool_args(
 def _blank_http_scope(app: Litestar) -> dict[str, Any]:
     """Return a minimum ASGI HTTP scope for stdio-mode dispatch.
 
-    Keys mirror what ``litestar.testing.RequestFactory`` populates so
+    Keys mirror :meth:`litestar.testing.RequestFactory._create_scope` so
     Litestar's native dispatch pipeline finds everything it expects.
+    Parity audited 2026-04-19 — the only delta is ``asgi.spec_version``:
+    RequestFactory uses ``"3.0"`` (stale), we use the current ASGI spec
+    version ``"2.4"``. Every other key matches what RequestFactory emits
+    (after ``_build_dispatch_scope`` adds the per-request ``method``,
+    ``path``, ``raw_path``, ``query_string``, ``headers``, ``path_params``,
+    ``route_handler``, and ``path_template`` values).
     """
     return {
         "type": "http",
