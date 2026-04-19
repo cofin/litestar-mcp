@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behaviour keep their existing output unchanged. CLI output
   (`litestar mcp list-tools` / `list-resources` / `run`) stays plain-text.
   Closes [#39](https://github.com/cofin/litestar-mcp/issues/39).
+- Resource templates per RFC 6570 Level 1. `@mcp_resource(uri_template="scheme://path/{var}")`
+  and the matching kwarg `mcp_resource_template="..."` on any Litestar route
+  decorator register a template-shaped resource. Concrete URIs matching the
+  template dispatch to the handler with extracted variables passed as kwargs —
+  the same way the matching path parameters would bind on an HTTP request.
+  New JSON-RPC methods `resources/templates/list` and `completion/complete`
+  (MCP spec 2025-11-25). `completion/complete` returns an empty completion by
+  default for 0.5.0; a `@mcp_resource_completion` decorator will arrive in a
+  future release.
 - `JWKSCache` protocol and `DefaultJWKSCache` implementation for injectable
   JWKS / OIDC discovery caches. `OIDCProviderConfig(jwks_cache=...)` and
   `create_oidc_validator(jwks_cache=...)` accept any `JWKSCache` instance so

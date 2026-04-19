@@ -105,7 +105,7 @@ def create_app(
 
     resolved_user_dep = {"resolved_user": Provide(_provide_resolved_user)}
 
-    @get("/notes", opt={"mcp_tool": LIST_NOTES_TOOL_NAME}, dependencies=resolved_user_dep)
+    @get("/notes", mcp_tool=LIST_NOTES_TOOL_NAME, dependencies=resolved_user_dep)
     @inject
     async def list_notes(
         note_service: FromDishka[SQLSpecNoteService], resolved_user: AuthenticatedIdentity
@@ -113,7 +113,7 @@ def create_app(
         rows = await note_service.list_for_owner(resolved_user.sub)
         return [msgspec.convert(note_row_to_public(row), Note) for row in rows]
 
-    @post("/notes", opt={"mcp_tool": CREATE_NOTE_TOOL_NAME}, dependencies=resolved_user_dep)
+    @post("/notes", mcp_tool=CREATE_NOTE_TOOL_NAME, dependencies=resolved_user_dep)
     @inject
     async def create_note(
         data: dict[str, Any],
@@ -127,7 +127,7 @@ def create_app(
     @delete(
         "/notes/{note_id:str}",
         status_code=HTTP_200_OK,
-        opt={"mcp_tool": DELETE_NOTE_TOOL_NAME},
+        mcp_tool=DELETE_NOTE_TOOL_NAME,
         dependencies=resolved_user_dep,
     )
     @inject
@@ -139,11 +139,11 @@ def create_app(
         deleted = await note_service.delete_for_owner(note_id, resolved_user.sub)
         return DeleteNoteResult(deleted=deleted, note_id=note_id)
 
-    @get("/notes/schema", opt={"mcp_resource": NOTES_SCHEMA_RESOURCE_NAME}, sync_to_thread=False)
+    @get("/notes/schema", mcp_resource=NOTES_SCHEMA_RESOURCE_NAME, sync_to_thread=False)
     def notes_schema() -> NotesSchema:
         return NotesSchema()
 
-    @get("/app/info", opt={"mcp_resource": APP_INFO_RESOURCE_NAME}, sync_to_thread=False)
+    @get("/app/info", mcp_resource=APP_INFO_RESOURCE_NAME, sync_to_thread=False)
     def get_api_info() -> AppInfo:
         return build_app_info(backend="sqlspec", auth_mode="jwt", supports_dishka=True)
 

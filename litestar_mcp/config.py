@@ -20,6 +20,9 @@ class MCPOptKeys:
         tool: Opt key that marks a route handler as an MCP tool
             (``handler.opt[tool] = "<tool-name>"``).
         resource: Opt key that marks a route handler as an MCP resource.
+        resource_template: Opt key that carries an RFC 6570 Level 1 URI
+            template for the resource (``handler.opt[resource_template] =
+            "app://workspaces/{workspace_id}/files/{file_id}"``).
         description: Opt key overriding the tool description
             (``handler.opt[description] = "LLM prose"``).
         resource_description: Opt key overriding the resource description.
@@ -32,6 +35,7 @@ class MCPOptKeys:
 
     tool: str = "mcp_tool"
     resource: str = "mcp_resource"
+    resource_template: str = "mcp_resource_template"
     description: str = "mcp_description"
     resource_description: str = "mcp_resource_description"
     agent_instructions: str = "mcp_agent_instructions"

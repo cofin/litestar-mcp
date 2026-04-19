@@ -141,14 +141,14 @@ def create_app(settings: CloudRunSettings | None = None) -> Litestar:
             "resolved_user": Provide(_provide_resolved_user),
         }
 
-        @get("/", opt={"mcp_tool": LIST_NOTES_TOOL_NAME})
+        @get("/", mcp_tool=LIST_NOTES_TOOL_NAME)
         async def list_notes(
             self, note_service: SQLSpecNoteService, resolved_user: AuthenticatedIdentity
         ) -> list[Note]:
             rows = await note_service.list_for_owner(resolved_user.sub)
             return [msgspec.convert(note_row_to_public(row), Note) for row in rows]
 
-        @post("/", opt={"mcp_tool": CREATE_NOTE_TOOL_NAME})
+        @post("/", mcp_tool=CREATE_NOTE_TOOL_NAME)
         async def create_note(
             self, data: dict[str, Any], note_service: SQLSpecNoteService, resolved_user: AuthenticatedIdentity
         ) -> Note:
@@ -156,18 +156,18 @@ def create_app(settings: CloudRunSettings | None = None) -> Litestar:
             row = await note_service.create(title=payload.title, body=payload.body, owner_sub=resolved_user.sub)
             return msgspec.convert(note_row_to_public(row), Note)
 
-        @delete("/{note_id:str}", status_code=HTTP_200_OK, opt={"mcp_tool": DELETE_NOTE_TOOL_NAME})
+        @delete("/{note_id:str}", status_code=HTTP_200_OK, mcp_tool=DELETE_NOTE_TOOL_NAME)
         async def delete_note(
             self, note_id: str, note_service: SQLSpecNoteService, resolved_user: AuthenticatedIdentity
         ) -> DeleteNoteResult:
             deleted = await note_service.delete_for_owner(note_id, resolved_user.sub)
             return DeleteNoteResult(deleted=deleted, note_id=note_id)
 
-    @get("/notes/schema", opt={"mcp_resource": NOTES_SCHEMA_RESOURCE_NAME}, sync_to_thread=False)
+    @get("/notes/schema", mcp_resource=NOTES_SCHEMA_RESOURCE_NAME, sync_to_thread=False)
     def notes_schema() -> NotesSchema:
         return NotesSchema()
 
-    @get("/app/info", opt={"mcp_resource": APP_INFO_RESOURCE_NAME}, sync_to_thread=False)
+    @get("/app/info", mcp_resource=APP_INFO_RESOURCE_NAME, sync_to_thread=False)
     def get_api_info() -> AppInfo:
         return build_app_info(backend="sqlspec", auth_mode="jwt", supports_dishka=False)
 

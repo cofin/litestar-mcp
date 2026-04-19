@@ -1,10 +1,21 @@
 """Central registry for MCP tools and resources."""
 
+from dataclasses import dataclass
 from typing import Any
 
 from litestar.handlers import BaseRouteHandler
 
+from litestar_mcp._uri_template import parse_template
 from litestar_mcp.sse import SSEManager
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceTemplate:
+    """A declared RFC 6570 Level 1 URI template bound to a resource handler."""
+
+    name: str
+    template: str
+    handler: BaseRouteHandler
 
 
 class Registry:
@@ -18,6 +29,7 @@ class Registry:
         """Initialize the registry."""
         self._tools: dict[str, BaseRouteHandler] = {}
         self._resources: dict[str, BaseRouteHandler] = {}
+        self._templates: dict[str, ResourceTemplate] = {}
         self._sse_manager: SSEManager | None = None
 
     def set_sse_manager(self, manager: SSEManager) -> None:
@@ -59,6 +71,23 @@ class Registry:
             handler: The route handler.
         """
         self._resources[name] = handler
+
+    @property
+    def templates(self) -> dict[str, ResourceTemplate]:
+        """Get registered resource templates, keyed by resource name."""
+        return self._templates
+
+    def register_resource_template(self, name: str, handler: BaseRouteHandler, template: str) -> None:
+        """Register an RFC 6570 Level 1 URI template for a resource.
+
+        Args:
+            name: The resource name (same key as ``register_resource``).
+            handler: The route handler bound to the template.
+            template: The URI template string. Validated at registration;
+                invalid templates raise :class:`ValueError`.
+        """
+        parse_template(template)
+        self._templates[name] = ResourceTemplate(name=name, template=template, handler=handler)
 
     async def publish_notification(
         self,

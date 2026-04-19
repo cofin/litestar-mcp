@@ -87,12 +87,20 @@ def mcp_tool(
         Decorator function that adds MCP metadata to the handler.
 
     Example:
+        Pass MCP metadata straight through to the route decorator —
+        Litestar funnels unknown kwargs into ``handler.opt``, so no
+        double-decoration is required:
+
         ```python
-        @mcp_tool(name="user_manager", annotations={"audience": ["user"]})
-        @get("/users")
+        @get("/users", mcp_tool="user_manager", mcp_description="List every user.")
         async def get_users() -> list[dict]:
             return [{"id": 1, "name": "Alice"}]
         ```
+
+        The decorator form is retained for parity; it carries the same
+        metadata to the registry and is useful when you want to stamp
+        ``output_schema``, ``annotations``, ``scopes``, or ``task_support``
+        without mixing more keys into ``handler.opt``.
     """
 
     def decorator(fn: F) -> F:
@@ -125,6 +133,7 @@ def mcp_tool(
 def mcp_resource(
     name: str,
     *,
+    uri_template: str | None = None,
     description: str | None = None,
     agent_instructions: str | None = None,
     when_to_use: str | None = None,
@@ -134,6 +143,13 @@ def mcp_resource(
 
     Args:
         name: The name of the MCP resource.
+        uri_template: Optional RFC 6570 Level 1 URI template
+            (e.g. ``"app://workspaces/{workspace_id}/files/{file_id}"``).
+            Concrete URIs matching the template dispatch to this handler
+            with extracted variables passed as kwargs — the same way the
+            matching path parameters would bind on an HTTP request. The
+            template is validated at registration; invalid templates raise
+            :class:`ValueError`.
         description: LLM-facing description. Overrides ``fn.__doc__``. The
             opt-form key is ``mcp_resource_description`` (not
             ``mcp_description``) so handlers that expose both a tool and a
@@ -150,16 +166,35 @@ def mcp_resource(
         Decorator function that adds MCP metadata to the handler.
 
     Example:
+        Pass MCP metadata straight through to the route decorator —
+        Litestar funnels unknown kwargs into ``handler.opt``:
+
         ```python
-        @mcp_resource(name="app_config")
-        @get("/config")
+        @get("/config", mcp_resource="app_config")
         async def get_config() -> dict:
             return {"debug": True}
+
+        @get(
+            "/workspaces/{workspace_id:str}/files/{file_id:str}",
+            mcp_resource="workspace_file",
+            mcp_resource_template="app://workspaces/{workspace_id}/files/{file_id}",
+        )
+        async def read_workspace_file(workspace_id: str, file_id: str) -> dict:
+            ...
         ```
+
+        The decorator form is retained for parity; it carries the same
+        metadata to the registry.
     """
+    if uri_template is not None:
+        from litestar_mcp._uri_template import parse_template
+
+        parse_template(uri_template)  # raises ValueError on malformed templates.
 
     def decorator(fn: F) -> F:
         metadata: dict[str, Any] = {"type": "resource", "name": name}
+        if uri_template is not None:
+            metadata["resource_template"] = uri_template
         if description is not None:
             metadata["description"] = description
         if agent_instructions is not None:

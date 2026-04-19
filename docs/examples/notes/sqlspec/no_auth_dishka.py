@@ -83,30 +83,30 @@ def create_app(database_path: str | None = None) -> Litestar:
     sqlspec, config = build_sqlspec(str(sqlite_path))
     container = make_async_container(LitestarProvider(), NotesDishkaProvider(sqlspec, config))
 
-    @get("/notes", opt={"mcp_tool": LIST_NOTES_TOOL_NAME})
+    @get("/notes", mcp_tool=LIST_NOTES_TOOL_NAME)
     @inject
     async def list_notes(note_service: FromDishka[SQLSpecNoteService]) -> list[Note]:
         rows = await note_service.list_public()
         return [msgspec.convert(note_row_to_public(row), Note) for row in rows]
 
-    @post("/notes", opt={"mcp_tool": CREATE_NOTE_TOOL_NAME})
+    @post("/notes", mcp_tool=CREATE_NOTE_TOOL_NAME)
     @inject
     async def create_note(data: dict[str, Any], note_service: FromDishka[SQLSpecNoteService]) -> Note:
         payload = msgspec.convert(data, CreateNoteInput)
         row = await note_service.create(title=payload.title, body=payload.body)
         return msgspec.convert(note_row_to_public(row), Note)
 
-    @delete("/notes/{note_id:str}", status_code=HTTP_200_OK, opt={"mcp_tool": DELETE_NOTE_TOOL_NAME})
+    @delete("/notes/{note_id:str}", status_code=HTTP_200_OK, mcp_tool=DELETE_NOTE_TOOL_NAME)
     @inject
     async def delete_note(note_id: str, note_service: FromDishka[SQLSpecNoteService]) -> DeleteNoteResult:
         await note_service.delete(note_id)
         return DeleteNoteResult(deleted=True, note_id=note_id)
 
-    @get("/notes/schema", opt={"mcp_resource": NOTES_SCHEMA_RESOURCE_NAME}, sync_to_thread=False)
+    @get("/notes/schema", mcp_resource=NOTES_SCHEMA_RESOURCE_NAME, sync_to_thread=False)
     def notes_schema() -> NotesSchema:
         return NotesSchema()
 
-    @get("/app/info", opt={"mcp_resource": APP_INFO_RESOURCE_NAME}, sync_to_thread=False)
+    @get("/app/info", mcp_resource=APP_INFO_RESOURCE_NAME, sync_to_thread=False)
     def get_api_info() -> AppInfo:
         return build_app_info(backend="sqlspec", auth_mode="none", supports_dishka=True)
 

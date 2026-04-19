@@ -23,6 +23,7 @@ from litestar.status_codes import (
 )
 
 from litestar_mcp._descriptions import render_description
+from litestar_mcp._uri_template import match_uri
 from litestar_mcp.config import MCPConfig
 from litestar_mcp.decorators import get_mcp_metadata
 from litestar_mcp.executor import execute_tool
@@ -303,6 +304,7 @@ def build_jsonrpc_router(
     app_ref: Any,
     request_context: RequestContext,
     task_store: InMemoryTaskStore | None = None,
+    registry: Registry | None = None,
 ) -> JSONRPCRouter:
     """Build and return a JSONRPCRouter wired to MCP method handlers."""
     router = JSONRPCRouter()
@@ -494,52 +496,115 @@ def build_jsonrpc_router(
 
     router.register("resources/list", handle_resources_list)
 
+    async def handle_resources_templates_list(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
+        if registry is None:
+            return {"resourceTemplates": []}
+        templates = []
+        for entry in registry.templates.values():
+            handler_tags = set(getattr(entry.handler, "tags", None) or [])
+            if not should_include_handler(entry.name, handler_tags, config):
+                continue
+            fn = get_handler_function(entry.handler)
+            templates.append(
+                {
+                    "uriTemplate": entry.template,
+                    "name": entry.name,
+                    "description": render_description(
+                        entry.handler, fn, kind="resource", fallback_name=entry.name, opt_keys=config.opt_keys
+                    ),
+                    "mimeType": "application/json",
+                }
+            )
+        return {"resourceTemplates": templates}
+
+    router.register("resources/templates/list", handle_resources_templates_list)
+
     async def handle_resources_read(params: dict[str, Any]) -> dict[str, Any]:
         uri = params.get("uri", "")
-        if not uri.startswith("litestar://"):
+        if not isinstance(uri, str) or not uri:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=f"Invalid resource URI: {uri}"))
 
-        resource_name = uri[len("litestar://") :]
-        if resource_name == "openapi" and app_ref is not None:
+        if uri.startswith("litestar://"):
+            resource_name = uri[len("litestar://") :]
+            if resource_name == "openapi" and app_ref is not None:
+                return {
+                    "contents": [
+                        {
+                            "uri": "litestar://openapi",
+                            "mimeType": "application/json",
+                            "text": encode_json(app_ref.openapi_schema).decode("utf-8"),
+                        }
+                    ]
+                }
+
+            handler = discovered_resources.get(resource_name)
+            if handler is None:
+                raise JSONRPCErrorException(
+                    JSONRPCError(code=INVALID_PARAMS, message=f"Resource not found: {resource_name}")
+                )
+
+            try:
+                result = await execute_tool(
+                    handler,
+                    app_ref,
+                    {},
+                    request=request_context.request,
+                )
+            except Exception as exc:
+                raise JSONRPCErrorException(
+                    JSONRPCError(code=INTERNAL_ERROR, message=f"Resource read failed: {exc!s}")
+                ) from exc
+
             return {
                 "contents": [
                     {
-                        "uri": "litestar://openapi",
+                        "uri": uri,
                         "mimeType": "application/json",
-                        "text": encode_json(app_ref.openapi_schema).decode("utf-8"),
+                        "text": encode_json(result).decode("utf-8"),
                     }
                 ]
             }
 
-        handler = discovered_resources.get(resource_name)
-        if handler is None:
-            raise JSONRPCErrorException(
-                JSONRPCError(code=INVALID_PARAMS, message=f"Resource not found: {resource_name}")
-            )
+        # Non-``litestar://`` URIs: match against registered templates.
+        # First template that matches wins (documented: registration order).
+        template_entries = registry.templates.values() if registry is not None else ()
+        for entry in template_entries:
+            extracted = match_uri(entry.template, uri)
+            if extracted is None:
+                continue
+            try:
+                result = await execute_tool(
+                    entry.handler,
+                    app_ref,
+                    dict(extracted),
+                    request=request_context.request,
+                )
+            except Exception as exc:
+                raise JSONRPCErrorException(
+                    JSONRPCError(code=INTERNAL_ERROR, message=f"Resource read failed: {exc!s}")
+                ) from exc
 
-        try:
-            result = await execute_tool(
-                handler,
-                app_ref,
-                {},
-                request=request_context.request,
-            )
-        except Exception as exc:
-            raise JSONRPCErrorException(
-                JSONRPCError(code=INTERNAL_ERROR, message=f"Resource read failed: {exc!s}")
-            ) from exc
+            return {
+                "contents": [
+                    {
+                        "uri": uri,
+                        "mimeType": "application/json",
+                        "text": encode_json(result).decode("utf-8"),
+                    }
+                ]
+            }
 
-        return {
-            "contents": [
-                {
-                    "uri": uri,
-                    "mimeType": "application/json",
-                    "text": encode_json(result).decode("utf-8"),
-                }
-            ]
-        }
+        raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=f"Resource not found: {uri}"))
 
     router.register("resources/read", handle_resources_read)
+
+    async def handle_completion_complete(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
+        # v0.5.0 default: every ref returns an empty completion. A future
+        # ``@mcp_resource_completion`` decorator will dispatch through this
+        # method; for now, unknown refs must not error per MCP spec.
+        return {"completion": {"values": [], "total": 0, "hasMore": False}}
+
+    router.register("completion/complete", handle_completion_complete)
 
     if task_store is not None:
 
@@ -836,6 +901,7 @@ class MCPController(Controller):
             app_ref=request.app,
             request_context=request_context,
             task_store=task_store,
+            registry=registry,
         )
         result = await router.dispatch(rpc_request)
 

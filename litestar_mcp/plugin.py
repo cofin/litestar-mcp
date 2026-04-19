@@ -89,13 +89,21 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                         self._registry.register_tool(metadata["name"], handler)
                     elif metadata["type"] == "resource":
                         self._registry.register_resource(metadata["name"], handler)
+                        template = metadata.get("resource_template")
+                        if template is not None:
+                            self._registry.register_resource_template(metadata["name"], handler, template)
                 elif handler.opt:
                     tool_key = self._config.opt_keys.tool
                     resource_key = self._config.opt_keys.resource
+                    template_key = self._config.opt_keys.resource_template
                     if tool_key in handler.opt:
                         self._registry.register_tool(handler.opt[tool_key], handler)
                     if resource_key in handler.opt:
-                        self._registry.register_resource(handler.opt[resource_key], handler)
+                        resource_name = handler.opt[resource_key]
+                        self._registry.register_resource(resource_name, handler)
+                        opt_template = handler.opt.get(template_key)
+                        if isinstance(opt_template, str):
+                            self._registry.register_resource_template(resource_name, handler, opt_template)
 
             if getattr(handler, "route_handlers", None):
                 self._discover_mcp_routes(handler.route_handlers)  # pyright: ignore[reportAttributeAccessIssue]

@@ -109,18 +109,31 @@ How It Works
 Kwargs to Opt Mechanism
 -----------------------
 
-Litestar automatically processes kwargs in route decorators and moves them into the route handler's ``opt`` dictionary:
+Litestar automatically funnels unknown kwargs in route decorators into the
+handler's ``opt`` dictionary. This is the **recommended way** to mark routes
+for MCP — pass the metadata straight through to ``@get`` / ``@post`` / etc.
+and let Litestar wire up ``handler.opt`` for you:
 
 .. code-block:: python
 
-    # These are equivalent:
-    @get("/users", mcp_tool="list_users")  # <- kwargs syntax (recommended)
-    async def get_users() -> list[dict]: ...
+    @get("/users", mcp_tool="list_users", mcp_description="List every user.")
+    async def get_users() -> list[dict]:
+        ...
 
-    @get("/users", opt={"mcp_tool": "list_users"})  # <- opt dictionary syntax
-    async def get_users() -> list[dict]: ...
+The plugin reads these MCP kwargs from ``handler.opt``:
 
-The plugin discovers MCP-marked routes by scanning the ``opt`` dictionary of each route handler.
+- ``mcp_tool``, ``mcp_resource`` — mark the handler as a tool / resource
+- ``mcp_resource_template`` — RFC 6570 URI template for templated resources
+- ``mcp_description``, ``mcp_resource_description`` — LLM-facing description
+- ``mcp_agent_instructions`` — rendered as ``## Instructions``
+- ``mcp_when_to_use`` — rendered as ``## When to use``
+- ``mcp_returns`` — rendered as ``## Returns``
+
+Stacking ``@mcp_tool(...)`` / ``@mcp_resource(...)`` on top of the route
+decorator is still supported (and is useful when you need ``output_schema``,
+``annotations``, ``scopes``, or ``task_support`` — fields that do not have
+opt-key equivalents), but the kwarg form is shorter and the right default
+99% of the time.
 
 Available Endpoints
 -------------------
