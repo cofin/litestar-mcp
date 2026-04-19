@@ -23,7 +23,7 @@ from litestar.status_codes import (
 )
 
 from litestar_mcp.config import MCPConfig
-from litestar_mcp.executor import execute_tool
+from litestar_mcp.executor import MCPToolErrorResult, execute_tool
 from litestar_mcp.jsonrpc import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
@@ -328,6 +328,8 @@ def build_jsonrpc_router(
 
         try:
             result = await execute_tool(handler, app_ref, tool_args, request=request_context.request)
+        except MCPToolErrorResult as err:
+            return _build_tool_result(err.content, is_error=True, task_id=task_id)
         except Exception as exc:  # noqa: BLE001
             return _build_tool_result({"error": str(exc)}, is_error=True, task_id=task_id)
 
@@ -552,6 +554,10 @@ def build_jsonrpc_router(
                     {},
                     request=request_context.request,
                 )
+            except MCPToolErrorResult as err:
+                raise JSONRPCErrorException(
+                    JSONRPCError(code=INTERNAL_ERROR, message=f"Resource read failed: {err.content!s}")
+                ) from err
             except Exception as exc:
                 raise JSONRPCErrorException(
                     JSONRPCError(code=INTERNAL_ERROR, message=f"Resource read failed: {exc!s}")
@@ -581,6 +587,10 @@ def build_jsonrpc_router(
                     dict(extracted),
                     request=request_context.request,
                 )
+            except MCPToolErrorResult as err:
+                raise JSONRPCErrorException(
+                    JSONRPCError(code=INTERNAL_ERROR, message=f"Resource read failed: {err.content!s}")
+                ) from err
             except Exception as exc:
                 raise JSONRPCErrorException(
                     JSONRPCError(code=INTERNAL_ERROR, message=f"Resource read failed: {exc!s}")

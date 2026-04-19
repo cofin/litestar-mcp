@@ -186,6 +186,7 @@ CLAUDE.md
 .dolt/
 .beads-credential-key
 AGENTS.md
+GEMINI.md
 .geminiignore
 .gemini
 .claude/settings.json

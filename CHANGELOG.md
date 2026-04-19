@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] — Unreleased
+
+### Fixed
+
+- `execute_tool` now runs the full Litestar handler pipeline for MCP tool
+  dispatch, not just guards. Response rendering delegates to
+  `HTTPRouteHandler.to_response()` + capture-send, so `before_request`,
+  `after_request`, `after_response`, `after_exception` observers, and
+  ownership-layer `exception_handlers` all fire identically to an HTTP
+  request. `type_encoders`, `response_class`, and `media_type` declared on
+  the handler are respected automatically. App-level `before_request` /
+  `after_response` hooks fire via the outer `/mcp` HTTP request and are
+  deduplicated inside the tool dispatch to avoid double-invocation.
+  `status_code >= 400` returned by the pipeline — either from the handler
+  directly or via an exception handler's `Response` — maps to
+  `isError: true` in the JSON-RPC result. Transport caveat: response
+  headers and cookies are dropped at the JSON-RPC boundary.
+  Closes [#41](https://github.com/cofin/litestar-mcp/issues/41).
+- `schema_dump` honors `msgspec.Struct(rename=...)` on output. The
+  serializer now uses `msgspec.structs.fields(cls)[i].encode_name` instead
+  of `__struct_fields__`, so Structs declared with `rename="camel"` (or
+  kebab / pascal / a callable) emit their wire-correct keys — matching
+  msgspec's native encoder. No-rename Structs continue to emit
+  snake_case. The implementation lives in `litestar_mcp._serializer`, a
+  cached type-keyed pipeline vendored from `sqlspec` (metrics + Arrow
+  bridge dropped). `schema_dump` in `litestar_mcp.typing` remains the
+  public import path as a thin delegator. Same upstream bug filed as
+  `litestar-org/sqlspec#418` for independent resolution.
+  Closes [#42](https://github.com/cofin/litestar-mcp/issues/42).
+
 ## [0.5.0] — 2026-04-19
 
 ### Added

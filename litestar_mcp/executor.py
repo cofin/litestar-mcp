@@ -1,34 +1,58 @@
-"""Execute MCP tools through Litestar's native request-pipeline.
+"""Execute MCP tools through Litestar's full HTTP request-pipeline.
 
-Each ``tools/call`` synthesizes a Litestar ``Request`` shaped like a real HTTP
-request for the handler's declared route, then runs the framework's own
-``KwargsModel`` / ``SignatureModel`` / dependency-resolution pipeline against
-it. Path params, query kwargs, ``data: StructT`` bodies, ``FromDishka[T]``,
-``request: Request``, guards, and ``Provide(...)`` dependencies all work the
-way they would for a normal HTTP handler — no MCP-specific DI plumbing.
+Each ``tools/call`` synthesizes a Litestar :class:`Request` shaped like a real
+HTTP request for the handler's declared route, then runs the framework's own
+dispatch pipeline against it. Path params, query kwargs, ``data: StructT``
+bodies, ``FromDishka[T]``, ``request: Request``, guards, dependencies,
+``before_request`` / ``after_request`` / ``after_response``,
+``after_exception`` observers, and ownership-layer ``exception_handlers`` all
+work the way they would for a normal HTTP handler — no MCP-specific plumbing.
+
+Response rendering delegates to :meth:`HTTPRouteHandler.to_response` + a
+capture-send driver, so every Litestar feature baked into the ``to_response``
+closure (``type_encoders``, ``response_class``, ``media_type``, cookies,
+headers, ``after_request``) is picked up automatically. The JSON-RPC envelope
+carries the decoded body and maps ``status_code >= 400`` to
+``isError: true``; HTTP-only semantics (headers, cookies) are a documented
+transport caveat.
 """
 
 from __future__ import annotations
 
 import inspect
+import logging
 import re
+import weakref
 from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlencode
 
 import msgspec
 from litestar import Litestar, Request
+from litestar._asgi.routing_trie.traversal import parse_path_params
 from litestar.exceptions import ImproperlyConfiguredException
+from litestar.response import Response
+from litestar.types.empty import Empty
 from litestar.utils.sync import ensure_async_callable
-
-from litestar_mcp.typing import schema_dump
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from litestar.handlers.base import BaseRouteHandler
+    from litestar.handlers.http_handlers.base import HTTPRouteHandler
+    from litestar.types.internal_types import PathParameterDefinition
 
-__all__ = ("NotCallableInCLIContextError", "execute_tool")
+__all__ = (
+    "MCPPathParamCoercionError",
+    "MCPToolErrorResult",
+    "NotCallableInCLIContextError",
+    "execute_tool",
+)
+
+_logger = logging.getLogger(__name__)
+
+_NON_JSON_STATUS = 500
+_ERROR_STATUS_FLOOR = 400
 
 
 class NotCallableInCLIContextError(ImproperlyConfiguredException):
@@ -44,6 +68,47 @@ class NotCallableInCLIContextError(ImproperlyConfiguredException):
         super().__init__(f"Tool '{handler_name}' cannot be called from the CLI: {reason}")
 
 
+class MCPPathParamCoercionError(ValueError):
+    """Raised when a typed path parameter cannot be coerced from its raw value.
+
+    Mirrors the failure mode Litestar's HTTP router surfaces when a URL
+    segment fails its declared parser (``{wid:uuid}`` with ``"not-a-uuid"``).
+    The MCP executor catches this so the JSON-RPC blanket catch can report a
+    structured error that names the offending argument.
+    """
+
+    def __init__(self, name: str, raw: Any, cause: Exception) -> None:
+        """Initialize the error.
+
+        Args:
+            name: Name of the path parameter that failed to coerce.
+            raw: The raw value passed in the ``tools/call`` arguments.
+            cause: Underlying parser exception.
+        """
+        super().__init__(f"Invalid value for path parameter {name!r}: {raw!r} ({cause})")
+        self.name = name
+        self.raw = raw
+
+
+class MCPToolErrorResult(Exception):  # noqa: N818
+    """Carries a ``4xx``/``5xx`` tool-call payload from executor to route layer.
+
+    Raised when ``handler.to_response`` produces a ``status_code >= 400`` or
+    when an ``exception_handlers`` dispatch resolves to an error response.
+    The JSON-RPC route layer catches this and maps it to ``isError: true`` in
+    the ``tools/call`` result.
+    """
+
+    def __init__(self, content: Any) -> None:
+        """Initialize with the already-rendered JSON-RPC content payload.
+
+        Args:
+            content: Decoded response body (typically a ``dict``).
+        """
+        super().__init__("MCP tool returned error response")
+        self.content = content
+
+
 async def _enforce_guards(handler: BaseRouteHandler, request: Request[Any, Any, Any]) -> None:
     """Run each guard resolved from ``handler.ownership_layers`` against ``request``.
 
@@ -56,21 +121,247 @@ async def _enforce_guards(handler: BaseRouteHandler, request: Request[Any, Any, 
             await result
 
 
+def _hook_is_app_level(hook: Any, app: Litestar, attr: str) -> bool:
+    """True when ``hook`` is the app-level hook already fired on the outer ``/mcp`` request.
+
+    Litestar runs ``before_request`` / ``after_response`` as part of the
+    handler's response pipeline, not via middleware — so the hook fires
+    exactly once per HTTP request. Since each ``tools/call`` IS an HTTP
+    request to ``/mcp``, the app-level hook already runs there. Firing it
+    again for the synthesized tool dispatch would double-invoke. Hooks
+    declared at route / controller / router scope live BELOW the ``/mcp``
+    endpoint and don't fire on the outer request, so they must run here.
+    """
+    app_hook = getattr(app, attr, None)
+    return app_hook is not None and hook is app_hook
+
+
+async def _run_before_request(
+    handler: BaseRouteHandler,
+    request: Request[Any, Any, Any],
+) -> Any:
+    """Invoke the closest-wins ``before_request`` hook.
+
+    Returns:
+        :data:`Empty` when no hook is declared or the resolved hook is the
+        app-level hook (which already fired on the outer ``/mcp`` request);
+        otherwise the hook's return value (truthy short-circuits the
+        handler, falsy falls through to normal dispatch).
+    """
+    http_handler = cast("HTTPRouteHandler", handler)
+    hook = http_handler.resolve_before_request()
+    if hook is None:
+        return Empty
+    if _hook_is_app_level(hook, request.app, "before_request"):
+        return Empty
+    raw: Any = hook(request)
+    if inspect.isawaitable(raw):
+        raw = await raw
+    return raw
+
+
+async def _run_after_response(
+    handler: BaseRouteHandler,
+    request: Request[Any, Any, Any],
+) -> None:
+    """Fire the closest-wins ``after_response`` hook; log and swallow failures.
+
+    Skipped when the resolved hook is the app-level hook — the outer
+    ``/mcp`` HTTP request already fires it.
+    """
+    http_handler = cast("HTTPRouteHandler", handler)
+    hook = http_handler.resolve_after_response()
+    if hook is None:
+        return
+    if _hook_is_app_level(hook, request.app, "after_response"):
+        return
+    try:
+        result = hook(request)
+        if inspect.isawaitable(result):
+            await result
+    except Exception:
+        _logger.exception("after_response hook failed during MCP tool dispatch")
+
+
+async def _run_after_exception_hooks(
+    app: Litestar,
+    request: Request[Any, Any, Any],
+    exc: Exception,
+) -> None:
+    """Fire app-level ``after_exception`` observers; log and swallow each failure.
+
+    Parity with Litestar HTTP: observers fire BEFORE ``exception_handlers``
+    dispatch, so recovery still happens even when an observer throws.
+    """
+    observers = getattr(app, "after_exception", None) or []
+    for observer in observers:
+        try:
+            result = observer(exc, request.scope)
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            _logger.exception("after_exception hook failed during MCP tool dispatch")
+
+
+async def _capture_asgi_response(
+    asgi_app: Any,
+    request: Request[Any, Any, Any],
+) -> tuple[Any, int]:
+    """Drive an ASGIApp against a sink-send, returning (content, status_code).
+
+    ``handler.to_response`` returns an :class:`ASGIResponse`. We invoke it
+    with the dispatch request's scope/receive and a send callable that
+    captures the ``http.response.start`` / ``http.response.body`` messages.
+    The body is decoded as JSON; if the handler returned a non-JSON media
+    type we surface a generic ``{"error": ..., "media_type": ...}`` payload
+    with ``status_code=500`` so JSON-RPC callers see a well-formed error.
+    """
+    status_code = 0
+    media_type = ""
+    body_chunks: list[bytes] = []
+
+    async def _sink_send(message: dict[str, Any]) -> None:
+        nonlocal status_code, media_type
+        msg_type = message.get("type")
+        if msg_type == "http.response.start":
+            status_code = int(message.get("status", 0))
+            for key, value in message.get("headers", []) or []:
+                if key.lower() == b"content-type":
+                    media_type = value.decode("latin-1").split(";")[0].strip()
+                    break
+        elif msg_type == "http.response.body":
+            body_chunks.append(bytes(message.get("body", b"") or b""))
+
+    await asgi_app(cast("Any", request.scope), cast("Any", request.receive), _sink_send)
+
+    body = b"".join(body_chunks)
+    if not body:
+        return None, status_code
+    try:
+        content = msgspec.json.decode(body)
+    except msgspec.DecodeError:
+        return (
+            {"error": "non-JSON response from MCP handler", "media_type": media_type or "unknown"},
+            _NON_JSON_STATUS,
+        )
+    return content, status_code
+
+
+async def _dispatch_via_exception_handlers(
+    handler: BaseRouteHandler,
+    request: Request[Any, Any, Any],
+    exc: Exception,
+) -> tuple[Any, bool] | None:
+    """Walk ``handler.resolve_exception_handlers()`` MRO-style for ``exc``.
+
+    Returns:
+        ``(content, is_error)`` when a handler matches and renders a
+        response; ``None`` when no handler matches (caller must re-raise).
+    """
+    exception_handlers = handler.resolve_exception_handlers() or {}
+    matched = None
+    for exc_type in type(exc).__mro__:
+        candidate = exception_handlers.get(exc_type)
+        if candidate is not None:
+            matched = candidate
+            break
+    if matched is None:
+        return None
+
+    raw: Any = matched(request, exc)
+    if inspect.isawaitable(raw):
+        raw = await raw
+
+    if isinstance(raw, Response):
+        status = int(getattr(raw, "status_code", 200))
+        is_error = status >= _ERROR_STATUS_FLOOR
+        return raw.content, is_error
+
+    # Exception handler returned raw data — treat as an error render since
+    # it was triggered by a raised exception.
+    return raw, True
+
+
+_PATH_PARAMETERS_CACHE: weakref.WeakKeyDictionary[Any, dict[str, Any]] = weakref.WeakKeyDictionary()
+
+
 def _find_route_path_parameters(app: Litestar, handler: BaseRouteHandler) -> dict[str, Any]:
     """Look up ``path_parameters`` for the route owning ``handler``.
 
-    The MCP registry stores handlers but not their owning route, so we walk
-    ``app.routes`` on each dispatch. Path-parameter metadata is small and
-    ``app.routes`` is modest in size; caching hasn't shown up as a hot spot.
+    Memoized on ``handler`` via :class:`weakref.WeakKeyDictionary` so each
+    handler's path-parameter map is discovered exactly once per process.
+    Path parameters are derived from ``handler.paths``, so they're stable
+    across any app the handler is registered on. The weakref keys release
+    cache entries automatically when handlers are collected.
     """
+    cached = _PATH_PARAMETERS_CACHE.get(handler)
+    if cached is not None:
+        return dict(cached)
     for route in app.routes:
         for candidate in getattr(route, "route_handlers", []):
             if candidate is handler:
-                return dict(getattr(route, "path_parameters", {}))
+                found = dict(getattr(route, "path_parameters", {}))
+                _PATH_PARAMETERS_CACHE[handler] = found
+                return dict(found)
         candidate = getattr(route, "route_handler", None)
         if candidate is handler:
-            return dict(getattr(route, "path_parameters", {}))
+            found = dict(getattr(route, "path_parameters", {}))
+            _PATH_PARAMETERS_CACHE[handler] = found
+            return dict(found)
     return {}
+
+
+def _coerce_path_params(
+    path_parameters: dict[str, PathParameterDefinition],
+    raw_values: dict[str, Any],
+) -> dict[str, Any]:
+    """Coerce raw path-param strings to their declared types via Litestar.
+
+    Uses :func:`litestar._asgi.routing_trie.traversal.parse_path_params`, the
+    same ``@lru_cache(1024)``-memoized helper Litestar's ASGI router runs on
+    every inbound request. Covers every built-in parser (``uuid``, ``int``,
+    ``float``, ``decimal``, ``date``, ``datetime``, ``time``, ``timedelta``,
+    ``path``) plus custom parsers registered on the app.
+
+    Args:
+        path_parameters: The owning route's ``path_parameters`` dict — each
+            value is a :class:`~litestar.types.internal_types.PathParameterDefinition`
+            carrying the parser callable (``None`` for plain ``str``).
+        raw_values: Subset of ``tool_args`` that matched path-parameter names.
+
+    Returns:
+        A new dict with each value parsed to its declared type. Values for
+        which the route declares no parser (e.g. ``{name:str}``) pass through
+        unchanged because ``PathParameterDefinition.parser`` is ``None``.
+
+    Raises:
+        MCPPathParamCoercionError: When a value cannot be parsed.
+    """
+    if not path_parameters or not raw_values:
+        return dict(raw_values)
+    present = tuple(defn for name, defn in path_parameters.items() if name in raw_values)
+    if not present:
+        return {}
+    try:
+        values_tuple = tuple(str(raw_values[defn.name]) for defn in present)
+        return parse_path_params(present, values_tuple)
+    except (ValueError, TypeError) as exc:
+        offending = next(
+            (defn.name for defn in present if _parser_would_reject(defn, raw_values[defn.name])),
+            present[0].name,
+        )
+        raise MCPPathParamCoercionError(offending, raw_values[offending], exc) from exc
+
+
+def _parser_would_reject(defn: PathParameterDefinition, raw: Any) -> bool:
+    """Return True when ``defn.parser`` raises on ``raw``. ``str``-typed params never reject."""
+    if defn.parser is None:
+        return False
+    try:
+        defn.parser(str(raw))
+    except (ValueError, TypeError):
+        return True
+    return False
 
 
 def _substitute_path(template: str, path_params: dict[str, Any]) -> str:
@@ -129,8 +420,14 @@ def _split_tool_args(
 def _blank_http_scope(app: Litestar) -> dict[str, Any]:
     """Return a minimum ASGI HTTP scope for stdio-mode dispatch.
 
-    Keys mirror what ``litestar.testing.RequestFactory`` populates so
+    Keys mirror :meth:`litestar.testing.RequestFactory._create_scope` so
     Litestar's native dispatch pipeline finds everything it expects.
+    Parity audited 2026-04-19 — the only delta is ``asgi.spec_version``:
+    RequestFactory uses ``"3.0"`` (stale), we use the current ASGI spec
+    version ``"2.4"``. Every other key matches what RequestFactory emits
+    (after ``_build_dispatch_scope`` adds the per-request ``method``,
+    ``path``, ``raw_path``, ``query_string``, ``headers``, ``path_params``,
+    ``route_handler``, and ``path_template`` values).
     """
     return {
         "type": "http",
@@ -166,8 +463,9 @@ def _build_dispatch_scope(
     Stdio mode starts from a blank scope.
     """
     path_values, query_values, body = _split_tool_args(handler, tool_args, path_parameters)
+    coerced_path_values = _coerce_path_params(path_parameters, path_values)
     path_template = next(iter(handler.paths)) if handler.paths else "/"
-    path = _substitute_path(path_template, path_values)
+    path = _substitute_path(path_template, coerced_path_values)
     query_string = urlencode(query_values, doseq=True).encode("ascii") if query_values else b""
 
     scope = _blank_http_scope(app)
@@ -193,7 +491,7 @@ def _build_dispatch_scope(
             "raw_path": path.encode("ascii"),
             "query_string": query_string,
             "headers": headers,
-            "path_params": path_values,
+            "path_params": coerced_path_values,
             "route_handler": handler,
             "path_template": path_template,
         },
@@ -227,18 +525,32 @@ async def execute_tool(
     *,
     request: Request[Any, Any, Any] | None = None,
 ) -> Any:
-    """Execute an MCP tool handler through Litestar's native dispatch pipeline.
+    """Execute an MCP tool handler through Litestar's full HTTP pipeline.
 
-    In HTTP mode (``request`` provided), the executor synthesizes a sibling
-    ``Request`` shaped like a real HTTP request for ``handler``'s declared
-    route, inheriting middleware-populated state from the inbound request. In
-    stdio mode (``request=None``), it builds a fresh scope and opens a child
-    Dishka container when the app has one. Both modes run the same dispatch
-    pipeline: ``create_kwargs_model`` → ``to_kwargs`` → ``resolve_dependencies``
-    → ``parse_values_from_connection_kwargs`` → ``handler.fn(**parsed)``.
+    Runs, in order:
 
-    Guards from every ownership layer (app → router → controller → handler)
-    run against the dispatch request before any dependency resolution.
+    1. Guards from every ownership layer (app → router → controller → handler).
+    2. ``before_request`` (closest-wins). A truthy return short-circuits the
+       handler; a falsy return (``None`` / ``""`` / ``0`` / ``[]`` / ``{}``)
+       falls through to normal dispatch.
+    3. ``create_kwargs_model`` → ``to_kwargs`` → ``resolve_dependencies`` →
+       ``parse_values_from_connection_kwargs`` → ``handler.fn(**parsed)``
+       (skipped on short-circuit).
+    4. ``handler.to_response(...)`` + capture-send — this is where
+       ``after_request``, ``type_encoders``, response-class selection, and
+       media-type negotiation happen.
+    5. On any raised exception: app-level ``after_exception`` observers fire
+       (observer failures are logged and swallowed), then
+       ``handler.resolve_exception_handlers()`` is walked MRO-style. A
+       matching handler's returned :class:`Response` renders in-place; if
+       no handler matches, the exception propagates to the route layer's
+       JSON-RPC blanket catch.
+    6. ``after_response`` (closest-wins) fires in ``finally``, exactly once,
+       on every path — success, short-circuit, guard failure, exception.
+
+    Transport caveat: JSON-RPC has no HTTP semantics, so response headers and
+    cookies set in ``after_request`` or by the response class are silently
+    dropped. ``status_code >= 400`` maps to ``isError: true``.
 
     Args:
         handler: The MCP-tool-marked route handler.
@@ -249,7 +561,12 @@ async def execute_tool(
             for CLI / stdio invocations.
 
     Returns:
-        The handler's return value, ``schema_dump``-ed when not a primitive.
+        The decoded response body for success paths.
+
+    Raises:
+        MCPToolErrorResult: When the handler pipeline or an exception handler
+            renders ``status_code >= 400``. The ``content`` attribute carries
+            the already-rendered payload for the JSON-RPC route layer.
     """
     path_parameters = _find_route_path_parameters(app, handler)
 
@@ -270,20 +587,40 @@ async def execute_tool(
             receive=cast("Any", receive),
         )
 
-        await _enforce_guards(handler, dispatch_request)
+        content: Any = None
+        is_error = False
+        try:
+            try:
+                await _enforce_guards(handler, dispatch_request)
 
-        kwargs_model = handler.create_kwargs_model(path_parameters=path_parameters)
-        kwargs = await kwargs_model.to_kwargs(connection=dispatch_request)
-        cleanup_group = await kwargs_model.resolve_dependencies(dispatch_request, kwargs)
-        await stack.enter_async_context(cleanup_group)
-        parsed_kwargs = handler.signature_model.parse_values_from_connection_kwargs(
-            connection=dispatch_request,
-            kwargs=kwargs,
-        )
+                short_circuit = await _run_before_request(handler, dispatch_request)
+                if short_circuit is not Empty and short_circuit:
+                    raw_result = short_circuit
+                else:
+                    kwargs_model = handler.create_kwargs_model(path_parameters=path_parameters)
+                    kwargs = await kwargs_model.to_kwargs(connection=dispatch_request)
+                    cleanup_group = await kwargs_model.resolve_dependencies(dispatch_request, kwargs)
+                    await stack.enter_async_context(cleanup_group)
+                    parsed_kwargs = handler.signature_model.parse_values_from_connection_kwargs(
+                        connection=dispatch_request,
+                        kwargs=kwargs,
+                    )
+                    handler_fn = ensure_async_callable(handler.fn)
+                    raw_result = await handler_fn(**parsed_kwargs)
 
-        handler_fn = ensure_async_callable(handler.fn)
-        result = await handler_fn(**parsed_kwargs)
+                http_handler = cast("HTTPRouteHandler", handler)
+                asgi_app = await http_handler.to_response(app=app, data=raw_result, request=dispatch_request)
+                content, status = await _capture_asgi_response(asgi_app, dispatch_request)
+                is_error = status >= _ERROR_STATUS_FLOOR
+            except Exception as exc:
+                await _run_after_exception_hooks(app, dispatch_request, exc)
+                handled = await _dispatch_via_exception_handlers(handler, dispatch_request, exc)
+                if handled is None:
+                    raise
+                content, is_error = handled
+        finally:
+            await _run_after_response(handler, dispatch_request)
 
-    if not isinstance(result, (str, int, float, bool, list, dict, type(None))):
-        return schema_dump(result)
-    return result
+    if is_error:
+        raise MCPToolErrorResult(content)
+    return content
