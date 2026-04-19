@@ -8,6 +8,8 @@ automatically exposed through a single MCP endpoint.
 
 from litestar_mcp.__metadata__ import __version__
 from litestar_mcp.auth import (
+    DefaultJWKSCache,
+    JWKSCache,
     MCPAuthBackend,
     MCPAuthConfig,
     OIDCProviderConfig,
@@ -20,6 +22,8 @@ from litestar_mcp.plugin import LitestarMCP
 from litestar_mcp.routes import MCPController
 
 __all__ = (
+    "DefaultJWKSCache",
+    "JWKSCache",
     "LitestarMCP",
     "MCPAuthBackend",
     "MCPAuthConfig",

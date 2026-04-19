@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from litestar_mcp.auth._oidc import (
     DEFAULT_CLOCK_SKEW_SECONDS,
     DEFAULT_JWKS_CACHE_TTL_SECONDS,
 )
+
+if TYPE_CHECKING:
+    from litestar_mcp.auth._cache import JWKSCache
 
 
 @dataclass
@@ -22,6 +26,11 @@ class OIDCProviderConfig:
         algorithms: Allowed JWS algorithms (default: ``["RS256"]``).
         cache_ttl: JWKS / discovery document cache TTL in seconds.
         clock_skew: Tolerance in seconds for ``exp`` / ``iat`` / ``nbf`` checks.
+        jwks_cache: Optional shared :class:`~litestar_mcp.auth.JWKSCache`
+            instance. When ``None`` the process-wide default cache is used,
+            which matches 0.4.0 semantics. Providing a custom cache lets an
+            application share one JWKS store across its own auth stack and
+            litestar-mcp's OIDC validator.
     """
 
     issuer: str
@@ -31,6 +40,7 @@ class OIDCProviderConfig:
     algorithms: list[str] = field(default_factory=lambda: ["RS256"])
     cache_ttl: int = DEFAULT_JWKS_CACHE_TTL_SECONDS
     clock_skew: int = DEFAULT_CLOCK_SKEW_SECONDS
+    jwks_cache: JWKSCache | None = None
 
 
 @dataclass

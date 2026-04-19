@@ -1205,14 +1205,9 @@ name = "litestar-mcp"
 version = "0.5.0"
 source = { editable = "." }
 dependencies = [
-    { name = "litestar" },
-    { name = "typing-extensions" },
-]
-
-[package.optional-dependencies]
-auth = [
     { name = "httpx" },
-    { name = "pyjwt", extra = ["crypto"] },
+    { name = "litestar", extra = ["jwt"] },
+    { name = "typing-extensions" },
 ]
 
 [package.dev-dependencies]
@@ -1330,12 +1325,10 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "httpx", marker = "extra == 'auth'", specifier = ">=0.24.1" },
-    { name = "litestar", specifier = ">=2.0.0" },
-    { name = "pyjwt", extras = ["crypto"], marker = "extra == 'auth'", specifier = ">=2.10.1" },
+    { name = "httpx", specifier = ">=0.24.1" },
+    { name = "litestar", extras = ["jwt"], specifier = ">=2.0.0" },
     { name = "typing-extensions", specifier = ">=4.0.0" },
 ]
-provides-extras = ["auth"]
 
 [package.metadata.requires-dev]
 build = [{ name = "bump-my-version" }]

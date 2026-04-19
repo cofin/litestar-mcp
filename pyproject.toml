@@ -23,7 +23,7 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
 ]
-dependencies = ["litestar>=2.0.0", "typing-extensions>=4.0.0"]
+dependencies = ["litestar[jwt]>=2.0.0", "typing-extensions>=4.0.0", "httpx>=0.24.1"]
 description = "Litestar plugin for Model Context Protocol (MCP) integration"
 keywords = ["litestar", "mcp", "model-context-protocol", "ai", "plugin"]
 license = { text = "MIT" }
@@ -35,9 +35,6 @@ name = "litestar-mcp"
 readme = "README.md"
 requires-python = ">=3.10"
 version = "0.5.0"
-
-[project.optional-dependencies]
-auth = ["httpx>=0.24.1", "pyjwt[crypto]>=2.10.1"]
 
 [project.urls]
 Changelog = "https://docs.litestar-mcp.litestar.dev/latest/changelog"

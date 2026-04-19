@@ -11,16 +11,21 @@ Exports:
   ``/.well-known/oauth-protected-resource`` manifest.
 - :func:`create_oidc_validator` — composable async bearer-token validator
   factory, usable as ``MCPAuthBackend(token_validator=...)``.
+- :class:`JWKSCache` / :class:`DefaultJWKSCache` — injectable JWKS cache
+  protocol and in-process default implementation.
 - :data:`TokenValidator` — type alias for the async validator signature.
 """
 
 from __future__ import annotations
 
+from litestar_mcp.auth._cache import DefaultJWKSCache, JWKSCache
 from litestar_mcp.auth.backend import MCPAuthBackend
 from litestar_mcp.auth.config import MCPAuthConfig, OIDCProviderConfig
 from litestar_mcp.auth.oidc import TokenValidator, create_oidc_validator
 
 __all__ = (
+    "DefaultJWKSCache",
+    "JWKSCache",
     "MCPAuthBackend",
     "MCPAuthConfig",
     "OIDCProviderConfig",

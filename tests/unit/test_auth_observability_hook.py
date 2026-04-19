@@ -15,16 +15,17 @@ from unittest.mock import patch
 import pytest
 
 from litestar_mcp.auth import _oidc as oidc_internals
+from litestar_mcp.auth._cache import reset_default_cache
 from litestar_mcp.auth._oidc import _validate_oidc_bearer
 
 
 @pytest.fixture(autouse=True)
 def _reset_cache() -> Any:
-    oidc_internals._JSON_DOCUMENT_CACHE.clear()
-    oidc_internals._JSON_DOCUMENT_LOCKS.clear()
+    reset_default_cache()
+    oidc_internals._FETCH_LOCKS.clear()
     yield
-    oidc_internals._JSON_DOCUMENT_CACHE.clear()
-    oidc_internals._JSON_DOCUMENT_LOCKS.clear()
+    reset_default_cache()
+    oidc_internals._FETCH_LOCKS.clear()
 
 
 @pytest.mark.asyncio

@@ -16,6 +16,7 @@ import pytest
 
 import litestar_mcp.auth._oidc as mcp_auth
 from litestar_mcp import TokenValidator, create_oidc_validator
+from litestar_mcp.auth._cache import reset_default_cache
 
 pytestmark = pytest.mark.anyio
 
@@ -46,9 +47,11 @@ def _encode(claims: dict[str, Any], secret: bytes, *, kid: str = KID) -> str:
 
 @pytest.fixture(autouse=True)
 def _clear_cache() -> Any:
-    mcp_auth._JSON_DOCUMENT_CACHE.clear()
+    reset_default_cache()
+    mcp_auth._FETCH_LOCKS.clear()
     yield
-    mcp_auth._JSON_DOCUMENT_CACHE.clear()
+    reset_default_cache()
+    mcp_auth._FETCH_LOCKS.clear()
 
 
 async def test_factory_returns_claims_for_valid_token() -> None:
@@ -207,7 +210,7 @@ async def test_factory_jwks_cache_ttl_respected(monkeypatch: pytest.MonkeyPatch)
     def fake_monotonic() -> float:
         return current_time[0]
 
-    monkeypatch.setattr("litestar_mcp.auth._oidc.monotonic", fake_monotonic)
+    monkeypatch.setattr("litestar_mcp.auth._cache.monotonic", fake_monotonic)
 
     validator = create_oidc_validator(
         ISSUER,
