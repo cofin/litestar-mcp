@@ -5,16 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [0.5.0] — 2026-04-19
 
 ### Added
 
 - `@mcp_tool` and `@mcp_resource` accept `description`, `agent_instructions`,
   `when_to_use`, and `returns` keyword arguments. The matching Litestar
-  `opt`-form keys `mcp_description` / `mcp_resource_description`,
+  kwargs `mcp_description` / `mcp_resource_description`,
   `mcp_agent_instructions`, `mcp_when_to_use`, and `mcp_returns` are
-  recognised on route handlers — use them when declaring MCP tools via
-  `@get("/x", opt={...})` rather than the decorators. `tools/list`,
+  recognised directly on route handlers — pass them straight through to
+  `@get(...)` / `@post(...)` etc., and Litestar funnels them into
+  `handler.opt` for the plugin to read. `tools/list`,
   `resources/list`, `/.well-known/agent-card.json`, and
   `/.well-known/mcp-server.json` render a combined description with
   `## When to use` / `## Returns` / `## Instructions` sections whenever

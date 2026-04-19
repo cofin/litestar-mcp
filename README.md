@@ -8,18 +8,19 @@ A lightweight plugin that integrates Litestar web applications with the Model Co
 
 ## Overview
 
-This plugin automatically discovers routes marked with the `opt` attribute and exposes them through an MCP-native transport surface. Routes marked with `mcp_tool="name"` become executable tools, while routes marked with `mcp_resource="name"` become readable resources.
+This plugin automatically discovers Litestar routes marked for MCP and exposes them through an MCP-native transport surface. Pass `mcp_tool="name"` or `mcp_resource="name"` straight through to `@get` / `@post` / etc. — Litestar funnels unknown kwargs into `handler.opt`, so no second decorator or `opt={...}` wrapper is needed.
 
 ## Features
 
-- 🚀 **Minimal Runtime Dependencies** - Litestar plus `typing-extensions`; tool-argument validation uses the `msgspec` bundled with Litestar
-- 📡 **Protocol-Native Transport** - MCP Streamable HTTP with JSON-RPC requests and SSE streams
-- 🔧 **Simple Route Marking** - Use Litestar's `opt` attribute pattern
-- 🛡️ **Type Safe** - Full type hints with dataclasses
-- 📊 **Automatic Discovery** - Routes are discovered at app initialization
-- 🎯 **OpenAPI Integration** - Server info derived from OpenAPI config
-- 🔐 **Optional Auth Metadata** - OAuth protected resource metadata and bearer-token validation hooks
-- ⏳ **Optional Task Support** - Experimental in-memory MCP task lifecycle endpoints
+- **Protocol-Native Transport** — MCP Streamable HTTP with JSON-RPC requests and SSE streams.
+- **Simple Route Marking** — pass `mcp_tool` / `mcp_resource` kwargs straight through to Litestar's route decorators.
+- **RFC 6570 URI Templates** — `mcp_resource_template="app://…/{var}"` dispatches concrete URIs to handlers with extracted vars.
+- **First-Class Descriptions** — structured `mcp_description`, `mcp_agent_instructions`, `mcp_when_to_use`, `mcp_returns` kwargs.
+- **Type Safe** — full type hints with dataclasses; `msgspec`-powered tool-argument validation.
+- **Automatic Discovery** — routes are discovered at app initialization.
+- **OpenAPI Integration** — server info derived from OpenAPI config.
+- **OIDC Auth Baked In** — bearer-token validation via `MCPAuthBackend` or a composable `create_oidc_validator()` factory; injectable `JWKSCache` protocol for shared document caches.
+- **Optional Task Support** — experimental in-memory MCP task lifecycle endpoints.
 
 ## Quick Start
 

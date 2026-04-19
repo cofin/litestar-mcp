@@ -37,6 +37,43 @@ Marked resources appear in ``resources/list`` and are fetched via
 ``resources/read``. The plugin always ships one synthetic resource,
 ``litestar://openapi``, that returns the application's OpenAPI document.
 
+Resource URI Templates
+----------------------
+
+Pass ``mcp_resource_template="scheme://path/{var}"`` alongside
+``mcp_resource`` to register an `RFC 6570 Level 1
+<https://datatracker.ietf.org/doc/html/rfc6570>`_ URI template. Clients
+can then request concrete URIs that match the template, and the plugin
+passes the extracted variables straight through to the handler the same
+way Litestar would bind path parameters on an HTTP request:
+
+.. literalinclude:: /examples/snippets/resource_template.py
+    :language: python
+    :caption: ``docs/examples/snippets/resource_template.py``
+    :start-after: # start-example
+    :end-before: # end-example
+    :dedent:
+
+Registered templates are announced via the ``resources/templates/list``
+JSON-RPC method, and concrete URIs flow through ``resources/read``:
+
+.. code-block:: json
+
+    // Request
+    {"jsonrpc":"2.0","id":1,"method":"resources/read",
+     "params":{"uri":"app://workspaces/42/files/99"}}
+
+    // Response (extracted vars -> handler kwargs)
+    {"jsonrpc":"2.0","id":1,"result":{"contents":[
+      {"uri":"app://workspaces/42/files/99","mimeType":"application/json",
+       "text":"{\"workspace\":\"42\",\"file\":\"99\"}"}]}}
+
+``{var}`` matches a single non-empty path segment — it does NOT cross
+``/``. Ambiguous templates resolve to the first-registered match. The
+``completion/complete`` JSON-RPC method is available but returns an empty
+completion by default for 0.5.0; a ``@mcp_resource_completion`` decorator
+is planned for a future release.
+
 JSON-RPC Round-Trip
 ===================
 
