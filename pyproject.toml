@@ -34,7 +34,7 @@ maintainers = [
 name = "litestar-mcp"
 readme = "README.md"
 requires-python = ">=3.10"
-version = "0.5.0"
+version = "0.5.1"
 
 [project.urls]
 Changelog = "https://docs.litestar-mcp.litestar.dev/latest/changelog"
@@ -109,7 +109,7 @@ test = [
 allow_dirty = true
 commit = false
 commit_args = "--no-verify"
-current_version = "0.5.0"
+current_version = "0.5.1"
 ignore_missing_files = false
 ignore_missing_version = false
 message = "chore(release): bump to v{new_version}"
