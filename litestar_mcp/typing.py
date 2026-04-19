@@ -162,7 +162,7 @@ def schema_dump(data: Any, exclude_unset: bool = True) -> "dict[str, Any] | None
     Thin delegator preserving back-compat for existing
     ``from litestar_mcp.typing import schema_dump`` imports. The
     heavy lifting — type dispatch, caching, msgspec ``rename`` fidelity —
-    lives in :mod:`litestar_mcp._serializer`.
+    lives in :mod:`litestar_mcp.utils.serialization`.
 
     Args:
         data: :type:`dict[str, Any]` | :class:`DataclassProtocol` | :class:`msgspec.Struct` | :class:`pydantic.BaseModel` | :class:`AttrsInstance`
@@ -171,7 +171,7 @@ def schema_dump(data: Any, exclude_unset: bool = True) -> "dict[str, Any] | None
     Returns:
         :type:`dict[str, Any] | None`
     """
-    from litestar_mcp._serializer import schema_dump as _cached_dump
+    from litestar_mcp.utils.serialization import schema_dump as _cached_dump
 
     return cast("dict[str, Any] | None", _cached_dump(data, exclude_unset=exclude_unset))
 

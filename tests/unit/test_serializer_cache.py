@@ -1,4 +1,4 @@
-"""Red-phase tests for :mod:`litestar_mcp._serializer` cache semantics.
+"""Red-phase tests for :mod:`litestar_mcp.utils.serialization` cache semantics.
 
 Every test imports from ``litestar_mcp._serializer``, which does not exist
 yet — Phase 2 creates it. All tests are expected to fail at collection time
@@ -12,7 +12,7 @@ from typing import Any, cast
 import pytest
 from msgspec import Struct
 
-from litestar_mcp._serializer import (
+from litestar_mcp.utils.serialization import (
     SchemaSerializer,
     get_collection_serializer,
     reset_serializer_cache,
