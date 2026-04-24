@@ -23,11 +23,14 @@ class MCPOptKeys:
         resource_template: Opt key that carries an RFC 6570 Level 1 URI
             template for the resource (``handler.opt[resource_template] =
             "app://workspaces/{workspace_id}/files/{file_id}"``).
+        prompt: Opt key that marks a route handler as an MCP prompt
+            (``handler.opt[prompt] = "<prompt-name>"``).
         description: Opt key overriding the tool description
             (``handler.opt[description] = "LLM prose"``).
         resource_description: Opt key overriding the resource description.
             Kept distinct from ``description`` so a handler that exposes both
             a tool and a resource on the same route can target each.
+        prompt_description: Opt key overriding the prompt description.
         agent_instructions: Opt key for the ``## Instructions`` section.
         when_to_use: Opt key for the ``## When to use`` section.
         returns: Opt key for the ``## Returns`` section.
@@ -36,22 +39,27 @@ class MCPOptKeys:
     tool: str = "mcp_tool"
     resource: str = "mcp_resource"
     resource_template: str = "mcp_resource_template"
+    prompt: str = "mcp_prompt"
     description: str = "mcp_description"
     resource_description: str = "mcp_resource_description"
+    prompt_description: str = "mcp_prompt_description"
     agent_instructions: str = "mcp_agent_instructions"
     when_to_use: str = "mcp_when_to_use"
     returns: str = "mcp_returns"
 
-    def for_field(self, field_name: str, kind: Literal["tool", "resource"]) -> str:
+    def for_field(self, field_name: str, kind: Literal["tool", "resource", "prompt"]) -> str:
         """Return the opt key for ``(field_name, kind)``.
 
         The ``description`` field has kind-specific keys (``description`` for
-        tools, ``resource_description`` for resources) so a handler exposing
-        both a tool and a resource on the same route can carry distinct
-        override prose. All other fields are kind-agnostic.
+        tools, ``resource_description`` for resources, ``prompt_description``
+        for prompts) so a handler exposing multiple MCP roles on the same
+        route can carry distinct override prose. All other fields are
+        kind-agnostic.
         """
         if field_name == "description" and kind == "resource":
             return self.resource_description
+        if field_name == "description" and kind == "prompt":
+            return self.prompt_description
         value: str = getattr(self, field_name)
         return value
 

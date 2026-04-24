@@ -3,7 +3,7 @@
 
 This module is the single home for handler-introspection helpers
 (``get_handler_function``), discovery filtering (``should_include_handler``),
-MCP metadata decorators (``@mcp_tool``, ``@mcp_resource``,
+MCP metadata decorators (``@mcp_tool``, ``@mcp_resource``, ``@mcp_prompt``,
 ``get_mcp_metadata``, ``MetadataRegistry``), LLM-facing description
 rendering (``render_description``, ``extract_description_sources``,
 ``DescriptionSources``), and the RFC 6570 Level 1 URI template helpers
@@ -279,6 +279,72 @@ def mcp_resource(
     return decorator
 
 
+def mcp_prompt(
+    name: str,
+    *,
+    title: str | None = None,
+    description: str | None = None,
+    arguments: list[dict[str, Any]] | None = None,
+    icons: list[dict[str, Any]] | None = None,
+) -> Callable[[F], F]:
+    """Decorator to mark a callable as an MCP prompt template.
+
+    Prompt functions take keyword arguments matching the declared prompt
+    arguments and return prompt messages. The return value is normalised
+    to a list of ``PromptMessage`` dicts:
+
+    * ``str`` → single ``{"role": "user", "content": {"type": "text", "text": ...}}``
+    * ``dict`` → treated as a single message and wrapped in a list
+    * ``list[dict]`` → used directly
+    * Any other type → ``str(result)`` wrapped as a single user text message
+
+    Both sync and async callables are supported.
+
+    Args:
+        name: Unique identifier for the prompt (used in ``prompts/get``).
+        title: Optional human-readable display name for UI clients.
+        description: LLM-facing description. When omitted, ``fn.__doc__``
+            is used as the fallback during registration.
+        arguments: Optional explicit argument definitions — each entry is a
+            dict with ``name`` (required), ``description`` (optional), and
+            ``required`` (optional, defaults to introspection from the
+            function signature). When omitted the argument list is derived
+            automatically from the decorated function's signature and
+            Google-style docstring.
+        icons: Optional list of icon objects for UI display. Each entry is a
+            dict with ``src`` (URL), ``mimeType``, and optionally ``sizes``
+            per the MCP spec.
+
+    Returns:
+        Decorator function that adds MCP metadata to the callable.
+
+    Example:
+        Standalone prompt function registered via
+        ``LitestarMCP(prompts=[summarize_text])``:
+
+        ```python
+        @mcp_prompt(name="summarize", description="Summarise a document.")
+        async def summarize_text(text: str, style: str = "concise") -> str:
+            return f"Please summarise the following in a {style} style:\\n\\n{text}"
+        ```
+    """
+
+    def decorator(fn: F) -> F:
+        metadata: dict[str, Any] = {"type": "prompt", "name": name}
+        if title is not None:
+            metadata["title"] = title
+        if description is not None:
+            metadata["description"] = description
+        if arguments is not None:
+            metadata["arguments"] = arguments
+        if icons is not None:
+            metadata["icons"] = icons
+        _REGISTRY.set(fn, metadata)
+        return fn
+
+    return decorator
+
+
 def get_mcp_metadata(obj: Any) -> dict[str, Any] | None:
     """Get MCP metadata for an object if it exists.
 
@@ -295,7 +361,7 @@ def get_mcp_metadata(obj: Any) -> dict[str, Any] | None:
 # Description rendering
 # ---------------------------------------------------------------------------
 
-Kind = Literal["tool", "resource"]
+Kind = Literal["tool", "resource", "prompt"]
 
 _STRUCTURED_FIELDS: tuple[str, str, str] = ("when_to_use", "returns", "agent_instructions")
 
@@ -498,6 +564,7 @@ __all__ = (
     "get_handler_function",
     "get_mcp_metadata",
     "match_uri",
+    "mcp_prompt",
     "mcp_resource",
     "mcp_tool",
     "parse_template",

@@ -116,6 +116,7 @@ def build_mcp_server_manifest(
     app: Litestar,
     discovered_tools: dict[str, Any],
     discovered_resources: dict[str, Any],
+    discovered_prompts: dict[str, Any],
 ) -> dict[str, Any]:
     """Build an experimental MCP server manifest."""
     tools = []
@@ -133,6 +134,17 @@ def build_mcp_server_manifest(
             tool_entry["security"] = {"scopes": metadata["scopes"]}
         tools.append(tool_entry)
 
+    prompts_list = []
+    if discovered_prompts:
+        for _name, registration in sorted(discovered_prompts.items()):
+            prompt_entry: dict[str, Any] = {"name": registration.name}
+            if registration.description is not None:
+                prompt_entry["description"] = registration.description
+            arguments = registration.get_arguments()
+            if arguments:
+                prompt_entry["arguments"] = arguments
+            prompts_list.append(prompt_entry)
+
     return {
         "experimental": True,
         "name": _server_name(config, app),
@@ -146,8 +158,10 @@ def build_mcp_server_manifest(
         "capabilities": {
             "tools": {"listChanged": True},
             "resources": {"subscribe": True, "listChanged": True},
+            "prompts": {"listChanged": True},
             "tasks": config.task_config is not None,
         },
         "tools": tools,
         "resources": sorted(discovered_resources.keys()),
+        "prompts": prompts_list,
     }

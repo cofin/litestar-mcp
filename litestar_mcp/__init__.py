@@ -23,7 +23,7 @@ from litestar_mcp.auth import (
 from litestar_mcp.config import MCPConfig, MCPOptKeys
 from litestar_mcp.plugin import LitestarMCP
 from litestar_mcp.routes import MCPController
-from litestar_mcp.utils import mcp_resource, mcp_tool
+from litestar_mcp.utils import mcp_prompt, mcp_resource, mcp_tool
 
 __all__ = (
     "DefaultJWKSCache",
@@ -38,6 +38,7 @@ __all__ = (
     "TokenValidator",
     "__version__",
     "create_oidc_validator",
+    "mcp_prompt",
     "mcp_resource",
     "mcp_tool",
 )

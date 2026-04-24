@@ -3,6 +3,8 @@
 
 import asyncio
 import contextlib
+import inspect
+import logging
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import Any
@@ -36,7 +38,7 @@ from litestar_mcp.jsonrpc import (
     error_response,
     parse_request,
 )
-from litestar_mcp.registry import Registry
+from litestar_mcp.registry import PromptRegistration, Registry
 from litestar_mcp.schema_builder import generate_schema_for_handler
 from litestar_mcp.sessions import MCPSessionManager, SessionTerminated
 from litestar_mcp.sse import StreamLimitExceeded
@@ -48,6 +50,8 @@ from litestar_mcp.utils import (
     render_description,
     should_include_handler,
 )
+
+_logger = logging.getLogger(__name__)
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
 MCP_SESSION_HEADER = "Mcp-Session-Id"
@@ -298,10 +302,43 @@ def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: dict[str, A
     return sorted(errors, key=lambda entry: (entry["path"], entry["message"]))
 
 
+def _normalize_prompt_result(result: Any) -> list[dict[str, Any]]:
+    """Normalize a prompt's return value to a list of PromptMessage dicts.
+
+    * ``str`` → single user-role text message
+    * ``dict`` → treated as a single message (wrapped in a list)
+    * ``list`` → used directly
+    * Any other type → ``str(result)`` wrapped as a user-role text message
+    """
+    if isinstance(result, str):
+        return [{"role": "user", "content": {"type": "text", "text": result}}]
+    if isinstance(result, dict):
+        if "role" in result and "content" in result:
+            return [result]
+        _logger.warning("Prompt returned dict missing 'role'/'content' keys: %s", list(result.keys()))
+        return [{"role": "user", "content": {"type": "text", "text": str(result)}}]
+    if isinstance(result, list):
+        coerced: list[dict[str, Any]] = []
+        for i, item in enumerate(result):
+            if isinstance(item, dict):
+                coerced.append(item)
+            else:
+                _logger.warning(
+                    "Prompt returned list with non-dict element at index %d (%s), coercing to string",
+                    i,
+                    type(item).__name__,
+                )
+                coerced.append({"role": "user", "content": {"type": "text", "text": str(item)}})
+        return coerced
+    _logger.warning("Prompt returned unexpected type %s, coercing to string", type(result).__name__)
+    return [{"role": "user", "content": {"type": "text", "text": str(result)}}]
+
+
 def build_jsonrpc_router(
     config: MCPConfig,
     discovered_tools: dict[str, BaseRouteHandler],
     discovered_resources: dict[str, BaseRouteHandler],
+    discovered_prompts: dict[str, PromptRegistration],
     *,
     app_ref: Any,
     request_context: RequestContext,
@@ -367,6 +404,7 @@ def build_jsonrpc_router(
         capabilities: dict[str, Any] = {
             "tools": {"listChanged": True},
             "resources": {"subscribe": True, "listChanged": True},
+            "prompts": {"listChanged": True},
         }
         if task_config is not None:
             task_capabilities: dict[str, Any] = {"requests": {"tools": {"call": {}}}}
@@ -618,6 +656,103 @@ def build_jsonrpc_router(
 
     router.register("completion/complete", handle_completion_complete)
 
+    async def handle_prompts_list(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
+        prompts = []
+        for _name, registration in discovered_prompts.items():
+            prompt_entry: dict[str, Any] = {"name": registration.name}
+            if registration.title is not None:
+                prompt_entry["title"] = registration.title
+            if registration.description is not None:
+                prompt_entry["description"] = registration.description
+            arguments = registration.get_arguments()
+            if arguments:
+                prompt_entry["arguments"] = arguments
+            if registration.icons is not None:
+                prompt_entry["icons"] = registration.icons
+            prompts.append(prompt_entry)
+        return {"prompts": prompts}
+
+    router.register("prompts/list", handle_prompts_list)
+
+    async def handle_prompts_get(params: dict[str, Any]) -> dict[str, Any]:
+        prompt_name = params.get("name")
+        if not prompt_name:
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'name'"))
+
+        registration = discovered_prompts.get(prompt_name)
+        if registration is None:
+            raise JSONRPCErrorException(
+                JSONRPCError(code=INVALID_PARAMS, message=f"Prompt not found: {prompt_name}")
+            )
+
+        prompt_args = params.get("arguments", {})
+        if not isinstance(prompt_args, dict):
+            raise JSONRPCErrorException(
+                JSONRPCError(code=INVALID_PARAMS, message="Prompt arguments must be an object")
+            )
+
+        if registration.handler is not None:
+            try:
+                result = await execute_tool(
+                    registration.handler, app_ref, prompt_args, request=request_context.request
+                )
+            except MCPToolErrorResult as err:
+                _logger.exception("Prompt handler execution failed: %s", prompt_name)
+                raise JSONRPCErrorException(
+                    JSONRPCError(code=INTERNAL_ERROR, message=f"Prompt execution failed: {err.content!s}")
+                ) from err
+            except JSONRPCErrorException:
+                raise
+            except TypeError as exc:
+                _logger.exception("Invalid prompt arguments for handler: %s", prompt_name)
+                raise JSONRPCErrorException(
+                    JSONRPCError(code=INVALID_PARAMS, message=f"Invalid prompt arguments: {exc!s}")
+                ) from exc
+            except Exception as exc:
+                _logger.exception("Prompt handler execution failed: %s", prompt_name)
+                raise JSONRPCErrorException(
+                    JSONRPCError(code=INTERNAL_ERROR, message=f"Prompt execution failed: {exc!s}")
+                ) from exc
+            handler_result: dict[str, Any]
+            if isinstance(result, dict) and "messages" in result:
+                handler_result = result
+            else:
+                handler_result = {"messages": _normalize_prompt_result(result)}
+            if registration.description is not None and "description" not in handler_result:
+                handler_result["description"] = registration.description
+            return handler_result
+
+        if registration.fn is not None:
+            # Validate arguments before calling to distinguish argument
+            # mismatches (INVALID_PARAMS) from TypeErrors inside the function.
+            try:
+                inspect.signature(registration.fn).bind(**prompt_args)
+            except TypeError as exc:
+                raise JSONRPCErrorException(
+                    JSONRPCError(code=INVALID_PARAMS, message=f"Invalid prompt arguments: {exc!s}")
+                ) from exc
+
+            try:
+                result = registration.fn(**prompt_args)
+                if asyncio.iscoroutine(result):
+                    result = await result
+            except Exception as exc:
+                _logger.exception("Prompt function execution failed: %s", prompt_name)
+                raise JSONRPCErrorException(
+                    JSONRPCError(code=INTERNAL_ERROR, message=f"Prompt execution failed: {exc!s}")
+                ) from exc
+            messages = _normalize_prompt_result(result)
+            get_result: dict[str, Any] = {"messages": messages}
+            if registration.description is not None and "description" not in get_result:
+                get_result["description"] = registration.description
+            return get_result
+
+        raise JSONRPCErrorException(  # pragma: no cover
+            JSONRPCError(code=INTERNAL_ERROR, message=f"Prompt has no callable: {prompt_name}")
+        )
+
+    router.register("prompts/get", handle_prompts_get)
+
     if task_store is not None:
 
         async def handle_tasks_get(params: dict[str, Any]) -> dict[str, Any]:
@@ -803,6 +938,7 @@ class MCPController(Controller):
         config: MCPConfig,
         discovered_tools: dict[str, Any],
         discovered_resources: dict[str, Any],
+        discovered_prompts: dict[str, PromptRegistration],
         registry: Registry,
         session_manager: MCPSessionManager,
         task_store: InMemoryTaskStore | None = None,
@@ -910,6 +1046,7 @@ class MCPController(Controller):
             config,
             discovered_tools,
             discovered_resources,
+            discovered_prompts,
             app_ref=request.app,
             request_context=request_context,
             task_store=task_store,
