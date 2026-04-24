@@ -665,6 +665,10 @@ def build_jsonrpc_router(
     async def handle_prompts_list(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
         prompts = []
         for _name, registration in discovered_prompts.items():
+            if registration.handler is not None:
+                handler_tags = set(getattr(registration.handler, "tags", None) or [])
+                if not should_include_handler(registration.name, handler_tags, config):
+                    continue
             prompt_entry: dict[str, Any] = {"name": registration.name}
             if registration.title is not None:
                 prompt_entry["title"] = registration.title
@@ -691,6 +695,13 @@ def build_jsonrpc_router(
                 JSONRPCError(code=INVALID_PARAMS, message=f"Prompt not found: {prompt_name}")
             )
 
+        if registration.handler is not None:
+            handler_tags = set(getattr(registration.handler, "tags", None) or [])
+            if not should_include_handler(registration.name, handler_tags, config):
+                raise JSONRPCErrorException(
+                    JSONRPCError(code=INVALID_PARAMS, message=f"Prompt not found: {prompt_name}")
+                )
+
         prompt_args = params.get("arguments", {})
         if not isinstance(prompt_args, dict):
             raise JSONRPCErrorException(
@@ -716,17 +727,13 @@ def build_jsonrpc_router(
                     registration.handler, app_ref, prompt_args, request=request_context.request
                 )
             except MCPToolErrorResult as err:
-                _logger.warning("Prompt handler returned error result: %s", prompt_name)
+                code = INVALID_PARAMS if err.is_client_error else INTERNAL_ERROR
+                _logger.warning("Prompt handler returned error result: %s (status=%d)", prompt_name, err.status_code)
                 raise JSONRPCErrorException(
-                    JSONRPCError(code=INTERNAL_ERROR, message=f"Prompt execution failed: {err.content!s}")
+                    JSONRPCError(code=code, message=f"Prompt execution failed: {err.content!s}")
                 ) from err
             except JSONRPCErrorException:
                 raise
-            except TypeError as exc:
-                _logger.exception("Invalid prompt arguments for handler: %s", prompt_name)
-                raise JSONRPCErrorException(
-                    JSONRPCError(code=INVALID_PARAMS, message=f"Invalid prompt arguments: {exc!s}")
-                ) from exc
             except Exception as exc:
                 _logger.exception("Prompt handler execution failed: %s", prompt_name)
                 raise JSONRPCErrorException(
