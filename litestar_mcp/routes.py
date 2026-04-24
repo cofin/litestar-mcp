@@ -320,8 +320,14 @@ def _normalize_prompt_result(result: Any) -> list[dict[str, Any]]:
     if isinstance(result, list):
         coerced: list[dict[str, Any]] = []
         for i, item in enumerate(result):
-            if isinstance(item, dict):
+            if isinstance(item, dict) and "role" in item and "content" in item:
                 coerced.append(item)
+            elif isinstance(item, dict):
+                _logger.warning(
+                    "Prompt returned list with dict missing 'role'/'content' at index %d, coercing to string",
+                    i,
+                )
+                coerced.append({"role": "user", "content": {"type": "text", "text": str(item)}})
             else:
                 _logger.warning(
                     "Prompt returned list with non-dict element at index %d (%s), coercing to string",
@@ -668,7 +674,7 @@ def build_jsonrpc_router(
             if arguments:
                 prompt_entry["arguments"] = arguments
             if registration.icons is not None:
-                prompt_entry["icons"] = registration.icons
+                prompt_entry.setdefault("_meta", {})["icons"] = registration.icons
             prompts.append(prompt_entry)
         return {"prompts": prompts}
 
@@ -691,7 +697,20 @@ def build_jsonrpc_router(
                 JSONRPCError(code=INVALID_PARAMS, message="Prompt arguments must be an object")
             )
 
+        # MCP spec: prompt arguments are Record<string, string> — all values must be strings.
+        for _arg_key, _arg_val in prompt_args.items():
+            if not isinstance(_arg_val, str):
+                raise JSONRPCErrorException(
+                    JSONRPCError(
+                        code=INVALID_PARAMS,
+                        message=f"Argument '{_arg_key}' must be a string, got {type(_arg_val).__name__}",
+                    )
+                )
+
         if registration.handler is not None:
+            # Prompt handlers run through the Litestar execution pipeline
+            # (DI, middleware, guards) via execute_tool — same dispatch path
+            # as tools, reused for consistent handler execution semantics.
             try:
                 result = await execute_tool(
                     registration.handler, app_ref, prompt_args, request=request_context.request

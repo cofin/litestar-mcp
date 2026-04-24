@@ -65,10 +65,9 @@ def _parse_docstring_args(docstring: str | None) -> dict[str, str]:
         elif current_name is not None and stripped:
             current_desc.append(stripped)
         elif current_name is not None and not stripped:
-            # Blank line ends current param
-            result[current_name] = " ".join(current_desc).strip()
-            current_name = None
-            current_desc = []
+            # Blank line between params — skip without terminating
+            # the current param so continuation lines are still captured.
+            pass
 
     if current_name is not None:
         result[current_name] = " ".join(current_desc).strip()

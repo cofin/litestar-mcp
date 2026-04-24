@@ -228,6 +228,17 @@ class TestParseDocstringArgs:
         """
         assert _parse_docstring_args(doc) == {"x": "First."}
 
+    def test_blank_line_between_params(self) -> None:
+        doc = """Fn.
+
+        Args:
+            x: First param.
+
+            y: Second param.
+        """
+        result = _parse_docstring_args(doc)
+        assert result == {"x": "First param.", "y": "Second param."}
+
     def test_stops_at_notes_section(self) -> None:
         doc = """Fn.
 
@@ -321,6 +332,10 @@ class TestNormalizePromptResult:
         ]
         assert _normalize_prompt_result(msgs) == msgs
 
+    def test_list_with_malformed_dict_coerced(self) -> None:
+        result = _normalize_prompt_result([{"text": "no role or content"}])
+        assert result == [{"role": "user", "content": {"type": "text", "text": "{'text': 'no role or content'}"}}]
+
     def test_other_types_stringified(self) -> None:
         result = _normalize_prompt_result(42)
         assert result == [{"role": "user", "content": {"type": "text", "text": "42"}}]
@@ -408,7 +423,7 @@ class TestPromptsListRPC:
             assert prompts[0]["description"] == "Summarize text"
             assert prompts[0]["arguments"] == [{"name": "text", "required": True}]
 
-    def test_lists_prompt_with_icons(self) -> None:
+    def test_lists_prompt_with_icons_in_meta(self) -> None:
         icons = [{"src": "https://example.com/icon.svg", "mimeType": "image/svg+xml", "sizes": ["any"]}]
 
         @mcp_prompt(name="fancy", description="Fancy prompt", icons=icons)
@@ -420,7 +435,8 @@ class TestPromptsListRPC:
             session_id = _init_session(client)
             data = _jsonrpc(client, "prompts/list", session_id=session_id)
             prompt = data["result"]["prompts"][0]
-            assert prompt["icons"] == icons
+            assert "icons" not in prompt, "icons must not be a top-level Prompt field (MCP spec)"
+            assert prompt["_meta"]["icons"] == icons
 
     def test_lists_prompt_with_docstring_arg_descriptions(self) -> None:
         @mcp_prompt(name="documented")
@@ -549,6 +565,24 @@ class TestPromptsGetRPC:
             )
             assert "error" in data
             assert data["error"]["code"] == -32602
+
+    def test_get_prompt_rejects_non_string_argument_values(self) -> None:
+        @mcp_prompt(name="typed")
+        def typed(name: str) -> str:
+            return name
+
+        app = _make_app_with_prompts(typed)
+        with TestClient(app) as client:
+            session_id = _init_session(client)
+            data = _jsonrpc(
+                client,
+                "prompts/get",
+                params={"name": "typed", "arguments": {"name": 42}},
+                session_id=session_id,
+            )
+            assert "error" in data
+            assert data["error"]["code"] == -32602
+            assert "must be a string" in data["error"]["message"]
 
     def test_get_prompt_invalid_arguments_error(self) -> None:
         @mcp_prompt(name="strict")
