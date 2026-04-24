@@ -1,6 +1,10 @@
 """Tests for MCP Prompts support (prompts/list and prompts/get)."""
 
+from __future__ import annotations
+
 import json
+from collections.abc import Callable
+from typing import Any
 
 import pytest
 from litestar import Litestar, get
@@ -10,6 +14,58 @@ from litestar_mcp import LitestarMCP, MCPConfig, mcp_prompt
 from litestar_mcp.registry import PromptRegistration, Registry, _parse_docstring_args
 from litestar_mcp.routes import _normalize_prompt_result
 from litestar_mcp.utils import get_mcp_metadata
+
+
+# ---------------------------------------------------------------------------
+# Helpers — mirrors _ensure_session / _rpc pattern from test_plugin.py
+# ---------------------------------------------------------------------------
+
+
+def _ensure_session(client: TestClient[Any]) -> str:
+    key = "_mcp_session::/mcp"
+    sid = getattr(client, key, None)
+    if sid is not None:
+        return sid  # type: ignore[no-any-return]
+    init = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
+        },
+    )
+    sid = init.headers.get("mcp-session-id", "")
+    client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+        headers={"Mcp-Session-Id": sid},
+    )
+    setattr(client, key, sid)
+    return str(sid)
+
+
+def _rpc(
+    client: TestClient[Any],
+    method: str,
+    params: dict[str, Any] | None = None,
+    msg_id: int = 1,
+) -> dict[str, Any]:
+    body: dict[str, Any] = {"jsonrpc": "2.0", "id": msg_id, "method": method}
+    if params is not None:
+        body["params"] = params
+    headers: dict[str, str] = {}
+    if method != "initialize":
+        sid = _ensure_session(client)
+        if sid:
+            headers["Mcp-Session-Id"] = sid
+    return client.post("/mcp", json=body, headers=headers).json()  # type: ignore[no-any-return]
+
+
+def _make_app_with_prompts(*prompt_fns: Callable[..., Any]) -> Litestar:
+    """Create a Litestar app with MCP prompts registered."""
+    plugin = LitestarMCP(config=MCPConfig(), prompts=list(prompt_fns))
+    return Litestar(route_handlers=[], plugins=[plugin])
 
 
 # ---------------------------------------------------------------------------
@@ -368,43 +424,11 @@ class TestPluginPromptRegistration:
 # ---------------------------------------------------------------------------
 
 
-def _make_app_with_prompts(*prompt_fns) -> Litestar:
-    """Create a Litestar app with MCP prompts registered."""
-    plugin = LitestarMCP(config=MCPConfig(), prompts=list(prompt_fns))
-    return Litestar(route_handlers=[], plugins=[plugin])
-
-
-def _jsonrpc(client: TestClient, method: str, params: dict | None = None, session_id: str | None = None) -> dict:
-    """Send a JSON-RPC request and return the result."""
-    body = {"jsonrpc": "2.0", "method": method, "id": 1, "params": params or {}}
-    headers = {"Content-Type": "application/json"}
-    if session_id:
-        headers["Mcp-Session-Id"] = session_id
-    resp = client.post("/mcp", json=body, headers=headers)
-    assert resp.status_code == 200
-    return resp.json()
-
-
-def _init_session(client: TestClient) -> str:
-    """Initialize an MCP session and return the session ID."""
-    resp = client.post(
-        "/mcp",
-        json={"jsonrpc": "2.0", "method": "initialize", "id": 1, "params": {}},
-        headers={"Content-Type": "application/json"},
-    )
-    session_id = resp.headers.get("Mcp-Session-Id")
-    assert session_id is not None
-    # Mark initialized
-    _jsonrpc(client, "notifications/initialized", session_id=session_id)
-    return session_id
-
-
 class TestPromptsListRPC:
     def test_empty_prompts_list(self) -> None:
         app = _make_app_with_prompts()
         with TestClient(app) as client:
-            session_id = _init_session(client)
-            data = _jsonrpc(client, "prompts/list", session_id=session_id)
+            data = _rpc(client, "prompts/list")
             assert data["result"]["prompts"] == []
 
     def test_lists_registered_prompts(self) -> None:
@@ -414,8 +438,7 @@ class TestPromptsListRPC:
 
         app = _make_app_with_prompts(summarize)
         with TestClient(app) as client:
-            session_id = _init_session(client)
-            data = _jsonrpc(client, "prompts/list", session_id=session_id)
+            data = _rpc(client, "prompts/list")
             prompts = data["result"]["prompts"]
             assert len(prompts) == 1
             assert prompts[0]["name"] == "summarize"
@@ -432,8 +455,7 @@ class TestPromptsListRPC:
 
         app = _make_app_with_prompts(fancy)
         with TestClient(app) as client:
-            session_id = _init_session(client)
-            data = _jsonrpc(client, "prompts/list", session_id=session_id)
+            data = _rpc(client, "prompts/list")
             prompt = data["result"]["prompts"][0]
             assert "icons" not in prompt, "icons must not be a top-level Prompt field (MCP spec)"
             assert prompt["_meta"]["icons"] == icons
@@ -451,8 +473,7 @@ class TestPromptsListRPC:
 
         app = _make_app_with_prompts(documented)
         with TestClient(app) as client:
-            session_id = _init_session(client)
-            data = _jsonrpc(client, "prompts/list", session_id=session_id)
+            data = _rpc(client, "prompts/list")
             args = data["result"]["prompts"][0]["arguments"]
             assert args[0]["name"] == "code"
             assert args[0]["description"] == "The source code to review."
@@ -470,8 +491,7 @@ class TestPromptsListRPC:
 
         app = _make_app_with_prompts(a, b)
         with TestClient(app) as client:
-            session_id = _init_session(client)
-            data = _jsonrpc(client, "prompts/list", session_id=session_id)
+            data = _rpc(client, "prompts/list")
             names = [p["name"] for p in data["result"]["prompts"]]
             assert "prompt_a" in names
             assert "prompt_b" in names
@@ -485,12 +505,10 @@ class TestPromptsGetRPC:
 
         app = _make_app_with_prompts(greet)
         with TestClient(app) as client:
-            session_id = _init_session(client)
-            data = _jsonrpc(
+            data = _rpc(
                 client,
                 "prompts/get",
                 params={"name": "greet", "arguments": {"name": "World"}},
-                session_id=session_id,
             )
             result = data["result"]
             assert result["description"] == "Greet someone"
@@ -505,12 +523,10 @@ class TestPromptsGetRPC:
 
         app = _make_app_with_prompts(async_greet)
         with TestClient(app) as client:
-            session_id = _init_session(client)
-            data = _jsonrpc(
+            data = _rpc(
                 client,
                 "prompts/get",
                 params={"name": "async_greet", "arguments": {"name": "Bob"}},
-                session_id=session_id,
             )
             assert data["result"]["messages"][0]["content"]["text"] == "Async hello, Bob!"
 
@@ -524,8 +540,7 @@ class TestPromptsGetRPC:
 
         app = _make_app_with_prompts(multi)
         with TestClient(app) as client:
-            session_id = _init_session(client)
-            data = _jsonrpc(client, "prompts/get", params={"name": "multi_msg"}, session_id=session_id)
+            data = _rpc(client, "prompts/get", params={"name": "multi_msg"})
             messages = data["result"]["messages"]
             assert len(messages) == 2
             assert messages[0]["role"] == "user"
@@ -534,18 +549,14 @@ class TestPromptsGetRPC:
     def test_get_nonexistent_prompt_error(self) -> None:
         app = _make_app_with_prompts()
         with TestClient(app) as client:
-            session_id = _init_session(client)
-            data = _jsonrpc(
-                client, "prompts/get", params={"name": "nonexistent"}, session_id=session_id
-            )
+            data = _rpc(client, "prompts/get", params={"name": "nonexistent"})
             assert "error" in data
             assert data["error"]["code"] == -32602  # INVALID_PARAMS
 
     def test_get_prompt_missing_name_error(self) -> None:
         app = _make_app_with_prompts()
         with TestClient(app) as client:
-            session_id = _init_session(client)
-            data = _jsonrpc(client, "prompts/get", params={}, session_id=session_id)
+            data = _rpc(client, "prompts/get", params={})
             assert "error" in data
             assert "Missing required param" in data["error"]["message"]
 
@@ -556,12 +567,10 @@ class TestPromptsGetRPC:
 
         app = _make_app_with_prompts(typed)
         with TestClient(app) as client:
-            session_id = _init_session(client)
-            data = _jsonrpc(
+            data = _rpc(
                 client,
                 "prompts/get",
                 params={"name": "typed", "arguments": []},
-                session_id=session_id,
             )
             assert "error" in data
             assert data["error"]["code"] == -32602
@@ -573,12 +582,10 @@ class TestPromptsGetRPC:
 
         app = _make_app_with_prompts(typed)
         with TestClient(app) as client:
-            session_id = _init_session(client)
-            data = _jsonrpc(
+            data = _rpc(
                 client,
                 "prompts/get",
                 params={"name": "typed", "arguments": {"name": 42}},
-                session_id=session_id,
             )
             assert "error" in data
             assert data["error"]["code"] == -32602
@@ -591,12 +598,10 @@ class TestPromptsGetRPC:
 
         app = _make_app_with_prompts(strict)
         with TestClient(app) as client:
-            session_id = _init_session(client)
-            data = _jsonrpc(
+            data = _rpc(
                 client,
                 "prompts/get",
                 params={"name": "strict", "arguments": {"wrong_arg": "val"}},
-                session_id=session_id,
             )
             assert "error" in data
 
@@ -610,7 +615,7 @@ class TestPromptsCapability:
     def test_initialize_advertises_prompts(self) -> None:
         app = _make_app_with_prompts()
         with TestClient(app) as client:
-            data = _jsonrpc(client, "initialize")
+            data = _rpc(client, "initialize")
             capabilities = data["result"]["capabilities"]
             assert "prompts" in capabilities
             assert capabilities["prompts"]["listChanged"] is True
@@ -645,12 +650,10 @@ class TestHandlerBasedPromptDiscovery:
         plugin = LitestarMCP(config=MCPConfig())
         app = Litestar(route_handlers=[greet_handler], plugins=[plugin])
         with TestClient(app) as client:
-            session_id = _init_session(client)
-            data = _jsonrpc(
+            data = _rpc(
                 client,
                 "prompts/get",
                 params={"name": "handler_greet"},
-                session_id=session_id,
             )
             result = data["result"]
             assert result["description"] == "Handler greet"
@@ -668,12 +671,10 @@ class TestHandlerBasedPromptDiscovery:
         plugin = LitestarMCP(config=MCPConfig())
         app = Litestar(route_handlers=[raw_handler], plugins=[plugin])
         with TestClient(app) as client:
-            session_id = _init_session(client)
-            data = _jsonrpc(
+            data = _rpc(
                 client,
                 "prompts/get",
                 params={"name": "raw_prompt"},
-                session_id=session_id,
             )
             result = data["result"]
             assert result["description"] == "Raw prompt"

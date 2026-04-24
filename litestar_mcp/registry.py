@@ -24,6 +24,15 @@ class ResourceTemplate:
     handler: BaseRouteHandler
 
 
+_GOOGLE_SECTION_HEADERS = frozenset({
+    "Args:", "Arguments:", "Params:", "Parameters:",
+    "Returns:", "Return:", "Raises:", "Yields:", "Yield:",
+    "Notes:", "Note:", "Examples:", "Example:",
+    "Attributes:", "References:", "See Also:",
+    "Warnings:", "Warning:", "Todo:", "Todos:",
+})
+
+
 def _parse_docstring_args(docstring: str | None) -> dict[str, str]:
     """Extract parameter descriptions from a Google-style docstring.
 
@@ -38,23 +47,19 @@ def _parse_docstring_args(docstring: str | None) -> dict[str, str]:
     result: dict[str, str] = {}
     current_name: str | None = None
     current_desc: list[str] = []
-    args_indent: int | None = None
 
     for line in lines:
         stripped = line.strip()
         if stripped in ("Args:", "Arguments:", "Params:", "Parameters:"):
             in_args = True
-            args_indent = len(line) - len(line.lstrip())
             continue
         if not in_args:
             continue
-        # Detect end of Args section: next section header at same or lesser indent
+        # Detect end of Args section: unindented non-empty line or known section header
         if stripped and not line[0].isspace():
             break
-        if args_indent is not None and re.match(r"^\s+\w+:\s*$", line):
-            line_indent = len(line) - len(line.lstrip())
-            if line_indent <= args_indent:
-                break
+        if stripped in _GOOGLE_SECTION_HEADERS:
+            break
         # Match "param_name: description" or "param_name (type): description"
         m = re.match(r"^\s+(\w+)(?:\s*\([^)]*\))?\s*:\s*(.*)$", line)
         if m:

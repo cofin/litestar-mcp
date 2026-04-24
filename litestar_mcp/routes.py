@@ -662,7 +662,8 @@ def build_jsonrpc_router(
 
     router.register("completion/complete", handle_completion_complete)
 
-    async def handle_prompts_list(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
+    async def handle_prompts_list(params: dict[str, Any]) -> dict[str, Any]:
+        _cursor = params.get("cursor")  # accepted per spec; pagination not yet implemented
         prompts = []
         for _name, registration in discovered_prompts.items():
             if registration.handler is not None:
@@ -672,7 +673,12 @@ def build_jsonrpc_router(
             prompt_entry: dict[str, Any] = {"name": registration.name}
             if registration.title is not None:
                 prompt_entry["title"] = registration.title
-            if registration.description is not None:
+            if registration.handler is not None:
+                fn = get_handler_function(registration.handler)
+                prompt_entry["description"] = render_description(
+                    registration.handler, fn, kind="prompt", fallback_name=registration.name, opt_keys=config.opt_keys
+                )
+            elif registration.description is not None:
                 prompt_entry["description"] = registration.description
             arguments = registration.get_arguments()
             if arguments:

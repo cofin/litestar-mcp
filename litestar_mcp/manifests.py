@@ -138,7 +138,14 @@ def build_mcp_server_manifest(
     if discovered_prompts:
         for _name, registration in discovered_prompts.items():
             prompt_entry: dict[str, Any] = {"name": registration.name}
-            if registration.description is not None:
+            if registration.title is not None:
+                prompt_entry["title"] = registration.title
+            if registration.handler is not None:
+                fn = get_handler_function(registration.handler)
+                prompt_entry["description"] = render_description(
+                    registration.handler, fn, kind="prompt", fallback_name=registration.name, opt_keys=config.opt_keys
+                )
+            elif registration.description is not None:
                 prompt_entry["description"] = registration.description
             arguments = registration.get_arguments()
             if arguments:
