@@ -309,6 +309,12 @@ def _normalize_prompt_result(result: Any) -> list[dict[str, Any]]:
     * ``dict`` → treated as a single message (wrapped in a list)
     * ``list`` → used directly
     * Any other type → ``str(result)`` wrapped as a user-role text message
+
+    .. warning::
+        Non-conformant return types are silently coerced to string messages
+        with a ``warning``-level log. This lenient behavior can mask bugs in
+        prompt implementations — a prompt returning the wrong type will still
+        produce a valid ``GetPromptResult`` instead of raising an error.
     """
     if isinstance(result, str):
         return [{"role": "user", "content": {"type": "text", "text": result}}]
@@ -662,14 +668,15 @@ def build_jsonrpc_router(
 
     router.register("completion/complete", handle_completion_complete)
 
-    async def handle_prompts_list(params: dict[str, Any]) -> dict[str, Any]:
-        _cursor = params.get("cursor")  # accepted per spec; pagination not yet implemented
+    async def handle_prompts_list(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
         prompts = []
         for _name, registration in discovered_prompts.items():
             if registration.handler is not None:
                 handler_tags = set(getattr(registration.handler, "tags", None) or [])
                 if not should_include_handler(registration.name, handler_tags, config):
                     continue
+            # NOTE: standalone prompts (fn-based) bypass include/exclude tag
+            # and operation filters — they have no handler or tags to filter on.
             prompt_entry: dict[str, Any] = {"name": registration.name}
             if registration.title is not None:
                 prompt_entry["title"] = registration.title
