@@ -286,11 +286,11 @@ class TestRegistryPrompts:
         registry.set_sse_manager(sse_manager)
 
         stream_id, stream = await sse_manager.open_stream(session_id="session1")
-        await stream.__anext__()  # Prime event
+        await anext(stream)  # Prime event
 
         await registry.notify_prompts_list_changed()
 
-        msg = await stream.__anext__()
+        msg = await anext(stream)
         data = json.loads(msg.data)
         assert data["method"] == "notifications/prompts/list_changed"
         sse_manager.disconnect(stream_id)

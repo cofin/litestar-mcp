@@ -51,7 +51,7 @@ def _parse_docstring_args(docstring: str | None) -> dict[str, str]:
         # Detect end of Args section: next section header at same or lesser indent
         if stripped and not line[0].isspace():
             break
-        if stripped.endswith(":") and args_indent is not None:
+        if args_indent is not None and re.match(r"^\s+\w+:\s*$", line):
             line_indent = len(line) - len(line.lstrip())
             if line_indent <= args_indent:
                 break

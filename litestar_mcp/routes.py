@@ -697,7 +697,7 @@ def build_jsonrpc_router(
                     registration.handler, app_ref, prompt_args, request=request_context.request
                 )
             except MCPToolErrorResult as err:
-                _logger.exception("Prompt handler execution failed: %s", prompt_name)
+                _logger.warning("Prompt handler returned error result: %s", prompt_name)
                 raise JSONRPCErrorException(
                     JSONRPCError(code=INTERNAL_ERROR, message=f"Prompt execution failed: {err.content!s}")
                 ) from err
@@ -734,7 +734,7 @@ def build_jsonrpc_router(
 
             try:
                 result = registration.fn(**prompt_args)
-                if asyncio.iscoroutine(result):
+                if inspect.isawaitable(result):
                     result = await result
             except Exception as exc:
                 _logger.exception("Prompt function execution failed: %s", prompt_name)

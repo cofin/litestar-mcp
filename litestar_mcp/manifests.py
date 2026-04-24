@@ -136,7 +136,7 @@ def build_mcp_server_manifest(
 
     prompts_list = []
     if discovered_prompts:
-        for _name, registration in sorted(discovered_prompts.items()):
+        for _name, registration in discovered_prompts.items():
             prompt_entry: dict[str, Any] = {"name": registration.name}
             if registration.description is not None:
                 prompt_entry["description"] = registration.description
