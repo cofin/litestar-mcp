@@ -457,8 +457,8 @@ class TestPromptsListRPC:
         with TestClient(app) as client:
             data = _rpc(client, "prompts/list")
             prompt = data["result"]["prompts"][0]
-            assert "icons" not in prompt, "icons must not be a top-level Prompt field (MCP spec)"
-            assert prompt["_meta"]["icons"] == icons
+            assert prompt["icons"] == icons
+            assert "_meta" not in prompt, "icons belong at top level per MCP Icons mixin, not in _meta"
 
     def test_lists_prompt_with_docstring_arg_descriptions(self) -> None:
         @mcp_prompt(name="documented")

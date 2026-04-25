@@ -691,7 +691,7 @@ def build_jsonrpc_router(
             if arguments:
                 prompt_entry["arguments"] = arguments
             if registration.icons is not None:
-                prompt_entry.setdefault("_meta", {})["icons"] = registration.icons
+                prompt_entry["icons"] = registration.icons
             prompts.append(prompt_entry)
         return {"prompts": prompts}
 

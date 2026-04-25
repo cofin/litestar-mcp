@@ -150,7 +150,7 @@ def build_mcp_server_manifest(
         if arguments:
             prompt_entry["arguments"] = arguments
         if registration.icons is not None:
-            prompt_entry.setdefault("_meta", {})["icons"] = registration.icons
+            prompt_entry["icons"] = registration.icons
         prompts_list.append(prompt_entry)
 
     return {
