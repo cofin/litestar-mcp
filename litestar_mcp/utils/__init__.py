@@ -306,11 +306,14 @@ def mcp_prompt(
         description: LLM-facing description. When omitted, ``fn.__doc__``
             is used as the fallback during registration.
         arguments: Optional explicit argument definitions — each entry is a
-            dict with ``name`` (required), ``description`` (optional), and
-            ``required`` (optional, defaults to introspection from the
-            function signature). When omitted the argument list is derived
-            automatically from the decorated function's signature and
-            Google-style docstring.
+            dict with ``name`` (required), and optional ``title``,
+            ``description``, and ``required`` keys. ``title`` is the
+            human-readable display name from the MCP ``BaseMetadata`` mixin
+            (a hint for UI clients; not used for matching). When omitted,
+            the argument list is derived automatically from the decorated
+            function's signature and Google-style docstring — note that
+            signature introspection cannot infer ``title``, so set it
+            explicitly when needed.
         icons: Optional list of icon objects for UI display. Each entry is a
             dict with ``src`` (URL), ``mimeType``, and optionally ``sizes``
             per the MCP spec.

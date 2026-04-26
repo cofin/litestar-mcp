@@ -31,6 +31,11 @@ class MCPOptKeys:
             Kept distinct from ``description`` so a handler that exposes both
             a tool and a resource on the same route can target each.
         prompt_description: Opt key overriding the prompt description.
+        prompt_title: Opt key overriding the prompt title.
+        prompt_arguments: Opt key overriding the prompt argument list (a
+            ``list[dict]`` matching the decorator's ``arguments=`` param).
+        prompt_icons: Opt key overriding the prompt icons list (a
+            ``list[dict]`` matching the decorator's ``icons=`` param).
         agent_instructions: Opt key for the ``## Instructions`` section.
         when_to_use: Opt key for the ``## When to use`` section.
         returns: Opt key for the ``## Returns`` section.
@@ -43,6 +48,9 @@ class MCPOptKeys:
     description: str = "mcp_description"
     resource_description: str = "mcp_resource_description"
     prompt_description: str = "mcp_prompt_description"
+    prompt_title: str = "mcp_prompt_title"
+    prompt_arguments: str = "mcp_prompt_arguments"
+    prompt_icons: str = "mcp_prompt_icons"
     agent_instructions: str = "mcp_agent_instructions"
     when_to_use: str = "mcp_when_to_use"
     returns: str = "mcp_returns"

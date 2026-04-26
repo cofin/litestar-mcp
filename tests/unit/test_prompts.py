@@ -7,14 +7,18 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
-from litestar import Litestar, get
+from litestar import Litestar, Response, get
+from litestar.status_codes import HTTP_400_BAD_REQUEST, HTTP_500_INTERNAL_SERVER_ERROR
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig, mcp_prompt
-from litestar_mcp.registry import PromptRegistration, Registry, _parse_docstring_args
-from litestar_mcp.routes import _normalize_prompt_result
+from litestar_mcp.registry import (
+    PromptRegistration,
+    Registry,
+    _normalize_prompt_result,
+    _parse_docstring_args,
+)
 from litestar_mcp.utils import get_mcp_metadata
-
 
 # ---------------------------------------------------------------------------
 # Helpers — mirrors _ensure_session / _rpc pattern from test_plugin.py
@@ -182,13 +186,39 @@ class TestPromptRegistration:
         with pytest.raises(ValueError, match="must have either"):
             PromptRegistration(name="x")
 
-    def test_handler_only_returns_empty_arguments(self) -> None:
+    def test_handler_with_no_params_returns_empty_arguments(self) -> None:
         @get("/")
         def handler() -> str:
             return ""
 
         reg = PromptRegistration(name="x", handler=handler)
         assert reg.get_arguments() == []
+
+    def test_handler_arguments_introspected_from_signature_model(self) -> None:
+        """Handler-based prompts derive arguments from the handler's
+        ``signature_model`` so ``prompts/list`` advertises the real shape
+        instead of an empty list.
+        """
+
+        @get("/x", mcp_prompt="x_prompt")
+        def x_handler(code: str, style: str = "brief") -> str:
+            """Review handler.
+
+            Args:
+                code: The source code.
+                style: Output style.
+            """
+            return ""
+
+        plugin = LitestarMCP(config=MCPConfig())
+        Litestar(route_handlers=[x_handler], plugins=[plugin])
+        args = plugin.discovered_prompts["x_prompt"].get_arguments()
+        names_required = [(a["name"], a.get("required")) for a in args]
+        assert ("code", True) in names_required
+        assert ("style", False) in names_required
+        descriptions = {a["name"]: a.get("description") for a in args}
+        assert descriptions["code"] == "The source code."
+        assert descriptions["style"] == "Output style."
 
     def test_get_arguments_skips_var_positional_and_var_keyword(self) -> None:
         def fn(a: str, *args: str, **kwargs: str) -> str:
@@ -612,13 +642,24 @@ class TestPromptsGetRPC:
 
 
 class TestPromptsCapability:
-    def test_initialize_advertises_prompts(self) -> None:
-        app = _make_app_with_prompts()
+    def test_initialize_advertises_prompts_when_registered(self) -> None:
+        @mcp_prompt(name="any_prompt")
+        def any_prompt() -> str:
+            return ""
+
+        app = _make_app_with_prompts(any_prompt)
         with TestClient(app) as client:
             data = _rpc(client, "initialize")
             capabilities = data["result"]["capabilities"]
             assert "prompts" in capabilities
             assert capabilities["prompts"]["listChanged"] is True
+
+    def test_initialize_omits_prompts_capability_when_none_registered(self) -> None:
+        """Per MCP spec, only advertise capabilities the server provides."""
+        app = _make_app_with_prompts()
+        with TestClient(app) as client:
+            data = _rpc(client, "initialize")
+            assert "prompts" not in data["result"]["capabilities"]
 
 
 # ---------------------------------------------------------------------------
@@ -635,7 +676,7 @@ class TestHandlerBasedPromptDiscovery:
             }
 
         plugin = LitestarMCP(config=MCPConfig())
-        app = Litestar(route_handlers=[review_handler], plugins=[plugin])
+        Litestar(route_handlers=[review_handler], plugins=[plugin])
         assert "code_review" in plugin.discovered_prompts
 
     def test_handler_prompt_get_e2e_dict_response(self) -> None:
@@ -681,3 +722,245 @@ class TestHandlerBasedPromptDiscovery:
             assert result["messages"] == [
                 {"role": "user", "content": {"type": "text", "text": "Normalized"}}
             ]
+
+    def test_handler_prompt_missing_required_arg_returns_invalid_params(self) -> None:
+        """MCP spec: missing a required prompt argument MUST surface as INVALID_PARAMS."""
+
+        @get("/needs-code", mcp_prompt="needs_code", mcp_prompt_description="Needs code")
+        async def needs_code(code: str) -> dict:
+            return {
+                "messages": [{"role": "user", "content": {"type": "text", "text": code}}]
+            }
+
+        plugin = LitestarMCP(config=MCPConfig())
+        app = Litestar(route_handlers=[needs_code], plugins=[plugin])
+        with TestClient(app) as client:
+            data = _rpc(client, "prompts/get", params={"name": "needs_code", "arguments": {}})
+            assert "error" in data
+            assert data["error"]["code"] == -32602
+            assert "code" in data["error"]["message"]
+
+    def test_handler_prompt_unknown_arg_returns_invalid_params(self) -> None:
+        """Unknown prompt argument names MUST surface as INVALID_PARAMS."""
+
+        @get("/typed-handler", mcp_prompt="typed_handler", mcp_prompt_description="Typed handler")
+        async def typed_handler(name: str) -> dict:
+            return {
+                "messages": [{"role": "user", "content": {"type": "text", "text": name}}]
+            }
+
+        plugin = LitestarMCP(config=MCPConfig())
+        app = Litestar(route_handlers=[typed_handler], plugins=[plugin])
+        with TestClient(app) as client:
+            data = _rpc(
+                client,
+                "prompts/get",
+                params={"name": "typed_handler", "arguments": {"name": "x", "wrong": "y"}},
+            )
+            assert "error" in data
+            assert data["error"]["code"] == -32602
+            assert "wrong" in data["error"]["message"]
+
+
+# ---------------------------------------------------------------------------
+# Spec coverage: _meta echo on prompts/get
+# ---------------------------------------------------------------------------
+
+
+class TestPromptsGetMetaEcho:
+    def test_handler_prompt_meta_passthrough(self) -> None:
+        """Handler-set _meta on the prompt result is preserved on the wire.
+
+        MCP spec allows servers to attach ``_meta`` to ``GetPromptResult``;
+        when a prompt handler explicitly returns it, the route layer must
+        not strip it.
+        """
+
+        @get("/meta-handler", mcp_prompt="meta_prompt", mcp_prompt_description="Meta prompt")
+        async def meta_handler() -> dict:
+            return {
+                "messages": [{"role": "user", "content": {"type": "text", "text": "hi"}}],
+                "_meta": {"trace_id": "abc-123"},
+            }
+
+        plugin = LitestarMCP(config=MCPConfig())
+        app = Litestar(route_handlers=[meta_handler], plugins=[plugin])
+        with TestClient(app) as client:
+            data = _rpc(client, "prompts/get", params={"name": "meta_prompt"})
+            result = data["result"]
+            assert result["_meta"] == {"trace_id": "abc-123"}
+
+
+# ---------------------------------------------------------------------------
+# Opt-key parity: title / arguments / icons
+# ---------------------------------------------------------------------------
+
+
+class TestHandlerPromptOptKeys:
+    def test_opt_keys_carry_title_arguments_icons(self) -> None:
+        explicit_args = [{"name": "topic", "description": "Topic to summarise", "required": True}]
+        icons = [{"src": "https://example.com/icon.svg", "mimeType": "image/svg+xml"}]
+
+        @get(
+            "/summarise",
+            mcp_prompt="opt_summarise",
+            mcp_prompt_title="Summarise",
+            mcp_prompt_description="Summarise a topic",
+            mcp_prompt_arguments=explicit_args,
+            mcp_prompt_icons=icons,
+        )
+        async def summarise(topic: str) -> dict:
+            return {"messages": [{"role": "user", "content": {"type": "text", "text": topic}}]}
+
+        plugin = LitestarMCP(config=MCPConfig())
+        app = Litestar(route_handlers=[summarise], plugins=[plugin])
+        with TestClient(app) as client:
+            data = _rpc(client, "prompts/list")
+            entry = next(p for p in data["result"]["prompts"] if p["name"] == "opt_summarise")
+            assert entry["title"] == "Summarise"
+            assert entry["arguments"] == explicit_args
+            assert entry["icons"] == icons
+
+
+# ---------------------------------------------------------------------------
+# Spec coverage: PromptArgument.title pass-through (BaseMetadata mixin)
+# ---------------------------------------------------------------------------
+
+
+class TestPromptArgumentTitle:
+    def test_explicit_argument_title_passes_through(self) -> None:
+        """Per MCP spec, ``PromptArgument`` carries an optional ``title`` from
+        the ``BaseMetadata`` mixin. It cannot be derived from a function
+        signature; explicit ``arguments=[...]`` carries it through verbatim.
+        """
+        explicit = [
+            {"name": "code", "title": "Source Code", "description": "The code", "required": True},
+        ]
+
+        @mcp_prompt(name="titled", arguments=explicit)
+        def titled(code: str) -> str:
+            return code
+
+        app = _make_app_with_prompts(titled)
+        with TestClient(app) as client:
+            data = _rpc(client, "prompts/list")
+            entry = next(p for p in data["result"]["prompts"] if p["name"] == "titled")
+            assert entry["arguments"] == explicit
+            assert entry["arguments"][0]["title"] == "Source Code"
+
+
+# ---------------------------------------------------------------------------
+# Error-mapping coverage: handler 4xx vs 5xx, fn exception INTERNAL_ERROR
+# ---------------------------------------------------------------------------
+
+
+class TestPromptErrorMapping:
+    def test_standalone_fn_exception_maps_to_internal_error(self) -> None:
+        """Plain exceptions inside a standalone prompt fn surface as -32603."""
+
+        @mcp_prompt(name="boom")
+        def boom() -> str:
+            msg = "kaboom"
+            raise RuntimeError(msg)
+
+        app = _make_app_with_prompts(boom)
+        with TestClient(app) as client:
+            data = _rpc(client, "prompts/get", params={"name": "boom"})
+            assert "error" in data
+            assert data["error"]["code"] == -32603  # INTERNAL_ERROR
+            assert "kaboom" in data["error"]["message"]
+
+    def test_handler_4xx_maps_to_invalid_params(self) -> None:
+        """Handler returning a 4xx Response surfaces as -32602 (INVALID_PARAMS).
+
+        ``MCPToolErrorResult.is_client_error`` keys off the captured HTTP
+        status; the route layer maps that to JSON-RPC ``INVALID_PARAMS``.
+        """
+
+        @get("/bad-handler", mcp_prompt="bad_4xx", mcp_prompt_description="Bad handler")
+        async def bad_handler() -> Response[dict[str, str]]:
+            return Response(content={"error": "bad input"}, status_code=HTTP_400_BAD_REQUEST)
+
+        plugin = LitestarMCP(config=MCPConfig())
+        app = Litestar(route_handlers=[bad_handler], plugins=[plugin])
+        with TestClient(app) as client:
+            data = _rpc(client, "prompts/get", params={"name": "bad_4xx"})
+            assert "error" in data
+            assert data["error"]["code"] == -32602  # INVALID_PARAMS
+
+    def test_handler_5xx_maps_to_internal_error(self) -> None:
+        """Handler returning a 5xx Response surfaces as -32603 (INTERNAL_ERROR)."""
+
+        @get("/boom-handler", mcp_prompt="bad_5xx", mcp_prompt_description="Boom handler")
+        async def boom_handler() -> Response[dict[str, str]]:
+            return Response(content={"error": "boom"}, status_code=HTTP_500_INTERNAL_SERVER_ERROR)
+
+        plugin = LitestarMCP(config=MCPConfig())
+        app = Litestar(route_handlers=[boom_handler], plugins=[plugin])
+        with TestClient(app) as client:
+            data = _rpc(client, "prompts/get", params={"name": "bad_5xx"})
+            assert "error" in data
+            assert data["error"]["code"] == -32603
+
+
+# ---------------------------------------------------------------------------
+# Filter coverage: prompts respect include/exclude_operations + tags
+# ---------------------------------------------------------------------------
+
+
+class TestPromptFiltering:
+    def test_handler_prompt_excluded_by_operations_hidden_from_list(self) -> None:
+        @get("/secret", mcp_prompt="secret_prompt", mcp_prompt_description="Secret")
+        async def secret() -> dict:
+            return {"messages": [{"role": "user", "content": {"type": "text", "text": "x"}}]}
+
+        plugin = LitestarMCP(config=MCPConfig(exclude_operations=["secret_prompt"]))
+        app = Litestar(route_handlers=[secret], plugins=[plugin])
+        with TestClient(app) as client:
+            data = _rpc(client, "prompts/list")
+            names = [p["name"] for p in data["result"]["prompts"]]
+            assert "secret_prompt" not in names
+
+    def test_handler_prompt_excluded_by_operations_returns_invalid_params(self) -> None:
+        @get("/secret-get", mcp_prompt="secret_get", mcp_prompt_description="Secret")
+        async def secret_get() -> dict:
+            return {"messages": [{"role": "user", "content": {"type": "text", "text": "x"}}]}
+
+        plugin = LitestarMCP(config=MCPConfig(exclude_operations=["secret_get"]))
+        app = Litestar(route_handlers=[secret_get], plugins=[plugin])
+        with TestClient(app) as client:
+            data = _rpc(client, "prompts/get", params={"name": "secret_get"})
+            assert "error" in data
+            assert data["error"]["code"] == -32602
+            assert "not found" in data["error"]["message"].lower()
+
+    def test_handler_prompt_excluded_by_tags(self) -> None:
+        @get("/tagged", mcp_prompt="tagged_prompt", mcp_prompt_description="Tagged", tags=["internal"])
+        async def tagged() -> dict:
+            return {"messages": [{"role": "user", "content": {"type": "text", "text": "x"}}]}
+
+        plugin = LitestarMCP(config=MCPConfig(exclude_tags=["internal"]))
+        app = Litestar(route_handlers=[tagged], plugins=[plugin])
+        with TestClient(app) as client:
+            data = _rpc(client, "prompts/list")
+            names = [p["name"] for p in data["result"]["prompts"]]
+            assert "tagged_prompt" not in names
+
+    def test_standalone_prompt_excluded_by_operations(self) -> None:
+        """fn-based prompts are subject to name-based filters too."""
+
+        @mcp_prompt(name="hidden_fn")
+        def hidden_fn() -> str:
+            return ""
+
+        plugin = LitestarMCP(
+            config=MCPConfig(exclude_operations=["hidden_fn"]),
+            prompts=[hidden_fn],
+        )
+        app = Litestar(route_handlers=[], plugins=[plugin])
+        with TestClient(app) as client:
+            data = _rpc(client, "prompts/list")
+            assert data["result"]["prompts"] == []
+            data = _rpc(client, "prompts/get", params={"name": "hidden_fn"})
+            assert "error" in data
+            assert data["error"]["code"] == -32602

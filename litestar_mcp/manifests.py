@@ -6,6 +6,7 @@ from litestar import Litestar
 
 from litestar_mcp.auth import MCPAuthConfig  # noqa: TC001
 from litestar_mcp.config import MCPConfig
+from litestar_mcp.registry import render_prompt_entry
 from litestar_mcp.schema_builder import generate_schema_for_handler
 from litestar_mcp.utils import get_handler_function, get_mcp_metadata, render_description
 
@@ -134,24 +135,7 @@ def build_mcp_server_manifest(
             tool_entry["security"] = {"scopes": metadata["scopes"]}
         tools.append(tool_entry)
 
-    prompts_list = []
-    for _name, registration in discovered_prompts.items():
-        prompt_entry: dict[str, Any] = {"name": registration.name}
-        if registration.title is not None:
-            prompt_entry["title"] = registration.title
-        if registration.handler is not None:
-            fn = get_handler_function(registration.handler)
-            prompt_entry["description"] = render_description(
-                registration.handler, fn, kind="prompt", fallback_name=registration.name, opt_keys=config.opt_keys
-            )
-        elif registration.description is not None:
-            prompt_entry["description"] = registration.description
-        arguments = registration.get_arguments()
-        if arguments:
-            prompt_entry["arguments"] = arguments
-        if registration.icons is not None:
-            prompt_entry["icons"] = registration.icons
-        prompts_list.append(prompt_entry)
+    prompts_list = [render_prompt_entry(registration, config) for registration in discovered_prompts.values()]
 
     return {
         "experimental": True,

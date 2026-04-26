@@ -46,6 +46,7 @@ __all__ = (
     "MCPPathParamCoercionError",
     "MCPToolErrorResult",
     "NotCallableInCLIContextError",
+    "execute_handler",
     "execute_tool",
 )
 
@@ -629,3 +630,10 @@ async def execute_tool(
     if status >= _ERROR_STATUS_FLOOR:
         raise MCPToolErrorResult(content, status_code=status)
     return content
+
+
+# Generic alias used by non-tool MCP primitives (resources, prompts) that
+# dispatch through the same Litestar pipeline. Keeping a thin alias instead
+# of a single name avoids implying that the prompt/resource path is
+# semantically a "tool call" — the underlying machinery is the same.
+execute_handler = execute_tool

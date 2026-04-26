@@ -145,11 +145,14 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                         if isinstance(opt_template, str):
                             self._registry.register_resource_template(resource_name, handler, opt_template)
                     if prompt_key in handler.opt:
-                        desc_key = self._config.opt_keys.prompt_description
+                        opt_keys = self._config.opt_keys
                         self._registry.register_prompt_handler(
                             handler.opt[prompt_key],
                             handler,
-                            description=handler.opt.get(desc_key),
+                            title=handler.opt.get(opt_keys.prompt_title),
+                            description=handler.opt.get(opt_keys.prompt_description),
+                            arguments=handler.opt.get(opt_keys.prompt_arguments),
+                            icons=handler.opt.get(opt_keys.prompt_icons),
                         )
 
             if getattr(handler, "route_handlers", None):
