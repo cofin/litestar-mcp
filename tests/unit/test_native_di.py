@@ -29,14 +29,18 @@ import msgspec
 import pytest
 from dishka import Provider, Scope, make_async_container, provide
 from dishka.integrations.litestar import FromDishka, inject, setup_dishka
-from litestar import Litestar, delete, get, post
+from litestar import Litestar, Response, delete, get, post
 from litestar.di import Provide
 from litestar.exceptions import NotAuthorizedException
-from litestar.status_codes import HTTP_200_OK
+from litestar.status_codes import (
+    HTTP_200_OK,
+    HTTP_422_UNPROCESSABLE_ENTITY,
+    HTTP_503_SERVICE_UNAVAILABLE,
+)
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP
-from litestar_mcp.executor import execute_tool
+from litestar_mcp.executor import MCPToolErrorResult, execute_tool
 from tests.unit.conftest import get_handler_from_app
 
 if TYPE_CHECKING:
@@ -414,3 +418,46 @@ def test_guards_run_in_stdio_mode() -> None:
 
     with pytest.raises(NotAuthorizedException, match=denied_msg):
         asyncio.run(execute_tool(handler, app, {}, request=None))
+
+
+# --- MCPToolErrorResult.status_code capture ---------------------------------
+
+
+def test_execute_tool_captures_handler_4xx_status_code() -> None:
+    """Regression sentinel for the executor refactor in PR #46.
+
+    ``MCPToolErrorResult.status_code`` is the load-bearing field that the
+    prompt path (``routes.py:701``) inspects to choose between
+    ``INVALID_PARAMS`` and ``INTERNAL_ERROR``. Tools collapse 4xx/5xx to
+    ``isError=True`` so they don't exercise the field directly — without
+    this test, only the prompt path would catch a regression in
+    ``_capture_asgi_response`` status capture.
+    """
+
+    @get("/bad", opt={"mcp_tool": "bad_status"}, sync_to_thread=False)
+    def bad() -> Response[dict[str, str]]:
+        return Response(content={"error": "nope"}, status_code=HTTP_422_UNPROCESSABLE_ENTITY)
+
+    app = Litestar(route_handlers=[bad], plugins=[LitestarMCP()])
+    handler = get_handler_from_app(app, "/bad")
+
+    with pytest.raises(MCPToolErrorResult) as excinfo:
+        asyncio.run(execute_tool(handler, app, {}, request=None))
+
+    assert excinfo.value.status_code == HTTP_422_UNPROCESSABLE_ENTITY
+    assert excinfo.value.is_client_error is True
+
+
+def test_execute_tool_captures_handler_5xx_status_code() -> None:
+    @get("/down", opt={"mcp_tool": "down_status"}, sync_to_thread=False)
+    def down() -> Response[dict[str, str]]:
+        return Response(content={"error": "down"}, status_code=HTTP_503_SERVICE_UNAVAILABLE)
+
+    app = Litestar(route_handlers=[down], plugins=[LitestarMCP()])
+    handler = get_handler_from_app(app, "/down")
+
+    with pytest.raises(MCPToolErrorResult) as excinfo:
+        asyncio.run(execute_tool(handler, app, {}, request=None))
+
+    assert excinfo.value.status_code == HTTP_503_SERVICE_UNAVAILABLE
+    assert excinfo.value.is_client_error is False

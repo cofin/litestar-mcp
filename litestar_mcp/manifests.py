@@ -6,6 +6,7 @@ from litestar import Litestar
 
 from litestar_mcp.auth import MCPAuthConfig  # noqa: TC001
 from litestar_mcp.config import MCPConfig
+from litestar_mcp.registry import render_prompt_entry, should_include_prompt
 from litestar_mcp.schema_builder import generate_schema_for_handler
 from litestar_mcp.utils import get_handler_function, get_mcp_metadata, render_description
 
@@ -116,6 +117,7 @@ def build_mcp_server_manifest(
     app: Litestar,
     discovered_tools: dict[str, Any],
     discovered_resources: dict[str, Any],
+    discovered_prompts: dict[str, Any],
 ) -> dict[str, Any]:
     """Build an experimental MCP server manifest."""
     tools = []
@@ -133,6 +135,20 @@ def build_mcp_server_manifest(
             tool_entry["security"] = {"scopes": metadata["scopes"]}
         tools.append(tool_entry)
 
+    visible_prompts = [registration for registration in discovered_prompts.values() if should_include_prompt(registration, config)]
+    prompts_list = [render_prompt_entry(registration, config) for registration in visible_prompts]
+
+    capabilities: dict[str, Any] = {
+        "tools": {"listChanged": True},
+        "resources": {"subscribe": True, "listChanged": True},
+        "tasks": config.task_config is not None,
+    }
+    # Per the MCP spec a server SHOULD only advertise capabilities for primitives
+    # it actually exposes. tools/resources stay unconditional to preserve
+    # historical manifest behavior; prompts are gated to match handle_initialize.
+    if visible_prompts:
+        capabilities["prompts"] = {"listChanged": True}
+
     return {
         "experimental": True,
         "name": _server_name(config, app),
@@ -143,11 +159,8 @@ def build_mcp_server_manifest(
             "oauthProtectedResource": f"{base_url.rstrip('/')}/.well-known/oauth-protected-resource",
             "agentCard": f"{base_url.rstrip('/')}/.well-known/agent-card.json",
         },
-        "capabilities": {
-            "tools": {"listChanged": True},
-            "resources": {"subscribe": True, "listChanged": True},
-            "tasks": config.task_config is not None,
-        },
+        "capabilities": capabilities,
         "tools": tools,
         "resources": sorted(discovered_resources.keys()),
+        "prompts": prompts_list,
     }

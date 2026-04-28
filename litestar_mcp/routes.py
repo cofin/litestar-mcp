@@ -3,6 +3,8 @@
 
 import asyncio
 import contextlib
+import inspect
+import logging
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import Any
@@ -23,7 +25,7 @@ from litestar.status_codes import (
 )
 
 from litestar_mcp.config import MCPConfig
-from litestar_mcp.executor import MCPToolErrorResult, execute_tool
+from litestar_mcp.executor import MCPToolErrorResult, execute_handler, execute_tool
 from litestar_mcp.jsonrpc import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
@@ -36,7 +38,15 @@ from litestar_mcp.jsonrpc import (
     error_response,
     parse_request,
 )
-from litestar_mcp.registry import Registry
+from litestar_mcp.registry import (
+    _VALIDATION_CONTEXT_PARAMS,
+    PromptRegistration,
+    Registry,
+    _normalize_prompt_result,
+    render_prompt_entry,
+    resolve_prompt_description,
+    should_include_prompt,
+)
 from litestar_mcp.schema_builder import generate_schema_for_handler
 from litestar_mcp.sessions import MCPSessionManager, SessionTerminated
 from litestar_mcp.sse import StreamLimitExceeded
@@ -48,6 +58,8 @@ from litestar_mcp.utils import (
     render_description,
     should_include_handler,
 )
+
+_logger = logging.getLogger(__name__)
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
 MCP_SESSION_HEADER = "Mcp-Session-Id"
@@ -149,19 +161,6 @@ def _build_tool_result(value: Any, *, is_error: bool, task_id: str | None = None
     if task_id is not None:
         result["_meta"] = {"io.modelcontextprotocol/related-task": {"taskId": task_id}}
     return result
-
-
-_VALIDATION_CONTEXT_PARAMS = {
-    "request",
-    "socket",
-    "state",
-    "scope",
-    "headers",
-    "cookies",
-    "query",
-    "body",
-    "data",
-}
 
 
 def _to_pointer(name: str, msgspec_path: str) -> str:
@@ -302,6 +301,7 @@ def build_jsonrpc_router(
     config: MCPConfig,
     discovered_tools: dict[str, BaseRouteHandler],
     discovered_resources: dict[str, BaseRouteHandler],
+    discovered_prompts: dict[str, PromptRegistration],
     *,
     app_ref: Any,
     request_context: RequestContext,
@@ -368,6 +368,12 @@ def build_jsonrpc_router(
             "tools": {"listChanged": True},
             "resources": {"subscribe": True, "listChanged": True},
         }
+        # Per the MCP spec a server SHOULD only advertise capabilities for
+        # primitives it actually exposes. tools/resources stay unconditional
+        # for compatibility with existing manifest behavior; prompts gate on
+        # presence to avoid claiming support when none are registered.
+        if discovered_prompts:
+            capabilities["prompts"] = {"listChanged": True}
         if task_config is not None:
             task_capabilities: dict[str, Any] = {"requests": {"tools": {"call": {}}}}
             if task_config.list_enabled:
@@ -618,6 +624,161 @@ def build_jsonrpc_router(
 
     router.register("completion/complete", handle_completion_complete)
 
+    async def handle_prompts_list(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
+        prompts = [
+            render_prompt_entry(registration, config)
+            for registration in discovered_prompts.values()
+            if should_include_prompt(registration, config)
+        ]
+        return {"prompts": prompts}
+
+    router.register("prompts/list", handle_prompts_list)
+
+    async def handle_prompts_get(params: dict[str, Any]) -> dict[str, Any]:
+        prompt_name = params.get("name")
+        if not prompt_name:
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'name'"))
+
+        registration = discovered_prompts.get(prompt_name)
+        if registration is None or not should_include_prompt(registration, config):
+            raise JSONRPCErrorException(
+                JSONRPCError(code=INVALID_PARAMS, message=f"Prompt not found: {prompt_name}")
+            )
+
+        prompt_args = params.get("arguments", {})
+        if not isinstance(prompt_args, dict):
+            raise JSONRPCErrorException(
+                JSONRPCError(code=INVALID_PARAMS, message="Prompt arguments must be an object")
+            )
+
+        # MCP spec: prompt arguments are Record<string, string> — all values must be strings.
+        for arg_key, arg_val in prompt_args.items():
+            if not isinstance(arg_val, str):
+                raise JSONRPCErrorException(
+                    JSONRPCError(
+                        code=INVALID_PARAMS,
+                        message=f"Argument '{arg_key}' must be a string, got {type(arg_val).__name__}",
+                    )
+                )
+
+        resolved_description = resolve_prompt_description(registration, config)
+
+        if registration.handler is not None:
+            # Validate against the handler's declared argument shape before
+            # dispatching. This intentionally diverges from tool-call
+            # validation: the MCP spec requires prompt arguments to be
+            # ``Record<string, string>`` (flat scalar map), whereas tools
+            # accept structured inputs validated via msgspec.convert.
+            # Pre-validating here keeps the error surface aligned with the
+            # advertised ``arguments`` list — missing required args become
+            # INVALID_PARAMS instead of a 500 emitted by the executor when
+            # the signature_model would otherwise reject the call.
+            declared_args = registration.get_arguments()
+            declared_names = {arg["name"] for arg in declared_args}
+            missing = [
+                arg["name"]
+                for arg in declared_args
+                if arg.get("required") and arg["name"] not in prompt_args
+            ]
+            if missing:
+                raise JSONRPCErrorException(
+                    JSONRPCError(
+                        code=INVALID_PARAMS,
+                        message=f"Missing required prompt argument(s): {', '.join(sorted(missing))}",
+                    )
+                )
+            unknown = [name for name in prompt_args if name not in declared_names]
+            if unknown:
+                raise JSONRPCErrorException(
+                    JSONRPCError(
+                        code=INVALID_PARAMS,
+                        message=(
+                            f"Unknown prompt argument(s): {', '.join(sorted(unknown))}. "
+                            "Prompt handlers should declare scalar arguments only; "
+                            "any 'data' body parameter on the handler is ignored by prompts/get."
+                        ),
+                    )
+                )
+
+            # Prompt handlers run through the Litestar execution pipeline
+            # (DI, middleware, guards) via execute_handler — same dispatch
+            # mechanism as tools, aliased so the call site reads honestly.
+            try:
+                result = await execute_handler(
+                    registration.handler, app_ref, prompt_args, request=request_context.request
+                )
+            except MCPToolErrorResult as err:
+                # Per JSON-RPC 2.0 INVALID_PARAMS (-32602) means specifically
+                # "invalid method parameter(s)". Reserve it for validation-shaped
+                # 4xx (400 Bad Request, 422 Unprocessable Entity); other 4xx
+                # (401/403/404/409/...) are not param-validation failures and
+                # collapse to INTERNAL_ERROR until a dedicated MCP error
+                # taxonomy is added (see issue tracker).
+                code = INVALID_PARAMS if err.status_code in {400, 422} else INTERNAL_ERROR
+                _logger.warning("Prompt handler returned error result: %s (status=%d)", prompt_name, err.status_code)
+                raise JSONRPCErrorException(
+                    # Per JSON-RPC 2.0 §5.1, the ``data`` member carries
+                    # structured error context — preserve the handler's
+                    # rendered payload so clients can pull field paths /
+                    # error lists out programmatically instead of parsing
+                    # a stringified dict from ``message``.
+                    JSONRPCError(code=code, message="Prompt execution failed", data=err.content)
+                ) from err
+            except JSONRPCErrorException:
+                raise
+            except Exception as exc:
+                _logger.exception("Prompt handler execution failed: %s", prompt_name)
+                raise JSONRPCErrorException(
+                    JSONRPCError(
+                        code=INTERNAL_ERROR,
+                        message="Prompt execution failed",
+                        data={"error": type(exc).__name__, "detail": str(exc)},
+                    )
+                ) from exc
+            handler_result: dict[str, Any]
+            if isinstance(result, dict) and "messages" in result:
+                handler_result = result
+            else:
+                handler_result = {"messages": _normalize_prompt_result(result)}
+            if resolved_description is not None and "description" not in handler_result:
+                handler_result["description"] = resolved_description
+            return handler_result
+
+        if registration.fn is not None:
+            # Validate arguments before calling to distinguish argument
+            # mismatches (INVALID_PARAMS) from TypeErrors inside the function.
+            try:
+                inspect.signature(registration.fn).bind(**prompt_args)
+            except TypeError as exc:
+                raise JSONRPCErrorException(
+                    JSONRPCError(code=INVALID_PARAMS, message=f"Invalid prompt arguments: {exc!s}")
+                ) from exc
+
+            try:
+                result = registration.fn(**prompt_args)
+                if inspect.isawaitable(result):
+                    result = await result
+            except Exception as exc:
+                _logger.exception("Prompt function execution failed: %s", prompt_name)
+                raise JSONRPCErrorException(
+                    JSONRPCError(
+                        code=INTERNAL_ERROR,
+                        message="Prompt execution failed",
+                        data={"error": type(exc).__name__, "detail": str(exc)},
+                    )
+                ) from exc
+            messages = _normalize_prompt_result(result)
+            get_result: dict[str, Any] = {"messages": messages}
+            if resolved_description is not None and "description" not in get_result:
+                get_result["description"] = resolved_description
+            return get_result
+
+        raise JSONRPCErrorException(  # pragma: no cover
+            JSONRPCError(code=INTERNAL_ERROR, message=f"Prompt has no callable: {prompt_name}")
+        )
+
+    router.register("prompts/get", handle_prompts_get)
+
     if task_store is not None:
 
         async def handle_tasks_get(params: dict[str, Any]) -> dict[str, Any]:
@@ -803,6 +964,7 @@ class MCPController(Controller):
         config: MCPConfig,
         discovered_tools: dict[str, Any],
         discovered_resources: dict[str, Any],
+        discovered_prompts: dict[str, PromptRegistration],
         registry: Registry,
         session_manager: MCPSessionManager,
         task_store: InMemoryTaskStore | None = None,
@@ -910,6 +1072,7 @@ class MCPController(Controller):
             config,
             discovered_tools,
             discovered_resources,
+            discovered_prompts,
             app_ref=request.app,
             request_context=request_context,
             task_store=task_store,
