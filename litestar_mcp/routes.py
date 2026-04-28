@@ -665,8 +665,14 @@ def build_jsonrpc_router(
 
         if registration.handler is not None:
             # Validate against the handler's declared argument shape before
-            # dispatching, so missing required args surface as INVALID_PARAMS
-            # rather than as a 500 from the framework's request parsing.
+            # dispatching. This intentionally diverges from tool-call
+            # validation: the MCP spec requires prompt arguments to be
+            # ``Record<string, string>`` (flat scalar map), whereas tools
+            # accept structured inputs validated via msgspec.convert.
+            # Pre-validating here keeps the error surface aligned with the
+            # advertised ``arguments`` list — missing required args become
+            # INVALID_PARAMS instead of a 500 emitted by the executor when
+            # the signature_model would otherwise reject the call.
             declared_args = registration.get_arguments()
             declared_names = {arg["name"] for arg in declared_args}
             missing = [
@@ -686,7 +692,11 @@ def build_jsonrpc_router(
                 raise JSONRPCErrorException(
                     JSONRPCError(
                         code=INVALID_PARAMS,
-                        message=f"Unknown prompt argument(s): {', '.join(sorted(unknown))}",
+                        message=(
+                            f"Unknown prompt argument(s): {', '.join(sorted(unknown))}. "
+                            "Prompt handlers should declare scalar arguments only; "
+                            "any 'data' body parameter on the handler is ignored by prompts/get."
+                        ),
                     )
                 )
 
@@ -698,17 +708,32 @@ def build_jsonrpc_router(
                     registration.handler, app_ref, prompt_args, request=request_context.request
                 )
             except MCPToolErrorResult as err:
-                code = INVALID_PARAMS if err.is_client_error else INTERNAL_ERROR
+                # Per JSON-RPC 2.0 INVALID_PARAMS (-32602) means specifically
+                # "invalid method parameter(s)". Reserve it for validation-shaped
+                # 4xx (400 Bad Request, 422 Unprocessable Entity); other 4xx
+                # (401/403/404/409/...) are not param-validation failures and
+                # collapse to INTERNAL_ERROR until a dedicated MCP error
+                # taxonomy is added (see issue tracker).
+                code = INVALID_PARAMS if err.status_code in {400, 422} else INTERNAL_ERROR
                 _logger.warning("Prompt handler returned error result: %s (status=%d)", prompt_name, err.status_code)
                 raise JSONRPCErrorException(
-                    JSONRPCError(code=code, message=f"Prompt execution failed: {err.content!s}")
+                    # Per JSON-RPC 2.0 §5.1, the ``data`` member carries
+                    # structured error context — preserve the handler's
+                    # rendered payload so clients can pull field paths /
+                    # error lists out programmatically instead of parsing
+                    # a stringified dict from ``message``.
+                    JSONRPCError(code=code, message="Prompt execution failed", data=err.content)
                 ) from err
             except JSONRPCErrorException:
                 raise
             except Exception as exc:
                 _logger.exception("Prompt handler execution failed: %s", prompt_name)
                 raise JSONRPCErrorException(
-                    JSONRPCError(code=INTERNAL_ERROR, message=f"Prompt execution failed: {exc!s}")
+                    JSONRPCError(
+                        code=INTERNAL_ERROR,
+                        message="Prompt execution failed",
+                        data={"error": type(exc).__name__, "detail": str(exc)},
+                    )
                 ) from exc
             handler_result: dict[str, Any]
             if isinstance(result, dict) and "messages" in result:
@@ -736,7 +761,11 @@ def build_jsonrpc_router(
             except Exception as exc:
                 _logger.exception("Prompt function execution failed: %s", prompt_name)
                 raise JSONRPCErrorException(
-                    JSONRPCError(code=INTERNAL_ERROR, message=f"Prompt execution failed: {exc!s}")
+                    JSONRPCError(
+                        code=INTERNAL_ERROR,
+                        message="Prompt execution failed",
+                        data={"error": type(exc).__name__, "detail": str(exc)},
+                    )
                 ) from exc
             messages = _normalize_prompt_result(result)
             get_result: dict[str, Any] = {"messages": messages}

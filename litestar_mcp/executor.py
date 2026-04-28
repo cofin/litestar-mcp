@@ -242,6 +242,16 @@ async def _capture_asgi_response(
 
     await asgi_app(cast("Any", request.scope), cast("Any", request.receive), _sink_send)
 
+    if status_code == 0:
+        # ASGI app exited without sending http.response.start. Treat as a
+        # transport invariant violation rather than a 0-status success — the
+        # downstream caller would otherwise pass the (None, 0) result through
+        # the < _ERROR_STATUS_FLOOR check and surface "None" as a successful body.
+        return (
+            {"error": "MCP handler exited without sending an ASGI response"},
+            _NON_JSON_STATUS,
+        )
+
     body = b"".join(body_chunks)
     if not body:
         return None, status_code

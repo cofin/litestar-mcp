@@ -231,6 +231,65 @@ class TestPromptRegistration:
         assert "args" not in names
         assert "kwargs" not in names
 
+    def test_handler_request_param_filtered_from_arguments(self) -> None:
+        """Litestar's magic-injected ``request`` must not leak into prompts/list."""
+        from litestar import Request
+
+        @get("/with-request", mcp_prompt="needs_req")
+        async def needs_req(text: str, request: Request) -> str:  # noqa: ARG001
+            return text
+
+        plugin = LitestarMCP(config=MCPConfig())
+        Litestar(route_handlers=[needs_req], plugins=[plugin])
+        args = plugin.discovered_prompts["needs_req"].get_arguments()
+        names = [a["name"] for a in args]
+        assert "text" in names
+        assert "request" not in names, "magic-injected param leaked into MCP arg list"
+
+    def test_handler_headers_param_filtered_from_arguments(self) -> None:
+        """``headers`` is a framework-injected name and must be filtered."""
+
+        @get("/with-headers", mcp_prompt="needs_hdr")
+        async def needs_hdr(text: str, headers: dict[str, str]) -> str:  # noqa: ARG001
+            return text
+
+        plugin = LitestarMCP(config=MCPConfig())
+        Litestar(route_handlers=[needs_hdr], plugins=[plugin])
+        names = [a["name"] for a in plugin.discovered_prompts["needs_hdr"].get_arguments()]
+        assert "headers" not in names
+
+    def test_handler_di_dependency_filtered_from_arguments(self) -> None:
+        """Provide() dependencies must be excluded from prompts/list."""
+        from litestar.di import Provide
+
+        async def supply_secret() -> str:
+            return "shh"
+
+        @get("/with-di", mcp_prompt="needs_di", dependencies={"secret": Provide(supply_secret)})
+        async def needs_di(text: str, secret: str) -> str:  # noqa: ARG001
+            return text
+
+        plugin = LitestarMCP(config=MCPConfig())
+        Litestar(route_handlers=[needs_di], plugins=[plugin])
+        names = [a["name"] for a in plugin.discovered_prompts["needs_di"].get_arguments()]
+        assert "text" in names
+        assert "secret" not in names, "DI dependency leaked into advertised arguments"
+
+    def test_introspect_handler_resolve_dependencies_failure_is_silent(self) -> None:
+        """resolve_dependencies() raising AttributeError/TypeError must not
+        propagate — empty di_params is the safe fallback."""
+        from types import SimpleNamespace
+
+        from litestar_mcp.registry import _introspect_handler_arguments
+
+        # Stub handler whose resolve_dependencies blows up. We still want
+        # introspection to succeed against a None signature_model.
+        stub = SimpleNamespace(
+            signature_model=None,
+            resolve_dependencies=lambda: (_ for _ in ()).throw(AttributeError("nope")),
+        )
+        assert _introspect_handler_arguments(stub) == []  # type: ignore[arg-type]
+
 
 # ---------------------------------------------------------------------------
 # Docstring argument parsing tests
@@ -337,6 +396,53 @@ class TestParseDocstringArgs:
         result = _parse_docstring_args(doc)
         assert result == {"x": "A param."}
 
+    def test_continuation_line_with_colon_not_treated_as_param(self) -> None:
+        """I1 regression: a continuation line containing ``:`` (URL,
+        ``Default: foo``, ``e.g.: bar``) must extend the current
+        parameter's description, not introduce a phantom parameter."""
+        doc = """Fn.
+
+        Args:
+            code: The code to review.
+                Default: see config above.
+                See also: https://example.com/docs
+            style: Output style.
+        """
+        result = _parse_docstring_args(doc)
+        assert result == {
+            "code": (
+                "The code to review. Default: see config above. "
+                "See also: https://example.com/docs"
+            ),
+            "style": "Output style.",
+        }
+
+    def test_empty_args_section(self) -> None:
+        """Args: header followed immediately by another section returns {}."""
+        doc = """Fn.
+
+        Args:
+
+        Returns:
+            Nothing.
+        """
+        assert _parse_docstring_args(doc) == {}
+
+    def test_args_section_terminated_by_unindented_text(self) -> None:
+        """Unindented non-empty line ends the Args section."""
+        doc = "Fn.\n\n        Args:\n            x: First.\nAfter args block.\n"
+        assert _parse_docstring_args(doc) == {"x": "First."}
+
+    def test_line_without_colon_appended_to_previous_param(self) -> None:
+        """Indented line w/o colon = continuation, not a new param."""
+        doc = """Fn.
+
+        Args:
+            x: First param.
+                additional notes without colon
+        """
+        assert _parse_docstring_args(doc) == {"x": "First param. additional notes without colon"}
+
 
 # ---------------------------------------------------------------------------
 # Registry tests
@@ -425,6 +531,57 @@ class TestNormalizePromptResult:
     def test_other_types_stringified(self) -> None:
         result = _normalize_prompt_result(42)
         assert result == [{"role": "user", "content": {"type": "text", "text": "42"}}]
+
+    def test_image_content_block_passes_through(self) -> None:
+        """Per MCP spec a message w/ image content survives normalization."""
+        msg = {
+            "role": "user",
+            "content": {"type": "image", "data": "Zg==", "mimeType": "image/png"},
+        }
+        assert _normalize_prompt_result(msg) == [msg]
+
+    def test_audio_content_block_passes_through(self) -> None:
+        msg = {
+            "role": "user",
+            "content": {"type": "audio", "data": "Zg==", "mimeType": "audio/wav"},
+        }
+        assert _normalize_prompt_result(msg) == [msg]
+
+    def test_resource_link_content_block_passes_through(self) -> None:
+        msg = {
+            "role": "user",
+            "content": {"type": "resource_link", "uri": "file://x", "name": "x"},
+        }
+        assert _normalize_prompt_result(msg) == [msg]
+
+    def test_resource_content_block_passes_through(self) -> None:
+        msg = {
+            "role": "user",
+            "content": {"type": "resource", "resource": {"uri": "file://x", "text": "y"}},
+        }
+        assert _normalize_prompt_result(msg) == [msg]
+
+    def test_unwrapped_image_block_wrapped_in_user_envelope(self) -> None:
+        """Bare content block without role wrapped in user-role envelope."""
+        block = {"type": "image", "data": "Zg==", "mimeType": "image/png"}
+        result = _normalize_prompt_result(block)
+        assert result == [{"role": "user", "content": block}]
+
+    def test_image_missing_required_key_falls_back_to_string(self) -> None:
+        """Image block missing 'data' is malformed → stringified fallback."""
+        block = {"type": "image", "mimeType": "image/png"}
+        result = _normalize_prompt_result(block)
+        assert result[0]["content"]["type"] == "text"
+        assert "image" in result[0]["content"]["text"]
+
+    def test_content_list_inside_message_preserved(self) -> None:
+        """A list of content blocks under message.content is not flattened."""
+        blocks = [
+            {"type": "text", "text": "hi"},
+            {"type": "image", "data": "Zg==", "mimeType": "image/png"},
+        ]
+        msg = {"role": "user", "content": blocks}
+        assert _normalize_prompt_result(msg) == [msg]
 
 
 # ---------------------------------------------------------------------------
@@ -868,7 +1025,11 @@ class TestPromptErrorMapping:
             data = _rpc(client, "prompts/get", params={"name": "boom"})
             assert "error" in data
             assert data["error"]["code"] == -32603  # INTERNAL_ERROR
-            assert "kaboom" in data["error"]["message"]
+            # Per JSON-RPC 2.0 §5.1, structured exception context lives in
+            # the ``data`` member; the ``message`` is a stable label.
+            assert data["error"]["message"] == "Prompt execution failed"
+            assert "kaboom" in data["error"]["data"]["detail"]
+            assert data["error"]["data"]["error"] == "RuntimeError"
 
     def test_handler_4xx_maps_to_invalid_params(self) -> None:
         """Handler returning a 4xx Response surfaces as -32602 (INVALID_PARAMS).
@@ -964,3 +1125,131 @@ class TestPromptFiltering:
             data = _rpc(client, "prompts/get", params={"name": "hidden_fn"})
             assert "error" in data
             assert data["error"]["code"] == -32602
+
+
+# ---------------------------------------------------------------------------
+# Manifest (.well-known/mcp-server.json) capability + filter parity with
+# the JSON-RPC initialize/prompts/list responses.
+# ---------------------------------------------------------------------------
+
+
+class TestPromptsManifest:
+    def test_manifest_omits_prompts_capability_when_none_registered(self) -> None:
+        """Per MCP spec, advertise prompts capability only when prompts exist."""
+        app = _make_app_with_prompts()
+        with TestClient(app) as client:
+            payload = client.get("/.well-known/mcp-server.json").json()
+            assert "prompts" not in payload["capabilities"]
+            assert payload["prompts"] == []
+
+    def test_manifest_advertises_prompts_capability_when_registered(self) -> None:
+        @mcp_prompt(name="hello")
+        def hello() -> str:
+            return ""
+
+        app = _make_app_with_prompts(hello)
+        with TestClient(app) as client:
+            payload = client.get("/.well-known/mcp-server.json").json()
+            assert payload["capabilities"]["prompts"] == {"listChanged": True}
+            assert any(p["name"] == "hello" for p in payload["prompts"])
+
+    def test_manifest_filters_excluded_prompts(self) -> None:
+        """Manifest must apply should_include_prompt — must not leak hidden prompts."""
+
+        @mcp_prompt(name="hidden")
+        def hidden() -> str:
+            return ""
+
+        plugin = LitestarMCP(
+            config=MCPConfig(exclude_operations=["hidden"]),
+            prompts=[hidden],
+        )
+        app = Litestar(route_handlers=[], plugins=[plugin])
+        with TestClient(app) as client:
+            payload = client.get("/.well-known/mcp-server.json").json()
+            assert payload["prompts"] == []
+            assert "prompts" not in payload["capabilities"]
+
+
+# ---------------------------------------------------------------------------
+# C1 regression: ASGI handler exits without http.response.start
+# ---------------------------------------------------------------------------
+
+
+class TestCaptureAsgiResponseStatusZero:
+    """Cover the path where _capture_asgi_response observes no response start.
+
+    Without the C1 fix the function returned (None, 0), which slipped past
+    the >= 400 error gate in execute_handler, leaving callers to surface the
+    literal string "None" as a successful prompt body.
+    """
+
+    @pytest.mark.asyncio
+    async def test_asgi_app_without_response_start_classified_as_500(self) -> None:
+        from types import SimpleNamespace
+
+        from litestar_mcp.executor import _NON_JSON_STATUS, _capture_asgi_response
+
+        async def silent_asgi_app(scope: Any, receive: Any, send: Any) -> None:
+            return  # never calls send → no http.response.start
+
+        request_stub = SimpleNamespace(scope={"type": "http"}, receive=lambda: None)
+
+        content, status = await _capture_asgi_response(silent_asgi_app, request_stub)  # type: ignore[arg-type]
+        assert status == _NON_JSON_STATUS
+        assert isinstance(content, dict)
+        assert "error" in content
+        assert "without sending" in content["error"].lower()
+
+
+# ---------------------------------------------------------------------------
+# I4 regression: 4xx → JSON-RPC code mapping is narrow (400/422 only)
+# ---------------------------------------------------------------------------
+
+
+class TestPromptHandlerErrorCodeMapping:
+    """4xx classes other than 400/422 must NOT be reported as INVALID_PARAMS.
+
+    JSON-RPC INVALID_PARAMS (-32602) is reserved for invalid method
+    parameters. 401/403/404/409 are not parameter-validation failures and
+    should fall through to INTERNAL_ERROR until the dedicated error
+    taxonomy lands (issue #48).
+    """
+
+    @pytest.mark.parametrize("status_code", [401, 403, 404, 409])
+    def test_non_validation_4xx_maps_to_internal_error(self, status_code: int) -> None:
+        @get(
+            f"/handler-{status_code}",
+            mcp_prompt=f"prompt_{status_code}",
+            mcp_prompt_description="Handler that returns a non-validation 4xx",
+        )
+        async def handler() -> Response[dict]:
+            return Response({"error": "no"}, status_code=status_code)
+
+        plugin = LitestarMCP(config=MCPConfig())
+        app = Litestar(route_handlers=[handler], plugins=[plugin])
+        with TestClient(app) as client:
+            data = _rpc(client, "prompts/get", params={"name": f"prompt_{status_code}"})
+            assert "error" in data
+            assert data["error"]["code"] == -32603, (
+                f"{status_code} must map to INTERNAL_ERROR, not INVALID_PARAMS"
+            )
+
+    @pytest.mark.parametrize("status_code", [400, 422])
+    def test_validation_4xx_maps_to_invalid_params(self, status_code: int) -> None:
+        @get(
+            f"/validation-{status_code}",
+            mcp_prompt=f"prompt_v{status_code}",
+            mcp_prompt_description="Handler that returns a validation 4xx",
+        )
+        async def handler() -> Response[dict]:
+            return Response({"error": "bad input"}, status_code=status_code)
+
+        plugin = LitestarMCP(config=MCPConfig())
+        app = Litestar(route_handlers=[handler], plugins=[plugin])
+        with TestClient(app) as client:
+            data = _rpc(client, "prompts/get", params={"name": f"prompt_v{status_code}"})
+            assert "error" in data
+            assert data["error"]["code"] == -32602, (
+                f"{status_code} must map to INVALID_PARAMS (validation error)"
+            )

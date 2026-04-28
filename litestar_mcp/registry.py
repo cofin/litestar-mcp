@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from litestar.exceptions import ImproperlyConfiguredException
 from litestar.handlers import BaseRouteHandler
 
 from litestar_mcp.sse import SSEManager
@@ -76,9 +77,16 @@ _GOOGLE_SECTION_HEADERS = frozenset({
 def _parse_docstring_args(docstring: str | None) -> dict[str, str]:
     """Extract parameter descriptions from a Google-style docstring.
 
-    Parses the ``Args:`` (or ``Arguments:``, ``Params:``, ``Parameters:``)
-    section and returns ``{param_name: description}``.  Supports multi-line
-    descriptions (continuation lines indented further than the parameter line).
+    Args:
+        docstring: A Google-style docstring, or ``None``.
+
+    Returns:
+        Mapping of ``{param_name: description}`` parsed from the
+        ``Args:`` (or ``Arguments:`` / ``Params:`` / ``Parameters:``)
+        section. Continuation lines indented strictly deeper than the
+        first parameter line are appended to that parameter's description
+        — even if they contain a colon. Lines indented at the parameter
+        level that match ``name: ...`` introduce a new parameter.
     """
     if not docstring:
         return {}
@@ -87,6 +95,8 @@ def _parse_docstring_args(docstring: str | None) -> dict[str, str]:
     result: dict[str, str] = {}
     current_name: str | None = None
     current_desc: list[str] = []
+    param_indent: int | None = None
+    param_re = re.compile(r"^(\s+)(\w+)(?:\s*\([^)]*\))?\s*:\s*(.*)$")
 
     for line in lines:
         stripped = line.strip()
@@ -95,19 +105,35 @@ def _parse_docstring_args(docstring: str | None) -> dict[str, str]:
             continue
         if not in_args:
             continue
-        # Detect end of Args section: unindented non-empty line or known section header
+        # End of Args section: unindented non-empty line or known section header
         if stripped and not line[0].isspace():
             break
         if stripped in _GOOGLE_SECTION_HEADERS:
             break
-        # Match "param_name: description" or "param_name (type): description"
-        m = re.match(r"^\s+(\w+)(?:\s*\([^)]*\))?\s*:\s*(.*)$", line)
-        if m:
+
+        line_indent = len(line) - len(line.lstrip())
+        m = param_re.match(line)
+        # Treat the line as a continuation when:
+        #   - we have not yet seen a param (param_indent is None and m is None)
+        #   - it is indented strictly deeper than the recorded param indent
+        #     (URLs, "Default: see ...", etc. inside a param description)
+        is_continuation = (
+            current_name is not None
+            and stripped
+            and (
+                m is None
+                or (param_indent is not None and line_indent > param_indent)
+            )
+        )
+
+        if m and not is_continuation:
             if current_name is not None:
                 result[current_name] = " ".join(current_desc).strip()
-            current_name = m.group(1)
-            current_desc = [m.group(2)] if m.group(2) else []
-        elif current_name is not None and stripped:
+            current_name = m.group(2)
+            current_desc = [m.group(3)] if m.group(3) else []
+            if param_indent is None:
+                param_indent = line_indent
+        elif is_continuation:
             current_desc.append(stripped)
         elif current_name is not None and not stripped:
             # Blank line between params — skip without terminating
@@ -163,7 +189,9 @@ class PromptRegistration:
 
         When ``arguments`` was set explicitly, returns that list unchanged.
 
-        For standalone prompts, inspects ``fn.__signature__``.
+        For standalone prompts, walks ``inspect.signature(fn).parameters``
+        (which transparently consults ``fn.__signature__`` when present and
+        otherwise builds from ``fn.__code__`` / ``fn.__annotations__``).
 
         For handler-based prompts, walks the handler's ``signature_model``
         fields (the same model the tool-validation path uses), filtering out
@@ -210,7 +238,18 @@ def _introspect_handler_arguments(handler: BaseRouteHandler) -> list[dict[str, A
 
     try:
         signature_model = handler.signature_model
-    except Exception:  # noqa: BLE001
+    except (AttributeError, ImproperlyConfiguredException):
+        # Handler not yet finalized, or signature model genuinely unavailable —
+        # silent fallback is correct here (no surprise to caller).
+        return []
+    except Exception as exc:  # noqa: BLE001
+        # Anything else is unexpected; log so misconfigurations don't silently
+        # advertise zero arguments to MCP clients.
+        _logger.warning(
+            "Unexpected error reading signature_model for %r: %s — advertising no arguments",
+            getattr(handler, "handler_name", handler),
+            exc,
+        )
         return []
     if signature_model is None:
         return []
@@ -243,7 +282,9 @@ def _normalize_prompt_result(result: Any) -> list[dict[str, Any]]:
     """Normalize a prompt's return value to a list of PromptMessage dicts.
 
     * ``str`` → single user-role text message.
-    * ``dict`` with a valid ``role`` + ``content`` (per :data:`_PROMPT_CONTENT_REQUIRED_KEYS`)
+    * ``dict`` with a ``role`` key (presence-only, value not validated
+      against the spec's ``user``/``assistant`` enumeration) and a
+      ``content`` block recognised by :data:`_PROMPT_CONTENT_REQUIRED_KEYS`
       is returned as-is, wrapped in a list.
     * ``list`` items follow the same dict rules.
     * Any other type — or any dict that doesn't look like a valid
@@ -514,12 +555,12 @@ class Registry:
     ) -> None:
         """Register a route-handler-based prompt.
 
-        The handler is executed via the normal Litestar pipeline on
-        ``prompts/get``. If it returns a dict containing a ``messages``
-        key, that dict is returned directly. Otherwise the return value
-        is normalized into a messages list (str becomes a single user
-        text message, dict is wrapped as a single message, list is used
-        directly).
+        Storage only — runtime dispatch and the
+        ``messages``-passthrough vs. normalize-on-return decision live in
+        :func:`litestar_mcp.routes.handle_prompts_get`. This function
+        captures the handler reference plus any explicit overrides so the
+        registry can render ``prompts/list`` entries without executing
+        the handler.
 
         Args:
             name: Unique prompt identifier.
@@ -527,7 +568,10 @@ class Registry:
             title: Optional human-readable display name.
             description: Optional description.
             arguments: Explicit argument definitions. When ``None``,
-                handler-based prompts report an empty argument list.
+                arguments are introspected from the handler's
+                ``signature_model`` at ``prompts/list`` render time
+                (DI- and framework-injected parameters filtered out).
+                Pass ``[]`` to advertise no arguments explicitly.
             icons: Optional list of icon objects for UI display.
         """
         if name in self._prompts:

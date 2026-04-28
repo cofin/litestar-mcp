@@ -1,9 +1,12 @@
 # ruff: noqa: N818, PLR0911, BLE001
 """JSON-RPC 2.0 message routing for MCP."""
 
+import logging
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import Any
+
+_logger = logging.getLogger(__name__)
 
 # Standard JSON-RPC 2.0 error codes
 PARSE_ERROR = -32700
@@ -109,11 +112,20 @@ class JSONRPCRouter:
                 return None
             return _error_response(request.id, exc.error)
         except Exception as exc:
+            # Blanket catch: any uncaught handler exception becomes
+            # INTERNAL_ERROR. Log with traceback so production triage
+            # has more than the wire payload to work from — silent
+            # -32603 in callers is otherwise undebugable.
+            _logger.exception("JSON-RPC handler %r raised", request.method)
             if request.is_notification:
                 return None
             return _error_response(
                 request.id,
-                JSONRPCError(code=INTERNAL_ERROR, message=str(exc)),
+                JSONRPCError(
+                    code=INTERNAL_ERROR,
+                    message="Internal error",
+                    data={"error": type(exc).__name__, "detail": str(exc)},
+                ),
             )
         else:
             if request.is_notification:
