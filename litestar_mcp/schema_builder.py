@@ -208,17 +208,21 @@ def type_to_json_schema(annotation: Any) -> "dict[str, Any]":
     Returns:
         JSON Schema dictionary for the type.
     """
-    # Handle None/empty annotation
     if annotation is None or annotation == inspect.Parameter.empty:
         return {"type": "object", "description": "No type annotation provided"}
 
-    # Handle stringified annotations (common in forward references)
+    inner, metas = _unwrap_annotated(annotation)
+    if inner is not annotation:
+        schema = type_to_json_schema(inner)
+        for meta in metas:
+            _merge_parameter_meta(schema, meta)
+        return schema
+
     if isinstance(annotation, str):
         annotation = _resolve_string_annotation(annotation)
-        if isinstance(annotation, dict):  # If resolution failed
+        if isinstance(annotation, dict):
             return annotation
 
-    # Try type conversions in order of complexity
     if result := basic_type_to_json_schema(annotation):
         return result
     if result := collection_type_to_json_schema(annotation):
@@ -226,7 +230,6 @@ def type_to_json_schema(annotation: Any) -> "dict[str, Any]":
     if result := model_to_json_schema(annotation):
         return result
 
-    # Try union types and fallback
     return union_type_to_json_schema(annotation) or {
         "type": "object",
         "description": "Parameter of type " + str(annotation),

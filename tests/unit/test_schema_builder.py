@@ -768,3 +768,40 @@ class TestMergeParameterMeta:
         schema: dict[str, Any] = {"type": "string"}
         _merge_parameter_meta(schema, Parameter(examples="one@example.com"))
         assert schema["examples"] == ["one@example.com"]
+
+
+class TestTypeToJsonSchemaAnnotated:
+    def test_annotated_bool_optional_yields_anyOf_with_description(self) -> None:
+        annotation = Annotated[
+            bool | None,
+            Parameter(query="isPaid", description="Whether the order is paid"),
+        ]
+        schema = type_to_json_schema(annotation)
+        assert "anyOf" in schema
+        types_seen = {member.get("type") for member in schema["anyOf"]}
+        assert types_seen == {"boolean", "null"}
+        assert schema["description"] == "Whether the order is paid"
+
+    def test_annotated_int_with_constraints(self) -> None:
+        annotation = Annotated[int, Parameter(ge=1, le=100, description="qty")]
+        schema = type_to_json_schema(annotation)
+        assert schema == {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "qty",
+        }
+
+    def test_annotated_str_pattern_and_length(self) -> None:
+        annotation = Annotated[str, Parameter(min_length=3, max_length=50, pattern="^[a-z]+$")]
+        schema = type_to_json_schema(annotation)
+        assert schema == {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 50,
+            "pattern": "^[a-z]+$",
+        }
+
+    def test_annotated_without_parameter_metadata_still_unwraps(self) -> None:
+        annotation = Annotated[int, "doc string"]
+        assert type_to_json_schema(annotation) == {"type": "integer"}
