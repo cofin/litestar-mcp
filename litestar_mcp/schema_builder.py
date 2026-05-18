@@ -3,11 +3,12 @@
 import contextlib
 import inspect
 from types import UnionType
-from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin
 
 if TYPE_CHECKING:
     from litestar.handlers import BaseRouteHandler
 
+from litestar.params import ParameterKwarg
 from litestar_mcp.typing import (
     MSGSPEC_INSTALLED,
     is_attrs_instance,
@@ -18,6 +19,18 @@ from litestar_mcp.typing import (
 from litestar_mcp.utils import get_handler_function
 
 _EXECUTION_CONTEXT_PARAMS = {"resolved_user", "user_claims"}
+
+
+def _unwrap_annotated(annotation: Any) -> "tuple[Any, list[ParameterKwarg]]":
+    """Return ``(inner_type, [ParameterKwarg, ...])``.
+
+    For non-Annotated annotations, returns ``(annotation, [])``.
+    Foreign metadata (strings, ``msgspec.Meta``, etc.) is ignored.
+    """
+    if get_origin(annotation) is Annotated:
+        args = get_args(annotation)
+        return args[0], [m for m in args[1:] if isinstance(m, ParameterKwarg)]
+    return annotation, []
 
 
 def basic_type_to_json_schema(annotation: Any) -> "dict[str, Any] | None":

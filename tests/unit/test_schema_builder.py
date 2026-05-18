@@ -1,11 +1,12 @@
 """Tests for the schema builder module."""
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Annotated, Any
 
 import pytest
 from litestar import get
 from litestar.handlers import BaseRouteHandler
+from litestar.params import Parameter, ParameterKwarg
 
 from litestar_mcp.schema_builder import (
     basic_type_to_json_schema,
@@ -16,6 +17,7 @@ from litestar_mcp.schema_builder import (
     pydantic_to_json_schema,
     type_to_json_schema,
     union_type_to_json_schema,
+    _unwrap_annotated,
 )
 from tests.unit.conftest import create_app_with_handler
 
@@ -698,3 +700,25 @@ class TestUnionHandling:
         # Just verify the full pipeline works
         result = type_to_json_schema(str)
         assert result == {"type": "string"}
+
+
+class TestUnwrapAnnotated:
+    def test_non_annotated_returns_input_and_empty_list(self) -> None:
+        inner, metas = _unwrap_annotated(int)
+        assert inner is int
+        assert metas == []
+
+    def test_annotated_with_parameter_kwarg_returns_inner_and_meta(self) -> None:
+        annotation = Annotated[bool, Parameter(description="paid")]
+        inner, metas = _unwrap_annotated(annotation)
+        assert inner is bool
+        assert len(metas) == 1
+        assert isinstance(metas[0], ParameterKwarg)
+        assert metas[0].description == "paid"
+
+    def test_annotated_filters_foreign_metadata(self) -> None:
+        annotation = Annotated[int, "doc string", Parameter(ge=1)]
+        inner, metas = _unwrap_annotated(annotation)
+        assert inner is int
+        assert len(metas) == 1
+        assert metas[0].ge == 1
