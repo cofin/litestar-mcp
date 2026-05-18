@@ -17,6 +17,7 @@ from litestar_mcp.schema_builder import (
     pydantic_to_json_schema,
     type_to_json_schema,
     union_type_to_json_schema,
+    _merge_parameter_meta,
     _unwrap_annotated,
 )
 from tests.unit.conftest import create_app_with_handler
@@ -722,3 +723,43 @@ class TestUnwrapAnnotated:
         assert inner is int
         assert len(metas) == 1
         assert metas[0].ge == 1
+
+
+class TestMergeParameterMeta:
+    def test_description_merges(self) -> None:
+        schema: dict[str, Any] = {"type": "boolean"}
+        _merge_parameter_meta(schema, Parameter(description="paid"))
+        assert schema == {"type": "boolean", "description": "paid"}
+
+    def test_numeric_constraints_map_to_json_schema_keywords(self) -> None:
+        schema: dict[str, Any] = {"type": "integer"}
+        _merge_parameter_meta(schema, Parameter(ge=1, le=100, gt=0, lt=200, multiple_of=5))
+        assert schema == {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "exclusiveMinimum": 0,
+            "exclusiveMaximum": 200,
+            "multipleOf": 5,
+        }
+
+    def test_string_constraints_map_to_json_schema_keywords(self) -> None:
+        schema: dict[str, Any] = {"type": "string"}
+        _merge_parameter_meta(schema, Parameter(min_length=3, max_length=50, pattern="^[a-z]+$"))
+        assert schema == {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 50,
+            "pattern": "^[a-z]+$",
+        }
+
+    def test_title_and_examples_merge(self) -> None:
+        schema: dict[str, Any] = {"type": "string"}
+        _merge_parameter_meta(schema, Parameter(title="Email", examples=["a@b.com"]))
+        assert schema["title"] == "Email"
+        assert schema["examples"] == ["a@b.com"]
+
+    def test_none_fields_skipped(self) -> None:
+        schema: dict[str, Any] = {"type": "string"}
+        _merge_parameter_meta(schema, Parameter())
+        assert schema == {"type": "string"}

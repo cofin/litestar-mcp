@@ -33,6 +33,34 @@ def _unwrap_annotated(annotation: Any) -> "tuple[Any, list[ParameterKwarg]]":
     return annotation, []
 
 
+_META_FIELD_MAP: "tuple[tuple[str, str], ...]" = (
+    ("description", "description"),
+    ("title", "title"),
+    ("examples", "examples"),
+    ("ge", "minimum"),
+    ("le", "maximum"),
+    ("gt", "exclusiveMinimum"),
+    ("lt", "exclusiveMaximum"),
+    ("min_length", "minLength"),
+    ("max_length", "maxLength"),
+    ("pattern", "pattern"),
+    ("multiple_of", "multipleOf"),
+    ("const", "const"),
+)
+
+
+def _merge_parameter_meta(schema: "dict[str, Any]", meta: ParameterKwarg) -> None:
+    """Copy non-None fields from ``meta`` into ``schema`` using JSON Schema names."""
+    for attr, key in _META_FIELD_MAP:
+        value = getattr(meta, attr, None)
+        if value is None:
+            continue
+        if key == "examples" and not isinstance(value, list):
+            schema[key] = [value]
+        else:
+            schema[key] = value
+
+
 def basic_type_to_json_schema(annotation: Any) -> "dict[str, Any] | None":
     """Convert basic Python types to JSON Schema format."""
     if annotation is str:
