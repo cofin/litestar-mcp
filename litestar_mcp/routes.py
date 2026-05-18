@@ -226,6 +226,13 @@ def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: dict[str, A
     """
     import msgspec
 
+    # Rewrite wire-name keys (``Parameter(query=...)``) to python kwarg
+    # names so they match the msgspec signature-model field names. Note
+    # this is the inverse of ``executor._split_tool_args``, which keeps
+    # wire names — the executor relies on Litestar's native extractor to
+    # do the wire→python resolution, while the signature-model used here
+    # only knows python field names. The two functions intentionally
+    # operate on different key spaces.
     aliases = parameter_aliases(handler)
     if aliases:
         tool_args = {aliases.get(k, k): v for k, v in tool_args.items()}

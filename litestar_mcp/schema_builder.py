@@ -26,6 +26,15 @@ def _unwrap_annotated(annotation: Any) -> "tuple[Any, list[ParameterKwarg]]":
 
     For non-Annotated annotations, returns ``(annotation, [])``.
     Foreign metadata (strings, ``msgspec.Meta``, etc.) is ignored.
+
+    .. note::
+       If the handler's module uses ``from __future__ import annotations``,
+       parameter annotations are stringified at definition time. ``get_origin``
+       on a string returns ``None``, so this helper falls through to the
+       no-Annotated branch and the schema builder will not emit
+       ``Parameter`` metadata or wire-name aliases for that handler. Use
+       runtime ``Annotated[...]`` annotations (i.e. omit the future import,
+       or rely on Litestar's own type-hint resolution).
     """
     if get_origin(annotation) is Annotated:
         args = get_args(annotation)

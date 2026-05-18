@@ -403,16 +403,20 @@ def _split_tool_args(
 ) -> tuple[dict[str, Any], dict[str, Any], bytes]:
     """Partition ``tool_args`` into (path_params, query_params, body_bytes).
 
-    Wire-name aliases (``Parameter(query=...)``) are rewritten to Python kwarg
-    names before partitioning so the rest of the pipeline can match against
-    ``handler.parsed_fn_signature.parameters``.
+    Wire-name aliases (``Parameter(query=...)``) are kept verbatim in
+    ``query_payload`` so Litestar's signature-model extractor can resolve
+    them against the declared ``Parameter(query=...)`` name. To decide
+    whether a key represents a scalar handler kwarg, the alias map is
+    consulted: a wire-name key counts as a scalar parameter when its
+    aliased python name appears in ``parsed_fn_signature.parameters``.
 
-    Precedence for each key (post-rewrite):
+    Precedence for each key:
 
     1. Path parameter — if the name appears in the route's path template.
-    2. Scalar handler kwarg — if the name matches a non-``data`` signature
-       parameter, it's bound as a query parameter so the native extractor
-       parses it via the signature model.
+    2. Scalar handler kwarg — if the name (or its aliased python name)
+       matches a non-``data`` signature parameter, it's bound as a query
+       parameter so the native extractor parses it via the signature
+       model.
     3. Body — if the handler declares a ``data`` parameter, leftover keys
        become members of the JSON body that Litestar decodes into the
        ``data`` struct.
