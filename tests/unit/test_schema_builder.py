@@ -763,3 +763,8 @@ class TestMergeParameterMeta:
         schema: dict[str, Any] = {"type": "string"}
         _merge_parameter_meta(schema, Parameter())
         assert schema == {"type": "string"}
+
+    def test_examples_scalar_value_is_wrapped_in_list(self) -> None:
+        schema: dict[str, Any] = {"type": "string"}
+        _merge_parameter_meta(schema, Parameter(examples="one@example.com"))
+        assert schema["examples"] == ["one@example.com"]
