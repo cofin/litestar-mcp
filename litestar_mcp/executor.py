@@ -35,6 +35,8 @@ from litestar.response import Response
 from litestar.types.empty import Empty
 from litestar.utils.sync import ensure_async_callable
 
+from litestar_mcp._parameter_aliases import parameter_aliases
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
@@ -401,7 +403,11 @@ def _split_tool_args(
 ) -> tuple[dict[str, Any], dict[str, Any], bytes]:
     """Partition ``tool_args`` into (path_params, query_params, body_bytes).
 
-    Precedence for each key:
+    Wire-name aliases (``Parameter(query=...)``) are rewritten to Python kwarg
+    names before partitioning so the rest of the pipeline can match against
+    ``handler.parsed_fn_signature.parameters``.
+
+    Precedence for each key (post-rewrite):
 
     1. Path parameter — if the name appears in the route's path template.
     2. Scalar handler kwarg — if the name matches a non-``data`` signature
@@ -410,18 +416,26 @@ def _split_tool_args(
     3. Body — if the handler declares a ``data`` parameter, leftover keys
        become members of the JSON body that Litestar decodes into the
        ``data`` struct.
-    4. Dropped — if none of the above match. (A later framework-level
-       error surfaces on handlers whose signatures genuinely can't accept
-       the key.)
+    4. Dropped — if none of the above match.
     """
+    aliases = parameter_aliases(handler)
+
     sig_params = handler.parsed_fn_signature.parameters
     has_data = "data" in sig_params
     scalar_sig_names = {name for name in sig_params if name != "data"}
 
+    # Build a set of wire keys that resolve to scalar sig params via aliases
+    # (or directly when no alias exists).  Keeps wire names in query_payload so
+    # Litestar's native extractor can still find them by their declared
+    # ``Parameter(query=...)`` name.
+    wire_scalar_keys = {
+        k for k in tool_args if aliases.get(k, k) in scalar_sig_names
+    }
+
     path_values = {k: tool_args[k] for k in path_parameters if k in tool_args}
     remaining = {k: v for k, v in tool_args.items() if k not in path_values}
 
-    query_payload = {k: v for k, v in remaining.items() if k in scalar_sig_names}
+    query_payload = {k: v for k, v in remaining.items() if k in wire_scalar_keys}
 
     body_payload: Any = {}
     if has_data:

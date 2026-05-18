@@ -24,6 +24,7 @@ from litestar.status_codes import (
     HTTP_503_SERVICE_UNAVAILABLE,
 )
 
+from litestar_mcp._parameter_aliases import parameter_aliases
 from litestar_mcp.config import MCPConfig
 from litestar_mcp.executor import MCPToolErrorResult, execute_handler, execute_tool
 from litestar_mcp.jsonrpc import (
@@ -224,6 +225,10 @@ def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: dict[str, A
     sorted by path for deterministic output.
     """
     import msgspec
+
+    aliases = parameter_aliases(handler)
+    if aliases:
+        tool_args = {aliases.get(k, k): v for k, v in tool_args.items()}
 
     signature_model = getattr(handler, "signature_model", None)
     if signature_model is None:
