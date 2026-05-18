@@ -25,25 +25,25 @@ class TestParameterAliases:
         _, h = create_app_with_handler(handler)
         assert parameter_aliases(h) == {"isPaid": "is_paid"}
 
-    def test_header_alias_is_included(self) -> None:
+    def test_query_matching_python_name_is_omitted(self) -> None:
         def handler(
-            user_agent: Annotated[str, Parameter(header="User-Agent")] = "",
+            page: Annotated[int, Parameter(query="page")] = 1,
         ) -> dict[str, Any]:
-            return {"user_agent": user_agent}
+            return {"page": page}
 
         _, h = create_app_with_handler(handler)
-        assert parameter_aliases(h) == {"User-Agent": "user_agent"}
+        assert parameter_aliases(h) == {}
 
-    def test_query_takes_precedence_over_header(self) -> None:
+    def test_header_alias_ignored(self) -> None:
         def handler(
-            x: Annotated[int, Parameter(query="qX", header="hX")] = 0,
+            tenant_id: Annotated[str, Parameter(header="X-Tenant")] = "",
         ) -> dict[str, Any]:
-            return {"x": x}
+            return {"tenant_id": tenant_id}
 
         _, h = create_app_with_handler(handler)
-        assert parameter_aliases(h) == {"qX": "x"}
+        assert parameter_aliases(h) == {}
 
-    def test_no_alias_omitted_even_when_annotated(self) -> None:
+    def test_no_query_omitted_even_when_annotated(self) -> None:
         def handler(
             n: Annotated[int, Parameter(description="count")] = 0,
         ) -> dict[str, Any]:
