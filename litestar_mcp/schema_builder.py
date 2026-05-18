@@ -265,47 +265,51 @@ def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]"
     Returns:
         JSON Schema dictionary describing the tool's input parameters.
     """
-    # Get the actual function to inspect
     try:
         fn = get_handler_function(handler)
     except AttributeError:
-        # Fallback for test cases where handler might be a raw function
         fn = handler
 
     try:
         sig = inspect.signature(fn)
     except (TypeError, ValueError):
-        # Handler has no callable function - return empty schema
         return {"type": "object", "properties": {}}
 
-    # Get dependencies that will be handled by DI, not passed as arguments
-    di_params = set()
+    di_params: set[str] = set()
     with contextlib.suppress(Exception):
         di_params = set(handler.resolve_dependencies().keys())
 
-    properties = {}
-    required = []
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+    wire_to_python: dict[str, str] = {}
 
-    for param_name, param in sig.parameters.items():
-        # Skip dependency injection parameters
-        if param_name in di_params or param_name in _EXECUTION_CONTEXT_PARAMS:
+    for python_name, param in sig.parameters.items():
+        if python_name in di_params or python_name in _EXECUTION_CONTEXT_PARAMS:
             continue
 
-        # Generate schema for this parameter
-        param_schema = type_to_json_schema(param.annotation)
+        _, metas = _unwrap_annotated(param.annotation)
+        wire_name = python_name
+        for meta in metas:
+            if meta.query:
+                wire_name = meta.query
+                break
 
-        # Add description if available from docstring or annotation
-        if getattr(param.annotation, "__doc__", None):
-            param_schema["description"] = param.annotation.__doc__.strip()
+        if wire_name in wire_to_python and wire_to_python[wire_name] != python_name:
+            existing = wire_to_python[wire_name]
+            handler_name = getattr(fn, "__name__", "<handler>")
+            msg = (
+                f"Wire-name collision in handler {handler_name!r}: "
+                f"{wire_name!r} maps to both {existing!r} and {python_name!r}"
+            )
+            raise ValueError(msg)
+        wire_to_python[wire_name] = python_name
 
-        properties[param_name] = param_schema
+        properties[wire_name] = type_to_json_schema(param.annotation)
 
-        # Check if parameter is required (no default value)
         if param.default is inspect.Parameter.empty:
-            required.append(param_name)
+            required.append(wire_name)
 
-    # Build the complete schema
-    schema = {
+    schema: dict[str, Any] = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
         "properties": properties,
@@ -315,7 +319,6 @@ def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]"
     if required:
         schema["required"] = required
 
-    # Add overall description from the function docstring
     fn_name = getattr(fn, "__name__", "unknown_function")
     fn_doc = getattr(fn, "__doc__", None)
     if fn_doc:

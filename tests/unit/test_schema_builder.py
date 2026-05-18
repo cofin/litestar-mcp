@@ -805,3 +805,75 @@ class TestTypeToJsonSchemaAnnotated:
     def test_annotated_without_parameter_metadata_still_unwraps(self) -> None:
         annotation = Annotated[int, "doc string"]
         assert type_to_json_schema(annotation) == {"type": "integer"}
+
+
+class TestGenerateSchemaWireNamesAndDocClobber:
+    def test_query_alias_used_as_property_key(self) -> None:
+        def handler(
+            is_paid: Annotated[bool | None, Parameter(query="isPaid", description="paid?")] = None,
+        ) -> dict[str, Any]:
+            return {"is_paid": is_paid}
+
+        _, h = create_app_with_handler(handler)
+        schema = generate_schema_for_handler(h)
+        assert "isPaid" in schema["properties"]
+        assert "is_paid" not in schema["properties"]
+        assert schema["properties"]["isPaid"]["description"] == "paid?"
+
+    def test_required_uses_wire_names(self) -> None:
+        def handler(
+            user_id: Annotated[str, Parameter(query="userId")],
+        ) -> dict[str, Any]:
+            return {"user_id": user_id}
+
+        _, h = create_app_with_handler(handler)
+        schema = generate_schema_for_handler(h)
+        assert schema["required"] == ["userId"]
+
+    def test_no_doc_clobber_on_annotated_parameter(self) -> None:
+        def handler(
+            is_paid: Annotated[bool | None, Parameter(query="isPaid")] = None,
+        ) -> dict[str, Any]:
+            return {"is_paid": is_paid}
+
+        _, h = create_app_with_handler(handler)
+        schema = generate_schema_for_handler(h)
+        prop = schema["properties"]["isPaid"]
+        description = prop.get("description", "")
+        assert "Runtime representation of an annotated type" not in description
+
+    def test_no_doc_clobber_on_dataclass_parameter(self) -> None:
+        @dataclass
+        class Filter:
+            """Filter dataclass with a meaningful docstring."""
+
+            name: str
+
+        def handler(filter: Filter) -> dict[str, Any]:
+            return {"filter": filter}
+
+        _, h = create_app_with_handler(handler)
+        schema = generate_schema_for_handler(h)
+        prop = schema["properties"]["filter"]
+        assert "Filter dataclass with a meaningful docstring" not in prop.get("description", "")
+
+    def test_wire_name_collision_raises(self) -> None:
+        def handler(
+            a: Annotated[str, Parameter(query="same")] = "",
+            b: Annotated[str, Parameter(query="same")] = "",
+        ) -> dict[str, Any]:
+            return {"a": a, "b": b}
+
+        _, h = create_app_with_handler(handler)
+        with pytest.raises(ValueError, match="Wire-name collision"):
+            generate_schema_for_handler(h)
+
+    def test_bare_types_regression(self) -> None:
+        def handler(is_paid: bool | None = None, name: str | None = None) -> dict[str, Any]:
+            return {"is_paid": is_paid, "name": name}
+
+        _, h = create_app_with_handler(handler)
+        schema = generate_schema_for_handler(h)
+        assert set(schema["properties"]) == {"is_paid", "name"}
+        assert "anyOf" in schema["properties"]["is_paid"]
+        assert "anyOf" in schema["properties"]["name"]
