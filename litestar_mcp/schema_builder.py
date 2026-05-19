@@ -54,7 +54,6 @@ _META_FIELD_MAP: "tuple[tuple[str, str], ...]" = (
     ("max_length", "maxLength"),
     ("pattern", "pattern"),
     ("multiple_of", "multipleOf"),
-    ("const", "const"),
 )
 
 
@@ -313,7 +312,14 @@ def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]"
             raise ValueError(msg)
         wire_to_python[wire_name] = python_name
 
-        properties[wire_name] = type_to_json_schema(param.annotation)
+        prop_schema = type_to_json_schema(param.annotation)
+        # ``ParameterKwarg.const=True`` means "must equal the default value",
+        # so we emit the default itself as the JSON Schema ``const`` value
+        # rather than a literal boolean — which would constrain non-bool
+        # parameters to ``true``/``false`` and mislead schema-driven clients.
+        if param.default is not inspect.Parameter.empty and any(getattr(m, "const", False) for m in metas):
+            prop_schema["const"] = param.default
+        properties[wire_name] = prop_schema
 
         if param.default is inspect.Parameter.empty:
             required.append(wire_name)
