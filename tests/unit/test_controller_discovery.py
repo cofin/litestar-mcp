@@ -49,7 +49,7 @@ def test_controller_discovery() -> None:
         path = "/test"
 
         @mcp_tool(name="controller_tool")
-        @get("/tool")
+        @get("/tool", sync_to_thread=False)
         def my_tool(self) -> str:
             return "hello"
 

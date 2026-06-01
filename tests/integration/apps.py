@@ -361,7 +361,7 @@ def build_sqlspec_duckdb_app(
     @get(
         "/sqlspec/duckdb/reports",
         opt={"mcp_tool": "sqlspec_duckdb_create_report"},
-        dependencies={"report_service": Provide(provide_report_service, sync_to_thread=False)},
+        dependencies={"report_service": Provide(provide_report_service)},
         sync_to_thread=False,
     )
     def create_report(title: str, report_service: DuckDBReportService) -> dict[str, str]:

@@ -267,7 +267,13 @@ addopts = [
     "--cov-report=xml",
     "--cov-fail-under=80",
 ]
-filterwarnings = ["ignore::DeprecationWarning", "ignore::PendingDeprecationWarning"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+    "ignore:.*without setting sync_to_thread is discouraged",
+    "ignore:.*sync_to_thread has no effect on generators",
+    "ignore:.*sync_to_thread has no effect on async callable",
+]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
@@ -295,6 +301,8 @@ exclude_lines = [
     "class .*\\bProtocol\\):",
     "@(abc\\.)?abstractmethod",
     "TYPE_CHECKING",
+    "except ImportError:",
+    "class NamedDependency:",
 ]
 show_missing = true
 skip_covered = false

@@ -5,9 +5,9 @@ import asyncio
 import contextlib
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from litestar import Controller, MediaType, Request, Response, delete, get, post
+from litestar import Controller, Litestar, MediaType, Request, Response, delete, get, post
 from litestar.exceptions import SerializationException
 from litestar.handlers import BaseRouteHandler
 from litestar.response import ServerSentEvent, ServerSentEventMessage
@@ -41,6 +41,24 @@ from litestar_mcp.schema_builder import generate_schema_for_handler
 from litestar_mcp.sessions import MCPSessionManager, SessionTerminated
 from litestar_mcp.sse import StreamLimitExceeded
 from litestar_mcp.tasks import InMemoryTaskStore, TaskLookupError, TaskRecord, TaskStateError
+
+if TYPE_CHECKING:
+    from litestar.di import NamedDependency
+else:
+    try:
+        from litestar.di import NamedDependency
+    except ImportError:
+        from typing import Annotated
+
+        from litestar.params import Dependency
+
+        class NamedDependency:
+            """Fallback wrapper for NamedDependency on older Litestar versions."""
+
+            def __class_getitem__(cls, item: Any) -> Any:
+                return Annotated[item, Dependency()]
+
+
 from litestar_mcp.utils import (
     get_handler_function,
     get_mcp_metadata,
@@ -303,7 +321,7 @@ def build_jsonrpc_router(
     discovered_tools: dict[str, BaseRouteHandler],
     discovered_resources: dict[str, BaseRouteHandler],
     *,
-    app_ref: Any,
+    app_ref: Litestar,
     request_context: RequestContext,
     task_store: InMemoryTaskStore | None = None,
     registry: Registry | None = None,
@@ -701,9 +719,9 @@ class MCPController(Controller):
     async def handle_sse(
         self,
         request: Request[Any, Any, Any],
-        config: MCPConfig,
-        registry: Registry,
-        session_manager: MCPSessionManager,
+        config: NamedDependency[MCPConfig],
+        registry: NamedDependency[Registry],
+        session_manager: NamedDependency[MCPSessionManager],
     ) -> Response[Any]:
         """Handle GET-based Streamable HTTP SSE streams on the MCP endpoint."""
         origin_err = _validate_origin(request, config)
@@ -773,9 +791,9 @@ class MCPController(Controller):
     async def handle_delete(
         self,
         request: Request[Any, Any, Any],
-        config: MCPConfig,
-        registry: Registry,
-        session_manager: MCPSessionManager,
+        config: NamedDependency[MCPConfig],
+        registry: NamedDependency[Registry],
+        session_manager: NamedDependency[MCPSessionManager],
     ) -> Response[Any]:
         """Terminate an MCP session and close its attached SSE streams."""
         origin_err = _validate_origin(request, config)
@@ -800,12 +818,12 @@ class MCPController(Controller):
     async def handle_jsonrpc(
         self,
         request: Request[Any, Any, Any],
-        config: MCPConfig,
-        discovered_tools: dict[str, Any],
-        discovered_resources: dict[str, Any],
-        registry: Registry,
-        session_manager: MCPSessionManager,
-        task_store: InMemoryTaskStore | None = None,
+        config: NamedDependency[MCPConfig],
+        discovered_tools: NamedDependency[dict[str, Any]],
+        discovered_resources: NamedDependency[dict[str, Any]],
+        registry: NamedDependency[Registry],
+        session_manager: NamedDependency[MCPSessionManager],
+        task_store: NamedDependency[InMemoryTaskStore | None] = None,
     ) -> Response[Any]:
         """Handle a JSON-RPC 2.0 request over Streamable HTTP."""
         origin_err = _validate_origin(request, config)
