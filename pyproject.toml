@@ -23,7 +23,7 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
 ]
-dependencies = ["litestar[jwt]>=2.0.0", "typing-extensions>=4.0.0", "httpx>=0.24.1"]
+dependencies = ["litestar[jwt]>=2.8.0", "typing-extensions>=4.0.0", "httpx>=0.24.1"]
 description = "Litestar plugin for Model Context Protocol (MCP) integration"
 keywords = ["litestar", "mcp", "model-context-protocol", "ai", "plugin"]
 license = { text = "MIT" }
@@ -301,8 +301,6 @@ exclude_lines = [
     "class .*\\bProtocol\\):",
     "@(abc\\.)?abstractmethod",
     "TYPE_CHECKING",
-    "except ImportError:",
-    "class NamedDependency:",
 ]
 show_missing = true
 skip_covered = false
