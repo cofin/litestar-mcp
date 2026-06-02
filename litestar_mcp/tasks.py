@@ -16,27 +16,6 @@ if TYPE_CHECKING:
 TERMINAL_TASK_STATUSES = frozenset({"completed", "failed", "cancelled"})
 
 
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _format_datetime(value: datetime) -> str:
-    return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def _encode_cursor(offset: int) -> str:
-    return base64.urlsafe_b64encode(str(offset).encode("utf-8")).decode("ascii")
-
-
-def _decode_cursor(cursor: str) -> int:
-    try:
-        raw = base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
-        return int(raw)
-    except (ValueError, binascii.Error) as exc:
-        msg = "Invalid cursor"
-        raise ValueError(msg) from exc
-
-
 class TaskLookupError(ValueError):
     """Raised when a task cannot be found or accessed."""
 
@@ -281,3 +260,24 @@ class InMemoryTaskStore:
         if record.is_terminal():
             clone.done_event.set()
         return clone
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _format_datetime(value: datetime) -> str:
+    return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _encode_cursor(offset: int) -> str:
+    return base64.urlsafe_b64encode(str(offset).encode("utf-8")).decode("ascii")
+
+
+def _decode_cursor(cursor: str) -> int:
+    try:
+        raw = base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
+        return int(raw)
+    except (ValueError, binascii.Error) as exc:
+        msg = "Invalid cursor"
+        raise ValueError(msg) from exc

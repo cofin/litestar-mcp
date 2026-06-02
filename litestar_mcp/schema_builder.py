@@ -20,6 +20,66 @@ from litestar_mcp.utils import get_handler_function
 _EXECUTION_CONTEXT_PARAMS = {"resolved_user", "user_claims"}
 
 
+def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]":
+    """Generate a JSON Schema for an MCP tool handler.
+
+    Args:
+        handler: The route handler to generate schema for.
+
+    Returns:
+        JSON Schema dictionary describing the tool's input parameters.
+    """
+    try:
+        fn = get_handler_function(handler)
+    except AttributeError:
+        fn = handler
+
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return {"type": "object", "properties": {}}
+
+    di_params = set()
+    with contextlib.suppress(Exception):
+        di_params = set(handler.resolve_dependencies().keys())
+
+    properties = {}
+    required = []
+
+    for param_name, param in sig.parameters.items():
+        if param_name in di_params or param_name in _EXECUTION_CONTEXT_PARAMS:
+            continue
+
+        param_schema = type_to_json_schema(param.annotation)
+
+        if getattr(param.annotation, "__doc__", None):
+            param_schema["description"] = param.annotation.__doc__.strip()
+
+        properties[param_name] = param_schema
+
+        if param.default is inspect.Parameter.empty:
+            required.append(param_name)
+
+    schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": properties,
+        "additionalProperties": False,
+    }
+
+    if required:
+        schema["required"] = required
+
+    fn_name = getattr(fn, "__name__", "unknown_function")
+    fn_doc = getattr(fn, "__doc__", None)
+    if fn_doc:
+        schema["description"] = "Input parameters for " + str(fn_name) + ": " + str(fn_doc.strip())
+    else:
+        schema["description"] = "Input parameters for " + str(fn_name)
+
+    return schema
+
+
 def basic_type_to_json_schema(annotation: Any) -> "dict[str, Any] | None":
     """Convert basic Python types to JSON Schema format."""
     if annotation is str:
@@ -138,15 +198,13 @@ def union_type_to_json_schema(annotation: Any) -> "dict[str, Any] | None":
     """Convert Union types (including Optional) to JSON Schema format."""
     origin = get_origin(annotation)
 
-    if origin is type(None):  # NoneType
+    if origin is type(None):
         return {"type": "null"}
 
-    # Handle Union types, including Optional[T] which is Union[T, None]
     if origin in (Union, UnionType):
         args = get_args(annotation)
         if len(args) == 1:
             return type_to_json_schema(args[0])
-        # Build anyOf for all member types (including NoneType → {"type": "null"})
         any_of = []
         for arg in args:
             if arg is type(None):
@@ -167,17 +225,14 @@ def type_to_json_schema(annotation: Any) -> "dict[str, Any]":
     Returns:
         JSON Schema dictionary for the type.
     """
-    # Handle None/empty annotation
     if annotation is None or annotation == inspect.Parameter.empty:
         return {"type": "object", "description": "No type annotation provided"}
 
-    # Handle stringified annotations (common in forward references)
     if isinstance(annotation, str):
         annotation = _resolve_string_annotation(annotation)
-        if isinstance(annotation, dict):  # If resolution failed
+        if isinstance(annotation, dict):
             return annotation
 
-    # Try type conversions in order of complexity
     if result := basic_type_to_json_schema(annotation):
         return result
     if result := collection_type_to_json_schema(annotation):
@@ -185,7 +240,6 @@ def type_to_json_schema(annotation: Any) -> "dict[str, Any]":
     if result := model_to_json_schema(annotation):
         return result
 
-    # Try union types and fallback
     return union_type_to_json_schema(annotation) or {
         "type": "object",
         "description": "Parameter of type " + str(annotation),
@@ -193,8 +247,10 @@ def type_to_json_schema(annotation: Any) -> "dict[str, Any]":
 
 
 def _resolve_string_annotation(annotation: str) -> Any:
-    """Resolve a string annotation to a Python type."""
-    # Common basic types
+    """Resolve a string annotation to a Python type.
+
+    For complex string annotations, returns an object schema.
+    """
     basic_types = {
         "int": int,
         "str": str,
@@ -208,75 +264,4 @@ def _resolve_string_annotation(annotation: str) -> Any:
     if annotation in basic_types:
         return basic_types[annotation]
 
-    # For complex string annotations, return object schema
     return {"type": "object", "description": "Parameter of type " + str(annotation)}
-
-
-def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]":
-    """Generate a JSON Schema for an MCP tool handler.
-
-    Args:
-        handler: The route handler to generate schema for.
-
-    Returns:
-        JSON Schema dictionary describing the tool's input parameters.
-    """
-    # Get the actual function to inspect
-    try:
-        fn = get_handler_function(handler)
-    except AttributeError:
-        # Fallback for test cases where handler might be a raw function
-        fn = handler
-
-    try:
-        sig = inspect.signature(fn)
-    except (TypeError, ValueError):
-        # Handler has no callable function - return empty schema
-        return {"type": "object", "properties": {}}
-
-    # Get dependencies that will be handled by DI, not passed as arguments
-    di_params = set()
-    with contextlib.suppress(Exception):
-        di_params = set(handler.resolve_dependencies().keys())
-
-    properties = {}
-    required = []
-
-    for param_name, param in sig.parameters.items():
-        # Skip dependency injection parameters
-        if param_name in di_params or param_name in _EXECUTION_CONTEXT_PARAMS:
-            continue
-
-        # Generate schema for this parameter
-        param_schema = type_to_json_schema(param.annotation)
-
-        # Add description if available from docstring or annotation
-        if getattr(param.annotation, "__doc__", None):
-            param_schema["description"] = param.annotation.__doc__.strip()
-
-        properties[param_name] = param_schema
-
-        # Check if parameter is required (no default value)
-        if param.default is inspect.Parameter.empty:
-            required.append(param_name)
-
-    # Build the complete schema
-    schema = {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "type": "object",
-        "properties": properties,
-        "additionalProperties": False,
-    }
-
-    if required:
-        schema["required"] = required
-
-    # Add overall description from the function docstring
-    fn_name = getattr(fn, "__name__", "unknown_function")
-    fn_doc = getattr(fn, "__doc__", None)
-    if fn_doc:
-        schema["description"] = "Input parameters for " + str(fn_name) + ": " + str(fn_doc.strip())
-    else:
-        schema["description"] = "Input parameters for " + str(fn_name)
-
-    return schema

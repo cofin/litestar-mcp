@@ -12,20 +12,6 @@ from litestar_mcp.utils import get_handler_function, get_mcp_metadata, render_de
 MCP_PROTOCOL_VERSION = "2025-11-25"
 
 
-def _server_name(config: MCPConfig, app: Litestar) -> str:
-    if config.name:
-        return config.name
-    if app.openapi_config and app.openapi_config.title:
-        return app.openapi_config.title
-    return "Litestar MCP Server"
-
-
-def _server_version(app: Litestar) -> str:
-    if app.openapi_config and app.openapi_config.version:
-        return app.openapi_config.version
-    return "1.0.0"
-
-
 def build_oauth_protected_resource(auth_config: "MCPAuthConfig | None", app: Litestar) -> dict[str, Any]:
     """Build RFC 9728 protected resource metadata."""
     if auth_config and auth_config.issuer:
@@ -151,3 +137,17 @@ def build_mcp_server_manifest(
         "tools": tools,
         "resources": sorted(discovered_resources.keys()),
     }
+
+
+def _server_name(config: MCPConfig, app: Litestar) -> str:
+    if config.name:
+        return config.name
+    if app.openapi_config and app.openapi_config.title:
+        return app.openapi_config.title
+    return "Litestar MCP Server"
+
+
+def _server_version(app: Litestar) -> str:
+    if app.openapi_config and app.openapi_config.version:
+        return app.openapi_config.version
+    return "1.0.0"

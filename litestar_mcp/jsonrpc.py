@@ -166,14 +166,6 @@ def parse_request(raw: Any) -> JSONRPCRequest:
 # ---------------------------------------------------------------------------
 
 
-def _success_response(msg_id: Any, result: dict[str, Any]) -> dict[str, Any]:
-    return {"jsonrpc": "2.0", "id": msg_id, "result": result}
-
-
-def _error_response(msg_id: Any, error: JSONRPCError) -> dict[str, Any]:
-    return {"jsonrpc": "2.0", "id": msg_id, "error": error.to_dict()}
-
-
 def error_response(msg_id: Any, error: JSONRPCError) -> dict[str, Any]:
     """Build a JSON-RPC error response (public API).
 
@@ -185,3 +177,11 @@ def error_response(msg_id: Any, error: JSONRPCError) -> dict[str, Any]:
         A JSON-RPC error response dict.
     """
     return _error_response(msg_id, error)
+
+
+def _success_response(msg_id: Any, result: dict[str, Any]) -> dict[str, Any]:
+    return {"jsonrpc": "2.0", "id": msg_id, "result": result}
+
+
+def _error_response(msg_id: Any, error: JSONRPCError) -> dict[str, Any]:
+    return {"jsonrpc": "2.0", "id": msg_id, "error": error.to_dict()}

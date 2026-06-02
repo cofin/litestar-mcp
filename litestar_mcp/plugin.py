@@ -75,38 +75,6 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
 
         cli.add_command(mcp_group)
 
-    def _discover_mcp_routes(self, route_handlers: Sequence[Any]) -> None:
-        """Discover routes marked for MCP exposure via opt attribute or decorators."""
-        for handler in route_handlers:
-            if isinstance(handler, BaseRouteHandler):
-                metadata = get_mcp_metadata(handler)
-                if not metadata:
-                    metadata = get_mcp_metadata(get_handler_function(handler))
-
-                if metadata:
-                    if metadata["type"] == "tool":
-                        self._registry.register_tool(metadata["name"], handler)
-                    elif metadata["type"] == "resource":
-                        self._registry.register_resource(metadata["name"], handler)
-                        template = metadata.get("resource_template")
-                        if template is not None:
-                            self._registry.register_resource_template(metadata["name"], handler, template)
-                elif handler.opt:
-                    tool_key = self._config.opt_keys.tool
-                    resource_key = self._config.opt_keys.resource
-                    template_key = self._config.opt_keys.resource_template
-                    if tool_key in handler.opt:
-                        self._registry.register_tool(handler.opt[tool_key], handler)
-                    if resource_key in handler.opt:
-                        resource_name = handler.opt[resource_key]
-                        self._registry.register_resource(resource_name, handler)
-                        opt_template = handler.opt.get(template_key)
-                        if isinstance(opt_template, str):
-                            self._registry.register_resource_template(resource_name, handler, opt_template)
-
-            if getattr(handler, "route_handlers", None):
-                self._discover_mcp_routes(handler.route_handlers)  # pyright: ignore[reportAttributeAccessIssue]
-
     def on_app_init(self, app_config: AppConfig) -> AppConfig:
         """Initialize the MCP integration when the Litestar app starts."""
         self._discover_mcp_routes(app_config.route_handlers)
@@ -191,3 +159,35 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
             if hasattr(route, "route_handlers"):
                 all_handlers.extend(route.route_handlers)  # pyright: ignore[reportAttributeAccessIssue]
         self._discover_mcp_routes(all_handlers)
+
+    def _discover_mcp_routes(self, route_handlers: Sequence[Any]) -> None:
+        """Discover routes marked for MCP exposure via opt attribute or decorators."""
+        for handler in route_handlers:
+            if isinstance(handler, BaseRouteHandler):
+                metadata = get_mcp_metadata(handler)
+                if not metadata:
+                    metadata = get_mcp_metadata(get_handler_function(handler))
+
+                if metadata:
+                    if metadata["type"] == "tool":
+                        self._registry.register_tool(metadata["name"], handler)
+                    elif metadata["type"] == "resource":
+                        self._registry.register_resource(metadata["name"], handler)
+                        template = metadata.get("resource_template")
+                        if template is not None:
+                            self._registry.register_resource_template(metadata["name"], handler, template)
+                elif handler.opt:
+                    tool_key = self._config.opt_keys.tool
+                    resource_key = self._config.opt_keys.resource
+                    template_key = self._config.opt_keys.resource_template
+                    if tool_key in handler.opt:
+                        self._registry.register_tool(handler.opt[tool_key], handler)
+                    if resource_key in handler.opt:
+                        resource_name = handler.opt[resource_key]
+                        self._registry.register_resource(resource_name, handler)
+                        opt_template = handler.opt.get(template_key)
+                        if isinstance(opt_template, str):
+                            self._registry.register_resource_template(resource_name, handler, opt_template)
+
+            if getattr(handler, "route_handlers", None):
+                self._discover_mcp_routes(handler.route_handlers)  # pyright: ignore[reportAttributeAccessIssue]

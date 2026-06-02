@@ -17,12 +17,16 @@ Resource caps:
   :meth:`SSEManager.open_stream` before admitting a new stream.
 """
 
+from __future__ import annotations
+
 import asyncio
 import time
-from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
 from litestar.serialization import encode_json
 
@@ -40,16 +44,6 @@ class SSEMessage:
     data: str
     event: str = "message"
     id: str | None = None
-
-
-@dataclass
-class _StreamState:
-    stream_id: str
-    session_id: str | None
-    queue: asyncio.Queue[SSEMessage] = field(default_factory=asyncio.Queue)
-    history: list[SSEMessage] = field(default_factory=list)
-    active: bool = True
-    last_activity: float = field(default_factory=time.monotonic)
 
 
 class SSEManager:
@@ -235,3 +229,13 @@ class SSEManager:
             msg = "Invalid Last-Event-ID header"
             raise ValueError(msg)
         return stream_id, int(raw_index)
+
+
+@dataclass
+class _StreamState:
+    stream_id: str
+    session_id: str | None
+    queue: asyncio.Queue[SSEMessage] = field(default_factory=asyncio.Queue)
+    history: list[SSEMessage] = field(default_factory=list)
+    active: bool = True
+    last_activity: float = field(default_factory=time.monotonic)
