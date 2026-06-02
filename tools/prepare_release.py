@@ -374,15 +374,6 @@ def _write_changelog_entry(changelog_entry: str) -> None:
     changelog_lines[line_no:line_no] = changelog_entry.splitlines()
     changelog_path.write_text("\n".join(changelog_lines))
 
-
-def update_pyproject_version(new_version: str) -> None:
-    # can't use tomli-w / tomllib for this as is messes up the formatting
-    pyproject = pathlib.Path("pyproject.toml")
-    content = pyproject.read_text()
-    content = re.sub(r'(\nversion ?= ?")\d+\.\d+\.\d+("\s*\n)', rf"\g<1>{new_version}\g<2>", content)
-    pyproject.write_text(content)
-
-
 @click.command()
 @click.argument("version")
 @click.option("--base", help="Previous release tag. Defaults to the latest tag")

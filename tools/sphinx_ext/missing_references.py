@@ -4,8 +4,6 @@
 from __future__ import annotations
 
 import ast
-import importlib
-import inspect
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -28,43 +26,6 @@ def _get_import_nodes(nodes: list[ast.stmt]) -> Generator[ast.Import | ast.Impor
             yield node
         elif isinstance(node, ast.If) and getattr(node.test, "id", None) == "TYPE_CHECKING":
             yield from _get_import_nodes(node.body)
-
-
-def get_module_global_imports(module_import_path: str, reference_target_source_obj: str) -> set[str]:
-    """Return a set of names that are imported globally within the containing module of ``reference_target_source_obj``,
-    including imports in ``if TYPE_CHECKING`` blocks.
-    """
-    module = importlib.import_module(module_import_path)
-    obj = getattr(module, reference_target_source_obj)
-    tree = _get_module_ast(inspect.getsourcefile(obj))  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
-
-    import_nodes = _get_import_nodes(tree.body)  # type: ignore[attr-defined]
-    return {path.asname or path.name for import_node in import_nodes for path in import_node.names}
-
-
-def _resolve_local_reference(module_path: str, target: str) -> bool:
-    """Attempt to resolve a reference within the local codebase.
-
-    Args:
-        module_path: The module path (e.g., 'advanced_alchemy.base')
-        target: The target class/attribute name
-
-    Returns:
-        bool: True if reference exists, False otherwise
-    """
-    try:
-        module = importlib.import_module(module_path)
-        if "." in target:
-            # Handle fully qualified names (e.g., advanced_alchemy.base.BasicAttributes)
-            parts = target.split(".")
-            current = module
-            for part in parts:
-                current = getattr(current, part)
-            return True
-        return hasattr(module, target)
-    except (ImportError, AttributeError):
-        return False
-
 
 def _resolve_litestar_reference(target: str) -> bool:
     """Attempt to resolve Litestar references.
