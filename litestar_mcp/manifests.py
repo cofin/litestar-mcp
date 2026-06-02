@@ -60,7 +60,7 @@ def build_agent_card(
     app: Litestar,
     discovered_tools: dict[str, Any],
 ) -> dict[str, Any]:
-    """Build an A2A-style agent card for MCP discovery."""
+    """Build an agent metadata card for MCP discovery."""
     skills = []
     for name, handler in discovered_tools.items():
         fn = get_handler_function(handler)
@@ -78,7 +78,6 @@ def build_agent_card(
         )
 
     return {
-        "protocolVersion": "0.2.6",
         "name": _server_name(config, app),
         "description": f"A Litestar-native MCP integration for {_server_name(config, app)}.",
         "version": _server_version(app),
@@ -91,7 +90,6 @@ def build_agent_card(
         "skills": skills,
         "defaultInputModes": ["application/json"],
         "defaultOutputModes": ["application/json"],
-        "supportsAuthenticatedExtendedCard": False,
     }
 
 
@@ -127,7 +125,7 @@ def build_mcp_server_manifest(
         "endpoints": {
             "mcp": f"{base_url.rstrip('/')}{config.base_path}",
             "oauthProtectedResource": f"{base_url.rstrip('/')}/.well-known/oauth-protected-resource",
-            "agentCard": f"{base_url.rstrip('/')}/.well-known/agent-card.json",
+            "agentMetadata": f"{base_url.rstrip('/')}/.well-known/agent-card.json",
         },
         "capabilities": {
             "tools": {"listChanged": True},

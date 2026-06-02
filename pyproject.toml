@@ -53,6 +53,7 @@ litestar-mcp-light = "tools.sphinx_ext.pygments_styles:LitestarMcpLightStyle"
 packages = ["litestar_mcp"]
 
 [dependency-groups]
+adk = ["google-adk>=1.31.1,<2"]
 build = ["bump-my-version"]
 dev = [{ include-group = "build" }, { include-group = "lint" }, { include-group = "doc" }, { include-group = "test" }]
 doc = [
@@ -278,6 +279,7 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
     "unit: marks tests as unit tests",
+    "adk: marks optional Google ADK compatibility tests",
 ]
 minversion = "7.0"
 testpaths = ["tests", "docs/examples"]

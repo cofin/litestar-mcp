@@ -71,3 +71,4 @@ the upgrade path to a shared store.
     - :doc:`configuration` — :class:`~litestar_mcp.MCPConfig` reference.
     - :doc:`uvx_guide` — single-file run reference for the shipped
       examples.
+    - :doc:`adk` — Guide for integrating with Google's Agent Development Kit (ADK).
