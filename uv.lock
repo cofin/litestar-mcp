@@ -2490,7 +2490,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.24.1" },
-    { name = "litestar", extras = ["jwt"], specifier = ">=2.8.0" },
+    { name = "litestar", extras = ["jwt"], specifier = ">=2.23.0" },
     { name = "typing-extensions", specifier = ">=4.0.0" },
 ]
 

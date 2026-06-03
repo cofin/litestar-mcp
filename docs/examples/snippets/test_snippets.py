@@ -1,7 +1,7 @@
-"""Smoke test every snippet module.
+"""Smoke test runnable snippet modules.
 
-Each snippet exposes ``build() -> Litestar`` or a module-level ``app`` variable;
-importing and invoking it catches copy-paste typos and missing imports.
+Runnable app snippets expose ``build() -> Litestar`` or a module-level ``app`` variable.
+Client-only snippets are import-smoked separately.
 """
 
 import importlib
@@ -12,10 +12,13 @@ from litestar import Litestar
 
 import docs.examples.snippets as snippets_pkg
 
+CLIENT_ONLY_SNIPPET_MODULES = {"adk_snippets"}
+NON_APP_SNIPPET_MODULES = CLIENT_ONLY_SNIPPET_MODULES | {"jwks_cache_shared"}
+
 SNIPPET_MODULES = [
     name
     for _finder, name, _ispkg in pkgutil.iter_modules(snippets_pkg.__path__)
-    if not name.startswith("test_") and name != "jwks_cache_shared"
+    if not name.startswith("test_") and name not in NON_APP_SNIPPET_MODULES
 ]
 
 
@@ -30,3 +33,9 @@ def test_snippet_build_returns_litestar(module_name: str) -> None:
     else:
         pytest.fail(f"{module_name} has neither build() nor app variable")
     assert isinstance(app, Litestar)
+
+
+@pytest.mark.parametrize("module_name", sorted(CLIENT_ONLY_SNIPPET_MODULES))
+def test_client_only_snippet_imports(module_name: str) -> None:
+    """Import client-only snippets that do not define a Litestar application."""
+    importlib.import_module(f"docs.examples.snippets.{module_name}")
