@@ -1,12 +1,59 @@
-"""Central registry for MCP tools and resources."""
+"""Central registry for MCP tools, resources, and prompts."""
 
-from dataclasses import dataclass
-from typing import Any
+import contextlib
+import inspect
+import logging
+import re
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
+from litestar.exceptions import ImproperlyConfiguredException
 from litestar.handlers import BaseRouteHandler
 
 from litestar_mcp.sse import SSEManager
-from litestar_mcp.utils import parse_template
+from litestar_mcp.utils import (
+    get_handler_function,
+    get_mcp_metadata,
+    parse_template,
+    render_description,
+    should_include_handler,
+)
+
+if TYPE_CHECKING:
+    from litestar_mcp.config import MCPConfig
+
+_logger = logging.getLogger(__name__)
+
+_VALIDATION_CONTEXT_PARAMS = frozenset({
+    "request",
+    "socket",
+    "state",
+    "scope",
+    "headers",
+    "cookies",
+    "query",
+    "body",
+    "data",
+})
+"""Litestar magic-injection parameter names — excluded from MCP arg advertising.
+
+Shared with :mod:`litestar_mcp.routes` tool validation. Handler-based prompts
+also exclude these names because they're populated by the framework rather
+than passed by the MCP caller.
+"""
+
+# MCP PromptMessage content discriminator → required structural keys.
+# Per the 2025-11-25 schema, every content block carries a ``type`` and the
+# variant-specific payload keys listed here. Used by ``_normalize_prompt_result``
+# to validate dict-shaped messages without silently coercing them to text.
+_PROMPT_CONTENT_REQUIRED_KEYS: dict[str, frozenset[str]] = {
+    "text": frozenset({"text"}),
+    "image": frozenset({"data", "mimeType"}),
+    "audio": frozenset({"data", "mimeType"}),
+    "resource_link": frozenset({"uri", "name"}),
+    "resource": frozenset({"resource"}),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,11 +65,369 @@ class ResourceTemplate:
     handler: BaseRouteHandler
 
 
+_GOOGLE_SECTION_HEADERS = frozenset({
+    "Args:", "Arguments:", "Params:", "Parameters:",
+    "Returns:", "Return:", "Raises:", "Yields:", "Yield:",
+    "Notes:", "Note:", "Examples:", "Example:",
+    "Attributes:", "References:", "See Also:",
+    "Warnings:", "Warning:", "Todo:", "Todos:",
+})
+
+
+def _parse_docstring_args(docstring: str | None) -> dict[str, str]:
+    """Extract parameter descriptions from a Google-style docstring.
+
+    Args:
+        docstring: A Google-style docstring, or ``None``.
+
+    Returns:
+        Mapping of ``{param_name: description}`` parsed from the
+        ``Args:`` (or ``Arguments:`` / ``Params:`` / ``Parameters:``)
+        section. Continuation lines indented strictly deeper than the
+        first parameter line are appended to that parameter's description
+        — even if they contain a colon. Lines indented at the parameter
+        level that match ``name: ...`` introduce a new parameter.
+    """
+    if not docstring:
+        return {}
+    lines = docstring.splitlines()
+    in_args = False
+    result: dict[str, str] = {}
+    current_name: str | None = None
+    current_desc: list[str] = []
+    param_indent: int | None = None
+    param_re = re.compile(r"^(\s+)(\w+)(?:\s*\([^)]*\))?\s*:\s*(.*)$")
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped in ("Args:", "Arguments:", "Params:", "Parameters:"):
+            in_args = True
+            continue
+        if not in_args:
+            continue
+        # End of Args section: unindented non-empty line or known section header
+        if stripped and not line[0].isspace():
+            break
+        if stripped in _GOOGLE_SECTION_HEADERS:
+            break
+
+        line_indent = len(line) - len(line.lstrip())
+        m = param_re.match(line)
+        # Treat the line as a continuation when:
+        #   - we have not yet seen a param (param_indent is None and m is None)
+        #   - it is indented strictly deeper than the recorded param indent
+        #     (URLs, "Default: see ...", etc. inside a param description)
+        is_continuation = (
+            current_name is not None
+            and stripped
+            and (
+                m is None
+                or (param_indent is not None and line_indent > param_indent)
+            )
+        )
+
+        if m and not is_continuation:
+            if current_name is not None:
+                result[current_name] = " ".join(current_desc).strip()
+            current_name = m.group(2)
+            current_desc = [m.group(3)] if m.group(3) else []
+            if param_indent is None:
+                param_indent = line_indent
+        elif is_continuation:
+            current_desc.append(stripped)
+        elif current_name is not None and not stripped:
+            # Blank line between params — skip without terminating
+            # the current param so continuation lines are still captured.
+            pass
+
+    if current_name is not None:
+        result[current_name] = " ".join(current_desc).strip()
+    return result
+
+
+@dataclass(frozen=True, slots=True)
+class PromptRegistration:
+    """A registered MCP prompt — either a standalone callable or a route handler.
+
+    Standalone prompts are plain (async) functions decorated with
+    ``@mcp_prompt`` and passed to ``LitestarMCP(prompts=[...])``.
+
+    Handler-based prompts are Litestar route handlers discovered via the
+    ``mcp_prompt`` opt key, executed through the normal Litestar pipeline.
+
+    Attributes:
+        name: Unique prompt identifier used in ``prompts/get``.
+        fn: The callable to invoke (standalone prompt functions).
+        handler: The Litestar route handler (handler-based prompts).
+        title: Optional human-readable display name.
+        description: Optional LLM-facing description.
+        arguments: Explicit argument definitions. When ``None``, derived
+            from the function signature (standalone prompts) or the
+            handler's ``signature_model`` (handler-based prompts), with
+            DI- and framework-injected parameters filtered out.
+        icons: Optional list of icon objects for UI display.
+    """
+
+    name: str
+    fn: Callable[..., Any] | None = None
+    handler: BaseRouteHandler | None = None
+    title: str | None = None
+    description: str | None = None
+    arguments: list[dict[str, Any]] | None = field(default=None, hash=False)
+    icons: list[dict[str, Any]] | None = field(default=None, hash=False)
+
+    def __post_init__(self) -> None:
+        if self.fn is not None and self.handler is not None:
+            msg = "PromptRegistration cannot have both fn and handler set"
+            raise ValueError(msg)
+        if self.fn is None and self.handler is None:
+            msg = "PromptRegistration must have either fn or handler set"
+            raise ValueError(msg)
+
+    def get_arguments(self) -> list[dict[str, Any]]:
+        """Return prompt arguments, introspecting from signature if needed.
+
+        When ``arguments`` was set explicitly, returns that list unchanged.
+
+        For standalone prompts, walks ``inspect.signature(fn).parameters``
+        (which transparently consults ``fn.__signature__`` when present and
+        otherwise builds from ``fn.__code__`` / ``fn.__annotations__``).
+
+        For handler-based prompts, walks the handler's ``signature_model``
+        fields (the same model the tool-validation path uses), filtering out
+        DI dependencies and Litestar's magic-injected parameters
+        (``request``, ``headers``, …) so the advertised shape matches what
+        an MCP caller is expected to supply.
+
+        Both paths enrich each entry with a Google-style docstring
+        description when present.
+        """
+        if self.arguments is not None:
+            return self.arguments
+        if self.handler is not None:
+            return _introspect_handler_arguments(self.handler)
+        if self.fn is None:
+            return []
+        sig = inspect.signature(self.fn)
+        doc_descriptions = _parse_docstring_args(getattr(self.fn, "__doc__", None))
+        _skip = {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
+        args: list[dict[str, Any]] = []
+        for param_name, param in sig.parameters.items():
+            if param.kind in _skip or param_name == "self":
+                continue
+            arg: dict[str, Any] = {"name": param_name}
+            desc = doc_descriptions.get(param_name)
+            if desc:
+                arg["description"] = desc
+            arg["required"] = param.default is inspect.Parameter.empty
+            args.append(arg)
+        return args
+
+
+def _introspect_handler_arguments(handler: BaseRouteHandler) -> list[dict[str, Any]]:
+    """Derive prompt arguments from a route handler's ``signature_model``.
+
+    Mirrors the partitioning used by tool-call validation in
+    :mod:`litestar_mcp.routes`: DI dependencies and framework-injected names
+    (``request``, ``headers``, ``state``, …) are excluded so the advertised
+    arguments match what callers actually supply via ``prompts/get``.
+    Descriptions are pulled from a Google-style docstring on the underlying
+    function when available.
+    """
+    import msgspec
+
+    try:
+        signature_model = handler.signature_model
+    except (AttributeError, ImproperlyConfiguredException):
+        # Handler not yet finalized, or signature model genuinely unavailable —
+        # silent fallback is correct here (no surprise to caller).
+        return []
+    except Exception as exc:  # noqa: BLE001
+        # Anything else is unexpected; log so misconfigurations don't silently
+        # advertise zero arguments to MCP clients.
+        _logger.warning(
+            "Unexpected error reading signature_model for %r: %s — advertising no arguments",
+            getattr(handler, "handler_name", handler),
+            exc,
+        )
+        return []
+    if signature_model is None:
+        return []
+    try:
+        fields = msgspec.structs.fields(signature_model)
+    except TypeError:
+        return []
+
+    di_params: set[str] = set()
+    with contextlib.suppress(AttributeError, TypeError):
+        di_params = set(handler.resolve_dependencies().keys())
+
+    fn = get_handler_function(handler)
+    doc_descriptions = _parse_docstring_args(getattr(fn, "__doc__", None))
+
+    args: list[dict[str, Any]] = []
+    for f in fields:
+        if f.name in di_params or f.name in _VALIDATION_CONTEXT_PARAMS:
+            continue
+        arg: dict[str, Any] = {"name": f.name}
+        desc = doc_descriptions.get(f.name)
+        if desc:
+            arg["description"] = desc
+        arg["required"] = f.default is msgspec.NODEFAULT and f.default_factory is msgspec.NODEFAULT
+        args.append(arg)
+    return args
+
+
+def _normalize_prompt_result(result: Any) -> list[dict[str, Any]]:
+    """Normalize a prompt's return value to a list of PromptMessage dicts.
+
+    * ``str`` → single user-role text message.
+    * ``dict`` with a ``role`` key (presence-only, value not validated
+      against the spec's ``user``/``assistant`` enumeration) and a
+      ``content`` block recognised by :data:`_PROMPT_CONTENT_REQUIRED_KEYS`
+      is returned as-is, wrapped in a list.
+    * ``list`` items follow the same dict rules.
+    * Any other type — or any dict that doesn't look like a valid
+      ``PromptMessage`` content block — is coerced to a user-role text
+      message via ``str(item)`` with a ``warning`` log.
+
+    The variant check covers the spec's ``text`` / ``image`` / ``audio`` /
+    ``resource_link`` / ``resource`` content types: a content block missing
+    only its outer ``role`` (e.g. an unwrapped image) is still recognised
+    and not mangled into a stringified dict.
+    """
+    if isinstance(result, str):
+        return [{"role": "user", "content": {"type": "text", "text": result}}]
+    if isinstance(result, dict):
+        return [_coerce_prompt_message(result, index=None)]
+    if isinstance(result, list):
+        return [_coerce_prompt_message(item, index=i) for i, item in enumerate(result)]
+    _logger.warning("Prompt returned unexpected type %s, coercing to string", type(result).__name__)
+    return [{"role": "user", "content": {"type": "text", "text": str(result)}}]
+
+
+def _coerce_prompt_message(item: Any, *, index: int | None) -> dict[str, Any]:
+    """Coerce a single result element into a valid ``PromptMessage`` dict.
+
+    Recognises:
+      * Already-shaped messages (``role`` + ``content`` where ``content`` is
+        a valid content block or list of content blocks).
+      * Unwrapped content blocks (``type`` + variant-required keys) — wrapped
+        in a ``user``-role envelope.
+      * Anything else — stringified with a warning.
+    """
+    if not isinstance(item, dict):
+        _logger.warning(
+            "Prompt result element %sis not a dict (%s), coercing to string",
+            f"at index {index} " if index is not None else "",
+            type(item).__name__,
+        )
+        return {"role": "user", "content": {"type": "text", "text": str(item)}}
+
+    if "role" in item and "content" in item:
+        content = item["content"]
+        if _looks_like_content(content) or _looks_like_content_list(content):
+            return item
+
+    if _looks_like_content(item):
+        return {"role": "user", "content": item}
+
+    _logger.warning(
+        "Prompt result element %sdid not match PromptMessage shape (keys=%s), coercing to string",
+        f"at index {index} " if index is not None else "",
+        list(item.keys()),
+    )
+    return {"role": "user", "content": {"type": "text", "text": str(item)}}
+
+
+def _looks_like_content(value: Any) -> bool:
+    """True when ``value`` is a dict matching a known content-block variant."""
+    if not isinstance(value, dict):
+        return False
+    variant = value.get("type")
+    required = _PROMPT_CONTENT_REQUIRED_KEYS.get(variant) if isinstance(variant, str) else None
+    return required is not None and required.issubset(value.keys())
+
+
+def _looks_like_content_list(value: Any) -> bool:
+    """True when ``value`` is a non-empty list of valid content-block dicts."""
+    return isinstance(value, list) and bool(value) and all(_looks_like_content(item) for item in value)
+
+
+def resolve_prompt_description(registration: "PromptRegistration", config: "MCPConfig") -> str | None:
+    """Resolve the description string for a registered prompt.
+
+    Handler-based prompts run through ``render_description`` so opt-key
+    overrides, structured sections, and docstring fallbacks all apply
+    consistently with tools and resources. Standalone prompts use the
+    description captured at registration time (decorator value or
+    ``fn.__doc__`` fallback) — there's no opt-key plumbing on a bare fn.
+    """
+    if registration.handler is not None:
+        fn = get_handler_function(registration.handler)
+        return render_description(
+            registration.handler,
+            fn,
+            kind="prompt",
+            fallback_name=registration.name,
+            opt_keys=config.opt_keys,
+        )
+    return registration.description
+
+
+def render_prompt_entry(registration: "PromptRegistration", config: "MCPConfig") -> dict[str, Any]:
+    """Build a Prompt entry dict for ``prompts/list`` and the server manifest.
+
+    Single source of truth for the wire shape so route + manifest
+    rendering can't drift. Optional fields (``title``, ``description``,
+    ``arguments``, ``icons``) are omitted when absent rather than emitted
+    as ``null``.
+    """
+    entry: dict[str, Any] = {"name": registration.name}
+    if registration.title is not None:
+        entry["title"] = registration.title
+    description = resolve_prompt_description(registration, config)
+    if description is not None:
+        entry["description"] = description
+    arguments = registration.get_arguments()
+    if arguments:
+        entry["arguments"] = arguments
+    if registration.icons is not None:
+        entry["icons"] = registration.icons
+    return entry
+
+
+def should_include_prompt(registration: "PromptRegistration", config: "MCPConfig") -> bool:
+    """Apply ``include/exclude_operations`` and tag filters to a prompt.
+
+    Handler-based prompts get the full filter set (tags + name).
+    Standalone (fn-based) prompts skip the tag filters — they have no
+    handler tags to test — but ``include_operations`` /
+    ``exclude_operations`` name filters still apply because they select
+    by prompt name, which fn-based prompts have just like everything else.
+    """
+    if registration.handler is not None:
+        handler_tags = set(getattr(registration.handler, "tags", None) or [])
+        return should_include_handler(registration.name, handler_tags, config)
+    if config.exclude_operations and registration.name in config.exclude_operations:
+        return False
+    return not (config.include_operations and registration.name not in config.include_operations)
+
+
 class Registry:
-    """Central registry for MCP tools and resources.
+    """Central registry for MCP tools, resources, and prompts.
 
     This class decouples metadata storage and discovery from the route handlers themselves,
     avoiding issues with __slots__ or object mutation.
+
+    Note:
+        Tools and resources are stored as bare ``BaseRouteHandler`` values
+        because every entry has a single underlying handler. Prompts use
+        :class:`PromptRegistration` instead — a prompt may originate from
+        either a standalone ``@mcp_prompt`` callable *or* a route handler,
+        so the dataclass carries the ``fn | handler`` union plus the
+        per-prompt metadata (title, description, arguments, icons) that
+        can't live on a bare callable.
     """
 
     def __init__(self) -> None:
@@ -30,6 +435,7 @@ class Registry:
         self._tools: dict[str, BaseRouteHandler] = {}
         self._resources: dict[str, BaseRouteHandler] = {}
         self._templates: dict[str, ResourceTemplate] = {}
+        self._prompts: dict[str, PromptRegistration] = {}
         self._sse_manager: SSEManager | None = None
 
     def set_sse_manager(self, manager: SSEManager) -> None:
@@ -61,6 +467,8 @@ class Registry:
             name: The tool name.
             handler: The route handler.
         """
+        if name in self._tools:
+            _logger.warning("Overwriting existing tool registration: %s", name)
         self._tools[name] = handler
 
     def register_resource(self, name: str, handler: BaseRouteHandler) -> None:
@@ -70,6 +478,8 @@ class Registry:
             name: The resource name.
             handler: The route handler.
         """
+        if name in self._resources:
+            _logger.warning("Overwriting existing resource registration: %s", name)
         self._resources[name] = handler
 
     @property
@@ -87,7 +497,95 @@ class Registry:
                 invalid templates raise :class:`ValueError`.
         """
         parse_template(template)
+        if name in self._templates:
+            _logger.warning("Overwriting existing resource template registration: %s", name)
         self._templates[name] = ResourceTemplate(name=name, template=template, handler=handler)
+
+    @property
+    def prompts(self) -> dict[str, PromptRegistration]:
+        """Get registered prompts."""
+        return self._prompts
+
+    def register_prompt(
+        self,
+        name: str,
+        fn: Callable[..., Any],
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        arguments: list[dict[str, Any]] | None = None,
+        icons: list[dict[str, Any]] | None = None,
+    ) -> None:
+        """Register a standalone prompt function.
+
+        Args:
+            name: Unique prompt identifier.
+            fn: The callable to invoke on ``prompts/get``.
+            title: Optional human-readable display name.
+            description: Optional description. Falls back to ``fn.__doc__``.
+            arguments: Explicit argument definitions. When ``None``, derived
+                from the function signature.
+            icons: Optional list of icon objects for UI display.
+        """
+        if name in self._prompts:
+            _logger.warning("Overwriting existing prompt registration: %s", name)
+        desc = description
+        if desc is None:
+            doc = getattr(fn, "__doc__", None)
+            if isinstance(doc, str) and doc.strip():
+                desc = doc.strip()
+        self._prompts[name] = PromptRegistration(
+            name=name,
+            fn=fn,
+            title=title,
+            description=desc,
+            arguments=arguments,
+            icons=icons,
+        )
+
+    def register_prompt_handler(
+        self,
+        name: str,
+        handler: BaseRouteHandler,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        arguments: list[dict[str, Any]] | None = None,
+        icons: list[dict[str, Any]] | None = None,
+    ) -> None:
+        """Register a route-handler-based prompt.
+
+        Storage only — runtime dispatch and the
+        ``messages``-passthrough vs. normalize-on-return decision live in
+        :func:`litestar_mcp.routes.handle_prompts_get`. This function
+        captures the handler reference plus any explicit overrides so the
+        registry can render ``prompts/list`` entries without executing
+        the handler.
+
+        Args:
+            name: Unique prompt identifier.
+            handler: The Litestar route handler.
+            title: Optional human-readable display name.
+            description: Optional description.
+            arguments: Explicit argument definitions. When ``None``,
+                arguments are introspected from the handler's
+                ``signature_model`` at ``prompts/list`` render time
+                (DI- and framework-injected parameters filtered out).
+                Pass ``[]`` to advertise no arguments explicitly.
+            icons: Optional list of icon objects for UI display.
+        """
+        if name in self._prompts:
+            _logger.warning("Overwriting existing prompt registration: %s", name)
+        metadata = get_mcp_metadata(handler) or {}
+        desc = description if description is not None else metadata.get("description")
+        self._prompts[name] = PromptRegistration(
+            name=name,
+            handler=handler,
+            title=title if title is not None else metadata.get("title"),
+            description=desc,
+            arguments=arguments if arguments is not None else metadata.get("arguments"),
+            icons=icons if icons is not None else metadata.get("icons"),
+        )
 
     async def publish_notification(
         self,
@@ -125,3 +623,7 @@ class Registry:
     async def notify_tools_list_changed(self) -> None:
         """Notify clients that the tool list has changed."""
         await self.publish_notification("notifications/tools/list_changed", {})
+
+    async def notify_prompts_list_changed(self) -> None:
+        """Notify clients that the prompt list has changed."""
+        await self.publish_notification("notifications/prompts/list_changed", {})

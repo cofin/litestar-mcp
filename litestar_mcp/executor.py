@@ -46,6 +46,7 @@ __all__ = (
     "MCPPathParamCoercionError",
     "MCPToolErrorResult",
     "NotCallableInCLIContextError",
+    "execute_handler",
     "execute_tool",
 )
 
@@ -99,14 +100,21 @@ class MCPToolErrorResult(Exception):  # noqa: N818
     the ``tools/call`` result.
     """
 
-    def __init__(self, content: Any) -> None:
+    def __init__(self, content: Any, *, status_code: int = 500) -> None:
         """Initialize with the already-rendered JSON-RPC content payload.
 
         Args:
             content: Decoded response body (typically a ``dict``).
+            status_code: HTTP status code from the handler response.
         """
         super().__init__("MCP tool returned error response")
         self.content = content
+        self.status_code = status_code
+
+    @property
+    def is_client_error(self) -> bool:
+        """``True`` when the status code is in the 4xx range."""
+        return 400 <= self.status_code < 500
 
 
 async def _enforce_guards(handler: BaseRouteHandler, request: Request[Any, Any, Any]) -> None:
@@ -234,6 +242,16 @@ async def _capture_asgi_response(
 
     await asgi_app(cast("Any", request.scope), cast("Any", request.receive), _sink_send)
 
+    if status_code == 0:
+        # ASGI app exited without sending http.response.start. Treat as a
+        # transport invariant violation rather than a 0-status success — the
+        # downstream caller would otherwise pass the (None, 0) result through
+        # the < _ERROR_STATUS_FLOOR check and surface "None" as a successful body.
+        return (
+            {"error": "MCP handler exited without sending an ASGI response"},
+            _NON_JSON_STATUS,
+        )
+
     body = b"".join(body_chunks)
     if not body:
         return None, status_code
@@ -251,11 +269,11 @@ async def _dispatch_via_exception_handlers(
     handler: BaseRouteHandler,
     request: Request[Any, Any, Any],
     exc: Exception,
-) -> tuple[Any, bool] | None:
+) -> tuple[Any, int] | None:
     """Walk ``handler.resolve_exception_handlers()`` MRO-style for ``exc``.
 
     Returns:
-        ``(content, is_error)`` when a handler matches and renders a
+        ``(content, status_code)`` when a handler matches and renders a
         response; ``None`` when no handler matches (caller must re-raise).
     """
     exception_handlers = handler.resolve_exception_handlers() or {}
@@ -274,12 +292,11 @@ async def _dispatch_via_exception_handlers(
 
     if isinstance(raw, Response):
         status = int(getattr(raw, "status_code", 200))
-        is_error = status >= _ERROR_STATUS_FLOOR
-        return raw.content, is_error
+        return raw.content, status
 
     # Exception handler returned raw data — treat as an error render since
     # it was triggered by a raised exception.
-    return raw, True
+    return raw, 500
 
 
 _PATH_PARAMETERS_CACHE: weakref.WeakKeyDictionary[Any, dict[str, Any]] = weakref.WeakKeyDictionary()
@@ -588,7 +605,7 @@ async def execute_tool(
         )
 
         content: Any = None
-        is_error = False
+        status = 200
         try:
             try:
                 await _enforce_guards(handler, dispatch_request)
@@ -611,16 +628,22 @@ async def execute_tool(
                 http_handler = cast("HTTPRouteHandler", handler)
                 asgi_app = await http_handler.to_response(app=app, data=raw_result, request=dispatch_request)
                 content, status = await _capture_asgi_response(asgi_app, dispatch_request)
-                is_error = status >= _ERROR_STATUS_FLOOR
             except Exception as exc:
                 await _run_after_exception_hooks(app, dispatch_request, exc)
                 handled = await _dispatch_via_exception_handlers(handler, dispatch_request, exc)
                 if handled is None:
                     raise
-                content, is_error = handled
+                content, status = handled
         finally:
             await _run_after_response(handler, dispatch_request)
 
-    if is_error:
-        raise MCPToolErrorResult(content)
+    if status >= _ERROR_STATUS_FLOOR:
+        raise MCPToolErrorResult(content, status_code=status)
     return content
+
+
+# Generic alias used by non-tool MCP primitives (resources, prompts) that
+# dispatch through the same Litestar pipeline. Keeping a thin alias instead
+# of a single name avoids implying that the prompt/resource path is
+# semantically a "tool call" — the underlying machinery is the same.
+execute_handler = execute_tool
