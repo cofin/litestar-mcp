@@ -3,10 +3,12 @@
 import contextlib
 import inspect
 from types import UnionType
-from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin
 
 if TYPE_CHECKING:
     from litestar.handlers import BaseRouteHandler
+
+from litestar.params import ParameterKwarg
 
 from litestar_mcp.typing import (
     MSGSPEC_INSTALLED,
@@ -20,64 +22,52 @@ from litestar_mcp.utils import get_handler_function
 _EXECUTION_CONTEXT_PARAMS = {"resolved_user", "user_claims"}
 
 
-def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]":
-    """Generate a JSON Schema for an MCP tool handler.
+def _unwrap_annotated(annotation: Any) -> "tuple[Any, list[ParameterKwarg]]":
+    """Return ``(inner_type, [ParameterKwarg, ...])``.
 
-    Args:
-        handler: The route handler to generate schema for.
+    For non-Annotated annotations, returns ``(annotation, [])``.
+    Foreign metadata (strings, ``msgspec.Meta``, etc.) is ignored.
 
-    Returns:
-        JSON Schema dictionary describing the tool's input parameters.
+    .. note::
+       If the handler's module uses ``from __future__ import annotations``,
+       parameter annotations are stringified at definition time. ``get_origin``
+       on a string returns ``None``, so this helper falls through to the
+       no-Annotated branch and the schema builder will not emit
+       ``Parameter`` metadata or wire-name aliases for that handler. Use
+       runtime ``Annotated[...]`` annotations (i.e. omit the future import,
+       or rely on Litestar's own type-hint resolution).
     """
-    try:
-        fn = get_handler_function(handler)
-    except AttributeError:
-        fn = handler
+    if get_origin(annotation) is Annotated:
+        args = get_args(annotation)
+        return args[0], [m for m in args[1:] if isinstance(m, ParameterKwarg)]
+    return annotation, []
 
-    try:
-        sig = inspect.signature(fn)
-    except (TypeError, ValueError):
-        return {"type": "object", "properties": {}}
 
-    di_params = set()
-    with contextlib.suppress(Exception):
-        di_params = set(handler.resolve_dependencies().keys())
+_META_FIELD_MAP: "tuple[tuple[str, str], ...]" = (
+    ("description", "description"),
+    ("title", "title"),
+    ("examples", "examples"),
+    ("ge", "minimum"),
+    ("le", "maximum"),
+    ("gt", "exclusiveMinimum"),
+    ("lt", "exclusiveMaximum"),
+    ("min_length", "minLength"),
+    ("max_length", "maxLength"),
+    ("pattern", "pattern"),
+    ("multiple_of", "multipleOf"),
+)
 
-    properties = {}
-    required = []
 
-    for param_name, param in sig.parameters.items():
-        if param_name in di_params or param_name in _EXECUTION_CONTEXT_PARAMS:
+def _merge_parameter_meta(schema: "dict[str, Any]", meta: ParameterKwarg) -> None:
+    """Copy non-None fields from ``meta`` into ``schema`` using JSON Schema names."""
+    for attr, key in _META_FIELD_MAP:
+        value = getattr(meta, attr, None)
+        if value is None:
             continue
-
-        param_schema = type_to_json_schema(param.annotation)
-
-        if getattr(param.annotation, "__doc__", None):
-            param_schema["description"] = param.annotation.__doc__.strip()
-
-        properties[param_name] = param_schema
-
-        if param.default is inspect.Parameter.empty:
-            required.append(param_name)
-
-    schema = {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "type": "object",
-        "properties": properties,
-        "additionalProperties": False,
-    }
-
-    if required:
-        schema["required"] = required
-
-    fn_name = getattr(fn, "__name__", "unknown_function")
-    fn_doc = getattr(fn, "__doc__", None)
-    if fn_doc:
-        schema["description"] = "Input parameters for " + str(fn_name) + ": " + str(fn_doc.strip())
-    else:
-        schema["description"] = "Input parameters for " + str(fn_name)
-
-    return schema
+        if key == "examples" and not isinstance(value, list):
+            schema[key] = [value]
+        else:
+            schema[key] = value
 
 
 def basic_type_to_json_schema(annotation: Any) -> "dict[str, Any] | None":
@@ -198,13 +188,15 @@ def union_type_to_json_schema(annotation: Any) -> "dict[str, Any] | None":
     """Convert Union types (including Optional) to JSON Schema format."""
     origin = get_origin(annotation)
 
-    if origin is type(None):
+    if origin is type(None):  # NoneType
         return {"type": "null"}
 
+    # Handle Union types, including Optional[T] which is Union[T, None]
     if origin in (Union, UnionType):
         args = get_args(annotation)
         if len(args) == 1:
             return type_to_json_schema(args[0])
+        # Build anyOf for all member types (including NoneType → {"type": "null"})
         any_of = []
         for arg in args:
             if arg is type(None):
@@ -216,7 +208,7 @@ def union_type_to_json_schema(annotation: Any) -> "dict[str, Any] | None":
     return None
 
 
-def type_to_json_schema(annotation: Any) -> "dict[str, Any]":
+def type_to_json_schema(annotation: Any) -> "dict[str, Any]":  # noqa: PLR0911
     """Convert a Python type annotation to JSON Schema format.
 
     Args:
@@ -227,6 +219,13 @@ def type_to_json_schema(annotation: Any) -> "dict[str, Any]":
     """
     if annotation is None or annotation == inspect.Parameter.empty:
         return {"type": "object", "description": "No type annotation provided"}
+
+    inner, metas = _unwrap_annotated(annotation)
+    if inner is not annotation:
+        schema = type_to_json_schema(inner)
+        for meta in metas:
+            _merge_parameter_meta(schema, meta)
+        return schema
 
     if isinstance(annotation, str):
         annotation = _resolve_string_annotation(annotation)
@@ -247,10 +246,8 @@ def type_to_json_schema(annotation: Any) -> "dict[str, Any]":
 
 
 def _resolve_string_annotation(annotation: str) -> Any:
-    """Resolve a string annotation to a Python type.
-
-    For complex string annotations, returns an object schema.
-    """
+    """Resolve a string annotation to a Python type."""
+    # Common basic types
     basic_types = {
         "int": int,
         "str": str,
@@ -264,4 +261,114 @@ def _resolve_string_annotation(annotation: str) -> Any:
     if annotation in basic_types:
         return basic_types[annotation]
 
+    # For complex string annotations, return object schema
     return {"type": "object", "description": "Parameter of type " + str(annotation)}
+
+
+def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]":
+    """Generate a JSON Schema for an MCP tool handler.
+
+    Args:
+        handler: The route handler to generate schema for.
+
+    Returns:
+        JSON Schema dictionary describing the tool's input parameters.
+    """
+    try:
+        fn = get_handler_function(handler)
+    except AttributeError:
+        fn = handler
+
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return {"type": "object", "properties": {}}
+
+    di_params: set[str] = set()
+    with contextlib.suppress(Exception):
+        di_params = set(handler.resolve_dependencies().keys())
+
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+    wire_to_python: dict[str, str] = {}
+
+    for python_name, param in sig.parameters.items():
+        if python_name in di_params or python_name in _EXECUTION_CONTEXT_PARAMS:
+            continue
+
+        _, metas = _unwrap_annotated(param.annotation)
+        wire_name = python_name
+        for meta in metas:
+            if meta.query:
+                wire_name = meta.query
+                break
+
+        if wire_name in wire_to_python and wire_to_python[wire_name] != python_name:
+            existing = wire_to_python[wire_name]
+            handler_name = getattr(fn, "__name__", "<handler>")
+            msg = (
+                f"Wire-name collision in handler {handler_name!r}: "
+                f"{wire_name!r} maps to both {existing!r} and {python_name!r}"
+            )
+            raise ValueError(msg)
+        wire_to_python[wire_name] = python_name
+
+        prop_schema = type_to_json_schema(param.annotation)
+        # ``ParameterKwarg.const=True`` means "must equal the default value",
+        # so we emit the default itself as the JSON Schema ``const`` value
+        # rather than a literal boolean — which would constrain non-bool
+        # parameters to ``true``/``false`` and mislead schema-driven clients.
+        if param.default is not inspect.Parameter.empty and any(getattr(m, "const", False) for m in metas):
+            prop_schema["const"] = param.default
+        properties[wire_name] = prop_schema
+
+        if param.default is inspect.Parameter.empty:
+            required.append(wire_name)
+
+    schema: dict[str, Any] = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": properties,
+        "additionalProperties": False,
+    }
+
+    if required:
+        schema["required"] = required
+
+    fn_name = getattr(fn, "__name__", "unknown_function")
+    fn_doc = getattr(fn, "__doc__", None)
+    if fn_doc:
+        schema["description"] = "Input parameters for " + str(fn_name) + ": " + str(fn_doc.strip())
+    else:
+        schema["description"] = "Input parameters for " + str(fn_name)
+
+    return schema
+
+
+def parameter_aliases(handler: "BaseRouteHandler") -> "dict[str, str]":
+    """Return ``{wire_name: python_name}`` for handler params whose wire name differs.
+
+    Wire name is taken from ``Parameter(query=...)``. Header and cookie sources
+    are intentionally ignored — the executor only synthesizes query strings,
+    so exposing those wire names would produce schemas the dispatcher cannot
+    honor. Re-add them when header/cookie dispatch lands (out of scope for #52).
+    """
+    try:
+        fn = get_handler_function(handler)
+    except AttributeError:
+        fn = handler  # raw function in tests
+
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return {}
+
+    aliases: dict[str, str] = {}
+    for python_name, param in sig.parameters.items():
+        _, metas = _unwrap_annotated(param.annotation)
+        for meta in metas:
+            wire_name = meta.query
+            if wire_name and wire_name != python_name:
+                aliases[wire_name] = python_name
+                break
+    return aliases

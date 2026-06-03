@@ -53,7 +53,7 @@ litestar-mcp-light = "tools.sphinx_ext.pygments_styles:LitestarMcpLightStyle"
 packages = ["litestar_mcp"]
 
 [dependency-groups]
-adk = ["google-adk>=1.31.1,<2"]
+adk = ["google-adk[mcp]>=2"]
 build = ["bump-my-version"]
 dev = [{ include-group = "build" }, { include-group = "lint" }, { include-group = "doc" }, { include-group = "test" }]
 doc = [

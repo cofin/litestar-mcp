@@ -3,6 +3,8 @@
 
 import asyncio
 import contextlib
+import inspect
+import logging
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import Any
@@ -24,7 +26,7 @@ from litestar.status_codes import (
 )
 
 from litestar_mcp.config import MCPConfig
-from litestar_mcp.executor import MCPToolErrorResult, execute_tool
+from litestar_mcp.executor import MCPToolErrorResult, execute_handler, execute_tool
 from litestar_mcp.jsonrpc import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
@@ -37,8 +39,16 @@ from litestar_mcp.jsonrpc import (
     error_response,
     parse_request,
 )
-from litestar_mcp.registry import Registry
-from litestar_mcp.schema_builder import generate_schema_for_handler
+from litestar_mcp.registry import (
+    _VALIDATION_CONTEXT_PARAMS,
+    PromptRegistration,
+    Registry,
+    _normalize_prompt_result,
+    render_prompt_entry,
+    resolve_prompt_description,
+    should_include_prompt,
+)
+from litestar_mcp.schema_builder import generate_schema_for_handler, parameter_aliases
 from litestar_mcp.sessions import MCPSessionManager, SessionTerminated
 from litestar_mcp.sse import StreamLimitExceeded
 from litestar_mcp.tasks import InMemoryTaskStore, TaskLookupError, TaskRecord, TaskStateError
@@ -49,6 +59,8 @@ from litestar_mcp.utils import (
     render_description,
     should_include_handler,
 )
+
+_logger = logging.getLogger(__name__)
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
 MCP_SESSION_HEADER = "Mcp-Session-Id"
@@ -75,10 +87,237 @@ class RequestContext:
     request: "Request[Any, Any, Any] | None" = None
 
 
+def _validate_origin(request: Request[Any, Any, Any], config: MCPConfig) -> Response[Any] | None:
+    """Validate the Origin header if allowed_origins is configured."""
+    if not config.allowed_origins:
+        return None
+
+    origin = request.headers.get("origin")
+    if origin and origin not in config.allowed_origins:
+        return Response(
+            content={"error": "Origin not allowed"},
+            status_code=HTTP_403_FORBIDDEN,
+            media_type=MediaType.JSON,
+        )
+    return None
+
+
+def _add_protocol_headers(response: Response[Any]) -> Response[Any]:
+    """Add standard MCP protocol headers to a response."""
+    response.headers["mcp-protocol-version"] = MCP_PROTOCOL_VERSION
+    return response
+
+
+def _request_subject(request: Request[Any, Any, Any]) -> str | None:
+    """Best-effort ``sub``-like identifier from ``request.auth`` claims dict.
+
+    Middleware populates ``scope["auth"]`` with whatever shape it sets — this
+    helper reads the raw scope value (avoiding the ``request.auth`` property
+    which raises when no auth middleware is installed) and treats it as a
+    mapping, pulling ``"sub"`` if present. Non-mapping values are ignored.
+    """
+    auth = request.scope.get("auth")
+    if isinstance(auth, dict):
+        sub = auth.get("sub")
+        if isinstance(sub, str) and sub:
+            return sub
+    return None
+
+
+def _resolve_client_id(request: Request[Any, Any, Any]) -> str:
+    explicit_client_id = (
+        request.headers.get("x-mcp-client-id")
+        or request.headers.get("mcp-client-id")
+        or request.query_params.get("clientId")
+        or request.query_params.get("client_id")
+    )
+    if explicit_client_id:
+        return explicit_client_id
+    sub = _request_subject(request)
+    if sub is not None:
+        return f"user:{sub}"
+    if request.client and request.client.host:
+        return f"remote:{request.client.host}"
+    return "anonymous"
+
+
+def _build_request_context(request: Request[Any, Any, Any]) -> RequestContext:
+    client_id = _resolve_client_id(request)
+    sub = _request_subject(request)
+    owner_id = f"user:{sub}" if sub is not None else f"client:{client_id}"
+    return RequestContext(client_id=client_id, owner_id=owner_id, request=request)
+
+
+def _serialize_tool_content(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    return encode_json(value).decode("utf-8")
+
+
+def _build_tool_result(value: Any, *, is_error: bool, task_id: str | None = None) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "content": [{"type": "text", "text": _serialize_tool_content(value)}],
+        "isError": is_error,
+    }
+    if task_id is not None:
+        result["_meta"] = {"io.modelcontextprotocol/related-task": {"taskId": task_id}}
+    return result
+
+
+def _to_pointer(name: str, msgspec_path: str) -> str:
+    """Turn ``name`` + ``$.age.limit`` into ``/arguments/age/limit`` JSON Pointer.
+
+    ``msgspec.ValidationError`` messages include a trailing ``$.<path>`` marker
+    indicating which nested field failed validation. We translate that into a
+    JSON Pointer rooted at ``/arguments/<name>`` so downstream UIs can render
+    field-level errors.
+    """
+    suffix = msgspec_path.removeprefix("$").lstrip(".")
+    parts = ["arguments", name]
+    if suffix:
+        parts.extend(p for p in suffix.split(".") if p and p != name)
+    return "/" + "/".join(parts)
+
+
+def _split_msgspec_error(exc: "Exception") -> tuple[str, str]:
+    """Split a ``msgspec.ValidationError`` string into (reason, path).
+
+    msgspec formats messages as ``"<reason> - at `$.path`"``. When no path is
+    present we return an empty path.
+    """
+    text = str(exc)
+    marker = " - at `"
+    if marker in text and text.endswith("`"):
+        reason, _, tail = text.rpartition(marker)
+        path = tail[:-1]
+        return reason, path
+    return text, ""
+
+
+def _resolve_annotated_types(handler: "BaseRouteHandler") -> dict[str, Any]:
+    """Return ``{param_name: annotated_type}`` from the original handler function.
+
+    Litestar's ``signature_model`` strips user-supplied ``msgspec.Meta``
+    constraints (``ge``/``le``/``pattern``/``min_length`` …) and replaces them
+    with its own ``KwargDefinition`` metadata. To enforce those constraints via
+    ``msgspec.convert`` we resolve type hints directly off the original
+    function, preserving the full ``Annotated[...]`` chain.
+    """
+    import typing as _typing
+
+    fn = get_handler_function(handler)
+    try:
+        return _typing.get_type_hints(fn, include_extras=True)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: dict[str, Any]) -> list[dict[str, str]]:
+    """Validate ``tool_args`` against the handler's Litestar signature.
+
+    Matches the executor's partitioning (Ch2): if the handler declares a
+    ``data`` parameter, unrecognized tool_args are validated as fields of
+    that struct type; path params are matched against the route's declared
+    path variables; remaining scalars are matched against the handler's
+    non-DI signature fields.
+
+    Returns a list of ``{"path": <json-pointer>, "message": <reason>}`` dicts,
+    sorted by path for deterministic output.
+    """
+    import msgspec
+
+    # Rewrite wire-name keys (``Parameter(query=...)``) to python kwarg
+    # names so they match the msgspec signature-model field names. Note
+    # this is the inverse of ``executor._split_tool_args``, which keeps
+    # wire names — the executor relies on Litestar's native extractor to
+    # do the wire→python resolution, while the signature-model used here
+    # only knows python field names. The two functions intentionally
+    # operate on different key spaces.
+    aliases = parameter_aliases(handler)
+    python_to_wire: dict[str, str] = {v: k for k, v in aliases.items()}
+    if aliases:
+        tool_args = {aliases.get(k, k): v for k, v in tool_args.items()}
+
+    signature_model = getattr(handler, "signature_model", None)
+    if signature_model is None:
+        return []
+
+    try:
+        fields = msgspec.structs.fields(signature_model)
+    except TypeError:
+        return []
+
+    di_params: set[str] = set()
+    with contextlib.suppress(AttributeError, TypeError):
+        di_params = set(handler.resolve_dependencies().keys())
+
+    declared_by_name = {field.name: field for field in fields}
+    annotated_types = _resolve_annotated_types(handler)
+    errors: list[dict[str, str]] = []
+
+    data_field = declared_by_name.get("data")
+    data_type = annotated_types.get("data") if data_field is not None else None
+    recognized_scalar_names = {
+        name for name in declared_by_name if name not in di_params and name not in _VALIDATION_CONTEXT_PARAMS
+    }
+
+    # When the handler has a ``data`` param, tool_args keys that aren't
+    # recognized scalar fields are treated as members of the data struct.
+    # Validate them by building a mapping and converting it to the struct.
+    if data_type is not None:
+        data_payload = {k: v for k, v in tool_args.items() if k not in recognized_scalar_names}
+        if data_payload:
+            try:
+                msgspec.convert(data_payload, data_type, strict=False)
+            except msgspec.ValidationError as exc:
+                reason, path = _split_msgspec_error(exc)
+                errors.append({"path": _to_pointer("data", path), "message": reason})
+            except TypeError:
+                pass
+
+    for field in fields:
+        if field.name in di_params or field.name in _VALIDATION_CONTEXT_PARAMS:
+            continue
+        if field.name == "data":
+            # Presence of ``data`` is implied by any matching struct field
+            # in tool_args; we don't require callers to pass ``data`` as a
+            # literal key.
+            continue
+        if field.name in tool_args:
+            continue
+        if field.default is msgspec.NODEFAULT and field.default_factory is msgspec.NODEFAULT:
+            wire_name = python_to_wire.get(field.name, field.name)
+            errors.append({"path": _to_pointer(wire_name, ""), "message": "Missing required argument"})
+
+    for name, value in tool_args.items():
+        if name not in recognized_scalar_names:
+            if data_type is not None:
+                # Unknown-to-scalars: assumed to belong to the ``data`` struct
+                # and already validated above.
+                continue
+            # No ``data`` parameter → unknown keys are genuinely unexpected.
+            display_name = python_to_wire.get(name, name)
+            errors.append({"path": "/arguments", "message": f"Unexpected argument: {display_name}"})
+            continue
+        declared = declared_by_name[name]
+        convert_type = annotated_types.get(name, declared.type)
+        try:
+            msgspec.convert(value, convert_type, strict=False)
+        except msgspec.ValidationError as exc:
+            reason, path = _split_msgspec_error(exc)
+            wire_name = python_to_wire.get(name, name)
+            errors.append({"path": _to_pointer(wire_name, path), "message": reason})
+        except TypeError:
+            continue
+
+    return sorted(errors, key=lambda entry: (entry["path"], entry["message"]))
+
+
 def build_jsonrpc_router(
     config: MCPConfig,
     discovered_tools: dict[str, BaseRouteHandler],
     discovered_resources: dict[str, BaseRouteHandler],
+    discovered_prompts: dict[str, PromptRegistration],
     *,
     app_ref: Litestar,
     request_context: RequestContext,
@@ -145,6 +384,12 @@ def build_jsonrpc_router(
             "tools": {"listChanged": True},
             "resources": {"subscribe": True, "listChanged": True},
         }
+        # Per the MCP spec a server SHOULD only advertise capabilities for
+        # primitives it actually exposes. tools/resources stay unconditional
+        # for compatibility with existing manifest behavior; prompts gate on
+        # presence to avoid claiming support when none are registered.
+        if discovered_prompts:
+            capabilities["prompts"] = {"listChanged": True}
         if task_config is not None:
             task_capabilities: dict[str, Any] = {"requests": {"tools": {"call": {}}}}
             if task_config.list_enabled:
@@ -395,6 +640,153 @@ def build_jsonrpc_router(
 
     router.register("completion/complete", handle_completion_complete)
 
+    async def handle_prompts_list(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
+        prompts = [
+            render_prompt_entry(registration, config)
+            for registration in discovered_prompts.values()
+            if should_include_prompt(registration, config)
+        ]
+        return {"prompts": prompts}
+
+    router.register("prompts/list", handle_prompts_list)
+
+    async def handle_prompts_get(params: dict[str, Any]) -> dict[str, Any]:
+        prompt_name = params.get("name")
+        if not prompt_name:
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'name'"))
+
+        registration = discovered_prompts.get(prompt_name)
+        if registration is None or not should_include_prompt(registration, config):
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=f"Prompt not found: {prompt_name}"))
+
+        prompt_args = params.get("arguments", {})
+        if not isinstance(prompt_args, dict):
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Prompt arguments must be an object"))
+
+        # MCP spec: prompt arguments are Record<string, string> — all values must be strings.
+        for arg_key, arg_val in prompt_args.items():
+            if not isinstance(arg_val, str):
+                raise JSONRPCErrorException(
+                    JSONRPCError(
+                        code=INVALID_PARAMS,
+                        message=f"Argument '{arg_key}' must be a string, got {type(arg_val).__name__}",
+                    )
+                )
+
+        resolved_description = resolve_prompt_description(registration, config)
+
+        if registration.handler is not None:
+            # Validate against the handler's declared argument shape before
+            # dispatching. This intentionally diverges from tool-call
+            # validation: the MCP spec requires prompt arguments to be
+            # ``Record<string, string>`` (flat scalar map), whereas tools
+            # accept structured inputs validated via msgspec.convert.
+            # Pre-validating here keeps the error surface aligned with the
+            # advertised ``arguments`` list — missing required args become
+            # INVALID_PARAMS instead of a 500 emitted by the executor when
+            # the signature_model would otherwise reject the call.
+            declared_args = registration.get_arguments()
+            declared_names = {arg["name"] for arg in declared_args}
+            missing = [arg["name"] for arg in declared_args if arg.get("required") and arg["name"] not in prompt_args]
+            if missing:
+                raise JSONRPCErrorException(
+                    JSONRPCError(
+                        code=INVALID_PARAMS,
+                        message=f"Missing required prompt argument(s): {', '.join(sorted(missing))}",
+                    )
+                )
+            unknown = [name for name in prompt_args if name not in declared_names]
+            if unknown:
+                raise JSONRPCErrorException(
+                    JSONRPCError(
+                        code=INVALID_PARAMS,
+                        message=(
+                            f"Unknown prompt argument(s): {', '.join(sorted(unknown))}. "
+                            "Prompt handlers should declare scalar arguments only; "
+                            "any 'data' body parameter on the handler is ignored by prompts/get."
+                        ),
+                    )
+                )
+
+            # Prompt handlers run through the Litestar execution pipeline
+            # (DI, middleware, guards) via execute_handler — same dispatch
+            # mechanism as tools, aliased so the call site reads honestly.
+            try:
+                result = await execute_handler(
+                    registration.handler, app_ref, prompt_args, request=request_context.request
+                )
+            except MCPToolErrorResult as err:
+                # Per JSON-RPC 2.0 INVALID_PARAMS (-32602) means specifically
+                # "invalid method parameter(s)". Reserve it for validation-shaped
+                # 4xx (400 Bad Request, 422 Unprocessable Entity); other 4xx
+                # (401/403/404/409/...) are not param-validation failures and
+                # collapse to INTERNAL_ERROR until a dedicated MCP error
+                # taxonomy is added (see issue tracker).
+                code = INVALID_PARAMS if err.status_code in {400, 422} else INTERNAL_ERROR
+                _logger.warning("Prompt handler returned error result: %s (status=%d)", prompt_name, err.status_code)
+                raise JSONRPCErrorException(
+                    # Per JSON-RPC 2.0 §5.1, the ``data`` member carries
+                    # structured error context — preserve the handler's
+                    # rendered payload so clients can pull field paths /
+                    # error lists out programmatically instead of parsing
+                    # a stringified dict from ``message``.
+                    JSONRPCError(code=code, message="Prompt execution failed", data=err.content)
+                ) from err
+            except JSONRPCErrorException:
+                raise
+            except Exception as exc:
+                _logger.exception("Prompt handler execution failed: %s", prompt_name)
+                raise JSONRPCErrorException(
+                    JSONRPCError(
+                        code=INTERNAL_ERROR,
+                        message="Prompt execution failed",
+                        data={"error": type(exc).__name__, "detail": str(exc)},
+                    )
+                ) from exc
+            handler_result: dict[str, Any]
+            if isinstance(result, dict) and "messages" in result:
+                handler_result = result
+            else:
+                handler_result = {"messages": _normalize_prompt_result(result)}
+            if resolved_description is not None and "description" not in handler_result:
+                handler_result["description"] = resolved_description
+            return handler_result
+
+        if registration.fn is not None:
+            # Validate arguments before calling to distinguish argument
+            # mismatches (INVALID_PARAMS) from TypeErrors inside the function.
+            try:
+                inspect.signature(registration.fn).bind(**prompt_args)
+            except TypeError as exc:
+                raise JSONRPCErrorException(
+                    JSONRPCError(code=INVALID_PARAMS, message=f"Invalid prompt arguments: {exc!s}")
+                ) from exc
+
+            try:
+                result = registration.fn(**prompt_args)
+                if inspect.isawaitable(result):
+                    result = await result
+            except Exception as exc:
+                _logger.exception("Prompt function execution failed: %s", prompt_name)
+                raise JSONRPCErrorException(
+                    JSONRPCError(
+                        code=INTERNAL_ERROR,
+                        message="Prompt execution failed",
+                        data={"error": type(exc).__name__, "detail": str(exc)},
+                    )
+                ) from exc
+            messages = _normalize_prompt_result(result)
+            get_result: dict[str, Any] = {"messages": messages}
+            if resolved_description is not None and "description" not in get_result:
+                get_result["description"] = resolved_description
+            return get_result
+
+        raise JSONRPCErrorException(  # pragma: no cover
+            JSONRPCError(code=INTERNAL_ERROR, message=f"Prompt has no callable: {prompt_name}")
+        )
+
+    router.register("prompts/get", handle_prompts_get)
+
     if task_store is not None:
 
         async def handle_tasks_get(params: dict[str, Any]) -> dict[str, Any]:
@@ -580,6 +972,7 @@ class MCPController(Controller):
         config: NamedDependency[MCPConfig],
         discovered_tools: NamedDependency[dict[str, Any]],
         discovered_resources: NamedDependency[dict[str, Any]],
+        discovered_prompts: NamedDependency[dict[str, PromptRegistration]],
         registry: NamedDependency[Registry],
         session_manager: NamedDependency[MCPSessionManager],
         task_store: NamedDependency[InMemoryTaskStore | None] = None,
@@ -687,6 +1080,7 @@ class MCPController(Controller):
             config,
             discovered_tools,
             discovered_resources,
+            discovered_prompts,
             app_ref=request.app,
             request_context=request_context,
             task_store=task_store,
@@ -704,235 +1098,3 @@ class MCPController(Controller):
             response.headers[MCP_SESSION_HEADER] = response_session_id
 
         return _add_protocol_headers(response)
-
-
-# ---------------------------------------------------------------------------
-# Private helpers
-# ---------------------------------------------------------------------------
-
-
-def _validate_origin(request: Request[Any, Any, Any], config: MCPConfig) -> Response[Any] | None:
-    """Validate the Origin header if allowed_origins is configured."""
-    if not config.allowed_origins:
-        return None
-
-    origin = request.headers.get("origin")
-    if origin and origin not in config.allowed_origins:
-        return Response(
-            content={"error": "Origin not allowed"},
-            status_code=HTTP_403_FORBIDDEN,
-            media_type=MediaType.JSON,
-        )
-    return None
-
-
-def _add_protocol_headers(response: Response[Any]) -> Response[Any]:
-    """Add standard MCP protocol headers to a response."""
-    response.headers["mcp-protocol-version"] = MCP_PROTOCOL_VERSION
-    return response
-
-
-def _request_subject(request: Request[Any, Any, Any]) -> str | None:
-    """Best-effort ``sub``-like identifier from ``request.auth`` claims dict.
-
-    Middleware populates ``scope["auth"]`` with whatever shape it sets — this
-    helper reads the raw scope value (avoiding the ``request.auth`` property
-    which raises when no auth middleware is installed) and treats it as a
-    mapping, pulling ``"sub"`` if present. Non-mapping values are ignored.
-    """
-    auth = request.scope.get("auth")
-    if isinstance(auth, dict):
-        sub = auth.get("sub")
-        if isinstance(sub, str) and sub:
-            return sub
-    return None
-
-
-def _resolve_client_id(request: Request[Any, Any, Any]) -> str:
-    explicit_client_id = (
-        request.headers.get("x-mcp-client-id")
-        or request.headers.get("mcp-client-id")
-        or request.query_params.get("clientId")
-        or request.query_params.get("client_id")
-    )
-    if explicit_client_id:
-        return explicit_client_id
-    sub = _request_subject(request)
-    if sub is not None:
-        return f"user:{sub}"
-    if request.client and request.client.host:
-        return f"remote:{request.client.host}"
-    return "anonymous"
-
-
-def _build_request_context(request: Request[Any, Any, Any]) -> RequestContext:
-    client_id = _resolve_client_id(request)
-    sub = _request_subject(request)
-    owner_id = f"user:{sub}" if sub is not None else f"client:{client_id}"
-    return RequestContext(client_id=client_id, owner_id=owner_id, request=request)
-
-
-def _serialize_tool_content(value: Any) -> str:
-    if isinstance(value, str):
-        return value
-    return encode_json(value).decode("utf-8")
-
-
-def _build_tool_result(value: Any, *, is_error: bool, task_id: str | None = None) -> dict[str, Any]:
-    result: dict[str, Any] = {
-        "content": [{"type": "text", "text": _serialize_tool_content(value)}],
-        "isError": is_error,
-    }
-    if task_id is not None:
-        result["_meta"] = {"io.modelcontextprotocol/related-task": {"taskId": task_id}}
-    return result
-
-
-_VALIDATION_CONTEXT_PARAMS = {
-    "request",
-    "socket",
-    "state",
-    "scope",
-    "headers",
-    "cookies",
-    "query",
-    "body",
-    "data",
-}
-
-
-def _to_pointer(name: str, msgspec_path: str) -> str:
-    """Turn ``name`` + ``$.age.limit`` into ``/arguments/age/limit`` JSON Pointer.
-
-    msgspec.ValidationError messages include a trailing $.<path> marker
-    indicating which nested field failed validation. We translate that into a
-    JSON Pointer rooted at /arguments/<name> so downstream UIs can render
-    field-level errors.
-    """
-    suffix = msgspec_path.removeprefix("$").lstrip(".")
-    parts = ["arguments", name]
-    if suffix:
-        parts.extend(p for p in suffix.split(".") if p and p != name)
-    return "/" + "/".join(parts)
-
-
-def _split_msgspec_error(exc: "Exception") -> tuple[str, str]:
-    """Split a ``msgspec.ValidationError`` string into (reason, path).
-
-    msgspec formats messages as ``"<reason> - at `$.path`"``. When no path is
-    present we return an empty path.
-    """
-    text = str(exc)
-    marker = " - at `"
-    if marker in text and text.endswith("`"):
-        reason, _, tail = text.rpartition(marker)
-        path = tail[:-1]
-        return reason, path
-    return text, ""
-
-
-def _resolve_annotated_types(handler: "BaseRouteHandler") -> dict[str, Any]:
-    """Return ``{param_name: annotated_type}`` from the original handler function.
-
-    Litestar's ``signature_model`` strips user-supplied ``msgspec.Meta``
-    constraints (``ge``/``le``/``pattern``/``min_length`` …) and replaces them
-    with its own ``KwargDefinition`` metadata. To enforce those constraints via
-    ``msgspec.convert`` we resolve type hints directly off the original
-    function, preserving the full ``Annotated[...]`` chain.
-    """
-    import typing as _typing
-
-    fn = get_handler_function(handler)
-    try:
-        return _typing.get_type_hints(fn, include_extras=True)
-    except Exception:  # noqa: BLE001
-        return {}
-
-
-def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: dict[str, Any]) -> list[dict[str, str]]:
-    """Validate ``tool_args`` against the handler's Litestar signature.
-
-    Matches the executor's partitioning (Ch2): if the handler declares a
-    data parameter, unrecognized tool_args are validated as fields of
-    that struct type; path params are matched against the route's declared
-    path variables; remaining scalars are matched against the handler's
-    non-DI signature fields.
-
-    When the handler has a data param, tool_args keys that aren't
-    recognized scalar fields are treated as members of the data struct.
-    Validate them by building a mapping and converting it to the struct.
-
-    Unknown-to-scalars are assumed to belong to the data struct
-    and already validated.
-
-    No data parameter implies unknown keys are genuinely unexpected.
-
-    Returns a list of ``{"path": <json-pointer>, "message": <reason>}`` dicts,
-    sorted by path for deterministic output.
-    """
-    import msgspec
-
-    signature_model = getattr(handler, "signature_model", None)
-    if signature_model is None:
-        return []
-
-    try:
-        fields = msgspec.structs.fields(signature_model)
-    except TypeError:
-        return []
-
-    di_params: set[str] = set()
-    with contextlib.suppress(AttributeError, TypeError):
-        di_params = set(handler.resolve_dependencies().keys())
-
-    declared_by_name = {field.name: field for field in fields}
-    annotated_types = _resolve_annotated_types(handler)
-    errors: list[dict[str, str]] = []
-
-    data_field = declared_by_name.get("data")
-    data_type = annotated_types.get("data") if data_field is not None else None
-    recognized_scalar_names = {
-        name for name in declared_by_name if name not in di_params and name not in _VALIDATION_CONTEXT_PARAMS
-    }
-
-    if data_type is not None:
-        data_payload = {k: v for k, v in tool_args.items() if k not in recognized_scalar_names}
-        if data_payload:
-            try:
-                msgspec.convert(data_payload, data_type, strict=False)
-            except msgspec.ValidationError as exc:
-                reason, path = _split_msgspec_error(exc)
-                errors.append({"path": _to_pointer("data", path), "message": reason})
-            except TypeError:
-                pass
-
-    for field in fields:
-        if field.name in di_params or field.name in _VALIDATION_CONTEXT_PARAMS:
-            continue
-        if field.name == "data":
-            # Presence of data is implied by any matching struct field
-            # in tool_args; we don't require callers to pass data as a
-            # literal key.
-            continue
-        if field.name in tool_args:
-            continue
-        if field.default is msgspec.NODEFAULT and field.default_factory is msgspec.NODEFAULT:
-            errors.append({"path": _to_pointer(field.name, ""), "message": "Missing required argument"})
-
-    for name, value in tool_args.items():
-        if name not in recognized_scalar_names:
-            if data_type is not None:
-                continue
-            errors.append({"path": "/arguments", "message": f"Unexpected argument: {name}"})
-            continue
-        declared = declared_by_name[name]
-        convert_type = annotated_types.get(name, declared.type)
-        try:
-            msgspec.convert(value, convert_type, strict=False)
-        except msgspec.ValidationError as exc:
-            reason, path = _split_msgspec_error(exc)
-            errors.append({"path": _to_pointer(name, path), "message": reason})
-        except TypeError:
-            continue
-
-    return sorted(errors, key=lambda entry: (entry["path"], entry["message"]))

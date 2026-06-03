@@ -139,8 +139,8 @@ def test_harness_starts_and_stops_cleanly() -> None:
 @pytest.mark.asyncio
 async def test_adk_mcp_toolset_discovers_and_calls_litestar_tool() -> None:
     """Verify that ADK McpToolset can discover and invoke a tool exposed by Litestar."""
-    from google.adk.tools.mcp_tool import McpToolset
     from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
+    from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
 
     app = _build_public_app()
     with _run_app(app) as base_url:
@@ -162,8 +162,8 @@ async def test_adk_mcp_toolset_discovers_and_calls_litestar_tool() -> None:
 @pytest.mark.asyncio
 async def test_adk_mcp_toolset_auth_success() -> None:
     """Verify that ADK McpToolset succeeds when a valid bearer token is supplied."""
-    from google.adk.tools.mcp_tool import McpToolset
     from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
+    from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
 
     app = _build_auth_app()
     with _run_app(app) as base_url:
@@ -188,8 +188,8 @@ async def test_adk_mcp_toolset_auth_success() -> None:
 @pytest.mark.asyncio
 async def test_adk_mcp_toolset_auth_failure() -> None:
     """Verify that ADK McpToolset fails when no bearer token is supplied."""
-    from google.adk.tools.mcp_tool import McpToolset
     from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
+    from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
 
     app = _build_auth_app()
     with _run_app(app) as base_url:
@@ -211,8 +211,8 @@ async def test_adk_mcp_toolset_auth_failure() -> None:
 @pytest.mark.asyncio
 async def test_adk_mcp_toolset_resources() -> None:
     """Verify that ADK McpToolset can list and read resources exposed by Litestar."""
-    from google.adk.tools.mcp_tool import McpToolset
     from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
+    from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
 
     app = _build_resource_app()
     with _run_app(app) as base_url:
