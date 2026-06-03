@@ -34,6 +34,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   public import path as a thin delegator. Same upstream bug filed as
   `litestar-org/sqlspec#418` for independent resolution.
   Closes [#42](https://github.com/cofin/litestar-mcp/issues/42).
+- Schema builder now unwraps `Annotated[T, Parameter(...)]` parameters,
+  recursing on the inner type and merging `Parameter` metadata
+  (description, title, examples, and constraints `ge`/`le`/`gt`/`lt`/
+  `min_length`/`max_length`/`pattern`/`multiple_of`/`const`) into the
+  resulting JSON Schema. Previously these parameters were emitted as
+  `{"type": "object"}` with the `typing.Annotated` class docstring as
+  description. Closes
+  [#52](https://github.com/cofin/litestar-mcp/issues/52).
+- Tool `inputSchema.properties` and `required` are now keyed by the
+  wire name (`Parameter(query=...)` → Python parameter name when no
+  alias is set). `tools/call` accepts arguments under the same
+  wire-name keys; the executor rewrites them before dispatch so the
+  Litestar signature model receives the values via the declared query
+  alias. Closes
+  [#52](https://github.com/cofin/litestar-mcp/issues/52).
+- Removed the unconditional `description = annotation.__doc__`
+  overwrite in `generate_schema_for_handler` that was clobbering
+  Pydantic / msgspec / dataclass schema descriptions with class
+  docstrings — including injecting `typing.Annotated`'s own
+  `"Runtime representation of an annotated type..."` docstring into
+  every annotated parameter. Closes
+  [#52](https://github.com/cofin/litestar-mcp/issues/52).
 
 ## [0.5.0] — 2026-04-19
 

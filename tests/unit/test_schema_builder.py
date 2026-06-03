@@ -1,11 +1,12 @@
 """Tests for the schema builder module."""
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Annotated, Any
 
 import pytest
 from litestar import get
 from litestar.handlers import BaseRouteHandler
+from litestar.params import Parameter, ParameterKwarg
 
 from litestar_mcp.schema_builder import (
     basic_type_to_json_schema,
@@ -16,6 +17,8 @@ from litestar_mcp.schema_builder import (
     pydantic_to_json_schema,
     type_to_json_schema,
     union_type_to_json_schema,
+    _merge_parameter_meta,
+    _unwrap_annotated,
 )
 from tests.unit.conftest import create_app_with_handler
 
@@ -698,3 +701,179 @@ class TestUnionHandling:
         # Just verify the full pipeline works
         result = type_to_json_schema(str)
         assert result == {"type": "string"}
+
+
+class TestUnwrapAnnotated:
+    def test_non_annotated_returns_input_and_empty_list(self) -> None:
+        inner, metas = _unwrap_annotated(int)
+        assert inner is int
+        assert metas == []
+
+    def test_annotated_with_parameter_kwarg_returns_inner_and_meta(self) -> None:
+        annotation = Annotated[bool, Parameter(description="paid")]
+        inner, metas = _unwrap_annotated(annotation)
+        assert inner is bool
+        assert len(metas) == 1
+        assert isinstance(metas[0], ParameterKwarg)
+        assert metas[0].description == "paid"
+
+    def test_annotated_filters_foreign_metadata(self) -> None:
+        annotation = Annotated[int, "doc string", Parameter(ge=1)]
+        inner, metas = _unwrap_annotated(annotation)
+        assert inner is int
+        assert len(metas) == 1
+        assert metas[0].ge == 1
+
+
+class TestMergeParameterMeta:
+    def test_description_merges(self) -> None:
+        schema: dict[str, Any] = {"type": "boolean"}
+        _merge_parameter_meta(schema, Parameter(description="paid"))
+        assert schema == {"type": "boolean", "description": "paid"}
+
+    def test_numeric_constraints_map_to_json_schema_keywords(self) -> None:
+        schema: dict[str, Any] = {"type": "integer"}
+        _merge_parameter_meta(schema, Parameter(ge=1, le=100, gt=0, lt=200, multiple_of=5))
+        assert schema == {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "exclusiveMinimum": 0,
+            "exclusiveMaximum": 200,
+            "multipleOf": 5,
+        }
+
+    def test_string_constraints_map_to_json_schema_keywords(self) -> None:
+        schema: dict[str, Any] = {"type": "string"}
+        _merge_parameter_meta(schema, Parameter(min_length=3, max_length=50, pattern="^[a-z]+$"))
+        assert schema == {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 50,
+            "pattern": "^[a-z]+$",
+        }
+
+    def test_title_and_examples_merge(self) -> None:
+        schema: dict[str, Any] = {"type": "string"}
+        _merge_parameter_meta(schema, Parameter(title="Email", examples=["a@b.com"]))
+        assert schema["title"] == "Email"
+        assert schema["examples"] == ["a@b.com"]
+
+    def test_none_fields_skipped(self) -> None:
+        schema: dict[str, Any] = {"type": "string"}
+        _merge_parameter_meta(schema, Parameter())
+        assert schema == {"type": "string"}
+
+    def test_examples_scalar_value_is_wrapped_in_list(self) -> None:
+        schema: dict[str, Any] = {"type": "string"}
+        _merge_parameter_meta(schema, Parameter(examples="one@example.com"))
+        assert schema["examples"] == ["one@example.com"]
+
+
+class TestTypeToJsonSchemaAnnotated:
+    def test_annotated_bool_optional_yields_anyOf_with_description(self) -> None:
+        annotation = Annotated[
+            bool | None,
+            Parameter(query="isPaid", description="Whether the order is paid"),
+        ]
+        schema = type_to_json_schema(annotation)
+        assert "anyOf" in schema
+        types_seen = {member.get("type") for member in schema["anyOf"]}
+        assert types_seen == {"boolean", "null"}
+        assert schema["description"] == "Whether the order is paid"
+
+    def test_annotated_int_with_constraints(self) -> None:
+        annotation = Annotated[int, Parameter(ge=1, le=100, description="qty")]
+        schema = type_to_json_schema(annotation)
+        assert schema == {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "qty",
+        }
+
+    def test_annotated_str_pattern_and_length(self) -> None:
+        annotation = Annotated[str, Parameter(min_length=3, max_length=50, pattern="^[a-z]+$")]
+        schema = type_to_json_schema(annotation)
+        assert schema == {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 50,
+            "pattern": "^[a-z]+$",
+        }
+
+    def test_annotated_without_parameter_metadata_still_unwraps(self) -> None:
+        annotation = Annotated[int, "doc string"]
+        assert type_to_json_schema(annotation) == {"type": "integer"}
+
+
+class TestGenerateSchemaWireNamesAndDocClobber:
+    def test_query_alias_used_as_property_key(self) -> None:
+        def handler(
+            is_paid: Annotated[bool | None, Parameter(query="isPaid", description="paid?")] = None,
+        ) -> dict[str, Any]:
+            return {"is_paid": is_paid}
+
+        _, h = create_app_with_handler(handler)
+        schema = generate_schema_for_handler(h)
+        assert "isPaid" in schema["properties"]
+        assert "is_paid" not in schema["properties"]
+        assert schema["properties"]["isPaid"]["description"] == "paid?"
+
+    def test_required_uses_wire_names(self) -> None:
+        def handler(
+            user_id: Annotated[str, Parameter(query="userId")],
+        ) -> dict[str, Any]:
+            return {"user_id": user_id}
+
+        _, h = create_app_with_handler(handler)
+        schema = generate_schema_for_handler(h)
+        assert schema["required"] == ["userId"]
+
+    def test_no_doc_clobber_on_annotated_parameter(self) -> None:
+        def handler(
+            is_paid: Annotated[bool | None, Parameter(query="isPaid")] = None,
+        ) -> dict[str, Any]:
+            return {"is_paid": is_paid}
+
+        _, h = create_app_with_handler(handler)
+        schema = generate_schema_for_handler(h)
+        prop = schema["properties"]["isPaid"]
+        description = prop.get("description", "")
+        assert "Runtime representation of an annotated type" not in description
+
+    def test_no_doc_clobber_on_dataclass_parameter(self) -> None:
+        @dataclass
+        class Filter:
+            """Filter dataclass with a meaningful docstring."""
+
+            name: str
+
+        def handler(filter: Filter) -> dict[str, Any]:
+            return {"filter": filter}
+
+        _, h = create_app_with_handler(handler)
+        schema = generate_schema_for_handler(h)
+        prop = schema["properties"]["filter"]
+        assert "Filter dataclass with a meaningful docstring" not in prop.get("description", "")
+
+    def test_wire_name_collision_raises(self) -> None:
+        def handler(
+            a: Annotated[str, Parameter(query="same")] = "",
+            b: Annotated[str, Parameter(query="same")] = "",
+        ) -> dict[str, Any]:
+            return {"a": a, "b": b}
+
+        _, h = create_app_with_handler(handler)
+        with pytest.raises(ValueError, match="Wire-name collision"):
+            generate_schema_for_handler(h)
+
+    def test_bare_types_regression(self) -> None:
+        def handler(is_paid: bool | None = None, name: str | None = None) -> dict[str, Any]:
+            return {"is_paid": is_paid, "name": name}
+
+        _, h = create_app_with_handler(handler)
+        schema = generate_schema_for_handler(h)
+        assert set(schema["properties"]) == {"is_paid", "name"}
+        assert "anyOf" in schema["properties"]["is_paid"]
+        assert "anyOf" in schema["properties"]["name"]

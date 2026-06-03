@@ -3,11 +3,12 @@
 import contextlib
 import inspect
 from types import UnionType
-from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin
 
 if TYPE_CHECKING:
     from litestar.handlers import BaseRouteHandler
 
+from litestar.params import ParameterKwarg
 from litestar_mcp.typing import (
     MSGSPEC_INSTALLED,
     is_attrs_instance,
@@ -18,6 +19,54 @@ from litestar_mcp.typing import (
 from litestar_mcp.utils import get_handler_function
 
 _EXECUTION_CONTEXT_PARAMS = {"resolved_user", "user_claims"}
+
+
+def _unwrap_annotated(annotation: Any) -> "tuple[Any, list[ParameterKwarg]]":
+    """Return ``(inner_type, [ParameterKwarg, ...])``.
+
+    For non-Annotated annotations, returns ``(annotation, [])``.
+    Foreign metadata (strings, ``msgspec.Meta``, etc.) is ignored.
+
+    .. note::
+       If the handler's module uses ``from __future__ import annotations``,
+       parameter annotations are stringified at definition time. ``get_origin``
+       on a string returns ``None``, so this helper falls through to the
+       no-Annotated branch and the schema builder will not emit
+       ``Parameter`` metadata or wire-name aliases for that handler. Use
+       runtime ``Annotated[...]`` annotations (i.e. omit the future import,
+       or rely on Litestar's own type-hint resolution).
+    """
+    if get_origin(annotation) is Annotated:
+        args = get_args(annotation)
+        return args[0], [m for m in args[1:] if isinstance(m, ParameterKwarg)]
+    return annotation, []
+
+
+_META_FIELD_MAP: "tuple[tuple[str, str], ...]" = (
+    ("description", "description"),
+    ("title", "title"),
+    ("examples", "examples"),
+    ("ge", "minimum"),
+    ("le", "maximum"),
+    ("gt", "exclusiveMinimum"),
+    ("lt", "exclusiveMaximum"),
+    ("min_length", "minLength"),
+    ("max_length", "maxLength"),
+    ("pattern", "pattern"),
+    ("multiple_of", "multipleOf"),
+)
+
+
+def _merge_parameter_meta(schema: "dict[str, Any]", meta: ParameterKwarg) -> None:
+    """Copy non-None fields from ``meta`` into ``schema`` using JSON Schema names."""
+    for attr, key in _META_FIELD_MAP:
+        value = getattr(meta, attr, None)
+        if value is None:
+            continue
+        if key == "examples" and not isinstance(value, list):
+            schema[key] = [value]
+        else:
+            schema[key] = value
 
 
 def basic_type_to_json_schema(annotation: Any) -> "dict[str, Any] | None":
@@ -167,17 +216,21 @@ def type_to_json_schema(annotation: Any) -> "dict[str, Any]":
     Returns:
         JSON Schema dictionary for the type.
     """
-    # Handle None/empty annotation
     if annotation is None or annotation == inspect.Parameter.empty:
         return {"type": "object", "description": "No type annotation provided"}
 
-    # Handle stringified annotations (common in forward references)
+    inner, metas = _unwrap_annotated(annotation)
+    if inner is not annotation:
+        schema = type_to_json_schema(inner)
+        for meta in metas:
+            _merge_parameter_meta(schema, meta)
+        return schema
+
     if isinstance(annotation, str):
         annotation = _resolve_string_annotation(annotation)
-        if isinstance(annotation, dict):  # If resolution failed
+        if isinstance(annotation, dict):
             return annotation
 
-    # Try type conversions in order of complexity
     if result := basic_type_to_json_schema(annotation):
         return result
     if result := collection_type_to_json_schema(annotation):
@@ -185,7 +238,6 @@ def type_to_json_schema(annotation: Any) -> "dict[str, Any]":
     if result := model_to_json_schema(annotation):
         return result
 
-    # Try union types and fallback
     return union_type_to_json_schema(annotation) or {
         "type": "object",
         "description": "Parameter of type " + str(annotation),
@@ -221,47 +273,58 @@ def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]"
     Returns:
         JSON Schema dictionary describing the tool's input parameters.
     """
-    # Get the actual function to inspect
     try:
         fn = get_handler_function(handler)
     except AttributeError:
-        # Fallback for test cases where handler might be a raw function
         fn = handler
 
     try:
         sig = inspect.signature(fn)
     except (TypeError, ValueError):
-        # Handler has no callable function - return empty schema
         return {"type": "object", "properties": {}}
 
-    # Get dependencies that will be handled by DI, not passed as arguments
-    di_params = set()
+    di_params: set[str] = set()
     with contextlib.suppress(Exception):
         di_params = set(handler.resolve_dependencies().keys())
 
-    properties = {}
-    required = []
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+    wire_to_python: dict[str, str] = {}
 
-    for param_name, param in sig.parameters.items():
-        # Skip dependency injection parameters
-        if param_name in di_params or param_name in _EXECUTION_CONTEXT_PARAMS:
+    for python_name, param in sig.parameters.items():
+        if python_name in di_params or python_name in _EXECUTION_CONTEXT_PARAMS:
             continue
 
-        # Generate schema for this parameter
-        param_schema = type_to_json_schema(param.annotation)
+        _, metas = _unwrap_annotated(param.annotation)
+        wire_name = python_name
+        for meta in metas:
+            if meta.query:
+                wire_name = meta.query
+                break
 
-        # Add description if available from docstring or annotation
-        if getattr(param.annotation, "__doc__", None):
-            param_schema["description"] = param.annotation.__doc__.strip()
+        if wire_name in wire_to_python and wire_to_python[wire_name] != python_name:
+            existing = wire_to_python[wire_name]
+            handler_name = getattr(fn, "__name__", "<handler>")
+            msg = (
+                f"Wire-name collision in handler {handler_name!r}: "
+                f"{wire_name!r} maps to both {existing!r} and {python_name!r}"
+            )
+            raise ValueError(msg)
+        wire_to_python[wire_name] = python_name
 
-        properties[param_name] = param_schema
+        prop_schema = type_to_json_schema(param.annotation)
+        # ``ParameterKwarg.const=True`` means "must equal the default value",
+        # so we emit the default itself as the JSON Schema ``const`` value
+        # rather than a literal boolean — which would constrain non-bool
+        # parameters to ``true``/``false`` and mislead schema-driven clients.
+        if param.default is not inspect.Parameter.empty and any(getattr(m, "const", False) for m in metas):
+            prop_schema["const"] = param.default
+        properties[wire_name] = prop_schema
 
-        # Check if parameter is required (no default value)
         if param.default is inspect.Parameter.empty:
-            required.append(param_name)
+            required.append(wire_name)
 
-    # Build the complete schema
-    schema = {
+    schema: dict[str, Any] = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
         "properties": properties,
@@ -271,7 +334,6 @@ def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]"
     if required:
         schema["required"] = required
 
-    # Add overall description from the function docstring
     fn_name = getattr(fn, "__name__", "unknown_function")
     fn_doc = getattr(fn, "__doc__", None)
     if fn_doc:

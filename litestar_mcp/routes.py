@@ -24,6 +24,7 @@ from litestar.status_codes import (
     HTTP_503_SERVICE_UNAVAILABLE,
 )
 
+from litestar_mcp._parameter_aliases import parameter_aliases
 from litestar_mcp.config import MCPConfig
 from litestar_mcp.executor import MCPToolErrorResult, execute_handler, execute_tool
 from litestar_mcp.jsonrpc import (
@@ -225,6 +226,18 @@ def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: dict[str, A
     """
     import msgspec
 
+    # Rewrite wire-name keys (``Parameter(query=...)``) to python kwarg
+    # names so they match the msgspec signature-model field names. Note
+    # this is the inverse of ``executor._split_tool_args``, which keeps
+    # wire names — the executor relies on Litestar's native extractor to
+    # do the wire→python resolution, while the signature-model used here
+    # only knows python field names. The two functions intentionally
+    # operate on different key spaces.
+    aliases = parameter_aliases(handler)
+    python_to_wire: dict[str, str] = {v: k for k, v in aliases.items()}
+    if aliases:
+        tool_args = {aliases.get(k, k): v for k, v in tool_args.items()}
+
     signature_model = getattr(handler, "signature_model", None)
     if signature_model is None:
         return []
@@ -273,7 +286,8 @@ def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: dict[str, A
         if field.name in tool_args:
             continue
         if field.default is msgspec.NODEFAULT and field.default_factory is msgspec.NODEFAULT:
-            errors.append({"path": _to_pointer(field.name, ""), "message": "Missing required argument"})
+            wire_name = python_to_wire.get(field.name, field.name)
+            errors.append({"path": _to_pointer(wire_name, ""), "message": "Missing required argument"})
 
     for name, value in tool_args.items():
         if name not in recognized_scalar_names:
@@ -282,7 +296,8 @@ def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: dict[str, A
                 # and already validated above.
                 continue
             # No ``data`` parameter → unknown keys are genuinely unexpected.
-            errors.append({"path": "/arguments", "message": f"Unexpected argument: {name}"})
+            display_name = python_to_wire.get(name, name)
+            errors.append({"path": "/arguments", "message": f"Unexpected argument: {display_name}"})
             continue
         declared = declared_by_name[name]
         convert_type = annotated_types.get(name, declared.type)
@@ -290,7 +305,8 @@ def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: dict[str, A
             msgspec.convert(value, convert_type, strict=False)
         except msgspec.ValidationError as exc:
             reason, path = _split_msgspec_error(exc)
-            errors.append({"path": _to_pointer(name, path), "message": reason})
+            wire_name = python_to_wire.get(name, name)
+            errors.append({"path": _to_pointer(wire_name, path), "message": reason})
         except TypeError:
             continue
 
