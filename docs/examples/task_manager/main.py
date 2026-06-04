@@ -108,10 +108,7 @@ def register_prompts(store: "dict[int, Task]") -> "list[Any]":
             style: Summary style hint, e.g. ``concise``, ``detailed``,
                 ``bullet-points``. Used verbatim in the prompt body.
         """
-        lines = [
-            f"- [{'x' if task.completed else ' '}] {task.title}: {task.description}"
-            for task in store.values()
-        ]
+        lines = [f"- [{'x' if task.completed else ' '}] {task.title}: {task.description}" for task in store.values()]
         body = "\n".join(lines) if lines else "(no tasks)"
         return f"Summarise the following tasks in a {style} style:\n\n{body}"
 
