@@ -141,7 +141,7 @@ Once configured, your application exposes these MCP-compatible endpoints:
 - `GET /mcp` - Server-Sent Events stream when `Accept: text/event-stream` is provided
 - `POST /mcp` - JSON-RPC endpoint for `initialize`, `ping`, `tools/*`, `resources/*`, and optional task methods
 - `GET /.well-known/mcp-server.json` - MCP server manifest
-- `GET /.well-known/agent-card.json` - Agent card metadata
+- `GET /.well-known/agent-card.json` - Agent metadata card
 - `GET /.well-known/oauth-protected-resource` - OAuth protected resource metadata when auth is configured
 
 **Built-in Resources:**

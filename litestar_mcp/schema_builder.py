@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from litestar.handlers import BaseRouteHandler
 
 from litestar.params import ParameterKwarg
+
 from litestar_mcp.typing import (
     MSGSPEC_INSTALLED,
     is_attrs_instance,
@@ -207,7 +208,7 @@ def union_type_to_json_schema(annotation: Any) -> "dict[str, Any] | None":
     return None
 
 
-def type_to_json_schema(annotation: Any) -> "dict[str, Any]":
+def type_to_json_schema(annotation: Any) -> "dict[str, Any]":  # noqa: PLR0911
     """Convert a Python type annotation to JSON Schema format.
 
     Args:
@@ -342,3 +343,32 @@ def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]"
         schema["description"] = "Input parameters for " + str(fn_name)
 
     return schema
+
+
+def parameter_aliases(handler: "BaseRouteHandler") -> "dict[str, str]":
+    """Return ``{wire_name: python_name}`` for handler params whose wire name differs.
+
+    Wire name is taken from ``Parameter(query=...)``. Header and cookie sources
+    are intentionally ignored — the executor only synthesizes query strings,
+    so exposing those wire names would produce schemas the dispatcher cannot
+    honor. Re-add them when header/cookie dispatch lands (out of scope for #52).
+    """
+    try:
+        fn = get_handler_function(handler)
+    except AttributeError:
+        fn = handler  # raw function in tests
+
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return {}
+
+    aliases: dict[str, str] = {}
+    for python_name, param in sig.parameters.items():
+        _, metas = _unwrap_annotated(param.annotation)
+        for meta in metas:
+            wire_name = meta.query
+            if wire_name and wire_name != python_name:
+                aliases[wire_name] = python_name
+                break
+    return aliases

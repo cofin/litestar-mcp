@@ -132,6 +132,71 @@ def reset_default_cache() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Public factory
+# ---------------------------------------------------------------------------
+
+
+def create_oidc_validator(
+    issuer: str,
+    audience: str,
+    *,
+    jwks_uri: str | None = None,
+    algorithms: tuple[str, ...] = ("RS256",),
+    clock_skew: int = DEFAULT_CLOCK_SKEW_SECONDS,
+    jwks_cache_ttl: int = DEFAULT_JWKS_CACHE_TTL_SECONDS,
+    jwks_cache: JWKSCache | None = None,
+    on_validation_error: ValidationErrorHook | None = None,
+) -> TokenValidator:
+    """Build an async token validator that verifies bearer tokens against an OIDC IdP.
+
+    If ``jwks_uri`` is omitted, the validator auto-discovers it from
+    ``{issuer}/.well-known/openid-configuration``. The JWKS document is
+    cached in-memory with the given TTL.
+
+    Args:
+        issuer: Expected ``iss`` claim and discovery base URL.
+        audience: Expected ``aud`` claim.
+        jwks_uri: Optional explicit JWKS endpoint (overrides discovery).
+        algorithms: Allowed JWS algorithms.
+        clock_skew: Tolerance in seconds for ``exp`` / ``iat`` / ``nbf`` checks.
+        jwks_cache_ttl: JWKS / discovery document TTL in seconds.
+        jwks_cache: Optional shared :class:`JWKSCache` instance. When
+            ``None`` the process-wide default cache is used.
+        on_validation_error: Observability hook invoked on failure.
+
+    Returns:
+        An async callable suitable for
+        :attr:`~litestar_mcp.auth.MCPAuthBackend`'s ``token_validator``
+        constructor argument.
+
+    Example:
+        >>> from litestar.middleware import DefineMiddleware
+        >>> from litestar_mcp import MCPAuthBackend, create_oidc_validator
+        >>> validator = create_oidc_validator(
+        ...     "https://company.okta.com",
+        ...     "api://mcp-tools",
+        ...     clock_skew=60,
+        ... )
+        >>> middleware = DefineMiddleware(MCPAuthBackend, token_validator=validator)
+    """
+
+    async def _validator(token: str) -> dict[str, Any] | None:
+        return await _validate_oidc_bearer(
+            token,
+            issuer=issuer,
+            audience=audience,
+            jwks_uri=jwks_uri,
+            algorithms=algorithms,
+            clock_skew=clock_skew,
+            jwks_cache_ttl=jwks_cache_ttl,
+            jwks_cache=jwks_cache,
+            on_validation_error=on_validation_error,
+        )
+
+    return _validator
+
+
+# ---------------------------------------------------------------------------
 # Internal OIDC validation helpers
 # ---------------------------------------------------------------------------
 
@@ -302,68 +367,3 @@ async def _validate_with_oidc_provider(
         jwks_cache=provider.jwks_cache,
         on_validation_error=on_validation_error,
     )
-
-
-# ---------------------------------------------------------------------------
-# Public factory
-# ---------------------------------------------------------------------------
-
-
-def create_oidc_validator(
-    issuer: str,
-    audience: str,
-    *,
-    jwks_uri: str | None = None,
-    algorithms: tuple[str, ...] = ("RS256",),
-    clock_skew: int = DEFAULT_CLOCK_SKEW_SECONDS,
-    jwks_cache_ttl: int = DEFAULT_JWKS_CACHE_TTL_SECONDS,
-    jwks_cache: JWKSCache | None = None,
-    on_validation_error: ValidationErrorHook | None = None,
-) -> TokenValidator:
-    """Build an async token validator that verifies bearer tokens against an OIDC IdP.
-
-    If ``jwks_uri`` is omitted, the validator auto-discovers it from
-    ``{issuer}/.well-known/openid-configuration``. The JWKS document is
-    cached in-memory with the given TTL.
-
-    Args:
-        issuer: Expected ``iss`` claim and discovery base URL.
-        audience: Expected ``aud`` claim.
-        jwks_uri: Optional explicit JWKS endpoint (overrides discovery).
-        algorithms: Allowed JWS algorithms.
-        clock_skew: Tolerance in seconds for ``exp`` / ``iat`` / ``nbf`` checks.
-        jwks_cache_ttl: JWKS / discovery document TTL in seconds.
-        jwks_cache: Optional shared :class:`JWKSCache` instance. When
-            ``None`` the process-wide default cache is used.
-        on_validation_error: Observability hook invoked on failure.
-
-    Returns:
-        An async callable suitable for
-        :attr:`~litestar_mcp.auth.MCPAuthBackend`'s ``token_validator``
-        constructor argument.
-
-    Example:
-        >>> from litestar.middleware import DefineMiddleware
-        >>> from litestar_mcp import MCPAuthBackend, create_oidc_validator
-        >>> validator = create_oidc_validator(
-        ...     "https://company.okta.com",
-        ...     "api://mcp-tools",
-        ...     clock_skew=60,
-        ... )
-        >>> middleware = DefineMiddleware(MCPAuthBackend, token_validator=validator)
-    """
-
-    async def _validator(token: str) -> dict[str, Any] | None:
-        return await _validate_oidc_bearer(
-            token,
-            issuer=issuer,
-            audience=audience,
-            jwks_uri=jwks_uri,
-            algorithms=algorithms,
-            clock_skew=clock_skew,
-            jwks_cache_ttl=jwks_cache_ttl,
-            jwks_cache=jwks_cache,
-            on_validation_error=on_validation_error,
-        )
-
-    return _validator

@@ -9,7 +9,8 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import Any
 
-from litestar import Controller, MediaType, Request, Response, delete, get, post
+from litestar import Controller, Litestar, MediaType, Request, Response, delete, get, post
+from litestar.di import NamedDependency
 from litestar.exceptions import SerializationException
 from litestar.handlers import BaseRouteHandler
 from litestar.response import ServerSentEvent, ServerSentEventMessage
@@ -24,7 +25,6 @@ from litestar.status_codes import (
     HTTP_503_SERVICE_UNAVAILABLE,
 )
 
-from litestar_mcp._parameter_aliases import parameter_aliases
 from litestar_mcp.config import MCPConfig
 from litestar_mcp.executor import MCPToolErrorResult, execute_handler, execute_tool
 from litestar_mcp.jsonrpc import (
@@ -48,7 +48,7 @@ from litestar_mcp.registry import (
     resolve_prompt_description,
     should_include_prompt,
 )
-from litestar_mcp.schema_builder import generate_schema_for_handler
+from litestar_mcp.schema_builder import generate_schema_for_handler, parameter_aliases
 from litestar_mcp.sessions import MCPSessionManager, SessionTerminated
 from litestar_mcp.sse import StreamLimitExceeded
 from litestar_mcp.tasks import InMemoryTaskStore, TaskLookupError, TaskRecord, TaskStateError
@@ -319,7 +319,7 @@ def build_jsonrpc_router(
     discovered_resources: dict[str, BaseRouteHandler],
     discovered_prompts: dict[str, PromptRegistration],
     *,
-    app_ref: Any,
+    app_ref: Litestar,
     request_context: RequestContext,
     task_store: InMemoryTaskStore | None = None,
     registry: Registry | None = None,
@@ -657,15 +657,11 @@ def build_jsonrpc_router(
 
         registration = discovered_prompts.get(prompt_name)
         if registration is None or not should_include_prompt(registration, config):
-            raise JSONRPCErrorException(
-                JSONRPCError(code=INVALID_PARAMS, message=f"Prompt not found: {prompt_name}")
-            )
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=f"Prompt not found: {prompt_name}"))
 
         prompt_args = params.get("arguments", {})
         if not isinstance(prompt_args, dict):
-            raise JSONRPCErrorException(
-                JSONRPCError(code=INVALID_PARAMS, message="Prompt arguments must be an object")
-            )
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Prompt arguments must be an object"))
 
         # MCP spec: prompt arguments are Record<string, string> — all values must be strings.
         for arg_key, arg_val in prompt_args.items():
@@ -691,11 +687,7 @@ def build_jsonrpc_router(
             # the signature_model would otherwise reject the call.
             declared_args = registration.get_arguments()
             declared_names = {arg["name"] for arg in declared_args}
-            missing = [
-                arg["name"]
-                for arg in declared_args
-                if arg.get("required") and arg["name"] not in prompt_args
-            ]
+            missing = [arg["name"] for arg in declared_args if arg.get("required") and arg["name"] not in prompt_args]
             if missing:
                 raise JSONRPCErrorException(
                     JSONRPCError(
@@ -878,9 +870,9 @@ class MCPController(Controller):
     async def handle_sse(
         self,
         request: Request[Any, Any, Any],
-        config: MCPConfig,
-        registry: Registry,
-        session_manager: MCPSessionManager,
+        config: NamedDependency[MCPConfig],
+        registry: NamedDependency[Registry],
+        session_manager: NamedDependency[MCPSessionManager],
     ) -> Response[Any]:
         """Handle GET-based Streamable HTTP SSE streams on the MCP endpoint."""
         origin_err = _validate_origin(request, config)
@@ -950,9 +942,9 @@ class MCPController(Controller):
     async def handle_delete(
         self,
         request: Request[Any, Any, Any],
-        config: MCPConfig,
-        registry: Registry,
-        session_manager: MCPSessionManager,
+        config: NamedDependency[MCPConfig],
+        registry: NamedDependency[Registry],
+        session_manager: NamedDependency[MCPSessionManager],
     ) -> Response[Any]:
         """Terminate an MCP session and close its attached SSE streams."""
         origin_err = _validate_origin(request, config)
@@ -977,13 +969,13 @@ class MCPController(Controller):
     async def handle_jsonrpc(
         self,
         request: Request[Any, Any, Any],
-        config: MCPConfig,
-        discovered_tools: dict[str, Any],
-        discovered_resources: dict[str, Any],
-        discovered_prompts: dict[str, PromptRegistration],
-        registry: Registry,
-        session_manager: MCPSessionManager,
-        task_store: InMemoryTaskStore | None = None,
+        config: NamedDependency[MCPConfig],
+        discovered_tools: NamedDependency[dict[str, Any]],
+        discovered_resources: NamedDependency[dict[str, Any]],
+        discovered_prompts: NamedDependency[dict[str, PromptRegistration]],
+        registry: NamedDependency[Registry],
+        session_manager: NamedDependency[MCPSessionManager],
+        task_store: NamedDependency[InMemoryTaskStore | None] = None,
     ) -> Response[Any]:
         """Handle a JSON-RPC 2.0 request over Streamable HTTP."""
         origin_err = _validate_origin(request, config)

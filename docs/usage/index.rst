@@ -66,6 +66,12 @@ examples drawn from :mod:`docs.examples`.
         Sticky routing on ``Mcp-Session-Id``, shared session stores,
         and multi-replica notes for Cloud Run / GKE.
 
+    .. grid-item-card:: ADK Integration
+        :link: adk
+        :link-type: doc
+
+        Connect Google ADK clients to your remote Litestar MCP server.
+
 .. toctree::
     :hidden:
     :maxdepth: 1
@@ -79,3 +85,4 @@ examples drawn from :mod:`docs.examples`.
     reference_examples
     uvx_guide
     deployment
+    adk

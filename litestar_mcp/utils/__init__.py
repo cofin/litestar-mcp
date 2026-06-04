@@ -13,6 +13,8 @@ these lived in separate modules (``filters.py``, ``decorators.py``,
 flattens them into this single module.
 """
 
+from __future__ import annotations
+
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -25,72 +27,24 @@ if TYPE_CHECKING:
 
 
 F = TypeVar("F", bound=Callable[..., Any])
+Kind = Literal["tool", "resource", "prompt"]
+_STRUCTURED_FIELDS: tuple[str, str, str] = ("when_to_use", "returns", "agent_instructions")
+_VAR_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 # ---------------------------------------------------------------------------
-# Handler helpers
-# ---------------------------------------------------------------------------
-
-
-def get_handler_function(handler: "BaseRouteHandler") -> Callable[..., Any]:
-    """Extract the actual function from a handler.
-
-    Litestar wraps functions in AnyCallable containers with .value attribute.
-    Dishka-injected handlers also wrap the original function and expose it via
-    ``__dishka_orig_func__``. MCP execution needs the original callable
-    signature so dependency injection hooks can see the actual handler
-    parameters instead of Dishka's synthetic ``request`` wrapper.
-
-    Args:
-        handler: The Litestar route handler.
-
-    Returns:
-        The underlying callable function.
-    """
-    fn = handler.fn
-    resolved = getattr(fn, "value", fn)
-    return getattr(resolved, "__dishka_orig_func__", resolved)
-
-
-# ---------------------------------------------------------------------------
-# Discovery filters
-# ---------------------------------------------------------------------------
-
-
-def should_include_handler(name: str, tags: set[str], config: "MCPConfig") -> bool:
-    """Determine whether a handler should be included based on config filters.
-
-    Precedence: exclude > include; tags > operations.
-
-    Args:
-        name: The handler/tool name.
-        tags: Set of tags associated with the handler.
-        config: MCP configuration with filter fields.
-
-    Returns:
-        True if the handler should be included, False otherwise.
-    """
-    if config.exclude_tags and tags & set(config.exclude_tags):
-        return False
-    if config.include_tags and not (tags & set(config.include_tags)):
-        return False
-    if config.exclude_operations and name in config.exclude_operations:
-        return False
-    return not (config.include_operations and name not in config.include_operations)
-
-
-# ---------------------------------------------------------------------------
-# MCP metadata registry + decorators
+# Public MetadataRegistry and DescriptionSources
 # ---------------------------------------------------------------------------
 
 
 class MetadataRegistry:
     """Singleton registry for MCP metadata using qualnames as keys."""
 
-    _instance: Optional["MetadataRegistry"] = None
+    _instance: MetadataRegistry | None = None
     _data: dict[str, dict[str, Any]]
 
-    def __new__(cls) -> "MetadataRegistry":
+    def __new__(cls) -> MetadataRegistry:
         if cls._instance is None:
             inst = super().__new__(cls)
             inst._data = {}
@@ -124,6 +78,70 @@ class MetadataRegistry:
 
 
 _REGISTRY = MetadataRegistry()
+
+
+@dataclass(frozen=True)
+class DescriptionSources:
+    """Resolved description fields for a handler.
+
+    Attributes:
+        description: The primary LLM-facing description (always set).
+        when_to_use: Optional ``## When to use`` section.
+        returns: Optional ``## Returns`` section.
+        agent_instructions: Optional ``## Instructions`` section.
+    """
+
+    description: str
+    when_to_use: str | None
+    returns: str | None
+    agent_instructions: str | None
+
+
+# ---------------------------------------------------------------------------
+# Public functions
+# ---------------------------------------------------------------------------
+
+
+def get_handler_function(handler: BaseRouteHandler) -> Callable[..., Any]:
+    """Extract the actual function from a handler.
+
+    Litestar wraps functions in AnyCallable containers with .value attribute.
+    Dishka-injected handlers also wrap the original function and expose it via
+    ``__dishka_orig_func__``. MCP execution needs the original callable
+    signature so dependency injection hooks can see the actual handler
+    parameters instead of Dishka's synthetic ``request`` wrapper.
+
+    Args:
+        handler: The Litestar route handler.
+
+    Returns:
+        The underlying callable function.
+    """
+    fn = handler.fn
+    resolved = getattr(fn, "value", fn)
+    return getattr(resolved, "__dishka_orig_func__", resolved)
+
+
+def should_include_handler(name: str, tags: set[str], config: MCPConfig) -> bool:
+    """Determine whether a handler should be included based on config filters.
+
+    Precedence: exclude > include; tags > operations.
+
+    Args:
+        name: The handler/tool name.
+        tags: Set of tags associated with the handler.
+        config: MCP configuration with filter fields.
+
+    Returns:
+        True if the handler should be included, False otherwise.
+    """
+    if config.exclude_tags and tags & set(config.exclude_tags):
+        return False
+    if config.include_tags and not (tags & set(config.include_tags)):
+        return False
+    if config.exclude_operations and name in config.exclude_operations:
+        return False
+    return not (config.include_operations and name not in config.include_operations)
 
 
 def mcp_tool(
@@ -287,7 +305,7 @@ def mcp_prompt(
     arguments: list[dict[str, Any]] | None = None,
     icons: list[dict[str, Any]] | None = None,
 ) -> Callable[[F], F]:
-    """Decorator to mark a callable as an MCP prompt template.
+    r"""Decorator to mark a callable as an MCP prompt template.
 
     Prompt functions take keyword arguments matching the declared prompt
     arguments and return prompt messages. The return value is normalised
@@ -360,69 +378,13 @@ def get_mcp_metadata(obj: Any) -> dict[str, Any] | None:
     return _REGISTRY.get(obj)
 
 
-# ---------------------------------------------------------------------------
-# Description rendering
-# ---------------------------------------------------------------------------
-
-Kind = Literal["tool", "resource", "prompt"]
-
-_STRUCTURED_FIELDS: tuple[str, str, str] = ("when_to_use", "returns", "agent_instructions")
-
-
-@dataclass(frozen=True)
-class DescriptionSources:
-    """Resolved description fields for a handler.
-
-    Attributes:
-        description: The primary LLM-facing description (always set).
-        when_to_use: Optional ``## When to use`` section.
-        returns: Optional ``## Returns`` section.
-        agent_instructions: Optional ``## Instructions`` section.
-    """
-
-    description: str
-    when_to_use: str | None
-    returns: str | None
-    agent_instructions: str | None
-
-
-def _clean(value: Any) -> str | None:
-    if isinstance(value, str):
-        stripped = value.strip()
-        if stripped:
-            return stripped
-    return None
-
-
-def _default_opt_keys() -> "MCPOptKeys":
-    """Return a default :class:`MCPOptKeys` without creating an import cycle."""
-    from litestar_mcp.config import MCPOptKeys
-
-    return MCPOptKeys()
-
-
-def _read_field(
-    handler: Any,
-    fn: Any,
-    field_name: str,
-    kind: Kind,
-    opt_keys: "MCPOptKeys",
-) -> str | None:
-    opt = getattr(handler, "opt", None) or {}
-    opt_value = _clean(opt.get(opt_keys.for_field(field_name, kind)))
-    if opt_value is not None:
-        return opt_value
-    metadata = get_mcp_metadata(handler) or get_mcp_metadata(fn) or {}
-    return _clean(metadata.get(field_name))
-
-
 def extract_description_sources(
     handler: Any,
     fn: Any,
     *,
     kind: Kind,
     fallback_name: str,
-    opt_keys: "MCPOptKeys | None" = None,
+    opt_keys: MCPOptKeys | None = None,
 ) -> DescriptionSources:
     """Resolve every description field for a handler."""
     keys = opt_keys if opt_keys is not None else _default_opt_keys()
@@ -445,7 +407,7 @@ def render_description(
     kind: Kind,
     fallback_name: str,
     structured: bool = True,
-    opt_keys: "MCPOptKeys | None" = None,
+    opt_keys: MCPOptKeys | None = None,
 ) -> str:
     """Render the final description string for a handler."""
     sources = extract_description_sources(handler, fn, kind=kind, fallback_name=fallback_name, opt_keys=opt_keys)
@@ -460,27 +422,6 @@ def render_description(
     if sources.agent_instructions:
         sections.append(f"## Instructions\n{sources.agent_instructions}")
     return "\n\n".join(sections)
-
-
-# ---------------------------------------------------------------------------
-# RFC 6570 Level 1 URI template helper
-# ---------------------------------------------------------------------------
-
-_VAR_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
-_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-
-
-@dataclass(frozen=True, slots=True)
-class _Variable:
-    name: str
-
-
-@dataclass(frozen=True, slots=True)
-class _Literal:
-    text: str
-
-
-Segment = _Variable | _Literal
 
 
 def parse_template(template: str) -> list[Segment]:
@@ -510,7 +451,7 @@ def parse_template(template: str) -> list[Segment]:
     return segments
 
 
-def match_uri(template: str, uri: str) -> "dict[str, str] | None":
+def match_uri(template: str, uri: str) -> dict[str, str] | None:
     """Match ``uri`` against ``template`` and extract variable values."""
     segments = parse_template(template)
     values: dict[str, str] = {}
@@ -543,7 +484,7 @@ def match_uri(template: str, uri: str) -> "dict[str, str] | None":
     return values
 
 
-def expand_template(template: str, values: "dict[str, str]") -> str:
+def expand_template(template: str, values: dict[str, str]) -> str:
     """Substitute ``{var}`` placeholders with values from ``values``."""
     for name in values:
         if not _IDENT_RE.match(name):
@@ -557,6 +498,54 @@ def expand_template(template: str, values: "dict[str, str]") -> str:
         else:
             parts.append(values[seg.name])
     return "".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Private helper functions and classes
+# ---------------------------------------------------------------------------
+
+
+def _clean(value: Any) -> str | None:
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped:
+            return stripped
+    return None
+
+
+def _default_opt_keys() -> MCPOptKeys:
+    """Return a default :class:`MCPOptKeys` without creating an import cycle."""
+    from litestar_mcp.config import MCPOptKeys
+
+    return MCPOptKeys()
+
+
+def _read_field(
+    handler: Any,
+    fn: Any,
+    field_name: str,
+    kind: Kind,
+    opt_keys: MCPOptKeys,
+) -> str | None:
+    opt = getattr(handler, "opt", None) or {}
+    opt_value = _clean(opt.get(opt_keys.for_field(field_name, kind)))
+    if opt_value is not None:
+        return opt_value
+    metadata = get_mcp_metadata(handler) or get_mcp_metadata(fn) or {}
+    return _clean(metadata.get(field_name))
+
+
+@dataclass(frozen=True, slots=True)
+class _Variable:
+    name: str
+
+
+@dataclass(frozen=True, slots=True)
+class _Literal:
+    text: str
+
+
+Segment = _Variable | _Literal
 
 
 __all__ = (

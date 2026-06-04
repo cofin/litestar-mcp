@@ -7,7 +7,7 @@ from litestar_mcp.utils import get_mcp_metadata, mcp_resource, mcp_tool
 
 def test_mcp_tool_decorator_storage() -> None:
     @mcp_tool(name="test_tool")
-    @get("/")
+    @get("/", sync_to_thread=False)
     def my_handler() -> str:
         return "hello"
 
@@ -22,7 +22,7 @@ def test_mcp_tool_decorator_storage() -> None:
 
 def test_mcp_resource_decorator_storage() -> None:
     @mcp_resource(name="test_resource")
-    @get("/")
+    @get("/", sync_to_thread=False)
     def my_handler() -> str:
         return "hello"
 
@@ -40,7 +40,7 @@ def test_mcp_tool_stores_description_kwargs() -> None:
         when_to_use="wtu",
         returns="r",
     )
-    @get("/")
+    @get("/", sync_to_thread=False)
     def handler() -> str:
         return ""
 
@@ -60,7 +60,7 @@ def test_mcp_resource_stores_description_kwargs() -> None:
         when_to_use="wtu",
         returns="ret",
     )
-    @get("/")
+    @get("/", sync_to_thread=False)
     def handler() -> str:
         return ""
 
@@ -74,7 +74,7 @@ def test_mcp_resource_stores_description_kwargs() -> None:
 
 def test_description_kwargs_default_to_none_and_omitted_from_metadata() -> None:
     @mcp_tool("t")
-    @get("/")
+    @get("/", sync_to_thread=False)
     def handler() -> str:
         return ""
 

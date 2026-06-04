@@ -5,7 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.1] — Unreleased
+## [0.6.0] — Unreleased
+
+### Added
+
+- MCP Prompts support. Route handlers marked with `mcp_prompt="name"` (or
+  the `@mcp_prompt(...)` decorator) and standalone prompt callables passed
+  via `LitestarMCP(prompts=[...])` are exposed through the `prompts/list`
+  and `prompts/get` JSON-RPC methods. Arguments are introspected from the
+  handler `signature_model` / function signature (DI- and
+  framework-injected parameters filtered out) or declared explicitly, and
+  the server advertises the `prompts` capability only when at least one
+  prompt is registered. Prompt return values are normalised to MCP
+  `PromptMessage` content (`text` / `image` / `audio` / `resource_link` /
+  `resource`), and handler-based prompts run through the full Litestar
+  dispatch pipeline (DI, guards, exception handlers).
+  [#46](https://github.com/cofin/litestar-mcp/pull/46).
+- Google ADK compatibility. A Litestar MCP server can be consumed by
+  Google's Agent Development Kit as a remote Streamable HTTP MCP server
+  through ADK's `McpToolset` / `StreamableHTTPConnectionParams`.
+  `google-adk` is a client-side optional integration, not a runtime
+  dependency; an `adk` dependency group (`google-adk[mcp]>=2`) installs it
+  for the compatibility test harness. See `docs/usage/adk.rst`.
+
+### Changed
+
+- Minimum supported Litestar raised to `litestar[jwt]>=2.23.0`. The
+  `NamedDependency` compatibility-fallback shim in `routes.py` was removed
+  — `litestar.di.NamedDependency` is now imported and used directly, since
+  every supported Litestar version provides it. This also remediates the
+  Litestar deprecation warnings the plugin previously emitted.
 
 ### Fixed
 

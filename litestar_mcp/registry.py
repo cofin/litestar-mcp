@@ -25,17 +25,19 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger(__name__)
 
-_VALIDATION_CONTEXT_PARAMS = frozenset({
-    "request",
-    "socket",
-    "state",
-    "scope",
-    "headers",
-    "cookies",
-    "query",
-    "body",
-    "data",
-})
+_VALIDATION_CONTEXT_PARAMS = frozenset(
+    {
+        "request",
+        "socket",
+        "state",
+        "scope",
+        "headers",
+        "cookies",
+        "query",
+        "body",
+        "data",
+    }
+)
 """Litestar magic-injection parameter names — excluded from MCP arg advertising.
 
 Shared with :mod:`litestar_mcp.routes` tool validation. Handler-based prompts
@@ -65,13 +67,30 @@ class ResourceTemplate:
     handler: BaseRouteHandler
 
 
-_GOOGLE_SECTION_HEADERS = frozenset({
-    "Args:", "Arguments:", "Params:", "Parameters:",
-    "Returns:", "Return:", "Raises:", "Yields:", "Yield:",
-    "Notes:", "Note:", "Examples:", "Example:",
-    "Attributes:", "References:", "See Also:",
-    "Warnings:", "Warning:", "Todo:", "Todos:",
-})
+_GOOGLE_SECTION_HEADERS = frozenset(
+    {
+        "Args:",
+        "Arguments:",
+        "Params:",
+        "Parameters:",
+        "Returns:",
+        "Return:",
+        "Raises:",
+        "Yields:",
+        "Yield:",
+        "Notes:",
+        "Note:",
+        "Examples:",
+        "Example:",
+        "Attributes:",
+        "References:",
+        "See Also:",
+        "Warnings:",
+        "Warning:",
+        "Todo:",
+        "Todos:",
+    }
+)
 
 
 def _parse_docstring_args(docstring: str | None) -> dict[str, str]:
@@ -120,10 +139,7 @@ def _parse_docstring_args(docstring: str | None) -> dict[str, str]:
         is_continuation = (
             current_name is not None
             and stripped
-            and (
-                m is None
-                or (param_indent is not None and line_indent > param_indent)
-            )
+            and (m is None or (param_indent is not None and line_indent > param_indent))
         )
 
         if m and not is_continuation:
@@ -250,8 +266,6 @@ def _introspect_handler_arguments(handler: BaseRouteHandler) -> list[dict[str, A
             getattr(handler, "handler_name", handler),
             exc,
         )
-        return []
-    if signature_model is None:
         return []
     try:
         fields = msgspec.structs.fields(signature_model)

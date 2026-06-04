@@ -13,20 +13,6 @@ from litestar_mcp.utils import get_handler_function, get_mcp_metadata, render_de
 MCP_PROTOCOL_VERSION = "2025-11-25"
 
 
-def _server_name(config: MCPConfig, app: Litestar) -> str:
-    if config.name:
-        return config.name
-    if app.openapi_config and app.openapi_config.title:
-        return app.openapi_config.title
-    return "Litestar MCP Server"
-
-
-def _server_version(app: Litestar) -> str:
-    if app.openapi_config and app.openapi_config.version:
-        return app.openapi_config.version
-    return "1.0.0"
-
-
 def build_oauth_protected_resource(auth_config: "MCPAuthConfig | None", app: Litestar) -> dict[str, Any]:
     """Build RFC 9728 protected resource metadata."""
     if auth_config and auth_config.issuer:
@@ -75,7 +61,7 @@ def build_agent_card(
     app: Litestar,
     discovered_tools: dict[str, Any],
 ) -> dict[str, Any]:
-    """Build an A2A-style agent card for MCP discovery."""
+    """Build an agent metadata card for MCP discovery."""
     skills = []
     for name, handler in discovered_tools.items():
         fn = get_handler_function(handler)
@@ -93,7 +79,6 @@ def build_agent_card(
         )
 
     return {
-        "protocolVersion": "0.2.6",
         "name": _server_name(config, app),
         "description": f"A Litestar-native MCP integration for {_server_name(config, app)}.",
         "version": _server_version(app),
@@ -106,7 +91,6 @@ def build_agent_card(
         "skills": skills,
         "defaultInputModes": ["application/json"],
         "defaultOutputModes": ["application/json"],
-        "supportsAuthenticatedExtendedCard": False,
     }
 
 
@@ -135,7 +119,9 @@ def build_mcp_server_manifest(
             tool_entry["security"] = {"scopes": metadata["scopes"]}
         tools.append(tool_entry)
 
-    visible_prompts = [registration for registration in discovered_prompts.values() if should_include_prompt(registration, config)]
+    visible_prompts = [
+        registration for registration in discovered_prompts.values() if should_include_prompt(registration, config)
+    ]
     prompts_list = [render_prompt_entry(registration, config) for registration in visible_prompts]
 
     capabilities: dict[str, Any] = {
@@ -157,10 +143,24 @@ def build_mcp_server_manifest(
         "endpoints": {
             "mcp": f"{base_url.rstrip('/')}{config.base_path}",
             "oauthProtectedResource": f"{base_url.rstrip('/')}/.well-known/oauth-protected-resource",
-            "agentCard": f"{base_url.rstrip('/')}/.well-known/agent-card.json",
+            "agentMetadata": f"{base_url.rstrip('/')}/.well-known/agent-card.json",
         },
         "capabilities": capabilities,
         "tools": tools,
         "resources": sorted(discovered_resources.keys()),
         "prompts": prompts_list,
     }
+
+
+def _server_name(config: MCPConfig, app: Litestar) -> str:
+    if config.name:
+        return config.name
+    if app.openapi_config and app.openapi_config.title:
+        return app.openapi_config.title
+    return "Litestar MCP Server"
+
+
+def _server_version(app: Litestar) -> str:
+    if app.openapi_config and app.openapi_config.version:
+        return app.openapi_config.version
+    return "1.0.0"

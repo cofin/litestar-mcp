@@ -9,6 +9,8 @@ from litestar.handlers import BaseRouteHandler
 from litestar.params import Parameter, ParameterKwarg
 
 from litestar_mcp.schema_builder import (
+    _merge_parameter_meta,
+    _unwrap_annotated,
     basic_type_to_json_schema,
     collection_type_to_json_schema,
     dataclass_to_json_schema,
@@ -17,8 +19,6 @@ from litestar_mcp.schema_builder import (
     pydantic_to_json_schema,
     type_to_json_schema,
     union_type_to_json_schema,
-    _merge_parameter_meta,
-    _unwrap_annotated,
 )
 from tests.unit.conftest import create_app_with_handler
 
@@ -755,7 +755,7 @@ class TestMergeParameterMeta:
 
     def test_title_and_examples_merge(self) -> None:
         schema: dict[str, Any] = {"type": "string"}
-        _merge_parameter_meta(schema, Parameter(title="Email", examples=["a@b.com"]))
+        _merge_parameter_meta(schema, Parameter(title="Email", examples=["a@b.com"]))  # type: ignore[list-item]
         assert schema["title"] == "Email"
         assert schema["examples"] == ["a@b.com"]
 
@@ -766,12 +766,12 @@ class TestMergeParameterMeta:
 
     def test_examples_scalar_value_is_wrapped_in_list(self) -> None:
         schema: dict[str, Any] = {"type": "string"}
-        _merge_parameter_meta(schema, Parameter(examples="one@example.com"))
+        _merge_parameter_meta(schema, Parameter(examples="one@example.com"))  # type: ignore[arg-type]
         assert schema["examples"] == ["one@example.com"]
 
 
 class TestTypeToJsonSchemaAnnotated:
-    def test_annotated_bool_optional_yields_anyOf_with_description(self) -> None:
+    def test_annotated_bool_optional_yields_any_of_with_description(self) -> None:
         annotation = Annotated[
             bool | None,
             Parameter(query="isPaid", description="Whether the order is paid"),
@@ -849,7 +849,7 @@ class TestGenerateSchemaWireNamesAndDocClobber:
 
             name: str
 
-        def handler(filter: Filter) -> dict[str, Any]:
+        def handler(filter: Filter) -> dict[str, Any]:  # noqa: A002
             return {"filter": filter}
 
         _, h = create_app_with_handler(handler)

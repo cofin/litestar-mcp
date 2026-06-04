@@ -11,6 +11,7 @@ from uuid import UUID
 
 import pytest
 from litestar import Litestar, get
+from litestar.params import FromPath
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP
@@ -25,7 +26,7 @@ def _build_app(captured: dict[str, Any]) -> Litestar:
         mcp_tool="list_files",
         sync_to_thread=False,
     )
-    def list_files(workspace_id: UUID) -> dict[str, Any]:
+    def list_files(workspace_id: FromPath[UUID]) -> dict[str, Any]:
         captured["workspace_id"] = workspace_id
         captured["type"] = type(workspace_id).__name__
         return {"files": [], "workspace_id": str(workspace_id)}

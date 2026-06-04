@@ -35,7 +35,7 @@ from litestar.response import Response
 from litestar.types.empty import Empty
 from litestar.utils.sync import ensure_async_callable
 
-from litestar_mcp._parameter_aliases import parameter_aliases
+from litestar_mcp.schema_builder import parameter_aliases
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -116,7 +116,7 @@ class MCPToolErrorResult(Exception):  # noqa: N818
     @property
     def is_client_error(self) -> bool:
         """``True`` when the status code is in the 4xx range."""
-        return 400 <= self.status_code < 500
+        return 400 <= self.status_code < 500  # noqa: PLR2004
 
 
 async def _enforce_guards(handler: BaseRouteHandler, request: Request[Any, Any, Any]) -> None:
@@ -432,9 +432,7 @@ def _split_tool_args(
     # (or directly when no alias exists).  Keeps wire names in query_payload so
     # Litestar's native extractor can still find them by their declared
     # ``Parameter(query=...)`` name.
-    wire_scalar_keys = {
-        k for k in tool_args if aliases.get(k, k) in scalar_sig_names
-    }
+    wire_scalar_keys = {k for k in tool_args if aliases.get(k, k) in scalar_sig_names}
 
     path_values = {k: tool_args[k] for k in path_parameters if k in tool_args}
     remaining = {k: v for k, v in tool_args.items() if k not in path_values}

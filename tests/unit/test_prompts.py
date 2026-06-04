@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable  # noqa: TC003
 from typing import Any
 
 import pytest
@@ -236,7 +236,7 @@ class TestPromptRegistration:
         from litestar import Request
 
         @get("/with-request", mcp_prompt="needs_req")
-        async def needs_req(text: str, request: Request) -> str:  # noqa: ARG001
+        async def needs_req(text: str, request: Request[Any, Any, Any]) -> str:
             return text
 
         plugin = LitestarMCP(config=MCPConfig())
@@ -250,7 +250,7 @@ class TestPromptRegistration:
         """``headers`` is a framework-injected name and must be filtered."""
 
         @get("/with-headers", mcp_prompt="needs_hdr")
-        async def needs_hdr(text: str, headers: dict[str, str]) -> str:  # noqa: ARG001
+        async def needs_hdr(text: str, headers: dict[str, str]) -> str:
             return text
 
         plugin = LitestarMCP(config=MCPConfig())
@@ -266,7 +266,7 @@ class TestPromptRegistration:
             return "shh"
 
         @get("/with-di", mcp_prompt="needs_di", dependencies={"secret": Provide(supply_secret)})
-        async def needs_di(text: str, secret: str) -> str:  # noqa: ARG001
+        async def needs_di(text: str, secret: str) -> str:
             return text
 
         plugin = LitestarMCP(config=MCPConfig())
@@ -277,7 +277,8 @@ class TestPromptRegistration:
 
     def test_introspect_handler_resolve_dependencies_failure_is_silent(self) -> None:
         """resolve_dependencies() raising AttributeError/TypeError must not
-        propagate — empty di_params is the safe fallback."""
+        propagate — empty di_params is the safe fallback.
+        """
         from types import SimpleNamespace
 
         from litestar_mcp.registry import _introspect_handler_arguments
@@ -399,7 +400,8 @@ class TestParseDocstringArgs:
     def test_continuation_line_with_colon_not_treated_as_param(self) -> None:
         """I1 regression: a continuation line containing ``:`` (URL,
         ``Default: foo``, ``e.g.: bar``) must extend the current
-        parameter's description, not introduce a phantom parameter."""
+        parameter's description, not introduce a phantom parameter.
+        """
         doc = """Fn.
 
         Args:
@@ -410,10 +412,7 @@ class TestParseDocstringArgs:
         """
         result = _parse_docstring_args(doc)
         assert result == {
-            "code": (
-                "The code to review. Default: see config above. "
-                "See also: https://example.com/docs"
-            ),
+            "code": ("The code to review. Default: see config above. See also: https://example.com/docs"),
             "style": "Output style.",
         }
 
@@ -474,7 +473,7 @@ class TestRegistryPrompts:
 
     def test_register_prompt_handler(self, registry: Registry) -> None:
         @get("/")
-        def handler() -> dict:
+        def handler() -> dict[str, Any]:
             return {"messages": []}
 
         registry.register_prompt_handler("handler_prompt", handler, description="Handler prompt")
@@ -719,7 +718,7 @@ class TestPromptsGetRPC:
 
     def test_get_prompt_returns_messages_list(self) -> None:
         @mcp_prompt(name="multi_msg")
-        def multi() -> list:
+        def multi() -> list[Any]:
             return [
                 {"role": "user", "content": {"type": "text", "text": "Question"}},
                 {"role": "assistant", "content": {"type": "text", "text": "Answer"}},
@@ -827,10 +826,8 @@ class TestPromptsCapability:
 class TestHandlerBasedPromptDiscovery:
     def test_opt_key_prompt_discovered(self) -> None:
         @get("/review", mcp_prompt="code_review", mcp_prompt_description="Review code")
-        async def review_handler(code: str) -> dict:
-            return {
-                "messages": [{"role": "user", "content": {"type": "text", "text": f"Review: {code}"}}]
-            }
+        async def review_handler(code: str) -> dict[str, Any]:
+            return {"messages": [{"role": "user", "content": {"type": "text", "text": f"Review: {code}"}}]}
 
         plugin = LitestarMCP(config=MCPConfig())
         Litestar(route_handlers=[review_handler], plugins=[plugin])
@@ -840,10 +837,8 @@ class TestHandlerBasedPromptDiscovery:
         """Handler returns {"messages": ...} — passed through directly."""
 
         @get("/greet-handler", mcp_prompt="handler_greet", mcp_prompt_description="Handler greet")
-        async def greet_handler() -> dict:
-            return {
-                "messages": [{"role": "assistant", "content": {"type": "text", "text": "Handler says hi"}}]
-            }
+        async def greet_handler() -> dict[str, Any]:
+            return {"messages": [{"role": "assistant", "content": {"type": "text", "text": "Handler says hi"}}]}
 
         plugin = LitestarMCP(config=MCPConfig())
         app = Litestar(route_handlers=[greet_handler], plugins=[plugin])
@@ -863,7 +858,7 @@ class TestHandlerBasedPromptDiscovery:
         """Handler returns dict without 'messages' key — normalized via _normalize_prompt_result."""
 
         @get("/raw-handler", mcp_prompt="raw_prompt", mcp_prompt_description="Raw prompt")
-        async def raw_handler() -> dict:
+        async def raw_handler() -> dict[str, Any]:
             return {"role": "user", "content": {"type": "text", "text": "Normalized"}}
 
         plugin = LitestarMCP(config=MCPConfig())
@@ -876,18 +871,14 @@ class TestHandlerBasedPromptDiscovery:
             )
             result = data["result"]
             assert result["description"] == "Raw prompt"
-            assert result["messages"] == [
-                {"role": "user", "content": {"type": "text", "text": "Normalized"}}
-            ]
+            assert result["messages"] == [{"role": "user", "content": {"type": "text", "text": "Normalized"}}]
 
     def test_handler_prompt_missing_required_arg_returns_invalid_params(self) -> None:
         """MCP spec: missing a required prompt argument MUST surface as INVALID_PARAMS."""
 
         @get("/needs-code", mcp_prompt="needs_code", mcp_prompt_description="Needs code")
-        async def needs_code(code: str) -> dict:
-            return {
-                "messages": [{"role": "user", "content": {"type": "text", "text": code}}]
-            }
+        async def needs_code(code: str) -> dict[str, Any]:
+            return {"messages": [{"role": "user", "content": {"type": "text", "text": code}}]}
 
         plugin = LitestarMCP(config=MCPConfig())
         app = Litestar(route_handlers=[needs_code], plugins=[plugin])
@@ -901,10 +892,8 @@ class TestHandlerBasedPromptDiscovery:
         """Unknown prompt argument names MUST surface as INVALID_PARAMS."""
 
         @get("/typed-handler", mcp_prompt="typed_handler", mcp_prompt_description="Typed handler")
-        async def typed_handler(name: str) -> dict:
-            return {
-                "messages": [{"role": "user", "content": {"type": "text", "text": name}}]
-            }
+        async def typed_handler(name: str) -> dict[str, Any]:
+            return {"messages": [{"role": "user", "content": {"type": "text", "text": name}}]}
 
         plugin = LitestarMCP(config=MCPConfig())
         app = Litestar(route_handlers=[typed_handler], plugins=[plugin])
@@ -934,7 +923,7 @@ class TestPromptsGetMetaEcho:
         """
 
         @get("/meta-handler", mcp_prompt="meta_prompt", mcp_prompt_description="Meta prompt")
-        async def meta_handler() -> dict:
+        async def meta_handler() -> dict[str, Any]:
             return {
                 "messages": [{"role": "user", "content": {"type": "text", "text": "hi"}}],
                 "_meta": {"trace_id": "abc-123"},
@@ -966,7 +955,7 @@ class TestHandlerPromptOptKeys:
             mcp_prompt_arguments=explicit_args,
             mcp_prompt_icons=icons,
         )
-        async def summarise(topic: str) -> dict:
+        async def summarise(topic: str) -> dict[str, Any]:
             return {"messages": [{"role": "user", "content": {"type": "text", "text": topic}}]}
 
         plugin = LitestarMCP(config=MCPConfig())
@@ -1072,7 +1061,7 @@ class TestPromptErrorMapping:
 class TestPromptFiltering:
     def test_handler_prompt_excluded_by_operations_hidden_from_list(self) -> None:
         @get("/secret", mcp_prompt="secret_prompt", mcp_prompt_description="Secret")
-        async def secret() -> dict:
+        async def secret() -> dict[str, Any]:
             return {"messages": [{"role": "user", "content": {"type": "text", "text": "x"}}]}
 
         plugin = LitestarMCP(config=MCPConfig(exclude_operations=["secret_prompt"]))
@@ -1084,7 +1073,7 @@ class TestPromptFiltering:
 
     def test_handler_prompt_excluded_by_operations_returns_invalid_params(self) -> None:
         @get("/secret-get", mcp_prompt="secret_get", mcp_prompt_description="Secret")
-        async def secret_get() -> dict:
+        async def secret_get() -> dict[str, Any]:
             return {"messages": [{"role": "user", "content": {"type": "text", "text": "x"}}]}
 
         plugin = LitestarMCP(config=MCPConfig(exclude_operations=["secret_get"]))
@@ -1097,7 +1086,7 @@ class TestPromptFiltering:
 
     def test_handler_prompt_excluded_by_tags(self) -> None:
         @get("/tagged", mcp_prompt="tagged_prompt", mcp_prompt_description="Tagged", tags=["internal"])
-        async def tagged() -> dict:
+        async def tagged() -> dict[str, Any]:
             return {"messages": [{"role": "user", "content": {"type": "text", "text": "x"}}]}
 
         plugin = LitestarMCP(config=MCPConfig(exclude_tags=["internal"]))
@@ -1223,7 +1212,7 @@ class TestPromptHandlerErrorCodeMapping:
             mcp_prompt=f"prompt_{status_code}",
             mcp_prompt_description="Handler that returns a non-validation 4xx",
         )
-        async def handler() -> Response[dict]:
+        async def handler() -> Response[dict[str, Any]]:
             return Response({"error": "no"}, status_code=status_code)
 
         plugin = LitestarMCP(config=MCPConfig())
@@ -1231,9 +1220,7 @@ class TestPromptHandlerErrorCodeMapping:
         with TestClient(app) as client:
             data = _rpc(client, "prompts/get", params={"name": f"prompt_{status_code}"})
             assert "error" in data
-            assert data["error"]["code"] == -32603, (
-                f"{status_code} must map to INTERNAL_ERROR, not INVALID_PARAMS"
-            )
+            assert data["error"]["code"] == -32603, f"{status_code} must map to INTERNAL_ERROR, not INVALID_PARAMS"
 
     @pytest.mark.parametrize("status_code", [400, 422])
     def test_validation_4xx_maps_to_invalid_params(self, status_code: int) -> None:
@@ -1242,7 +1229,7 @@ class TestPromptHandlerErrorCodeMapping:
             mcp_prompt=f"prompt_v{status_code}",
             mcp_prompt_description="Handler that returns a validation 4xx",
         )
-        async def handler() -> Response[dict]:
+        async def handler() -> Response[dict[str, Any]]:
             return Response({"error": "bad input"}, status_code=status_code)
 
         plugin = LitestarMCP(config=MCPConfig())
@@ -1250,6 +1237,4 @@ class TestPromptHandlerErrorCodeMapping:
         with TestClient(app) as client:
             data = _rpc(client, "prompts/get", params={"name": f"prompt_v{status_code}"})
             assert "error" in data
-            assert data["error"]["code"] == -32602, (
-                f"{status_code} must map to INVALID_PARAMS (validation error)"
-            )
+            assert data["error"]["code"] == -32602, f"{status_code} must map to INVALID_PARAMS (validation error)"

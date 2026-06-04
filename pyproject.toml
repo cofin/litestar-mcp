@@ -23,7 +23,7 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
 ]
-dependencies = ["litestar[jwt]>=2.0.0", "typing-extensions>=4.0.0", "httpx>=0.24.1"]
+dependencies = ["litestar[jwt]>=2.23.0", "typing-extensions>=4.0.0", "httpx>=0.24.1"]
 description = "Litestar plugin for Model Context Protocol (MCP) integration"
 keywords = ["litestar", "mcp", "model-context-protocol", "ai", "plugin"]
 license = { text = "MIT" }
@@ -34,7 +34,7 @@ maintainers = [
 name = "litestar-mcp"
 readme = "README.md"
 requires-python = ">=3.10"
-version = "0.5.1"
+version = "0.6.0"
 
 [project.urls]
 Changelog = "https://docs.litestar-mcp.litestar.dev/latest/changelog"
@@ -53,8 +53,15 @@ litestar-mcp-light = "tools.sphinx_ext.pygments_styles:LitestarMcpLightStyle"
 packages = ["litestar_mcp"]
 
 [dependency-groups]
+adk = ["google-adk[mcp]>=2"]
 build = ["bump-my-version"]
-dev = [{ include-group = "build" }, { include-group = "lint" }, { include-group = "doc" }, { include-group = "test" }]
+dev = [
+    { include-group = "adk" },
+    { include-group = "build" },
+    { include-group = "lint" },
+    { include-group = "doc" },
+    { include-group = "test" },
+]
 doc = [
     "auto-pytabs[sphinx]>=0.5.0",
     "sphinx>=8.0.0",
@@ -109,7 +116,7 @@ test = [
 allow_dirty = true
 commit = false
 commit_args = "--no-verify"
-current_version = "0.5.1"
+current_version = "0.6.0"
 ignore_missing_files = false
 ignore_missing_version = false
 message = "chore(release): bump to v{new_version}"
@@ -267,11 +274,18 @@ addopts = [
     "--cov-report=xml",
     "--cov-fail-under=80",
 ]
-filterwarnings = ["ignore::DeprecationWarning", "ignore::PendingDeprecationWarning"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+    "ignore:.*without setting sync_to_thread is discouraged",
+    "ignore:.*sync_to_thread has no effect on generators",
+    "ignore:.*sync_to_thread has no effect on async callable",
+]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
     "unit: marks tests as unit tests",
+    "adk: marks optional Google ADK compatibility tests",
 ]
 minversion = "7.0"
 testpaths = ["tests", "docs/examples"]

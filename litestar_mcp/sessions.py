@@ -85,13 +85,6 @@ class MCPSessionManager:
         self._store = store
         self._max_idle_seconds = max_idle_seconds
 
-    @staticmethod
-    def _generate_id() -> str:
-        return secrets.token_urlsafe(24)
-
-    def _ttl(self) -> int:
-        return int(self._max_idle_seconds)
-
     async def create(
         self,
         *,
@@ -164,3 +157,10 @@ class MCPSessionManager:
     async def delete(self, session_id: str) -> None:
         """Remove a session from the Store. Idempotent."""
         await self._store.delete(session_id)
+
+    @staticmethod
+    def _generate_id() -> str:
+        return secrets.token_urlsafe(24)
+
+    def _ttl(self) -> int:
+        return int(self._max_idle_seconds)

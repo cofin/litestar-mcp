@@ -12,9 +12,7 @@ Well-Known Endpoints
 .. literalinclude:: /examples/snippets/discovery_endpoints.py
     :language: python
     :caption: ``docs/examples/snippets/discovery_endpoints.py``
-    :start-after: # start-example
-    :end-before: # end-example
-    :dedent:
+    :pyobject: build
 
 With this setup the following URLs are served automatically:
 
@@ -36,28 +34,34 @@ With this setup the following URLs are served automatically:
 MCP Server Manifest
 ===================
 
-``/.well-known/mcp-server.json`` describes the server's identity, transport,
+``/.well-known/mcp-server.json`` describes the server's identity, endpoints,
 and capabilities. A minimal response looks like:
 
 .. code-block:: json
 
     {
+      "experimental": true,
       "name": "litestar-mcp",
-      "description": "Litestar MCP plugin",
-      "transports": [
-        {"type": "streamable-http", "url": "/mcp"}
-      ],
+      "version": "1.0.0",
+      "protocolVersion": "2025-11-25",
+      "endpoints": {
+        "mcp": "/mcp",
+        "oauthProtectedResource": "/.well-known/oauth-protected-resource",
+        "agentMetadata": "/.well-known/agent-card.json"
+      },
       "capabilities": {
-        "tools": {"listChanged": false},
-        "resources": {"listChanged": false, "subscribe": false}
-      }
+        "tools": {"listChanged": true},
+        "resources": {"subscribe": true, "listChanged": true},
+        "tasks": false
+      },
+      "tools": [],
+      "resources": []
     }
 
-Agent Card
-==========
+Agent Metadata Card
+===================
 
-``/.well-known/agent-card.json`` publishes the same identity in the
-``agent-card`` shape used by agent-to-agent discovery:
+``/.well-known/agent-card.json`` publishes the same identity in a format that provides agent metadata for MCP-aware clients:
 
 .. code-block:: json
 
@@ -65,8 +69,14 @@ Agent Card
       "name": "litestar-mcp",
       "description": "Litestar MCP plugin",
       "url": "/mcp",
-      "capabilities": {"tools": true, "resources": true}
+      "capabilities": {"streaming": true, "mcp": true, "tasks": false},
+      "skills": []
     }
+
+.. note::
+    MCP server discovery, generic agent metadata, and full Agent-to-Agent (A2A) protocol support are separate concerns.
+    Serving this metadata card does not make the server A2A-protocol compatible. A2A protocol support requires a dedicated A2A service endpoint and is tracked separately.
+
 
 OAuth Protected Resource
 ========================
