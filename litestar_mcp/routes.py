@@ -51,7 +51,7 @@ from litestar_mcp.registry import (
 from litestar_mcp.schema_builder import generate_schema_for_handler, parameter_aliases
 from litestar_mcp.sessions import MCPSessionManager, SessionTerminated
 from litestar_mcp.sse import StreamLimitExceeded
-from litestar_mcp.tasks import InMemoryTaskStore, TaskLookupError, TaskRecord, TaskStateError
+from litestar_mcp.tasks import InMemoryTaskStore, TaskLookupError, TaskRecord, TaskStateError, _decode_cursor, _encode_cursor
 from litestar_mcp.utils import (
     get_handler_function,
     get_mcp_metadata,
@@ -146,6 +146,26 @@ def _build_request_context(request: Request[Any, Any, Any]) -> RequestContext:
     sub = _request_subject(request)
     owner_id = f"user:{sub}" if sub is not None else f"client:{client_id}"
     return RequestContext(client_id=client_id, owner_id=owner_id, request=request)
+
+
+def _paginate_list(items: list[Any], params: dict[str, Any], page_size: int) -> tuple[list[Any], str | None]:
+    """Slice ``items`` by the opaque cursor in ``params`` and return ``(page, next_cursor)``.
+
+    Cursors are base64-encoded offsets — the same scheme used by ``tasks/list``.
+    A missing cursor starts at offset 0; an out-of-range cursor returns an empty
+    page with no ``nextCursor`` (treating "past the end" as "end of pagination"
+    rather than an error, matching the spec's permissive client model).
+    """
+    cursor = params.get("cursor")
+    if cursor is not None and not isinstance(cursor, str):
+        raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="The 'cursor' parameter must be a string"))
+    try:
+        offset = _decode_cursor(cursor) if cursor else 0
+    except ValueError as exc:
+        raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
+    page = items[offset : offset + page_size]
+    next_cursor = _encode_cursor(offset + page_size) if offset + page_size < len(items) else None
+    return page, next_cursor
 
 
 def _serialize_tool_content(value: Any) -> str:
@@ -416,7 +436,7 @@ def build_jsonrpc_router(
 
     router.register("ping", handle_ping)
 
-    async def handle_tools_list(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
+    async def handle_tools_list(params: dict[str, Any]) -> dict[str, Any]:
         tools = []
         for name, handler in discovered_tools.items():
             handler_tags = set(getattr(handler, "tags", None) or [])
@@ -444,7 +464,11 @@ def build_jsonrpc_router(
             if task_config is not None and metadata.get("task_support") is not None:
                 tool_entry["execution"] = {"taskSupport": metadata["task_support"]}
             tools.append(tool_entry)
-        return {"tools": tools}
+        page, next_cursor = _paginate_list(tools, params, config.list_page_size)
+        result: dict[str, Any] = {"tools": page}
+        if next_cursor is not None:
+            result["nextCursor"] = next_cursor
+        return result
 
     router.register("tools/list", handle_tools_list)
 
@@ -493,7 +517,7 @@ def build_jsonrpc_router(
 
     router.register("tools/call", handle_tools_call)
 
-    async def handle_resources_list(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
+    async def handle_resources_list(params: dict[str, Any]) -> dict[str, Any]:
         resources = [
             {
                 "uri": "litestar://openapi",
@@ -518,7 +542,11 @@ def build_jsonrpc_router(
                     "mimeType": "application/json",
                 }
             )
-        return {"resources": resources}
+        page, next_cursor = _paginate_list(resources, params, config.list_page_size)
+        result: dict[str, Any] = {"resources": page}
+        if next_cursor is not None:
+            result["nextCursor"] = next_cursor
+        return result
 
     router.register("resources/list", handle_resources_list)
 
@@ -640,13 +668,17 @@ def build_jsonrpc_router(
 
     router.register("completion/complete", handle_completion_complete)
 
-    async def handle_prompts_list(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
+    async def handle_prompts_list(params: dict[str, Any]) -> dict[str, Any]:
         prompts = [
             render_prompt_entry(registration, config)
             for registration in discovered_prompts.values()
             if should_include_prompt(registration, config)
         ]
-        return {"prompts": prompts}
+        page, next_cursor = _paginate_list(prompts, params, config.list_page_size)
+        result: dict[str, Any] = {"prompts": page}
+        if next_cursor is not None:
+            result["nextCursor"] = next_cursor
+        return result
 
     router.register("prompts/list", handle_prompts_list)
 

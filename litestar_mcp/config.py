@@ -111,6 +111,10 @@ class MCPConfig:
             is enforced on MCP endpoints.
         tasks: Optional task configuration or ``True`` to enable the default
             experimental in-memory task implementation.
+        list_page_size: Page size for ``tools/list``, ``resources/list``, and
+            ``prompts/list``. The MCP spec lets servers choose the page size;
+            clients page through results via the opaque ``cursor`` /
+            ``nextCursor`` round-trip. Must be a positive integer.
     """
 
     base_path: str = "/mcp"
@@ -129,6 +133,7 @@ class MCPConfig:
     session_max_idle_seconds: float = 3600.0
     sse_max_streams: int = 10_000
     sse_max_idle_seconds: float = 3600.0
+    list_page_size: int = 100
     _session_manager: Any = field(default=None, repr=False, compare=False)
 
     @property
