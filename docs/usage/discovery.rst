@@ -52,7 +52,6 @@ and capabilities. A minimal response looks like:
       "capabilities": {
         "tools": {"listChanged": true},
         "resources": {"subscribe": true, "listChanged": true},
-        "prompts": {"listChanged": true},
         "tasks": false
       },
       "tools": [],
@@ -60,9 +59,15 @@ and capabilities. A minimal response looks like:
       "prompts": []
     }
 
+The ``protocolVersion`` value mirrors the
+:data:`litestar_mcp.manifests.MCP_PROTOCOL_VERSION` constant and will move
+in lock-step with the implementation; do not pin against the string above.
+
 The ``prompts`` capability is **gated**: it is only advertised — both in
 this manifest and in ``initialize``'s capability response — when at least
-one visible prompt is registered. This matches the MCP spec's
+one visible prompt is registered. That is why the minimal capabilities
+block above omits ``prompts`` entirely while the top-level ``prompts``
+array is still present (empty). This matches the MCP spec's
 recommendation that servers only declare capabilities for primitives they
 actually expose. The same per-tag and per-operation include/exclude
 filters that apply to tools and resources also gate prompt visibility.

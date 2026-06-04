@@ -51,8 +51,8 @@ JSON-RPC method, and concrete URIs flow through ``resources/read``:
 ``{var}`` matches a single non-empty path segment — it does NOT cross
 ``/``. Ambiguous templates resolve to the first-registered match. The
 ``completion/complete`` JSON-RPC method is available but returns an empty
-completion by default for 0.5.0; a ``@mcp_resource_completion`` decorator
-is planned for a future release.
+completion by default; user-supplied completion is planned but not yet
+exposed through a stable API.
 
 JSON-RPC Round-Trip
 ===================

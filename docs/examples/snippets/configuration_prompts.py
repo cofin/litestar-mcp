@@ -18,6 +18,7 @@ async def greet(name: str) -> str:
 def build() -> Litestar:
     # start-example
     app = Litestar(
+        route_handlers=[],
         plugins=[
             LitestarMCP(
                 MCPConfig(name="prompt-demo"),

@@ -102,8 +102,13 @@ If you prefer a dedicated decorator over the kwargs form, ``litestar_mcp``
 ships :func:`~litestar_mcp.mcp_tool`, :func:`~litestar_mcp.mcp_resource`,
 and :func:`~litestar_mcp.mcp_prompt`. The tool and resource decorators
 carry the same metadata as the ``opt`` kwargs and are interchangeable at
-discovery time; ``mcp_prompt`` doubles as the marker for standalone
-prompt callables registered through ``LitestarMCP(prompts=[...])``.
+discovery time on a route handler.
+
+``mcp_prompt`` is different: the decorator and the ``mcp_prompt_*`` opt
+keys target *different registration paths*. Use the opt keys to expose a
+Litestar route handler as a prompt. Use the decorator to mark a plain
+callable that you hand to ``LitestarMCP(prompts=[...])``. The decorator
+does not act as the route-handler marker.
 
 .. tabs::
 
