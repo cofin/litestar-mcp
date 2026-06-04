@@ -52,11 +52,20 @@ and capabilities. A minimal response looks like:
       "capabilities": {
         "tools": {"listChanged": true},
         "resources": {"subscribe": true, "listChanged": true},
+        "prompts": {"listChanged": true},
         "tasks": false
       },
       "tools": [],
-      "resources": []
+      "resources": [],
+      "prompts": []
     }
+
+The ``prompts`` capability is **gated**: it is only advertised — both in
+this manifest and in ``initialize``'s capability response — when at least
+one visible prompt is registered. This matches the MCP spec's
+recommendation that servers only declare capabilities for primitives they
+actually expose. The same per-tag and per-operation include/exclude
+filters that apply to tools and resources also gate prompt visibility.
 
 Agent Metadata Card
 ===================

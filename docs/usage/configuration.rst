@@ -46,6 +46,25 @@ See :doc:`auth` for the full authentication story.
     :end-before: # end-example
     :dedent:
 
+Standalone Prompts
+==================
+
+Prompt callables that are not bound to an HTTP route are registered by
+passing them to ``LitestarMCP(prompts=[...])``. Each function must first
+be decorated with :func:`~litestar_mcp.mcp_prompt`; the plugin rejects
+plain callables to keep prompt metadata explicit.
+
+.. literalinclude:: /examples/snippets/configuration_prompts.py
+    :language: python
+    :caption: ``docs/examples/snippets/configuration_prompts.py``
+    :start-after: # start-example
+    :end-before: # end-example
+    :dedent:
+
+See :doc:`marking_routes` for the handler-based ``mcp_prompt`` opt-key
+form, which routes a prompt under HTTP *and* publishes it via
+``prompts/get``.
+
 Task Lifecycle
 ==============
 
@@ -97,6 +116,10 @@ Configuration Options
     * - ``tasks``
       - ``False``
       - Enable experimental in-memory MCP task support.
+
+The ``LitestarMCP`` constructor also accepts a top-level ``prompts``
+argument — a sequence of ``@mcp_prompt``-decorated callables — for
+standalone prompt registration (see above).
 
 Environment Overrides
 =====================

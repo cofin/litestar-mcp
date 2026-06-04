@@ -78,6 +78,26 @@ def test_resources_list_exposes_expected_resources(fresh_client: TestClient[Any]
     assert any(uri.endswith("api_info") for uri in uris)
 
 
+def test_prompts_list_exposes_summarize_tasks(fresh_client: TestClient[Any]) -> None:
+    result = _rpc(fresh_client, "prompts/list", {})
+    names = {prompt["name"] for prompt in result["result"]["prompts"]}
+    assert "summarize_tasks" in names
+
+
+def test_prompts_get_summarize_tasks_includes_seed(fresh_client: TestClient[Any]) -> None:
+    result = _rpc(
+        fresh_client,
+        "prompts/get",
+        {"name": "summarize_tasks", "arguments": {"style": "detailed"}},
+    )
+    messages = result["result"]["messages"]
+    assert len(messages) == 1
+    assert messages[0]["role"] == "user"
+    text = messages[0]["content"]["text"]
+    assert "detailed" in text
+    assert "seed-1" in text
+
+
 def test_create_task_via_rest_round_trips(fresh_client: TestClient[Any]) -> None:
     """Create a task through the HTTP surface and confirm it is listed back.
 
