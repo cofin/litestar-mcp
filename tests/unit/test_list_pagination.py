@@ -28,7 +28,7 @@ def _init_session(client: TestClient[Any]) -> str:
         "initialize",
         {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "x"}},
     )
-    sid = init.headers["mcp-session-id"]
+    sid: str = init.headers["mcp-session-id"]
     client.post(
         "/mcp",
         json={"jsonrpc": "2.0", "method": "notifications/initialized"},

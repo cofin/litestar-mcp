@@ -167,7 +167,9 @@ def _paginate_list(items: list[_T], params: dict[str, Any], page_size: int) -> t
     """
     cursor = params.get("cursor")
     if cursor is not None and not isinstance(cursor, str):
-        raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="The 'cursor' parameter must be a string"))
+        raise JSONRPCErrorException(
+            JSONRPCError(code=INVALID_PARAMS, message="The 'cursor' parameter must be a string")
+        )
     try:
         offset = decode_cursor(cursor) if cursor else 0
     except ValueError as exc:
