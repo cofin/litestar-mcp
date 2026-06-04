@@ -380,7 +380,8 @@ class TestResourcesRead:
     def test_resources_read_unknown_resource(self, client: TestClient[Any]) -> None:
         result = _rpc(client, "resources/read", {"uri": "litestar://nonexistent"})
         assert "error" in result
-        assert result["error"]["code"] == INVALID_PARAMS
+        assert result["error"]["code"] == -32002
+        assert result["error"]["data"] == {"uri": "litestar://nonexistent"}
 
     def test_resources_read_openapi(self, client: TestClient[Any]) -> None:
         result = _rpc(client, "resources/read", {"uri": "litestar://openapi"})

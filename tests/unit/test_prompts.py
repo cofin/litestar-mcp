@@ -1020,12 +1020,8 @@ class TestPromptErrorMapping:
             assert "kaboom" in data["error"]["data"]["detail"]
             assert data["error"]["data"]["error"] == "RuntimeError"
 
-    def test_handler_4xx_maps_to_invalid_params(self) -> None:
-        """Handler returning a 4xx Response surfaces as -32602 (INVALID_PARAMS).
-
-        ``MCPToolErrorResult.is_client_error`` keys off the captured HTTP
-        status; the route layer maps that to JSON-RPC ``INVALID_PARAMS``.
-        """
+    def test_handler_4xx_maps_to_internal_error(self) -> None:
+        """Handler execution failures surface as -32603 with structured data."""
 
         @get("/bad-handler", mcp_prompt="bad_4xx", mcp_prompt_description="Bad handler")
         async def bad_handler() -> Response[dict[str, str]]:
@@ -1036,7 +1032,8 @@ class TestPromptErrorMapping:
         with TestClient(app) as client:
             data = _rpc(client, "prompts/get", params={"name": "bad_4xx"})
             assert "error" in data
-            assert data["error"]["code"] == -32602  # INVALID_PARAMS
+            assert data["error"]["code"] == -32603  # INTERNAL_ERROR
+            assert data["error"]["data"] == {"statusCode": 400, "content": {"error": "bad input"}}
 
     def test_handler_5xx_maps_to_internal_error(self) -> None:
         """Handler returning a 5xx Response surfaces as -32603 (INTERNAL_ERROR)."""
@@ -1197,13 +1194,7 @@ class TestCaptureAsgiResponseStatusZero:
 
 
 class TestPromptHandlerErrorCodeMapping:
-    """4xx classes other than 400/422 must NOT be reported as INVALID_PARAMS.
-
-    JSON-RPC INVALID_PARAMS (-32602) is reserved for invalid method
-    parameters. 401/403/404/409 are not parameter-validation failures and
-    should fall through to INTERNAL_ERROR until the dedicated error
-    taxonomy lands (issue #48).
-    """
+    """Prompt handler execution errors map by primitive, not raw HTTP status."""
 
     @pytest.mark.parametrize("status_code", [401, 403, 404, 409])
     def test_non_validation_4xx_maps_to_internal_error(self, status_code: int) -> None:
@@ -1223,7 +1214,7 @@ class TestPromptHandlerErrorCodeMapping:
             assert data["error"]["code"] == -32603, f"{status_code} must map to INTERNAL_ERROR, not INVALID_PARAMS"
 
     @pytest.mark.parametrize("status_code", [400, 422])
-    def test_validation_4xx_maps_to_invalid_params(self, status_code: int) -> None:
+    def test_handler_validation_4xx_maps_to_internal_error(self, status_code: int) -> None:
         @get(
             f"/validation-{status_code}",
             mcp_prompt=f"prompt_v{status_code}",
@@ -1237,4 +1228,5 @@ class TestPromptHandlerErrorCodeMapping:
         with TestClient(app) as client:
             data = _rpc(client, "prompts/get", params={"name": f"prompt_v{status_code}"})
             assert "error" in data
-            assert data["error"]["code"] == -32602, f"{status_code} must map to INVALID_PARAMS (validation error)"
+            assert data["error"]["code"] == -32603, f"{status_code} must map to INTERNAL_ERROR"
+            assert data["error"]["data"] == {"statusCode": status_code, "content": {"error": "bad input"}}

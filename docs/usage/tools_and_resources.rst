@@ -74,6 +74,22 @@ JSON-RPC method, and concrete URIs flow through ``resources/read``:
 completion by default for 0.5.0; a ``@mcp_resource_completion`` decorator
 is planned for a future release.
 
+List Pagination
+===============
+
+The MCP list methods accept an optional opaque ``cursor`` parameter and
+return ``nextCursor`` when another page is available:
+
+- ``tools/list``
+- ``resources/list``
+- ``resources/templates/list``
+- ``prompts/list``
+
+The plugin currently uses a server-selected page size of 100 entries. Treat
+``nextCursor`` as an opaque token: pass it back as ``params.cursor`` on the
+next request and stop when the response omits ``nextCursor``. Invalid cursor
+values return a JSON-RPC ``INVALID_PARAMS`` error (``-32602``).
+
 JSON-RPC Round-Trip
 ===================
 
@@ -108,5 +124,21 @@ The MCP Streamable HTTP transport is a single JSON-RPC endpoint at
            "params":{"uri":"litestar://openapi"}}'
 
 Successful responses carry the handler's return value inside the standard
-JSON-RPC envelope. Errors raised from the underlying handler are mapped
-onto JSON-RPC error objects automatically.
+JSON-RPC envelope.
+
+Error Contract
+==============
+
+Error mapping follows the MCP primitive being invoked rather than a generic
+HTTP status table:
+
+- ``tools/call`` keeps handler validation failures, API failures, and
+  business errors inside the tool result with ``isError: true``. Protocol
+  problems such as an unknown tool name still use JSON-RPC errors.
+- ``prompts/get`` returns ``INVALID_PARAMS`` (``-32602``) for invalid prompt
+  names, missing or invalid prompt arguments, and invalid list cursors.
+  Handler execution failures return ``INTERNAL_ERROR`` (``-32603``) with
+  structured details in the JSON-RPC ``data`` member.
+- ``resources/read`` returns MCP's resource-not-found code ``-32002`` with
+  ``data.uri`` for unknown resource URIs. Handler read failures return
+  ``INTERNAL_ERROR`` (``-32603``) with structured details in ``data``.

@@ -1,14 +1,11 @@
 """Central registry for MCP tools, resources, and prompts."""
 
-import contextlib
 import inspect
 import logging
-import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from litestar.exceptions import ImproperlyConfiguredException
 from litestar.handlers import BaseRouteHandler
 
 from litestar_mcp.sse import SSEManager
@@ -19,31 +16,17 @@ from litestar_mcp.utils import (
     render_description,
     should_include_handler,
 )
+from litestar_mcp.utils.handler_signature import (
+    _parse_docstring_args as _parse_handler_docstring_args,
+)
+from litestar_mcp.utils.handler_signature import (
+    extract_advertised_handler_arguments,
+)
 
 if TYPE_CHECKING:
     from litestar_mcp.config import MCPConfig
 
 _logger = logging.getLogger(__name__)
-
-_VALIDATION_CONTEXT_PARAMS = frozenset(
-    {
-        "request",
-        "socket",
-        "state",
-        "scope",
-        "headers",
-        "cookies",
-        "query",
-        "body",
-        "data",
-    }
-)
-"""Litestar magic-injection parameter names — excluded from MCP arg advertising.
-
-Shared with :mod:`litestar_mcp.routes` tool validation. Handler-based prompts
-also exclude these names because they're populated by the framework rather
-than passed by the MCP caller.
-"""
 
 # MCP PromptMessage content discriminator → required structural keys.
 # Per the 2025-11-25 schema, every content block carries a ``type`` and the
@@ -58,6 +41,11 @@ _PROMPT_CONTENT_REQUIRED_KEYS: dict[str, frozenset[str]] = {
 }
 
 
+def _parse_docstring_args(docstring: str | None) -> dict[str, str]:
+    """Extract parameter descriptions from a Google-style docstring."""
+    return _parse_handler_docstring_args(docstring)
+
+
 @dataclass(frozen=True, slots=True)
 class ResourceTemplate:
     """A declared RFC 6570 Level 1 URI template bound to a resource handler."""
@@ -65,100 +53,6 @@ class ResourceTemplate:
     name: str
     template: str
     handler: BaseRouteHandler
-
-
-_GOOGLE_SECTION_HEADERS = frozenset(
-    {
-        "Args:",
-        "Arguments:",
-        "Params:",
-        "Parameters:",
-        "Returns:",
-        "Return:",
-        "Raises:",
-        "Yields:",
-        "Yield:",
-        "Notes:",
-        "Note:",
-        "Examples:",
-        "Example:",
-        "Attributes:",
-        "References:",
-        "See Also:",
-        "Warnings:",
-        "Warning:",
-        "Todo:",
-        "Todos:",
-    }
-)
-
-
-def _parse_docstring_args(docstring: str | None) -> dict[str, str]:
-    """Extract parameter descriptions from a Google-style docstring.
-
-    Args:
-        docstring: A Google-style docstring, or ``None``.
-
-    Returns:
-        Mapping of ``{param_name: description}`` parsed from the
-        ``Args:`` (or ``Arguments:`` / ``Params:`` / ``Parameters:``)
-        section. Continuation lines indented strictly deeper than the
-        first parameter line are appended to that parameter's description
-        — even if they contain a colon. Lines indented at the parameter
-        level that match ``name: ...`` introduce a new parameter.
-    """
-    if not docstring:
-        return {}
-    lines = docstring.splitlines()
-    in_args = False
-    result: dict[str, str] = {}
-    current_name: str | None = None
-    current_desc: list[str] = []
-    param_indent: int | None = None
-    param_re = re.compile(r"^(\s+)(\w+)(?:\s*\([^)]*\))?\s*:\s*(.*)$")
-
-    for line in lines:
-        stripped = line.strip()
-        if stripped in ("Args:", "Arguments:", "Params:", "Parameters:"):
-            in_args = True
-            continue
-        if not in_args:
-            continue
-        # End of Args section: unindented non-empty line or known section header
-        if stripped and not line[0].isspace():
-            break
-        if stripped in _GOOGLE_SECTION_HEADERS:
-            break
-
-        line_indent = len(line) - len(line.lstrip())
-        m = param_re.match(line)
-        # Treat the line as a continuation when:
-        #   - we have not yet seen a param (param_indent is None and m is None)
-        #   - it is indented strictly deeper than the recorded param indent
-        #     (URLs, "Default: see ...", etc. inside a param description)
-        is_continuation = (
-            current_name is not None
-            and stripped
-            and (m is None or (param_indent is not None and line_indent > param_indent))
-        )
-
-        if m and not is_continuation:
-            if current_name is not None:
-                result[current_name] = " ".join(current_desc).strip()
-            current_name = m.group(2)
-            current_desc = [m.group(3)] if m.group(3) else []
-            if param_indent is None:
-                param_indent = line_indent
-        elif is_continuation:
-            current_desc.append(stripped)
-        elif current_name is not None and not stripped:
-            # Blank line between params — skip without terminating
-            # the current param so continuation lines are still captured.
-            pass
-
-    if current_name is not None:
-        result[current_name] = " ".join(current_desc).strip()
-    return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,7 +73,7 @@ class PromptRegistration:
         description: Optional LLM-facing description.
         arguments: Explicit argument definitions. When ``None``, derived
             from the function signature (standalone prompts) or the
-            handler's ``signature_model`` (handler-based prompts), with
+            handler's parsed signature (handler-based prompts), with
             DI- and framework-injected parameters filtered out.
         icons: Optional list of icon objects for UI display.
     """
@@ -209,9 +103,8 @@ class PromptRegistration:
         (which transparently consults ``fn.__signature__`` when present and
         otherwise builds from ``fn.__code__`` / ``fn.__annotations__``).
 
-        For handler-based prompts, walks the handler's ``signature_model``
-        fields (the same model the tool-validation path uses), filtering out
-        DI dependencies and Litestar's magic-injected parameters
+        For handler-based prompts, walks the handler's parsed Litestar
+        signature, filtering out DI dependencies and framework parameters
         (``request``, ``headers``, …) so the advertised shape matches what
         an MCP caller is expected to supply.
 
@@ -241,55 +134,15 @@ class PromptRegistration:
 
 
 def _introspect_handler_arguments(handler: BaseRouteHandler) -> list[dict[str, Any]]:
-    """Derive prompt arguments from a route handler's ``signature_model``.
+    """Derive prompt arguments from a route handler's parsed signature.
 
-    Mirrors the partitioning used by tool-call validation in
-    :mod:`litestar_mcp.routes`: DI dependencies and framework-injected names
-    (``request``, ``headers``, ``state``, …) are excluded so the advertised
-    arguments match what callers actually supply via ``prompts/get``.
+    DI dependencies and framework-injected names (``request``, ``headers``,
+    ``state``, ...) are excluded so the advertised arguments match what
+    callers actually supply via ``prompts/get``.
     Descriptions are pulled from a Google-style docstring on the underlying
     function when available.
     """
-    import msgspec
-
-    try:
-        signature_model = handler.signature_model
-    except (AttributeError, ImproperlyConfiguredException):
-        # Handler not yet finalized, or signature model genuinely unavailable —
-        # silent fallback is correct here (no surprise to caller).
-        return []
-    except Exception as exc:  # noqa: BLE001
-        # Anything else is unexpected; log so misconfigurations don't silently
-        # advertise zero arguments to MCP clients.
-        _logger.warning(
-            "Unexpected error reading signature_model for %r: %s — advertising no arguments",
-            getattr(handler, "handler_name", handler),
-            exc,
-        )
-        return []
-    try:
-        fields = msgspec.structs.fields(signature_model)
-    except TypeError:
-        return []
-
-    di_params: set[str] = set()
-    with contextlib.suppress(AttributeError, TypeError):
-        di_params = set(handler.resolve_dependencies().keys())
-
-    fn = get_handler_function(handler)
-    doc_descriptions = _parse_docstring_args(getattr(fn, "__doc__", None))
-
-    args: list[dict[str, Any]] = []
-    for f in fields:
-        if f.name in di_params or f.name in _VALIDATION_CONTEXT_PARAMS:
-            continue
-        arg: dict[str, Any] = {"name": f.name}
-        desc = doc_descriptions.get(f.name)
-        if desc:
-            arg["description"] = desc
-        arg["required"] = f.default is msgspec.NODEFAULT and f.default_factory is msgspec.NODEFAULT
-        args.append(arg)
-    return args
+    return extract_advertised_handler_arguments(handler)
 
 
 def _normalize_prompt_result(result: Any) -> list[dict[str, Any]]:
@@ -583,7 +436,7 @@ class Registry:
             description: Optional description.
             arguments: Explicit argument definitions. When ``None``,
                 arguments are introspected from the handler's
-                ``signature_model`` at ``prompts/list`` render time
+                parsed handler signature at ``prompts/list`` render time
                 (DI- and framework-injected parameters filtered out).
                 Pass ``[]`` to advertise no arguments explicitly.
             icons: Optional list of icon objects for UI display.
