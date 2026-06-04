@@ -374,6 +374,7 @@ def _write_changelog_entry(changelog_entry: str) -> None:
     changelog_lines[line_no:line_no] = changelog_entry.splitlines()
     changelog_path.write_text("\n".join(changelog_lines))
 
+
 @click.command()
 @click.argument("version")
 @click.option("--base", help="Previous release tag. Defaults to the latest tag")

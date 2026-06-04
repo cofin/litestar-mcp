@@ -55,7 +55,13 @@ packages = ["litestar_mcp"]
 [dependency-groups]
 adk = ["google-adk[mcp]>=2"]
 build = ["bump-my-version"]
-dev = [{ include-group = "build" }, { include-group = "lint" }, { include-group = "doc" }, { include-group = "test" }]
+dev = [
+    { include-group = "adk" },
+    { include-group = "build" },
+    { include-group = "lint" },
+    { include-group = "doc" },
+    { include-group = "test" },
+]
 doc = [
     "auto-pytabs[sphinx]>=0.5.0",
     "sphinx>=8.0.0",

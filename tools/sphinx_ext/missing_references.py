@@ -27,6 +27,7 @@ def _get_import_nodes(nodes: list[ast.stmt]) -> Generator[ast.Import | ast.Impor
         elif isinstance(node, ast.If) and getattr(node.test, "id", None) == "TYPE_CHECKING":
             yield from _get_import_nodes(node.body)
 
+
 def _resolve_litestar_reference(target: str) -> bool:
     """Attempt to resolve Litestar references.
 

@@ -86,4 +86,3 @@ examples drawn from :mod:`docs.examples`.
     uvx_guide
     deployment
     adk
-
