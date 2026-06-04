@@ -51,7 +51,8 @@ from litestar_mcp.registry import (
 from litestar_mcp.schema_builder import generate_schema_for_handler, parameter_aliases
 from litestar_mcp.sessions import MCPSessionManager, SessionTerminated
 from litestar_mcp.sse import StreamLimitExceeded
-from litestar_mcp.tasks import InMemoryTaskStore, TaskLookupError, TaskRecord, TaskStateError, _decode_cursor, _encode_cursor
+from litestar_mcp._cursor import decode_cursor, encode_cursor
+from litestar_mcp.tasks import InMemoryTaskStore, TaskLookupError, TaskRecord, TaskStateError
 from litestar_mcp.utils import (
     get_handler_function,
     get_mcp_metadata,
@@ -160,11 +161,11 @@ def _paginate_list(items: list[Any], params: dict[str, Any], page_size: int) -> 
     if cursor is not None and not isinstance(cursor, str):
         raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="The 'cursor' parameter must be a string"))
     try:
-        offset = _decode_cursor(cursor) if cursor else 0
+        offset = decode_cursor(cursor) if cursor else 0
     except ValueError as exc:
         raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
     page = items[offset : offset + page_size]
-    next_cursor = _encode_cursor(offset + page_size) if offset + page_size < len(items) else None
+    next_cursor = encode_cursor(offset + page_size) if offset + page_size < len(items) else None
     return page, next_cursor
 
 

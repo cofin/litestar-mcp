@@ -2,6 +2,7 @@
 
 from typing import Any
 
+import pytest
 from litestar import Litestar, get
 from litestar.testing import TestClient
 
@@ -158,3 +159,27 @@ def test_prompts_list_paginates() -> None:
         r2 = _rpc(client, "prompts/list", {"cursor": r1["nextCursor"]}, headers=headers).json()["result"]
         assert len(r2["prompts"]) == 1
         assert "nextCursor" not in r2
+
+
+def test_tools_list_empty_registry_returns_empty_page() -> None:
+    app = Litestar(plugins=[LitestarMCP(config=MCPConfig(list_page_size=10))])
+    with TestClient(app=app) as client:
+        sid = _init_session(client)
+        result = _rpc(client, "tools/list", {}, headers={"Mcp-Session-Id": sid}).json()["result"]
+        assert result["tools"] == []
+        assert "nextCursor" not in result
+
+
+def test_prompts_list_empty_registry_returns_empty_page() -> None:
+    app = Litestar(plugins=[LitestarMCP(config=MCPConfig(list_page_size=10))])
+    with TestClient(app=app) as client:
+        sid = _init_session(client)
+        result = _rpc(client, "prompts/list", {}, headers={"Mcp-Session-Id": sid}).json()["result"]
+        assert result["prompts"] == []
+        assert "nextCursor" not in result
+
+
+@pytest.mark.parametrize("bad_size", [0, -1, -100])
+def test_mcp_config_rejects_non_positive_list_page_size(bad_size: int) -> None:
+    with pytest.raises(ValueError, match="list_page_size must be a positive integer"):
+        MCPConfig(list_page_size=bad_size)

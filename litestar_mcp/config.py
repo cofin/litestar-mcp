@@ -136,6 +136,11 @@ class MCPConfig:
     list_page_size: int = 100
     _session_manager: Any = field(default=None, repr=False, compare=False)
 
+    def __post_init__(self) -> None:
+        if self.list_page_size <= 0:
+            msg = f"list_page_size must be a positive integer, got {self.list_page_size}"
+            raise ValueError(msg)
+
     @property
     def task_config(self) -> "MCPTaskConfig | None":
         """Return the normalized task configuration, if task support is enabled."""
