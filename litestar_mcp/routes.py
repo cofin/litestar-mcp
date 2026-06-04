@@ -7,7 +7,7 @@ import inspect
 import logging
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar
 
 from litestar import Controller, Litestar, MediaType, Request, Response, delete, get, post
 from litestar.di import NamedDependency
@@ -25,6 +25,7 @@ from litestar.status_codes import (
     HTTP_503_SERVICE_UNAVAILABLE,
 )
 
+from litestar_mcp._cursor import decode_cursor, encode_cursor
 from litestar_mcp.config import MCPConfig
 from litestar_mcp.executor import MCPToolErrorResult, execute_handler, execute_tool
 from litestar_mcp.jsonrpc import (
@@ -51,7 +52,6 @@ from litestar_mcp.registry import (
 from litestar_mcp.schema_builder import generate_schema_for_handler, parameter_aliases
 from litestar_mcp.sessions import MCPSessionManager, SessionTerminated
 from litestar_mcp.sse import StreamLimitExceeded
-from litestar_mcp._cursor import decode_cursor, encode_cursor
 from litestar_mcp.tasks import InMemoryTaskStore, TaskLookupError, TaskRecord, TaskStateError
 from litestar_mcp.utils import (
     get_handler_function,
@@ -149,13 +149,21 @@ def _build_request_context(request: Request[Any, Any, Any]) -> RequestContext:
     return RequestContext(client_id=client_id, owner_id=owner_id, request=request)
 
 
-def _paginate_list(items: list[Any], params: dict[str, Any], page_size: int) -> tuple[list[Any], str | None]:
+_T = TypeVar("_T")
+
+
+def _paginate_list(items: list[_T], params: dict[str, Any], page_size: int) -> tuple[list[_T], str | None]:
     """Slice ``items`` by the opaque cursor in ``params`` and return ``(page, next_cursor)``.
 
     Cursors are base64-encoded offsets — the same scheme used by ``tasks/list``.
     A missing cursor starts at offset 0; an out-of-range cursor returns an empty
     page with no ``nextCursor`` (treating "past the end" as "end of pagination"
     rather than an error, matching the spec's permissive client model).
+
+    Assumes ``items`` is stable for the lifetime of a pagination round-trip — the
+    list/prompt/resource registries are built at startup and not mutated, so
+    offset cursors remain valid. ``page_size`` is server-controlled (see
+    ``MCPConfig.list_page_size``); clients cannot override it per request.
     """
     cursor = params.get("cursor")
     if cursor is not None and not isinstance(cursor, str):

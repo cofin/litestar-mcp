@@ -99,6 +99,17 @@ def test_tools_list_rejects_non_string_cursor() -> None:
         assert resp["error"]["code"] == -32602
 
 
+def test_tools_list_rejects_negative_offset_cursor() -> None:
+    import base64
+
+    app = _make_tools_app(count=3, page_size=2)
+    with TestClient(app=app) as client:
+        sid = _init_session(client)
+        negative = base64.urlsafe_b64encode(b"-1").decode("ascii")
+        resp = _rpc(client, "tools/list", {"cursor": negative}, headers={"Mcp-Session-Id": sid}).json()
+        assert resp["error"]["code"] == -32602
+
+
 def test_tools_list_cursor_past_end_returns_empty_page() -> None:
     import base64
 

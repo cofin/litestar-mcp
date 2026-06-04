@@ -113,8 +113,9 @@ class MCPConfig:
             experimental in-memory task implementation.
         list_page_size: Page size for ``tools/list``, ``resources/list``, and
             ``prompts/list``. The MCP spec lets servers choose the page size;
-            clients page through results via the opaque ``cursor`` /
-            ``nextCursor`` round-trip. Must be a positive integer.
+            clients cannot override it per request — they page through results
+            via the opaque ``cursor`` / ``nextCursor`` round-trip. Must be a
+            positive integer.
     """
 
     base_path: str = "/mcp"
