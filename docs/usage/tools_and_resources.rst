@@ -142,3 +142,32 @@ HTTP status table:
 - ``resources/read`` returns MCP's resource-not-found code ``-32002`` with
   ``data.uri`` for unknown resource URIs. Handler read failures return
   ``INTERNAL_ERROR`` (``-32603``) with structured details in ``data``.
+
+The JSON-RPC ``error.code`` reflects the **primitive-level error class**, never
+the handler's HTTP status. When a marked handler returns a 4xx/5xx response
+during execution, the code stays ``INTERNAL_ERROR`` (``-32603``) and the
+original status is preserved in ``data.statusCode`` so clients can recover the
+finer signal:
+
+.. code-block:: json
+
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "error": {
+        "code": -32603,
+        "message": "Resource read failed",
+        "data": {"statusCode": 503, "content": {"error": "upstream timeout"}}
+      }
+    }
+
+This is deliberate: MCP defines no JSON-RPC codes for statuses such as 401,
+403, 409, or 429, so the server does not invent any. Prompt and resource
+handlers follow the **same** contract — only the not-found code differs
+(``-32602`` for prompts, the spec-mandated ``-32002`` for resources).
+
+.. note::
+
+   The resource-not-found code ``-32002`` is mandated by the current MCP
+   specification. An upstream proposal (SEP-2164) would migrate it to
+   ``-32602``; this page will be updated if that lands.

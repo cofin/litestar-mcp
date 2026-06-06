@@ -90,3 +90,38 @@ def test_resource_read_failure_maps_to_internal_error_with_data() -> None:
         assert response["error"]["code"] == -32603
         assert response["error"]["message"] == "Resource read failed"
         assert response["error"]["data"] == {"statusCode": 503, "content": {"error": "failed read"}}
+
+
+# ---------------------------------------------------------------------------
+# Cross-primitive consistency (GH #48): a resource read handler returning ANY
+# HTTP status maps to the same -32603 + data.statusCode shape as a prompt
+# handler does (TestPromptHandlerErrorCodeMapping). The JSON-RPC ``code``
+# reflects the primitive-level error class, never the handler's HTTP status —
+# the status is preserved only in ``data.statusCode``.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("status_code", [400, 401, 403, 404, 409, 422, 429, 500, 503])
+def test_resource_read_error_maps_to_internal_error_for_all_statuses(status_code: int) -> None:
+    @get(f"/res-{status_code}", mcp_resource=f"res_{status_code}", sync_to_thread=False)
+    def resource_error() -> Response[dict[str, str]]:
+        return Response({"error": "boom"}, status_code=status_code)
+
+    app = Litestar(route_handlers=[resource_error], plugins=[LitestarMCP(MCPConfig())])
+    with TestClient(app=app) as client:
+        sid = _ensure_session(client)
+        response = _rpc(client, "resources/read", {"uri": f"litestar://res_{status_code}"}, sid=sid)
+        assert response["error"]["code"] == -32603, f"{status_code} must map to INTERNAL_ERROR"
+        assert response["error"]["data"] == {"statusCode": status_code, "content": {"error": "boom"}}
+
+
+def test_resource_not_found_keeps_spec_code_not_internal_error() -> None:
+    """The one intentional asymmetry: resource-not-found is -32002 (spec-mandated),
+    where prompt-not-found is -32602. This must not collapse to -32603.
+    """
+    app = Litestar(route_handlers=[], plugins=[LitestarMCP(MCPConfig())])
+    with TestClient(app=app) as client:
+        sid = _ensure_session(client)
+        response = _rpc(client, "resources/read", {"uri": "litestar://nope"}, sid=sid)
+        assert response["error"]["code"] == -32002
+        assert response["error"]["data"] == {"uri": "litestar://nope"}

@@ -1189,7 +1189,10 @@ class TestCaptureAsgiResponseStatusZero:
 
 
 # ---------------------------------------------------------------------------
-# I4 regression: 4xx → JSON-RPC code mapping is narrow (400/422 only)
+# Error contract (GH #48): prompt handler execution errors map to the
+# primitive-level code (-32603 INTERNAL_ERROR) regardless of the handler's
+# HTTP status — the status is preserved only in ``data.statusCode``. The same
+# contract is enforced for resources in test_mcp_error_mapping.py.
 # ---------------------------------------------------------------------------
 
 
