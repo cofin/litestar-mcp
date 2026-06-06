@@ -25,12 +25,12 @@ examples drawn from :mod:`docs.examples`.
         Expose handlers with ``mcp_tool`` / ``mcp_resource`` kwargs or the
         dedicated decorator.
 
-    .. grid-item-card:: Tools & Resources
+    .. grid-item-card:: Tools, Resources & Prompts
         :link: tools_and_resources
         :link-type: doc
 
-        How marked routes are registered, executed, and returned to MCP
-        clients.
+        How marked routes — tools, resources, and prompts — are registered,
+        executed, and returned to MCP clients.
 
     .. grid-item-card:: Discovery
         :link: discovery

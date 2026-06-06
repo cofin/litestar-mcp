@@ -58,6 +58,14 @@ and capabilities. A minimal response looks like:
       "resources": []
     }
 
+.. note::
+
+    The ``prompts`` capability (``{"listChanged": true}``) and the top-level
+    ``prompts`` array are advertised **only when at least one prompt is
+    registered**, both here and in the ``initialize`` response. Per the MCP
+    spec a server should not claim a capability for a primitive it does not
+    expose, so a server with no prompts omits the key entirely.
+
 Agent Metadata Card
 ===================
 

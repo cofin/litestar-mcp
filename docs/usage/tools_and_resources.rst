@@ -74,6 +74,49 @@ JSON-RPC method, and concrete URIs flow through ``resources/read``:
 completion by default for 0.5.0; a ``@mcp_resource_completion`` decorator
 is planned for a future release.
 
+Prompt Registration
+====================
+
+Prompts are reusable message templates a client can fetch and feed to a model.
+Tag a handler with ``mcp_prompt="<prompt_name>"`` (or register a standalone
+callable with :func:`~litestar_mcp.mcp_prompt`; see
+:ref:`usage/configuration:Standalone Prompts`). Marked prompts are published
+via ``prompts/list`` and rendered via ``prompts/get``.
+
+.. literalinclude:: /examples/task_manager/main.py
+    :language: python
+    :caption: ``docs/examples/task_manager/main.py`` — ``register_prompts``
+    :start-after: # start-example
+    :end-before: # end-example
+    :dedent:
+
+Prompt handlers run through the full Litestar pipeline (dependency injection,
+guards, exception handlers), so their return value must be JSON-serialisable.
+The value is normalised to a list of MCP ``PromptMessage`` objects:
+
+- a ``str`` becomes a single ``user``-role text message;
+- a ``dict`` shaped like a content block (``{"type": "text", "text": ...}``) or
+  a full message (``{"role": ..., "content": ...}``) is used as-is;
+- a ``list`` of those dicts is used directly.
+
+The recognised content variants are ``text``, ``image``, ``audio``,
+``resource_link``, and ``resource``. Declared signature parameters (minus
+dependency- and framework-injected ones) are advertised as prompt
+``arguments``; clients supply them in the ``prompts/get`` ``arguments`` object:
+
+.. code-block:: json
+
+    // Request
+    {"jsonrpc":"2.0","id":1,"method":"prompts/get",
+     "params":{"name":"summarize_tasks","arguments":{"focus":"open"}}}
+
+    // Response
+    {"jsonrpc":"2.0","id":1,"result":{"messages":[
+      {"role":"user","content":{"type":"text","text":"Summarize these tasks ..."}}]}}
+
+The ``prompts`` capability is advertised in ``initialize`` and the server
+manifest **only when at least one prompt is registered**.
+
 List Pagination
 ===============
 

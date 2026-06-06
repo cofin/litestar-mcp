@@ -60,6 +60,22 @@ long-running work and poll for completion.
     :end-before: # end-example
     :dedent:
 
+Standalone Prompts
+==================
+
+Prompts usually ride along on a marked route handler (see
+:doc:`marking_routes`), but a prompt that has no HTTP endpoint can be declared
+as a standalone callable with :func:`~litestar_mcp.mcp_prompt` and passed to
+``LitestarMCP(prompts=[...])``. These are registered immediately and exposed
+through ``prompts/list`` and ``prompts/get`` just like handler-bound prompts.
+
+.. literalinclude:: /examples/snippets/configuration_prompts.py
+    :language: python
+    :caption: ``docs/examples/snippets/configuration_prompts.py``
+    :start-after: # start-example
+    :end-before: # end-example
+    :dedent:
+
 Configuration Options
 =====================
 

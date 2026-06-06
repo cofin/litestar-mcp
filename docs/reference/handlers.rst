@@ -12,3 +12,16 @@ MCPController
 .. autoclass:: MCPController
    :members:
    :show-inheritance:
+
+Prompt Markers
+--------------
+
+.. currentmodule:: litestar_mcp
+
+.. autofunction:: mcp_prompt
+
+.. currentmodule:: litestar_mcp.registry
+
+.. autoclass:: PromptRegistration
+   :members:
+   :show-inheritance:

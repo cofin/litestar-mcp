@@ -131,6 +131,44 @@ def register_tools(store: "dict[int, Task]") -> "list[Any]":
     return [list_tasks, get_task, create_task, complete_task, delete_task]
 
 
+def register_prompts(store: "dict[int, Task]") -> "list[Any]":
+    """Return MCP prompt handlers bound to ``store``.
+
+    Prompt handlers are ordinary Litestar routes marked with ``mcp_prompt``.
+    Their return value is normalised to MCP ``PromptMessage`` content (a plain
+    ``str`` becomes a single user-role text message), and their declared
+    signature parameters are advertised as prompt arguments.
+    """
+
+    # start-example
+    @get(
+        "/prompts/summarize",
+        mcp_prompt="summarize_tasks",
+        mcp_prompt_description="Draft a review prompt summarizing the current tasks.",
+    )
+    async def summarize_tasks(focus: str = "all") -> dict[str, Any]:
+        """Build a prompt asking the model to summarize tasks.
+
+        Returns a single MCP ``PromptMessage``; handlers run through the normal
+        Litestar pipeline, so the value must be JSON-serialisable.
+
+        Args:
+            focus: Which tasks to highlight - ``all``, ``open``, or ``done``.
+        """
+        if focus == "open":
+            selected = [task for task in store.values() if not task.completed]
+        elif focus == "done":
+            selected = [task for task in store.values() if task.completed]
+        else:
+            selected = list(store.values())
+        lines = "\n".join(f"- {task.title}: {'done' if task.completed else 'open'}" for task in selected)
+        text = f"Summarize these tasks (focus: {focus}) and suggest next steps:\n{lines}"
+        return {"role": "user", "content": {"type": "text", "text": text}}
+
+    # end-example
+    return [summarize_tasks]
+
+
 @get("/")
 async def root() -> dict[str, str]:
     """Root endpoint - not exposed to MCP."""
@@ -153,6 +191,7 @@ def build_app(tasks: "dict[int, Task] | None" = None) -> Litestar:
 
     resource_handlers = register_resources(store)
     tool_handlers = register_tools(store)
+    prompt_handlers = register_prompts(store)
 
     # start-example
     mcp_config = MCPConfig(
@@ -164,6 +203,7 @@ def build_app(tasks: "dict[int, Task] | None" = None) -> Litestar:
         route_handlers=[
             *resource_handlers,
             *tool_handlers,
+            *prompt_handlers,
             root,
             health_check,
         ],

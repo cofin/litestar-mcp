@@ -34,6 +34,45 @@ expose it via ``resources/list`` and ``resources/read``.
     :end-before: # end-example
     :dedent:
 
+Prompt Marker
+=============
+
+Prompts are reusable message templates. Tag a handler with
+``mcp_prompt="<prompt_name>"`` to publish it via ``prompts/list`` and
+``prompts/get``. The return value is normalised to MCP ``PromptMessage``
+content, and declared signature parameters become prompt ``arguments``.
+
+.. literalinclude:: /examples/snippets/marking_prompts.py
+    :language: python
+    :caption: ``docs/examples/snippets/marking_prompts.py``
+    :start-after: # start-example
+    :end-before: # end-example
+    :dedent:
+
+Four optional ``opt`` kwargs refine a marked prompt (each overrides the value
+otherwise derived from the handler):
+
+.. list-table::
+    :widths: 30 70
+    :header-rows: 1
+
+    * - Kwarg
+      - Effect
+    * - ``mcp_prompt``
+      - Required. The prompt name exposed to clients.
+    * - ``mcp_prompt_title``
+      - Human-readable display title.
+    * - ``mcp_prompt_description``
+      - Description shown in ``prompts/list``.
+    * - ``mcp_prompt_arguments``
+      - Explicit argument list, overriding signature introspection.
+    * - ``mcp_prompt_icons``
+      - Icon metadata for clients that render prompt pickers.
+
+Standalone callables that are not route handlers can instead be decorated with
+:func:`~litestar_mcp.mcp_prompt` and passed to ``LitestarMCP(prompts=[...])`` —
+see :ref:`usage/configuration:Standalone Prompts`.
+
 Dependency Injection
 ====================
 

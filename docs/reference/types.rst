@@ -20,6 +20,17 @@ MCPTaskConfig
    :members:
    :show-inheritance:
 
+MCPOptKeys
+----------
+
+The ``opt``-key names the plugin reads from each handler, including the
+``mcp_prompt`` / ``mcp_prompt_title`` / ``mcp_prompt_description`` /
+``mcp_prompt_arguments`` / ``mcp_prompt_icons`` prompt markers.
+
+.. autoclass:: MCPOptKeys
+   :members:
+   :show-inheritance:
+
 .. currentmodule:: litestar_mcp.auth
 
 MCPAuthConfig
