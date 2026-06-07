@@ -1,7 +1,10 @@
 """Structural test for the usage-guide-rewrite restructure.
 
-Guards the six focused ``docs/usage/`` pages that replace the original
+Guards the focused ``docs/usage/`` pages that replace the original
 flat structure (`configuration.rst`, `marking-routes.rst`, `examples.rst`).
+
+The MCP usage primitives (tools, resources, prompts) are documented on
+separate pages to mirror the MCP specification.
 
 If any of these pages disappear, the literalinclude-backed docs grid will
 regress.
@@ -18,7 +21,9 @@ USAGE_DIR = Path(__file__).resolve().parents[2] / "docs" / "usage"
 EXPECTED_PAGES = (
     "configuration.rst",
     "marking_routes.rst",
-    "tools_and_resources.rst",
+    "tools.rst",
+    "resources.rst",
+    "prompts.rst",
     "discovery.rst",
     "auth.rst",
     "framework_integration.rst",

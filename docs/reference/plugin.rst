@@ -14,8 +14,11 @@ LitestarMCP
    :show-inheritance:
 
    The main plugin class that implements :class:`litestar.plugins.InitPluginProtocol`.
-   It discovers routes marked with ``mcp_tool`` or ``mcp_resource`` in their ``opt``
-   dictionary and exposes them through the MCP Streamable HTTP transport surface.
+   It discovers routes marked with ``mcp_tool``, ``mcp_resource``, or
+   ``mcp_prompt`` in their ``opt`` dictionary and exposes them through the
+   MCP Streamable HTTP transport surface. Standalone prompt callables
+   decorated with :func:`~litestar_mcp.mcp_prompt` can be passed via the
+   ``prompts`` constructor argument.
 
 .. currentmodule:: litestar_mcp.registry
 

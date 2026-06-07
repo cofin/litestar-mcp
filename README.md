@@ -1,6 +1,6 @@
 # Litestar MCP Plugin
 
-A lightweight plugin that integrates Litestar web applications with the Model Context Protocol (MCP) by exposing marked routes as MCP tools and resources over MCP Streamable HTTP and JSON-RPC.
+A lightweight plugin that integrates Litestar web applications with the Model Context Protocol (MCP) by exposing marked routes as MCP tools, resources, and prompts over MCP Streamable HTTP and JSON-RPC.
 
 [![PyPI - Version](https://img.shields.io/pypi/v/litestar-mcp)](https://pypi.org/project/litestar-mcp/)
 [![Python Version](https://img.shields.io/pypi/pyversions/litestar-mcp)](https://pypi.org/project/litestar-mcp/)
@@ -8,12 +8,13 @@ A lightweight plugin that integrates Litestar web applications with the Model Co
 
 ## Overview
 
-This plugin automatically discovers Litestar routes marked for MCP and exposes them through an MCP-native transport surface. Pass `mcp_tool="name"` or `mcp_resource="name"` straight through to `@get` / `@post` / etc. — Litestar funnels unknown kwargs into `handler.opt`, so no second decorator or `opt={...}` wrapper is needed.
+This plugin automatically discovers Litestar routes marked for MCP and exposes them through an MCP-native transport surface. Pass `mcp_tool="name"`, `mcp_resource="name"`, or `mcp_prompt="name"` straight through to `@get` / `@post` / etc. — Litestar funnels unknown kwargs into `handler.opt`, so no second decorator or `opt={...}` wrapper is needed. Standalone prompt callables that are not bound to an HTTP route can be registered through `LitestarMCP(prompts=[...])`.
 
 ## Features
 
 - **Protocol-Native Transport** — MCP Streamable HTTP with JSON-RPC requests and SSE streams.
-- **Simple Route Marking** — pass `mcp_tool` / `mcp_resource` kwargs straight through to Litestar's route decorators.
+- **Three MCP Primitives** — tools, resources, *and* prompts, with `prompts/list` and `prompts/get` driven by the same handler discovery as the rest of the surface.
+- **Simple Route Marking** — pass `mcp_tool` / `mcp_resource` / `mcp_prompt` kwargs straight through to Litestar's route decorators, or register standalone prompts via `LitestarMCP(prompts=[...])`.
 - **RFC 6570 URI Templates** — `mcp_resource_template="app://…/{var}"` dispatches concrete URIs to handlers with extracted vars.
 - **First-Class Descriptions** — structured `mcp_description`, `mcp_agent_instructions`, `mcp_when_to_use`, `mcp_returns` kwargs.
 - **Type Safe** — full type hints with dataclasses; `msgspec`-powered tool-argument validation.

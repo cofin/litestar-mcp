@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `@mcp_prompt(...)` decorator) and standalone prompt callables passed
   via `LitestarMCP(prompts=[...])` are exposed through the `prompts/list`
   and `prompts/get` JSON-RPC methods. Arguments are introspected from the
-  handler `signature_model` / function signature (DI- and
+  handler's parsed Litestar signature / function signature (DI- and
   framework-injected parameters filtered out) or declared explicitly, and
   the server advertises the `prompts` capability only when at least one
   prompt is registered. Prompt return values are normalised to MCP
@@ -85,6 +85,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `"Runtime representation of an annotated type..."` docstring into
   every annotated parameter. Closes
   [#52](https://github.com/cofin/litestar-mcp/issues/52).
+- `tools/list`, `resources/list`, `resources/templates/list`, and
+  `prompts/list` now support MCP cursor pagination with opaque
+  `cursor` / `nextCursor` tokens and `INVALID_PARAMS` (`-32602`) for
+  invalid cursors. Closes
+  [#47](https://github.com/cofin/litestar-mcp/issues/47).
+- Prompt and resource JSON-RPC errors now map by MCP primitive instead of a
+  generic HTTP-status table. Tool execution failures continue to return
+  `isError: true`; prompt handler execution failures return
+  `INTERNAL_ERROR` (`-32603`) with structured `data`; resource misses return
+  MCP's resource-not-found code (`-32002`) with `data.uri`. Closes
+  [#48](https://github.com/cofin/litestar-mcp/issues/48).
+- Handler argument advertisement and tool prevalidation now share
+  `parsed_fn_signature`-based introspection with Litestar reserved kwargs,
+  DI dependencies, query aliases, and docstring descriptions handled in one
+  helper. Executor dispatch still uses Litestar's native
+  `signature_model.parse_values_from_connection_kwargs()` path. Closes
+  [#49](https://github.com/cofin/litestar-mcp/issues/49).
 
 ## [0.5.0] — 2026-04-19
 

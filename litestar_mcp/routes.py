@@ -7,7 +7,7 @@ import inspect
 import logging
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar
 
 from litestar import Controller, Litestar, MediaType, Request, Response, delete, get, post
 from litestar.di import NamedDependency
@@ -25,7 +25,13 @@ from litestar.status_codes import (
     HTTP_503_SERVICE_UNAVAILABLE,
 )
 
+from litestar_mcp._cursor import decode_cursor, encode_cursor
 from litestar_mcp.config import MCPConfig
+from litestar_mcp.error_mapping import (
+    mcp_error_for_prompt_execution,
+    mcp_error_for_resource_not_found,
+    mcp_error_for_resource_read,
+)
 from litestar_mcp.executor import MCPToolErrorResult, execute_handler, execute_tool
 from litestar_mcp.jsonrpc import (
     INTERNAL_ERROR,
@@ -40,7 +46,6 @@ from litestar_mcp.jsonrpc import (
     parse_request,
 )
 from litestar_mcp.registry import (
-    _VALIDATION_CONTEXT_PARAMS,
     PromptRegistration,
     Registry,
     _normalize_prompt_result,
@@ -59,6 +64,7 @@ from litestar_mcp.utils import (
     render_description,
     should_include_handler,
 )
+from litestar_mcp.utils.handler_signature import get_advertised_handler_parameters
 
 _logger = logging.getLogger(__name__)
 
@@ -146,6 +152,36 @@ def _build_request_context(request: Request[Any, Any, Any]) -> RequestContext:
     sub = _request_subject(request)
     owner_id = f"user:{sub}" if sub is not None else f"client:{client_id}"
     return RequestContext(client_id=client_id, owner_id=owner_id, request=request)
+
+
+_T = TypeVar("_T")
+
+
+def _paginate_list(items: list[_T], params: dict[str, Any], page_size: int) -> tuple[list[_T], str | None]:
+    """Slice ``items`` by the opaque cursor in ``params`` and return ``(page, next_cursor)``.
+
+    Cursors are base64-encoded offsets — the same scheme used by ``tasks/list``.
+    A missing cursor starts at offset 0; an out-of-range cursor returns an empty
+    page with no ``nextCursor`` (treating "past the end" as "end of pagination"
+    rather than an error, matching the spec's permissive client model).
+
+    Assumes ``items`` is stable for the lifetime of a pagination round-trip — the
+    tool/resource/template/prompt registries are built at startup and not
+    mutated, so offset cursors remain valid. ``page_size`` is server-controlled
+    (see ``MCPConfig.list_page_size``); clients cannot override it per request.
+    """
+    cursor = params.get("cursor")
+    if cursor is not None and not isinstance(cursor, str):
+        raise JSONRPCErrorException(
+            JSONRPCError(code=INVALID_PARAMS, message="The 'cursor' parameter must be a string")
+        )
+    try:
+        offset = decode_cursor(cursor) if cursor else 0
+    except ValueError as exc:
+        raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
+    page = items[offset : offset + page_size]
+    next_cursor = encode_cursor(offset + page_size) if offset + page_size < len(items) else None
+    return page, next_cursor
 
 
 def _serialize_tool_content(value: Any) -> str:
@@ -238,34 +274,29 @@ def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: dict[str, A
     if aliases:
         tool_args = {aliases.get(k, k): v for k, v in tool_args.items()}
 
-    signature_model = getattr(handler, "signature_model", None)
-    if signature_model is None:
-        return []
-
     try:
-        fields = msgspec.structs.fields(signature_model)
-    except TypeError:
+        declared_by_name = dict(handler.parsed_fn_signature.parameters)
+    except Exception:  # noqa: BLE001
         return []
 
-    di_params: set[str] = set()
-    with contextlib.suppress(AttributeError, TypeError):
-        di_params = set(handler.resolve_dependencies().keys())
-
-    declared_by_name = {field.name: field for field in fields}
+    advertised_params = get_advertised_handler_parameters(handler)
+    advertised_by_name = {param.python_name: param for param in advertised_params}
     annotated_types = _resolve_annotated_types(handler)
     errors: list[dict[str, str]] = []
 
     data_field = declared_by_name.get("data")
     data_type = annotated_types.get("data") if data_field is not None else None
-    recognized_scalar_names = {
-        name for name in declared_by_name if name not in di_params and name not in _VALIDATION_CONTEXT_PARAMS
-    }
+    recognized_scalar_names = set(advertised_by_name)
 
     # When the handler has a ``data`` param, tool_args keys that aren't
     # recognized scalar fields are treated as members of the data struct.
     # Validate them by building a mapping and converting it to the struct.
     if data_type is not None:
-        data_payload = {k: v for k, v in tool_args.items() if k not in recognized_scalar_names}
+        data_payload = (
+            tool_args["data"]
+            if "data" in tool_args
+            else {k: v for k, v in tool_args.items() if k not in recognized_scalar_names}
+        )
         if data_payload:
             try:
                 msgspec.convert(data_payload, data_type, strict=False)
@@ -275,21 +306,15 @@ def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: dict[str, A
             except TypeError:
                 pass
 
-    for field in fields:
-        if field.name in di_params or field.name in _VALIDATION_CONTEXT_PARAMS:
+    for name, parameter in advertised_by_name.items():
+        if name in tool_args:
             continue
-        if field.name == "data":
-            # Presence of ``data`` is implied by any matching struct field
-            # in tool_args; we don't require callers to pass ``data`` as a
-            # literal key.
-            continue
-        if field.name in tool_args:
-            continue
-        if field.default is msgspec.NODEFAULT and field.default_factory is msgspec.NODEFAULT:
-            wire_name = python_to_wire.get(field.name, field.name)
-            errors.append({"path": _to_pointer(wire_name, ""), "message": "Missing required argument"})
+        if parameter.required:
+            errors.append({"path": _to_pointer(parameter.wire_name, ""), "message": "Missing required argument"})
 
     for name, value in tool_args.items():
+        if name == "data" and data_type is not None:
+            continue
         if name not in recognized_scalar_names:
             if data_type is not None:
                 # Unknown-to-scalars: assumed to belong to the ``data`` struct
@@ -300,12 +325,12 @@ def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: dict[str, A
             errors.append({"path": "/arguments", "message": f"Unexpected argument: {display_name}"})
             continue
         declared = declared_by_name[name]
-        convert_type = annotated_types.get(name, declared.type)
+        convert_type = annotated_types.get(name, getattr(declared, "annotation", Any))
         try:
             msgspec.convert(value, convert_type, strict=False)
         except msgspec.ValidationError as exc:
             reason, path = _split_msgspec_error(exc)
-            wire_name = python_to_wire.get(name, name)
+            wire_name = advertised_by_name[name].wire_name
             errors.append({"path": _to_pointer(wire_name, path), "message": reason})
         except TypeError:
             continue
@@ -416,7 +441,7 @@ def build_jsonrpc_router(
 
     router.register("ping", handle_ping)
 
-    async def handle_tools_list(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
+    async def handle_tools_list(params: dict[str, Any]) -> dict[str, Any]:
         tools = []
         for name, handler in discovered_tools.items():
             handler_tags = set(getattr(handler, "tags", None) or [])
@@ -444,7 +469,14 @@ def build_jsonrpc_router(
             if task_config is not None and metadata.get("task_support") is not None:
                 tool_entry["execution"] = {"taskSupport": metadata["task_support"]}
             tools.append(tool_entry)
-        return {"tools": tools}
+        try:
+            page, next_cursor = _paginate_list(tools, params, config.list_page_size)
+        except ValueError as exc:
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
+        result: dict[str, Any] = {"tools": page}
+        if next_cursor is not None:
+            result["nextCursor"] = next_cursor
+        return result
 
     router.register("tools/list", handle_tools_list)
 
@@ -493,7 +525,7 @@ def build_jsonrpc_router(
 
     router.register("tools/call", handle_tools_call)
 
-    async def handle_resources_list(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
+    async def handle_resources_list(params: dict[str, Any]) -> dict[str, Any]:
         resources = [
             {
                 "uri": "litestar://openapi",
@@ -518,11 +550,18 @@ def build_jsonrpc_router(
                     "mimeType": "application/json",
                 }
             )
-        return {"resources": resources}
+        try:
+            page, next_cursor = _paginate_list(resources, params, config.list_page_size)
+        except ValueError as exc:
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
+        result: dict[str, Any] = {"resources": page}
+        if next_cursor is not None:
+            result["nextCursor"] = next_cursor
+        return result
 
     router.register("resources/list", handle_resources_list)
 
-    async def handle_resources_templates_list(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
+    async def handle_resources_templates_list(params: dict[str, Any]) -> dict[str, Any]:
         if registry is None:
             return {"resourceTemplates": []}
         templates = []
@@ -541,7 +580,14 @@ def build_jsonrpc_router(
                     "mimeType": "application/json",
                 }
             )
-        return {"resourceTemplates": templates}
+        try:
+            page, next_cursor = _paginate_list(templates, params, config.list_page_size)
+        except ValueError as exc:
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
+        result: dict[str, Any] = {"resourceTemplates": page}
+        if next_cursor is not None:
+            result["nextCursor"] = next_cursor
+        return result
 
     router.register("resources/templates/list", handle_resources_templates_list)
 
@@ -565,9 +611,7 @@ def build_jsonrpc_router(
 
             handler = discovered_resources.get(resource_name)
             if handler is None:
-                raise JSONRPCErrorException(
-                    JSONRPCError(code=INVALID_PARAMS, message=f"Resource not found: {resource_name}")
-                )
+                raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
 
             try:
                 result = await execute_tool(
@@ -577,13 +621,9 @@ def build_jsonrpc_router(
                     request=request_context.request,
                 )
             except MCPToolErrorResult as err:
-                raise JSONRPCErrorException(
-                    JSONRPCError(code=INTERNAL_ERROR, message=f"Resource read failed: {err.content!s}")
-                ) from err
+                raise JSONRPCErrorException(mcp_error_for_resource_read(err)) from err
             except Exception as exc:
-                raise JSONRPCErrorException(
-                    JSONRPCError(code=INTERNAL_ERROR, message=f"Resource read failed: {exc!s}")
-                ) from exc
+                raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
 
             return {
                 "contents": [
@@ -610,13 +650,9 @@ def build_jsonrpc_router(
                     request=request_context.request,
                 )
             except MCPToolErrorResult as err:
-                raise JSONRPCErrorException(
-                    JSONRPCError(code=INTERNAL_ERROR, message=f"Resource read failed: {err.content!s}")
-                ) from err
+                raise JSONRPCErrorException(mcp_error_for_resource_read(err)) from err
             except Exception as exc:
-                raise JSONRPCErrorException(
-                    JSONRPCError(code=INTERNAL_ERROR, message=f"Resource read failed: {exc!s}")
-                ) from exc
+                raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
 
             return {
                 "contents": [
@@ -628,7 +664,7 @@ def build_jsonrpc_router(
                 ]
             }
 
-        raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=f"Resource not found: {uri}"))
+        raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
 
     router.register("resources/read", handle_resources_read)
 
@@ -640,13 +676,20 @@ def build_jsonrpc_router(
 
     router.register("completion/complete", handle_completion_complete)
 
-    async def handle_prompts_list(params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
+    async def handle_prompts_list(params: dict[str, Any]) -> dict[str, Any]:
         prompts = [
             render_prompt_entry(registration, config)
             for registration in discovered_prompts.values()
             if should_include_prompt(registration, config)
         ]
-        return {"prompts": prompts}
+        try:
+            page, next_cursor = _paginate_list(prompts, params, config.list_page_size)
+        except ValueError as exc:
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
+        result: dict[str, Any] = {"prompts": page}
+        if next_cursor is not None:
+            result["nextCursor"] = next_cursor
+        return result
 
     router.register("prompts/list", handle_prompts_list)
 
@@ -716,22 +759,8 @@ def build_jsonrpc_router(
                     registration.handler, app_ref, prompt_args, request=request_context.request
                 )
             except MCPToolErrorResult as err:
-                # Per JSON-RPC 2.0 INVALID_PARAMS (-32602) means specifically
-                # "invalid method parameter(s)". Reserve it for validation-shaped
-                # 4xx (400 Bad Request, 422 Unprocessable Entity); other 4xx
-                # (401/403/404/409/...) are not param-validation failures and
-                # collapse to INTERNAL_ERROR until a dedicated MCP error
-                # taxonomy is added (see issue tracker).
-                code = INVALID_PARAMS if err.status_code in {400, 422} else INTERNAL_ERROR
                 _logger.warning("Prompt handler returned error result: %s (status=%d)", prompt_name, err.status_code)
-                raise JSONRPCErrorException(
-                    # Per JSON-RPC 2.0 §5.1, the ``data`` member carries
-                    # structured error context — preserve the handler's
-                    # rendered payload so clients can pull field paths /
-                    # error lists out programmatically instead of parsing
-                    # a stringified dict from ``message``.
-                    JSONRPCError(code=code, message="Prompt execution failed", data=err.content)
-                ) from err
+                raise JSONRPCErrorException(mcp_error_for_prompt_execution(err)) from err
             except JSONRPCErrorException:
                 raise
             except Exception as exc:

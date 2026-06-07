@@ -20,6 +20,19 @@ MCPTaskConfig
    :members:
    :show-inheritance:
 
+.. currentmodule:: litestar_mcp.registry
+
+PromptRegistration
+------------------
+
+See also :class:`~litestar_mcp.config.MCPOptKeys` (documented under
+:doc:`config`) for the opt-key field names that drive handler-based
+prompt discovery.
+
+.. autoclass:: PromptRegistration
+   :members:
+   :show-inheritance:
+
 .. currentmodule:: litestar_mcp.auth
 
 MCPAuthConfig
