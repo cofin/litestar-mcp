@@ -7,7 +7,7 @@ import inspect
 import logging
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar
 
 from litestar import Controller, Litestar, MediaType, Request, Response, delete, get, post
 from litestar.di import NamedDependency
@@ -25,6 +25,7 @@ from litestar.status_codes import (
     HTTP_503_SERVICE_UNAVAILABLE,
 )
 
+from litestar_mcp._cursor import decode_cursor, encode_cursor
 from litestar_mcp.config import MCPConfig
 from litestar_mcp.error_mapping import (
     mcp_error_for_prompt_execution,
@@ -64,7 +65,6 @@ from litestar_mcp.utils import (
     should_include_handler,
 )
 from litestar_mcp.utils.handler_signature import get_advertised_handler_parameters
-from litestar_mcp.utils.pagination import paginate_items
 
 _logger = logging.getLogger(__name__)
 
@@ -152,6 +152,36 @@ def _build_request_context(request: Request[Any, Any, Any]) -> RequestContext:
     sub = _request_subject(request)
     owner_id = f"user:{sub}" if sub is not None else f"client:{client_id}"
     return RequestContext(client_id=client_id, owner_id=owner_id, request=request)
+
+
+_T = TypeVar("_T")
+
+
+def _paginate_list(items: list[_T], params: dict[str, Any], page_size: int) -> tuple[list[_T], str | None]:
+    """Slice ``items`` by the opaque cursor in ``params`` and return ``(page, next_cursor)``.
+
+    Cursors are base64-encoded offsets — the same scheme used by ``tasks/list``.
+    A missing cursor starts at offset 0; an out-of-range cursor returns an empty
+    page with no ``nextCursor`` (treating "past the end" as "end of pagination"
+    rather than an error, matching the spec's permissive client model).
+
+    Assumes ``items`` is stable for the lifetime of a pagination round-trip — the
+    tool/resource/template/prompt registries are built at startup and not
+    mutated, so offset cursors remain valid. ``page_size`` is server-controlled
+    (see ``MCPConfig.list_page_size``); clients cannot override it per request.
+    """
+    cursor = params.get("cursor")
+    if cursor is not None and not isinstance(cursor, str):
+        raise JSONRPCErrorException(
+            JSONRPCError(code=INVALID_PARAMS, message="The 'cursor' parameter must be a string")
+        )
+    try:
+        offset = decode_cursor(cursor) if cursor else 0
+    except ValueError as exc:
+        raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
+    page = items[offset : offset + page_size]
+    next_cursor = encode_cursor(offset + page_size) if offset + page_size < len(items) else None
+    return page, next_cursor
 
 
 def _serialize_tool_content(value: Any) -> str:
@@ -440,7 +470,7 @@ def build_jsonrpc_router(
                 tool_entry["execution"] = {"taskSupport": metadata["task_support"]}
             tools.append(tool_entry)
         try:
-            page, next_cursor = paginate_items(tools, params.get("cursor"))
+            page, next_cursor = _paginate_list(tools, params, config.list_page_size)
         except ValueError as exc:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
         result: dict[str, Any] = {"tools": page}
@@ -521,7 +551,7 @@ def build_jsonrpc_router(
                 }
             )
         try:
-            page, next_cursor = paginate_items(resources, params.get("cursor"))
+            page, next_cursor = _paginate_list(resources, params, config.list_page_size)
         except ValueError as exc:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
         result: dict[str, Any] = {"resources": page}
@@ -551,7 +581,7 @@ def build_jsonrpc_router(
                 }
             )
         try:
-            page, next_cursor = paginate_items(templates, params.get("cursor"))
+            page, next_cursor = _paginate_list(templates, params, config.list_page_size)
         except ValueError as exc:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
         result: dict[str, Any] = {"resourceTemplates": page}
@@ -653,7 +683,7 @@ def build_jsonrpc_router(
             if should_include_prompt(registration, config)
         ]
         try:
-            page, next_cursor = paginate_items(prompts, params.get("cursor"))
+            page, next_cursor = _paginate_list(prompts, params, config.list_page_size)
         except ValueError as exc:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
         result: dict[str, Any] = {"prompts": page}

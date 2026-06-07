@@ -1,13 +1,12 @@
 """Experimental MCP task support."""
 
 import asyncio
-import base64
-import binascii
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from litestar_mcp._cursor import decode_cursor, encode_cursor
 from litestar_mcp.jsonrpc import INTERNAL_ERROR, JSONRPCError
 
 if TYPE_CHECKING:
@@ -127,13 +126,13 @@ class InMemoryTaskStore:
     ) -> tuple[list[TaskRecord], str | None]:
         async with self._lock:
             self._purge_expired_locked()
-            offset = _decode_cursor(cursor) if cursor is not None else 0
+            offset = decode_cursor(cursor) if cursor is not None else 0
             owned_tasks = [self._clone_record(task) for task in self._tasks.values() if task.owner_id == owner_id]
             owned_tasks.sort(key=lambda item: item.created_at)
             page = owned_tasks[offset : offset + limit]
             next_cursor = None
             if offset + limit < len(owned_tasks):
-                next_cursor = _encode_cursor(offset + limit)
+                next_cursor = encode_cursor(offset + limit)
             return page, next_cursor
 
     async def wait_for_terminal(self, task_id: str, owner_id: str) -> TaskRecord:
@@ -268,16 +267,3 @@ def _utc_now() -> datetime:
 
 def _format_datetime(value: datetime) -> str:
     return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def _encode_cursor(offset: int) -> str:
-    return base64.urlsafe_b64encode(str(offset).encode("utf-8")).decode("ascii")
-
-
-def _decode_cursor(cursor: str) -> int:
-    try:
-        raw = base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
-        return int(raw)
-    except (ValueError, binascii.Error) as exc:
-        msg = "Invalid cursor"
-        raise ValueError(msg) from exc

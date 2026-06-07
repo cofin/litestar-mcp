@@ -1,4 +1,4 @@
-"""Pagination coverage for MCP list methods."""
+"""Cursor pagination for ``tools/list``, ``resources/list``, ``prompts/list``."""
 
 from typing import Any
 
@@ -6,174 +6,217 @@ import pytest
 from litestar import Litestar, get
 from litestar.testing import TestClient
 
-from litestar_mcp import LitestarMCP, MCPConfig, mcp_prompt
-
-pytestmark = pytest.mark.unit
-
-
-def _ensure_session(client: TestClient[Any]) -> str:
-    init = client.post(
-        "/mcp",
-        json={
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
-        },
-    )
-    sid = init.headers.get("mcp-session-id", "")
-    client.post(
-        "/mcp",
-        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        headers={"Mcp-Session-Id": sid},
-    )
-    return str(sid)
+from litestar_mcp import LitestarMCP, mcp_prompt
+from litestar_mcp.config import MCPConfig
 
 
 def _rpc(
     client: TestClient[Any],
     method: str,
-    params: dict[str, Any] | None = None,
-    *,
-    sid: str,
-) -> dict[str, Any]:
-    response = client.post(
+    params: "dict[str, Any] | None" = None,
+    headers: "dict[str, str] | None" = None,
+) -> Any:
+    body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
+    if params is not None:
+        body["params"] = params
+    return client.post("/mcp", json=body, headers=headers or {})
+
+
+def _init_session(client: TestClient[Any]) -> str:
+    init = _rpc(
+        client,
+        "initialize",
+        {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "x"}},
+    )
+    sid: str = init.headers["mcp-session-id"]
+    client.post(
         "/mcp",
-        json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}},
+        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
         headers={"Mcp-Session-Id": sid},
     )
-    data: dict[str, Any] = response.json()
-    return data
+    return sid
 
 
-def _make_tool(index: int) -> Any:
-    @get(f"/tools/{index}", mcp_tool=f"tool_{index:03}", sync_to_thread=False)
-    def handler() -> dict[str, int]:
-        return {"index": index}
+def _make_tools_app(count: int, page_size: int) -> Litestar:
+    handlers = []
+    for i in range(count):
 
-    return handler
+        @get(f"/t{i}", name=f"t{i}", opt={"mcp_tool": f"tool_{i:03d}"}, sync_to_thread=False)
+        def _h() -> dict[str, int]:
+            return {"i": 0}
 
-
-def _make_resource(index: int) -> Any:
-    @get(f"/resources/{index}", mcp_resource=f"resource_{index:03}", sync_to_thread=False)
-    def handler() -> dict[str, int]:
-        return {"index": index}
-
-    return handler
+        handlers.append(_h)
+    return Litestar(route_handlers=handlers, plugins=[LitestarMCP(config=MCPConfig(list_page_size=page_size))])
 
 
-def _make_template(index: int) -> Any:
-    @get(
-        f"/templates/{index}/{{item_id:str}}",
-        mcp_resource=f"template_{index:03}",
-        mcp_resource_template=f"app://templates/{index}/{{item_id}}",
-        sync_to_thread=False,
-    )
-    def handler(item_id: str) -> dict[str, str]:
-        return {"item_id": item_id}
-
-    return handler
-
-
-def _make_prompt(index: int) -> Any:
-    def prompt() -> str:
-        return str(index)
-
-    prompt.__name__ = f"prompt_{index:03}"
-    prompt.__qualname__ = f"prompt_{index:03}"
-    return mcp_prompt(name=f"prompt_{index:03}")(prompt)
-
-
-def test_tools_list_paginates_with_opaque_cursor() -> None:
-    app = Litestar(route_handlers=[_make_tool(i) for i in range(105)], plugins=[LitestarMCP(MCPConfig())])
+def test_tools_list_paginates_with_next_cursor() -> None:
+    app = _make_tools_app(count=5, page_size=2)
     with TestClient(app=app) as client:
-        sid = _ensure_session(client)
-        first = _rpc(client, "tools/list", sid=sid)
-        tools = first["result"]["tools"]
-        assert [tool["name"] for tool in tools[:3]] == ["tool_000", "tool_001", "tool_002"]
-        assert len(tools) == 100
-        assert "nextCursor" in first["result"]
+        sid = _init_session(client)
+        headers = {"Mcp-Session-Id": sid}
 
-        second = _rpc(client, "tools/list", {"cursor": first["result"]["nextCursor"]}, sid=sid)
-        assert [tool["name"] for tool in second["result"]["tools"]] == [
-            "tool_100",
-            "tool_101",
-            "tool_102",
-            "tool_103",
-            "tool_104",
-        ]
-        assert "nextCursor" not in second["result"]
+        # Page 1
+        r1 = _rpc(client, "tools/list", {}, headers=headers).json()["result"]
+        assert len(r1["tools"]) == 2
+        assert "nextCursor" in r1
+
+        # Page 2
+        r2 = _rpc(client, "tools/list", {"cursor": r1["nextCursor"]}, headers=headers).json()["result"]
+        assert len(r2["tools"]) == 2
+        assert "nextCursor" in r2
+
+        # Page 3 — final page, no nextCursor
+        r3 = _rpc(client, "tools/list", {"cursor": r2["nextCursor"]}, headers=headers).json()["result"]
+        assert len(r3["tools"]) == 1
+        assert "nextCursor" not in r3
+
+        all_names = [t["name"] for t in r1["tools"] + r2["tools"] + r3["tools"]]
+        assert all_names == [f"tool_{i:03d}" for i in range(5)]
 
 
-def test_resources_list_paginates_and_keeps_openapi_first() -> None:
-    app = Litestar(route_handlers=[_make_resource(i) for i in range(105)], plugins=[LitestarMCP(MCPConfig())])
+def test_tools_list_single_page_omits_next_cursor() -> None:
+    app = _make_tools_app(count=2, page_size=100)
     with TestClient(app=app) as client:
-        sid = _ensure_session(client)
-        first = _rpc(client, "resources/list", sid=sid)
-        resources = first["result"]["resources"]
-        assert resources[0]["uri"] == "litestar://openapi"
-        assert resources[1]["name"] == "resource_000"
-        assert len(resources) == 100
+        sid = _init_session(client)
+        result = _rpc(client, "tools/list", {}, headers={"Mcp-Session-Id": sid}).json()["result"]
+        assert len(result["tools"]) == 2
+        assert "nextCursor" not in result
 
-        second = _rpc(client, "resources/list", {"cursor": first["result"]["nextCursor"]}, sid=sid)
-        assert [resource["name"] for resource in second["result"]["resources"]] == [
-            "resource_099",
-            "resource_100",
-            "resource_101",
-            "resource_102",
-            "resource_103",
-            "resource_104",
-        ]
-        assert "nextCursor" not in second["result"]
+
+def test_tools_list_rejects_invalid_cursor() -> None:
+    app = _make_tools_app(count=3, page_size=2)
+    with TestClient(app=app) as client:
+        sid = _init_session(client)
+        resp = _rpc(client, "tools/list", {"cursor": "!!!not-base64!!!"}, headers={"Mcp-Session-Id": sid}).json()
+        assert resp["error"]["code"] == -32602
+
+
+def test_tools_list_rejects_non_string_cursor() -> None:
+    app = _make_tools_app(count=3, page_size=2)
+    with TestClient(app=app) as client:
+        sid = _init_session(client)
+        resp = _rpc(client, "tools/list", {"cursor": 42}, headers={"Mcp-Session-Id": sid}).json()
+        assert resp["error"]["code"] == -32602
+
+
+def test_tools_list_rejects_negative_offset_cursor() -> None:
+    import base64
+
+    app = _make_tools_app(count=3, page_size=2)
+    with TestClient(app=app) as client:
+        sid = _init_session(client)
+        negative = base64.urlsafe_b64encode(b"-1").decode("ascii")
+        resp = _rpc(client, "tools/list", {"cursor": negative}, headers={"Mcp-Session-Id": sid}).json()
+        assert resp["error"]["code"] == -32602
+
+
+def test_tools_list_cursor_past_end_returns_empty_page() -> None:
+    import base64
+
+    app = _make_tools_app(count=3, page_size=2)
+    with TestClient(app=app) as client:
+        sid = _init_session(client)
+        far = base64.urlsafe_b64encode(b"99").decode("ascii")
+        result = _rpc(client, "tools/list", {"cursor": far}, headers={"Mcp-Session-Id": sid}).json()["result"]
+        assert result["tools"] == []
+        assert "nextCursor" not in result
+
+
+def test_resources_list_paginates() -> None:
+    handlers = []
+    # The built-in litestar://openapi resource counts as one entry.
+    for i in range(4):
+
+        @get(f"/r{i}", name=f"r{i}", opt={"mcp_resource": f"res_{i:03d}"}, sync_to_thread=False)
+        def _h() -> dict[str, int]:
+            return {"i": 0}
+
+        handlers.append(_h)
+    app = Litestar(route_handlers=handlers, plugins=[LitestarMCP(config=MCPConfig(list_page_size=2))])
+    with TestClient(app=app) as client:
+        sid = _init_session(client)
+        headers = {"Mcp-Session-Id": sid}
+        r1 = _rpc(client, "resources/list", {}, headers=headers).json()["result"]
+        assert len(r1["resources"]) == 2
+        assert "nextCursor" in r1
+        r2 = _rpc(client, "resources/list", {"cursor": r1["nextCursor"]}, headers=headers).json()["result"]
+        assert len(r2["resources"]) == 2
+        assert "nextCursor" in r2
+        r3 = _rpc(client, "resources/list", {"cursor": r2["nextCursor"]}, headers=headers).json()["result"]
+        assert len(r3["resources"]) == 1
+        assert "nextCursor" not in r3
 
 
 def test_resources_templates_list_paginates() -> None:
-    app = Litestar(route_handlers=[_make_template(i) for i in range(105)], plugins=[LitestarMCP(MCPConfig())])
-    with TestClient(app=app) as client:
-        sid = _ensure_session(client)
-        first = _rpc(client, "resources/templates/list", sid=sid)
-        templates = first["result"]["resourceTemplates"]
-        assert templates[0]["uriTemplate"] == "app://templates/0/{item_id}"
-        assert len(templates) == 100
+    handlers = []
+    for i in range(3):
 
-        second = _rpc(client, "resources/templates/list", {"cursor": first["result"]["nextCursor"]}, sid=sid)
-        assert [template["name"] for template in second["result"]["resourceTemplates"]] == [
-            "template_100",
-            "template_101",
-            "template_102",
-            "template_103",
-            "template_104",
-        ]
-        assert "nextCursor" not in second["result"]
+        @get(
+            f"/tpl{i}/{{item_id:str}}",
+            name=f"tpl{i}",
+            opt={"mcp_resource": f"tpl_{i:03d}", "mcp_resource_template": f"app://tpl/{i}/{{item_id}}"},
+            sync_to_thread=False,
+        )
+        def _h(item_id: str) -> dict[str, str]:
+            return {"item_id": item_id}
+
+        handlers.append(_h)
+    app = Litestar(route_handlers=handlers, plugins=[LitestarMCP(config=MCPConfig(list_page_size=2))])
+    with TestClient(app=app) as client:
+        sid = _init_session(client)
+        headers = {"Mcp-Session-Id": sid}
+        r1 = _rpc(client, "resources/templates/list", {}, headers=headers).json()["result"]
+        assert len(r1["resourceTemplates"]) == 2
+        assert "nextCursor" in r1
+        r2 = _rpc(client, "resources/templates/list", {"cursor": r1["nextCursor"]}, headers=headers).json()["result"]
+        assert len(r2["resourceTemplates"]) == 1
+        assert "nextCursor" not in r2
 
 
 def test_prompts_list_paginates() -> None:
-    app = Litestar(route_handlers=[], plugins=[LitestarMCP(MCPConfig(), prompts=[_make_prompt(i) for i in range(105)])])
+    @mcp_prompt(name="p_a")
+    def p_a() -> str:
+        return "a"
+
+    @mcp_prompt(name="p_b")
+    def p_b() -> str:
+        return "b"
+
+    @mcp_prompt(name="p_c")
+    def p_c() -> str:
+        return "c"
+
+    app = Litestar(plugins=[LitestarMCP(prompts=[p_a, p_b, p_c], config=MCPConfig(list_page_size=2))])
     with TestClient(app=app) as client:
-        sid = _ensure_session(client)
-        first = _rpc(client, "prompts/list", sid=sid)
-        prompts = first["result"]["prompts"]
-        assert [prompt["name"] for prompt in prompts[:3]] == ["prompt_000", "prompt_001", "prompt_002"]
-        assert len(prompts) == 100
-
-        second = _rpc(client, "prompts/list", {"cursor": first["result"]["nextCursor"]}, sid=sid)
-        assert [prompt["name"] for prompt in second["result"]["prompts"]] == [
-            "prompt_100",
-            "prompt_101",
-            "prompt_102",
-            "prompt_103",
-            "prompt_104",
-        ]
-        assert "nextCursor" not in second["result"]
+        sid = _init_session(client)
+        headers = {"Mcp-Session-Id": sid}
+        r1 = _rpc(client, "prompts/list", {}, headers=headers).json()["result"]
+        assert len(r1["prompts"]) == 2
+        assert "nextCursor" in r1
+        r2 = _rpc(client, "prompts/list", {"cursor": r1["nextCursor"]}, headers=headers).json()["result"]
+        assert len(r2["prompts"]) == 1
+        assert "nextCursor" not in r2
 
 
-@pytest.mark.parametrize("method", ["tools/list", "resources/list", "resources/templates/list", "prompts/list"])
-def test_list_methods_reject_invalid_cursor(method: str) -> None:
-    app = Litestar(
-        route_handlers=[_make_tool(0), _make_resource(0), _make_template(0)], plugins=[LitestarMCP(MCPConfig())]
-    )
+def test_tools_list_empty_registry_returns_empty_page() -> None:
+    app = Litestar(plugins=[LitestarMCP(config=MCPConfig(list_page_size=10))])
     with TestClient(app=app) as client:
-        sid = _ensure_session(client)
-        response = _rpc(client, method, {"cursor": "not-a-valid-cursor"}, sid=sid)
-        assert response["error"]["code"] == -32602
-        assert response["error"]["message"] == "Invalid cursor"
+        sid = _init_session(client)
+        result = _rpc(client, "tools/list", {}, headers={"Mcp-Session-Id": sid}).json()["result"]
+        assert result["tools"] == []
+        assert "nextCursor" not in result
+
+
+def test_prompts_list_empty_registry_returns_empty_page() -> None:
+    app = Litestar(plugins=[LitestarMCP(config=MCPConfig(list_page_size=10))])
+    with TestClient(app=app) as client:
+        sid = _init_session(client)
+        result = _rpc(client, "prompts/list", {}, headers={"Mcp-Session-Id": sid}).json()["result"]
+        assert result["prompts"] == []
+        assert "nextCursor" not in result
+
+
+@pytest.mark.parametrize("bad_size", [0, -1, -100])
+def test_mcp_config_rejects_non_positive_list_page_size(bad_size: int) -> None:
+    with pytest.raises(ValueError, match="list_page_size must be a positive integer"):
+        MCPConfig(list_page_size=bad_size)
