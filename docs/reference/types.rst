@@ -20,14 +20,16 @@ MCPTaskConfig
    :members:
    :show-inheritance:
 
-MCPOptKeys
-----------
+.. currentmodule:: litestar_mcp.registry
 
-The ``opt``-key names the plugin reads from each handler, including the
-``mcp_prompt`` / ``mcp_prompt_title`` / ``mcp_prompt_description`` /
-``mcp_prompt_arguments`` / ``mcp_prompt_icons`` prompt markers.
+PromptRegistration
+------------------
 
-.. autoclass:: MCPOptKeys
+See also :class:`~litestar_mcp.config.MCPOptKeys` (documented under
+:doc:`config`) for the opt-key field names that drive handler-based
+prompt discovery.
+
+.. autoclass:: PromptRegistration
    :members:
    :show-inheritance:
 

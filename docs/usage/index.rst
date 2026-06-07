@@ -22,15 +22,29 @@ examples drawn from :mod:`docs.examples`.
         :link: marking_routes
         :link-type: doc
 
-        Expose handlers with ``mcp_tool`` / ``mcp_resource`` kwargs or the
-        dedicated decorator.
+        Expose handlers with ``mcp_tool`` / ``mcp_resource`` /
+        ``mcp_prompt`` kwargs or the dedicated decorator.
 
-    .. grid-item-card:: Tools, Resources & Prompts
-        :link: tools_and_resources
+    .. grid-item-card:: Prompts
+        :link: prompts
         :link-type: doc
 
-        How marked routes — tools, resources, and prompts — are registered,
-        executed, and returned to MCP clients.
+        Templated instructions exposed via ``prompts/list`` and
+        ``prompts/get``, including standalone and handler-based forms.
+
+    .. grid-item-card:: Resources
+        :link: resources
+        :link-type: doc
+
+        Read-only payloads served via ``resources/list`` and
+        ``resources/read``, with RFC 6570 URI template support.
+
+    .. grid-item-card:: Tools
+        :link: tools
+        :link-type: doc
+
+        Executable operations served via ``tools/list`` and
+        ``tools/call``, validated through Litestar signature models.
 
     .. grid-item-card:: Discovery
         :link: discovery
@@ -78,7 +92,9 @@ examples drawn from :mod:`docs.examples`.
 
     configuration
     marking_routes
-    tools_and_resources
+    prompts
+    resources
+    tools
     discovery
     auth
     framework_integration

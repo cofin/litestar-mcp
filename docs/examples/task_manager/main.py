@@ -30,7 +30,7 @@ from litestar.openapi.config import OpenAPIConfig
 from litestar.status_codes import HTTP_201_CREATED
 from pydantic import BaseModel
 
-from litestar_mcp import LitestarMCP, MCPConfig
+from litestar_mcp import LitestarMCP, MCPConfig, mcp_prompt
 
 
 class Task(BaseModel):
@@ -86,6 +86,36 @@ def register_resources(store: "dict[int, Task]") -> "list[Any]":
     return [get_task_schema, get_api_info]
 
 
+def register_prompts(store: "dict[int, Task]") -> "list[Any]":
+    """Return standalone MCP prompts bound to ``store``.
+
+    Prompts are templated instructions for an LLM. Unlike tools (which execute)
+    and resources (which return data), prompts return a list of messages the
+    client feeds back into the model. Returning a plain ``str`` is the
+    simplest form — the plugin wraps it as a single user-role text message.
+    """
+
+    # start-example
+    @mcp_prompt(
+        name="summarize_tasks",
+        title="Summarize tasks",
+        description="Ask the model to summarize the current task list in a chosen style.",
+    )
+    async def summarize_tasks(style: str = "concise") -> str:
+        """Build a prompt summarizing the task store.
+
+        Args:
+            style: Summary style hint, e.g. ``concise``, ``detailed``,
+                ``bullet-points``. Used verbatim in the prompt body.
+        """
+        lines = [f"- [{'x' if task.completed else ' '}] {task.title}: {task.description}" for task in store.values()]
+        body = "\n".join(lines) if lines else "(no tasks)"
+        return f"Summarise the following tasks in a {style} style:\n\n{body}"
+
+    # end-example
+    return [summarize_tasks]
+
+
 def register_tools(store: "dict[int, Task]") -> "list[Any]":
     """Return MCP tool handlers (task CRUD) bound to ``store``."""
 
@@ -131,44 +161,6 @@ def register_tools(store: "dict[int, Task]") -> "list[Any]":
     return [list_tasks, get_task, create_task, complete_task, delete_task]
 
 
-def register_prompts(store: "dict[int, Task]") -> "list[Any]":
-    """Return MCP prompt handlers bound to ``store``.
-
-    Prompt handlers are ordinary Litestar routes marked with ``mcp_prompt``.
-    Their return value is normalised to MCP ``PromptMessage`` content (a plain
-    ``str`` becomes a single user-role text message), and their declared
-    signature parameters are advertised as prompt arguments.
-    """
-
-    # start-example
-    @get(
-        "/prompts/summarize",
-        mcp_prompt="summarize_tasks",
-        mcp_prompt_description="Draft a review prompt summarizing the current tasks.",
-    )
-    async def summarize_tasks(focus: str = "all") -> dict[str, Any]:
-        """Build a prompt asking the model to summarize tasks.
-
-        Returns a single MCP ``PromptMessage``; handlers run through the normal
-        Litestar pipeline, so the value must be JSON-serialisable.
-
-        Args:
-            focus: Which tasks to highlight - ``all``, ``open``, or ``done``.
-        """
-        if focus == "open":
-            selected = [task for task in store.values() if not task.completed]
-        elif focus == "done":
-            selected = [task for task in store.values() if task.completed]
-        else:
-            selected = list(store.values())
-        lines = "\n".join(f"- {task.title}: {'done' if task.completed else 'open'}" for task in selected)
-        text = f"Summarize these tasks (focus: {focus}) and suggest next steps:\n{lines}"
-        return {"role": "user", "content": {"type": "text", "text": text}}
-
-    # end-example
-    return [summarize_tasks]
-
-
 @get("/")
 async def root() -> dict[str, str]:
     """Root endpoint - not exposed to MCP."""
@@ -191,7 +183,7 @@ def build_app(tasks: "dict[int, Task] | None" = None) -> Litestar:
 
     resource_handlers = register_resources(store)
     tool_handlers = register_tools(store)
-    prompt_handlers = register_prompts(store)
+    prompts = register_prompts(store)
 
     # start-example
     mcp_config = MCPConfig(
@@ -203,11 +195,10 @@ def build_app(tasks: "dict[int, Task] | None" = None) -> Litestar:
         route_handlers=[
             *resource_handlers,
             *tool_handlers,
-            *prompt_handlers,
             root,
             health_check,
         ],
-        plugins=[LitestarMCP(mcp_config)],
+        plugins=[LitestarMCP(mcp_config, prompts=prompts)],
         openapi_config=OpenAPIConfig(
             title="Task Management API",
             version="1.0.0",

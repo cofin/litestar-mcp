@@ -46,6 +46,25 @@ See :doc:`auth` for the full authentication story.
     :end-before: # end-example
     :dedent:
 
+Standalone Prompts
+==================
+
+Prompt callables that are not bound to an HTTP route are registered by
+passing them to ``LitestarMCP(prompts=[...])``. Each function must first
+be decorated with :func:`~litestar_mcp.mcp_prompt`; the plugin rejects
+plain callables to keep prompt metadata explicit.
+
+.. literalinclude:: /examples/snippets/configuration_prompts.py
+    :language: python
+    :caption: ``docs/examples/snippets/configuration_prompts.py``
+    :start-after: # start-example
+    :end-before: # end-example
+    :dedent:
+
+See :doc:`marking_routes` for the handler-based ``mcp_prompt`` opt-key
+form, which routes a prompt under HTTP *and* publishes it via
+``prompts/get``.
+
 Task Lifecycle
 ==============
 
@@ -56,22 +75,6 @@ long-running work and poll for completion.
 .. literalinclude:: /examples/snippets/configuration_tasks.py
     :language: python
     :caption: ``docs/examples/snippets/configuration_tasks.py``
-    :start-after: # start-example
-    :end-before: # end-example
-    :dedent:
-
-Standalone Prompts
-==================
-
-Prompts usually ride along on a marked route handler (see
-:doc:`marking_routes`), but a prompt that has no HTTP endpoint can be declared
-as a standalone callable with :func:`~litestar_mcp.mcp_prompt` and passed to
-``LitestarMCP(prompts=[...])``. These are registered immediately and exposed
-through ``prompts/list`` and ``prompts/get`` just like handler-bound prompts.
-
-.. literalinclude:: /examples/snippets/configuration_prompts.py
-    :language: python
-    :caption: ``docs/examples/snippets/configuration_prompts.py``
     :start-after: # start-example
     :end-before: # end-example
     :dedent:
@@ -113,6 +116,34 @@ Configuration Options
     * - ``tasks``
       - ``False``
       - Enable experimental in-memory MCP task support.
+    * - ``list_page_size``
+      - ``100``
+      - Server-chosen page size for the ``*/list`` methods (see below).
+
+The ``LitestarMCP`` constructor also accepts a top-level ``prompts``
+argument — a sequence of ``@mcp_prompt``-decorated callables — for
+standalone prompt registration (see above).
+
+List Pagination
+===============
+
+``tools/list``, ``resources/list``, ``resources/templates/list``, and
+``prompts/list`` are paginated per the MCP spec's opaque-cursor model.
+Each accepts an optional ``cursor`` parameter and returns ``nextCursor``
+when another page is available; treat ``nextCursor`` as an opaque token
+and pass it back as ``params.cursor`` until the response omits it. An
+invalid cursor returns ``INVALID_PARAMS`` (``-32602``).
+
+The MCP spec lets the **server** pick the page size — clients cannot
+request a ``limit`` on these methods. Set it with the
+``MCPConfig.list_page_size`` option (e.g. ``MCPConfig(list_page_size=25)``);
+it defaults to ``100`` and must be a positive integer.
+
+These methods enumerate the *catalog* of registered primitives, which is
+built once at startup; the cursor is a base64-encoded offset into that
+stable list. For paginating application data, see ``tasks/list`` (which
+accepts a client ``limit`` and delegates to a task store) or implement
+paging inside an individual tool.
 
 Environment Overrides
 =====================

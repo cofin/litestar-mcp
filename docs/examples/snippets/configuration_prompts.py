@@ -1,26 +1,30 @@
-"""Snippet: registering a standalone prompt. Referenced from docs/usage/configuration.rst."""
-
-from typing import Any
+"""Snippet: register standalone prompts. Referenced from docs/usage/configuration.rst."""
 
 from litestar import Litestar
 
-from litestar_mcp import LitestarMCP, mcp_prompt
+from litestar_mcp import LitestarMCP, MCPConfig, mcp_prompt
+
+
+@mcp_prompt(name="greet", description="Greet a user by name.")
+async def greet(name: str) -> str:
+    """Build a greeting prompt.
+
+    Args:
+        name: The user's name to greet.
+    """
+    return f"Please greet {name} warmly."
 
 
 def build() -> Litestar:
     # start-example
-    @mcp_prompt(
-        "greeting",
-        description="Greet a user by name.",
+    app = Litestar(
+        route_handlers=[],
+        plugins=[
+            LitestarMCP(
+                MCPConfig(name="prompt-demo"),
+                prompts=[greet],
+            ),
+        ],
     )
-    def greeting(name: str = "world") -> dict[str, Any]:
-        """A standalone prompt callable - not bound to any route handler.
-
-        Args:
-            name: Who to greet.
-        """
-        return {"role": "user", "content": {"type": "text", "text": f"Say hello to {name}."}}
-
-    app = Litestar(route_handlers=[], plugins=[LitestarMCP(prompts=[greeting])])
     # end-example
     return app

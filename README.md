@@ -8,13 +8,13 @@ A lightweight plugin that integrates Litestar web applications with the Model Co
 
 ## Overview
 
-This plugin automatically discovers Litestar routes marked for MCP and exposes them through an MCP-native transport surface. Pass `mcp_tool="name"` or `mcp_resource="name"` straight through to `@get` / `@post` / etc. — Litestar funnels unknown kwargs into `handler.opt`, so no second decorator or `opt={...}` wrapper is needed.
+This plugin automatically discovers Litestar routes marked for MCP and exposes them through an MCP-native transport surface. Pass `mcp_tool="name"`, `mcp_resource="name"`, or `mcp_prompt="name"` straight through to `@get` / `@post` / etc. — Litestar funnels unknown kwargs into `handler.opt`, so no second decorator or `opt={...}` wrapper is needed. Standalone prompt callables that are not bound to an HTTP route can be registered through `LitestarMCP(prompts=[...])`.
 
 ## Features
 
 - **Protocol-Native Transport** — MCP Streamable HTTP with JSON-RPC requests and SSE streams.
-- **Simple Route Marking** — pass `mcp_tool` / `mcp_resource` / `mcp_prompt` kwargs straight through to Litestar's route decorators.
-- **Three MCP Primitives** — tools (`tools/*`), resources (`resources/*`), and prompts (`prompts/*`), all from marked routes; the `prompts` capability is advertised only when a prompt is registered.
+- **Three MCP Primitives** — tools, resources, *and* prompts, with `prompts/list` and `prompts/get` driven by the same handler discovery as the rest of the surface.
+- **Simple Route Marking** — pass `mcp_tool` / `mcp_resource` / `mcp_prompt` kwargs straight through to Litestar's route decorators, or register standalone prompts via `LitestarMCP(prompts=[...])`.
 - **RFC 6570 URI Templates** — `mcp_resource_template="app://…/{var}"` dispatches concrete URIs to handlers with extracted vars.
 - **First-Class Descriptions** — structured `mcp_description`, `mcp_agent_instructions`, `mcp_when_to_use`, `mcp_returns` kwargs.
 - **Type Safe** — full type hints with dataclasses; `msgspec`-powered tool-argument validation.
@@ -131,7 +131,7 @@ async def search(query: str, limit: int = 10) -> dict:
 ## How It Works
 
 1. **Route Discovery**: At app initialization, the plugin scans all route handlers for the `opt` attribute
-2. **Automatic Exposure**: Routes marked with `mcp_tool`, `mcp_resource`, or `mcp_prompt` are automatically exposed
+2. **Automatic Exposure**: Routes marked with `mcp_tool` or `mcp_resource` are automatically exposed
 3. **MCP Transport**: The plugin adds a Streamable HTTP MCP endpoint under the configured base path (default `/mcp`)
 4. **Server Info**: Server name and version are derived from your OpenAPI configuration
 
@@ -140,7 +140,7 @@ async def search(query: str, limit: int = 10) -> dict:
 Once configured, your application exposes these MCP-compatible endpoints:
 
 - `GET /mcp` - Server-Sent Events stream when `Accept: text/event-stream` is provided
-- `POST /mcp` - JSON-RPC endpoint for `initialize`, `ping`, `tools/*`, `resources/*`, `prompts/*`, and optional task methods
+- `POST /mcp` - JSON-RPC endpoint for `initialize`, `ping`, `tools/*`, `resources/*`, and optional task methods
 - `GET /.well-known/mcp-server.json` - MCP server manifest
 - `GET /.well-known/agent-card.json` - Agent metadata card
 - `GET /.well-known/oauth-protected-resource` - OAuth protected resource metadata when auth is configured

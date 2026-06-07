@@ -78,20 +78,48 @@ def test_resources_list_exposes_expected_resources(fresh_client: TestClient[Any]
     assert any(uri.endswith("api_info") for uri in uris)
 
 
-def test_prompts_list_exposes_summarize_prompt(fresh_client: TestClient[Any]) -> None:
+def test_prompts_list_exposes_summarize_tasks(fresh_client: TestClient[Any]) -> None:
     result = _rpc(fresh_client, "prompts/list", {})
-    prompts = {prompt["name"]: prompt for prompt in result["result"]["prompts"]}
-    assert "summarize_tasks" in prompts
-    arg_names = {arg["name"] for arg in prompts["summarize_tasks"].get("arguments", [])}
-    assert "focus" in arg_names
+    names = {prompt["name"] for prompt in result["result"]["prompts"]}
+    assert "summarize_tasks" in names
 
 
-def test_prompts_get_returns_prompt_messages(fresh_client: TestClient[Any]) -> None:
-    result = _rpc(fresh_client, "prompts/get", {"name": "summarize_tasks", "arguments": {"focus": "open"}})
+def test_prompts_get_summarize_tasks_includes_seed(fresh_client: TestClient[Any]) -> None:
+    result = _rpc(
+        fresh_client,
+        "prompts/get",
+        {"name": "summarize_tasks", "arguments": {"style": "detailed"}},
+    )
     messages = result["result"]["messages"]
+    assert len(messages) == 1
     assert messages[0]["role"] == "user"
-    assert messages[0]["content"]["type"] == "text"
-    assert "Summarize these tasks" in messages[0]["content"]["text"]
+    content = messages[0]["content"]
+    assert content["type"] == "text"
+    text = content["text"]
+    assert "detailed" in text
+    assert "seed-1" in text
+
+
+def test_prompts_get_summarize_tasks_uses_default_style(fresh_client: TestClient[Any]) -> None:
+    """Omitting ``arguments`` must fall back to the handler's ``style="concise"`` default."""
+    result = _rpc(fresh_client, "prompts/get", {"name": "summarize_tasks"})
+    text = result["result"]["messages"][0]["content"]["text"]
+    assert "concise" in text
+
+
+def test_prompts_get_summarize_tasks_empty_store_renders_fallback() -> None:
+    """With no tasks the prompt body must use the ``(no tasks)`` literal, not crash."""
+    with TestClient(app=build_app(tasks={})) as client:
+        result = _rpc(client, "prompts/get", {"name": "summarize_tasks"})
+        text = result["result"]["messages"][0]["content"]["text"]
+        assert "(no tasks)" in text
+
+
+def test_prompts_get_unknown_name_returns_mcp_error(fresh_client: TestClient[Any]) -> None:
+    """Requesting an unregistered prompt must surface as an MCP error envelope."""
+    result = _rpc(fresh_client, "prompts/get", {"name": "does_not_exist"})
+    assert "jsonrpc" in result
+    assert ("error" in result) or result.get("result", {}).get("isError") is True
 
 
 def test_create_task_via_rest_round_trips(fresh_client: TestClient[Any]) -> None:
