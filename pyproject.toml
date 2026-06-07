@@ -37,13 +37,13 @@ requires-python = ">=3.10"
 version = "0.7.0"
 
 [project.urls]
-Changelog = "https://docs.litestar-mcp.litestar.dev/latest/changelog"
+Changelog = "https://cofin.github.io/litestar-mcp/latest/changelog"
 Discord = "https://discord.gg/litestar"
-Documentation = "https://docs.litestar-mcp.litestar.dev/latest/"
+Documentation = "https://cofin.github.io/litestar-mcp/latest/"
 Funding = "https://github.com/sponsors/litestar-org"
-Homepage = "https://docs.litestar-mcp.litestar.dev/latest/"
-Issue = "https://github.com/litestar-org/litestar-mcp/issues/"
-Source = "https://github.com/litestar-org/litestar-mcp"
+Homepage = "https://cofin.github.io/litestar-mcp/latest/"
+Issue = "https://github.com/cofin/litestar-mcp/issues/"
+Source = "https://github.com/cofin/litestar-mcp"
 
 [project.entry-points."pygments.styles"]
 litestar-mcp-dark = "tools.sphinx_ext.pygments_styles:LitestarMcpDarkStyle"
