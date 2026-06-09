@@ -66,7 +66,10 @@ Filtering Exposure
 
 Use the ``include_tags`` / ``exclude_tags`` and
 ``include_operations`` / ``exclude_operations`` options to restrict which
-marked handlers are visible. Filters apply at ``tools/list`` and
-``resources/list`` time - a handler hidden by a filter is simply not
-returned, but may still be invoked directly if the caller knows its name.
-Precedence is ``exclude > include`` and ``tags > operations``.
+marked handlers are exposed. Filters apply to ``tools/list``,
+``resources/list``, ``resources/templates/list``, direct ``tools/call``,
+and direct ``resources/read``. A filtered handler is omitted from list
+responses and direct invocation returns the same not-found response as an
+unknown name or URI. Precedence is ``exclude > include`` and
+``tags > operations``. Filters are not authentication; use MCP router
+``guards`` or auth middleware for access control.

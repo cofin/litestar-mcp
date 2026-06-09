@@ -85,13 +85,14 @@ def test_full_post_only_flow() -> None:
         )
         session_id = init.headers["mcp-session-id"]
 
-        # notifications/initialized (notification: no id)
+        # notifications/initialized (accepted notification: 202, no body)
         notif = client.post(
             "/mcp",
             json={"jsonrpc": "2.0", "method": "notifications/initialized"},
             headers={"Mcp-Session-Id": session_id},
         )
-        assert notif.status_code in {200, 204}
+        assert notif.status_code == 202
+        assert notif.content == b""
 
         # tools/list with session header should succeed
         listed = _rpc(client, "tools/list", headers={"Mcp-Session-Id": session_id})
