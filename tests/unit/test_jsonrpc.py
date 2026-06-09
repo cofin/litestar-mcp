@@ -438,12 +438,12 @@ class TestErrorHandling:
 
 class TestNotifications:
     def test_notifications_initialized_no_response(self, client: TestClient[Any]) -> None:
-        """notifications/initialized is a notification (no id) — server should return 204."""
+        """notifications/initialized is accepted with 202 and no response body."""
         sid = _ensure_session(client)
         body = {"jsonrpc": "2.0", "method": "notifications/initialized"}
         resp = client.post("/mcp", json=body, headers={"Mcp-Session-Id": sid})
-        # Notifications get no response body per JSON-RPC spec
-        assert resp.status_code in (200, 202, 204)
+        assert resp.status_code == 202
+        assert resp.content == b""
 
 
 # ---------------------------------------------------------------------------

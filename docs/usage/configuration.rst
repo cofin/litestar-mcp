@@ -124,6 +124,13 @@ The ``LitestarMCP`` constructor also accepts a top-level ``prompts``
 argument — a sequence of ``@mcp_prompt``-decorated callables — for
 standalone prompt registration (see above).
 
+Filters apply both to list responses and direct invocation. A filtered tool
+or resource is omitted from ``tools/list``, ``resources/list``, or
+``resources/templates/list`` and a direct ``tools/call`` / ``resources/read``
+returns the same not-found response as an unknown name or URI. Filters narrow
+the MCP exposure surface; use ``guards`` or auth middleware for access
+control.
+
 List Pagination
 ===============
 

@@ -17,6 +17,7 @@ from litestar.response import ServerSentEvent, ServerSentEventMessage
 from litestar.serialization import decode_json, encode_json
 from litestar.status_codes import (
     HTTP_200_OK,
+    HTTP_202_ACCEPTED,
     HTTP_204_NO_CONTENT,
     HTTP_400_BAD_REQUEST,
     HTTP_403_FORBIDDEN,
@@ -488,6 +489,9 @@ def build_jsonrpc_router(
         handler = discovered_tools.get(tool_name)
         if handler is None:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=f"Tool not found: {tool_name}"))
+        handler_tags = set(getattr(handler, "tags", None) or [])
+        if not should_include_handler(tool_name, handler_tags, config):
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=f"Tool not found: {tool_name}"))
 
         fn = get_handler_function(handler)
         metadata = get_mcp_metadata(handler) or get_mcp_metadata(fn) or {}
@@ -612,6 +616,9 @@ def build_jsonrpc_router(
             handler = discovered_resources.get(resource_name)
             if handler is None:
                 raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
+            handler_tags = set(getattr(handler, "tags", None) or [])
+            if not should_include_handler(resource_name, handler_tags, config):
+                raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
 
             try:
                 result = await execute_tool(
@@ -641,6 +648,9 @@ def build_jsonrpc_router(
         for entry in template_entries:
             extracted = match_uri(entry.template, uri)
             if extracted is None:
+                continue
+            handler_tags = set(getattr(entry.handler, "tags", None) or [])
+            if not should_include_handler(entry.name, handler_tags, config):
                 continue
             try:
                 result = await execute_tool(
@@ -1119,7 +1129,7 @@ class MCPController(Controller):
 
         response: Response[Any]
         if result is None:
-            response = Response(content=None, status_code=HTTP_204_NO_CONTENT)
+            response = Response(content=b"", status_code=HTTP_202_ACCEPTED)
         else:
             response = Response(content=result, status_code=HTTP_200_OK, media_type=MediaType.JSON)
 

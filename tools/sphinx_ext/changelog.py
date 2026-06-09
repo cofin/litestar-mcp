@@ -11,7 +11,7 @@ from sphinx.util.nodes import clean_astext
 if TYPE_CHECKING:
     from sphinx.domains.std import StandardDomain
 
-_GH_BASE_URL = "https://github.com/litestar-org/advanced-alchemy"
+_GH_BASE_URL = "https://github.com/cofin/litestar-mcp"
 
 
 def _parse_gh_reference(raw: str, type_: Literal["issues", "pull"]) -> list[str]:
