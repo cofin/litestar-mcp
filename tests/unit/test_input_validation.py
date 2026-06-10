@@ -238,7 +238,7 @@ class TestInputValidation:
             rh
             for route in app.routes
             for rh in getattr(route, "route_handlers", [])
-            if getattr(rh, "fn", None) is pp_tool.fn  # type: ignore[union-attr]
+            if getattr(rh, "fn", None) is pp_tool.fn
         )
 
         # Happy path: previously raised KeyError on ``declared_by_name[name]``.

@@ -942,7 +942,7 @@ class TestDependencyProviderParameters:
         from litestar.di import Provide
         from litestar.params import Dependency
 
-        async def provide_context(state: State, request: Request, limit: int = 10) -> dict[str, Any]:
+        async def provide_context(state: State, request: Request[Any, Any, Any], limit: int = 10) -> dict[str, Any]:
             return {"limit": limit}
 
         async def handler(
