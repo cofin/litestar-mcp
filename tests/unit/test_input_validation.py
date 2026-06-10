@@ -194,3 +194,65 @@ class TestInputValidation:
             assert "result" in result
             assert result["result"]["isError"] is False
             assert json.loads(result["result"]["content"][0]["text"]) == {"hello": "world"}
+
+    def test_provider_only_param_does_not_crash_validator(self) -> None:
+        """Provider-declared params don't appear in ``parsed_fn_signature``.
+
+        Before the fix, ``declared_by_name[name]`` raised ``KeyError`` for any
+        provider param that reached ``_validate_tool_arguments``; with the
+        fallback to ``advertised_by_name[name].annotation`` the call now
+        succeeds. Direct-call assertion against ``_validate_tool_arguments``
+        bypasses ``from __future__ import annotations`` stringification of the
+        provider's annotations (msgspec can't validate ``'int'`` strings) so
+        we can also assert the bad-payload error envelope.
+        """
+        from litestar.params import Dependency
+
+        from litestar_mcp.routes import _validate_tool_arguments
+
+        async def provide_pagination(limit: int = 20, offset: int = 0) -> dict[str, int]:
+            return {"limit": limit, "offset": offset}
+
+        # Strip the ``__future__ annotations`` stringification so msgspec sees
+        # real types when the validator falls back to provider annotations.
+        provide_pagination.__annotations__ = {
+            "limit": int,
+            "offset": int,
+            "return": dict[str, int],
+        }
+
+        @get(
+            "/pp",
+            opt={"mcp_tool": "pp_tool"},
+            dependencies={"pagination": Provide(provide_pagination)},
+            sync_to_thread=False,
+        )
+        def pp_tool(
+            pagination: Annotated[dict[str, int], Dependency(skip_validation=True)],
+        ) -> dict[str, int]:
+            return pagination
+
+        app = Litestar(route_handlers=[pp_tool], plugins=[LitestarMCP(MCPConfig())])
+
+        handler = next(
+            rh
+            for route in app.routes
+            for rh in getattr(route, "route_handlers", [])
+            if getattr(rh, "fn", None) is pp_tool.fn  # type: ignore[union-attr]
+        )
+
+        # Happy path: previously raised KeyError on ``declared_by_name[name]``.
+        assert _validate_tool_arguments(handler, {"limit": 7, "offset": 3}) == []
+
+        # Type coercion uses the provider's annotation as the fallback.
+        errs = _validate_tool_arguments(handler, {"limit": "not-an-int"})
+        paths = {e["path"] for e in errs}
+        assert "/arguments/limit" in paths, errs
+
+        # End-to-end smoke: the JSON-RPC dispatcher accepts the provider params
+        # without 4xx-ing at the HTTP layer.
+        with TestClient(app=app) as client:
+            ok = _call(client, "pp_tool", {"limit": 7, "offset": 3})
+            assert "result" in ok
+            assert ok["result"]["isError"] is False
+            assert json.loads(ok["result"]["content"][0]["text"]) == {"limit": 7, "offset": 3}

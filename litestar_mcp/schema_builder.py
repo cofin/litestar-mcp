@@ -2,6 +2,7 @@
 
 import contextlib
 import inspect
+from collections import deque
 from types import UnionType
 from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin
 
@@ -81,13 +82,17 @@ def iter_dependency_input_parameters(
     dep_names: set[str] = set(top_deps)
     framework_skip = RESERVED_KWARGS | _EXECUTION_CONTEXT_PARAMS
 
+    # Cycle key is the provider *function* identity, not the Provide wrapper:
+    # two Provides registered under different names with sync/cache flag
+    # differences but the same underlying callable have identical signatures,
+    # so walking either yields the same params.
     visited: set[int] = set()
     seen_names: set[str] = set()
     collected: list[tuple[str, inspect.Parameter]] = []
-    stack: list[Any] = list(top_deps.values())
+    queue: deque[Any] = deque(top_deps.values())
 
-    while stack:
-        provide = stack.pop(0)
+    while queue:
+        provide = queue.popleft()
         provider_fn = getattr(provide, "dependency", None)
         if provider_fn is None:
             continue
@@ -109,7 +114,7 @@ def iter_dependency_input_parameters(
                 # Transitive provider — walk it but do not emit as user input.
                 nested = top_deps.get(pname)
                 if nested is not None:
-                    stack.append(nested)
+                    queue.append(nested)
                 continue
             if pname in seen_names:
                 continue
@@ -369,12 +374,8 @@ def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]"
     handler_name = getattr(fn, "__name__", "<handler>")
 
     def _emit(python_name: str, param: inspect.Parameter) -> None:
+        wire_name = _wire_name_for(python_name, param)
         _, metas = _unwrap_annotated(param.annotation)
-        wire_name = python_name
-        for meta in metas:
-            if meta.query:
-                wire_name = meta.query
-                break
 
         if wire_name in wire_to_python:
             if wire_to_python[wire_name] == python_name:
@@ -447,17 +448,11 @@ def parameter_aliases(handler: "BaseRouteHandler") -> "dict[str, str]":
 
     aliases: dict[str, str] = {}
     for python_name, param in sig.parameters.items():
-        _, metas = _unwrap_annotated(param.annotation)
-        for meta in metas:
-            wire_name = meta.query
-            if wire_name and wire_name != python_name:
-                aliases[wire_name] = python_name
-                break
+        wire_name = _wire_name_for(python_name, param)
+        if wire_name != python_name:
+            aliases[wire_name] = python_name
     for python_name, param in iter_dependency_input_parameters(handler):
-        _, metas = _unwrap_annotated(param.annotation)
-        for meta in metas:
-            wire_name = meta.query
-            if wire_name and wire_name != python_name and wire_name not in aliases:
-                aliases[wire_name] = python_name
-                break
+        wire_name = _wire_name_for(python_name, param)
+        if wire_name != python_name and wire_name not in aliases:
+            aliases[wire_name] = python_name
     return aliases

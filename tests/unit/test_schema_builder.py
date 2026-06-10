@@ -972,6 +972,36 @@ class TestDependencyProviderParameters:
         schema = generate_schema_for_handler(h)
         assert schema["properties"] == {}
 
+    def test_path_param_collision_dedupes_to_single_emission(self) -> None:
+        """If a provider declares the same name as a path param, the handler's
+        own sig walk emits it first; the provider walk must be a no-op for
+        that name rather than raising a wire-name collision."""
+        from litestar import Litestar, get
+        from litestar.di import Provide
+        from litestar.params import Dependency
+
+        from tests.unit.conftest import get_handler_from_app
+
+        async def provide_audit(user_id: str) -> dict[str, str]:
+            return {"user_id": user_id}
+
+        async def handler(
+            user_id: str,
+            audit: Annotated[dict[str, str], Dependency(skip_validation=True)],
+        ) -> dict[str, str]:
+            return {"user_id": user_id, **audit}
+
+        decorated = get("/items/{user_id:str}", sync_to_thread=False)(handler)
+        app = Litestar(route_handlers=[decorated], dependencies={"audit": Provide(provide_audit)})
+        h = next(
+            rh
+            for route in app.routes
+            for rh in getattr(route, "route_handlers", [getattr(route, "route_handler", None)])
+            if rh is not None and "user_id" in getattr(route, "path", "")
+        )
+        schema = generate_schema_for_handler(h)
+        assert set(schema["properties"]) == {"user_id"}
+
     def test_provider_param_wire_alias_round_trips(self) -> None:
         from litestar.di import Provide
         from litestar.params import Dependency, Parameter
