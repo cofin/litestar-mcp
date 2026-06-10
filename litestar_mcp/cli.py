@@ -25,6 +25,40 @@ if TYPE_CHECKING:
     from litestar_mcp.plugin import LitestarMCP
 
 
+def _append_cli_option(
+    params: "list[click.Option]",
+    seen: set[str],
+    name: str,
+    param: inspect.Parameter,
+) -> None:
+    """Append a ``click.Option`` derived from a handler/provider parameter.
+
+    Deduplicates on ``name`` so handler-sig and provider-walk passes can both
+    feed the same accumulator without double-emitting the same flag.
+    """
+    if name in seen:
+        return
+    seen.add(name)
+    annotation = param.annotation
+    is_json = (
+        annotation in {dict, list, set}
+        or hasattr(annotation, "__origin__")
+        or (hasattr(annotation, "__module__") and annotation.__module__ != "builtins")
+    )
+    help_text = f"Type: {getattr(annotation, '__name__', str(annotation))}"
+    if is_json:
+        help_text += ". Pass as JSON string if complex type."
+    option_kwargs: dict[str, Any] = {
+        "help": help_text,
+        "required": param.default is inspect.Parameter.empty,
+    }
+    if annotation is bool and param.default is not inspect.Parameter.empty:
+        option_kwargs["is_flag"] = True
+        option_kwargs["default"] = param.default
+        option_kwargs.pop("required", None)
+    params.append(click.Option([f"--{name}"], **option_kwargs))  # pyright: ignore
+
+
 def get_mcp_plugin(app: "Litestar") -> "LitestarMCP":
     """Retrieve the MCP plugin from the Litestar application's plugins.
 
@@ -88,41 +122,14 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
             di_params = set(handler.resolve_dependencies().keys())
 
         # Create CLI options from function signature + provider params.
-        params = []
-        seen_param_names: set[str] = set()
-
-        def _add_option(name: str, param: inspect.Parameter) -> None:
-            if name in seen_param_names:
-                return
-            seen_param_names.add(name)
-            annotation = param.annotation
-            is_json = (
-                annotation in {dict, list, set}
-                or hasattr(annotation, "__origin__")
-                or (hasattr(annotation, "__module__") and annotation.__module__ != "builtins")
-            )
-            help_text = f"Type: {getattr(annotation, '__name__', str(annotation))}"
-            if is_json:
-                help_text += ". Pass as JSON string if complex type."
-
-            option_kwargs: dict[str, Any] = {
-                "help": help_text,
-                "required": param.default is inspect.Parameter.empty,
-            }
-            if annotation is bool and param.default is not inspect.Parameter.empty:
-                option_kwargs["is_flag"] = True
-                option_kwargs["default"] = param.default
-                option_kwargs.pop("required", None)
-
-            params.append(click.Option([f"--{name}"], **option_kwargs))  # pyright: ignore
-
+        params: list[click.Option] = []
+        seen: set[str] = set()
         for param in sig.parameters.values():
             if param.name in di_params:
                 continue
-            _add_option(param.name, param)
-
+            _append_cli_option(params, seen, param.name, param)
         for name, param in iter_dependency_input_parameters(handler):
-            _add_option(name, param)
+            _append_cli_option(params, seen, name, param)
 
         @click.pass_context
         def callback(ctx: click.Context, /, **kwargs: Any) -> None:

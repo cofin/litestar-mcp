@@ -920,9 +920,7 @@ class TestDependencyProviderParameters:
         ) -> dict[str, Any]:
             return {"q": filter_q}
 
-        async def provide_pagination(
-            base: dict[str, Any], limit: int = 20, offset: int = 0
-        ) -> dict[str, Any]:
+        async def provide_pagination(base: dict[str, Any], limit: int = 20, offset: int = 0) -> dict[str, Any]:
             return {"limit": limit, "offset": offset, **base}
 
         async def handler(
@@ -975,12 +973,11 @@ class TestDependencyProviderParameters:
     def test_path_param_collision_dedupes_to_single_emission(self) -> None:
         """If a provider declares the same name as a path param, the handler's
         own sig walk emits it first; the provider walk must be a no-op for
-        that name rather than raising a wire-name collision."""
+        that name rather than raising a wire-name collision.
+        """
         from litestar import Litestar, get
         from litestar.di import Provide
         from litestar.params import Dependency
-
-        from tests.unit.conftest import get_handler_from_app
 
         async def provide_audit(user_id: str) -> dict[str, str]:
             return {"user_id": user_id}
