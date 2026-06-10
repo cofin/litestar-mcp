@@ -174,9 +174,16 @@ def iter_dependency_input_parameters(
             if pname in seen_names:
                 continue
             seen_names.add(pname)
-            resolved = resolved_hints.get(pname)
-            if resolved is not None and resolved is not param.annotation:
-                param = param.replace(annotation=resolved)
+            # Only swap in the resolved hint when the source annotation was a
+            # string (PEP 563). For live ``Annotated[...]`` objects we already
+            # have the real type, and ``get_type_hints`` on Python 3.10/3.11
+            # would silently wrap params with ``None`` defaults in
+            # ``Optional[...]``, hiding the inner ``Annotated`` from
+            # ``_unwrap_annotated`` and dropping wire-name aliases.
+            if isinstance(param.annotation, str):
+                resolved = resolved_hints.get(pname)
+                if resolved is not None:
+                    param = param.replace(annotation=resolved)
             collected.append((pname, param))
     return collected
 
