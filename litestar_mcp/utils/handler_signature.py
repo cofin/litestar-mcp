@@ -148,8 +148,8 @@ def get_advertised_handler_parameters(
         advertised_names.add(name)
 
     path_param_names = _path_parameter_names(path_parameters)
-    for name, param in iter_dependency_input_parameters(handler):
-        if name in advertised_names or name in path_param_names:
+    for name, param in iter_dependency_input_parameters(handler, path_param_names=path_param_names):
+        if name in advertised_names:
             continue
         wire_name = python_to_wire.get(name, name)
         description = doc_descriptions.get(name) or doc_descriptions.get(wire_name)

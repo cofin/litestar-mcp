@@ -199,12 +199,11 @@ class TestInputValidation:
         """Provider-declared params don't appear in ``parsed_fn_signature``.
 
         Before the fix, ``declared_by_name[name]`` raised ``KeyError`` for any
-        provider param that reached ``_validate_tool_arguments``; with the
-        fallback to ``advertised_by_name[name].annotation`` the call now
-        succeeds. Direct-call assertion against ``_validate_tool_arguments``
-        bypasses ``from __future__ import annotations`` stringification of the
-        provider's annotations (msgspec can't validate ``'int'`` strings) so
-        we can also assert the bad-payload error envelope.
+        provider param that reached ``_validate_tool_arguments``. The fallback
+        resolves the provider's annotations via ``typing.get_type_hints`` at
+        walk time, so PEP 563 stringified annotations (this module uses
+        ``from __future__ import annotations``) resolve to real types --
+        ``msgspec.convert`` would otherwise see ``'int'`` strings and bail.
         """
         from litestar.params import Dependency
 
@@ -212,14 +211,6 @@ class TestInputValidation:
 
         async def provide_pagination(limit: int = 20, offset: int = 0) -> dict[str, int]:
             return {"limit": limit, "offset": offset}
-
-        # Strip the ``__future__ annotations`` stringification so msgspec sees
-        # real types when the validator falls back to provider annotations.
-        provide_pagination.__annotations__ = {
-            "limit": int,
-            "offset": int,
-            "return": dict[str, int],
-        }
 
         @get(
             "/pp",
