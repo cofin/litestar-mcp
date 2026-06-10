@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.json import JSON
 
 from litestar_mcp.executor import NotCallableInCLIContextError, execute_tool
+from litestar_mcp.schema_builder import iter_dependency_input_parameters
 from litestar_mcp.utils import get_handler_function, render_description
 
 try:
@@ -86,20 +87,20 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
         with contextlib.suppress(Exception):
             di_params = set(handler.resolve_dependencies().keys())
 
-        # Create CLI options from function signature
+        # Create CLI options from function signature + provider params.
         params = []
-        for param in sig.parameters.values():
-            if param.name in di_params:
-                continue
+        seen_param_names: set[str] = set()
 
-            # For complex types, accept a JSON string
+        def _add_option(name: str, param: inspect.Parameter) -> None:
+            if name in seen_param_names:
+                return
+            seen_param_names.add(name)
             annotation = param.annotation
             is_json = (
                 annotation in {dict, list, set}
                 or hasattr(annotation, "__origin__")
                 or (hasattr(annotation, "__module__") and annotation.__module__ != "builtins")
             )
-
             help_text = f"Type: {getattr(annotation, '__name__', str(annotation))}"
             if is_json:
                 help_text += ". Pass as JSON string if complex type."
@@ -108,14 +109,20 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
                 "help": help_text,
                 "required": param.default is inspect.Parameter.empty,
             }
-
-            # For boolean parameters with defaults, create flags instead of options
             if annotation is bool and param.default is not inspect.Parameter.empty:
                 option_kwargs["is_flag"] = True
                 option_kwargs["default"] = param.default
-                option_kwargs.pop("required", None)  # Flags can't be required
+                option_kwargs.pop("required", None)
 
-            params.append(click.Option([f"--{param.name}"], **option_kwargs))  # pyright: ignore
+            params.append(click.Option([f"--{name}"], **option_kwargs))  # pyright: ignore
+
+        for param in sig.parameters.values():
+            if param.name in di_params:
+                continue
+            _add_option(param.name, param)
+
+        for name, param in iter_dependency_input_parameters(handler):
+            _add_option(name, param)
 
         @click.pass_context
         def callback(ctx: click.Context, /, **kwargs: Any) -> None:

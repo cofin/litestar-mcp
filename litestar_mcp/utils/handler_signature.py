@@ -1,6 +1,7 @@
 """Helpers for Litestar handler argument advertisement."""
 
 import contextlib
+import inspect
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -9,7 +10,7 @@ from typing import Any
 from litestar.constants import RESERVED_KWARGS
 from litestar.handlers import BaseRouteHandler
 
-from litestar_mcp.schema_builder import parameter_aliases
+from litestar_mcp.schema_builder import iter_dependency_input_parameters, parameter_aliases
 from litestar_mcp.utils import get_handler_function
 
 
@@ -129,6 +130,7 @@ def get_advertised_handler_parameters(
     doc_descriptions = _parse_docstring_args(getattr(fn, "__doc__", None))
 
     advertised: list[AdvertisedHandlerParameter] = []
+    advertised_names: set[str] = set()
     for name, definition in parsed_parameters.items():
         if name == "self" or name in skipped_names:
             continue
@@ -143,6 +145,24 @@ def get_advertised_handler_parameters(
                 description=description or None,
             )
         )
+        advertised_names.add(name)
+
+    path_param_names = _path_parameter_names(path_parameters)
+    for name, param in iter_dependency_input_parameters(handler):
+        if name in advertised_names or name in path_param_names:
+            continue
+        wire_name = python_to_wire.get(name, name)
+        description = doc_descriptions.get(name) or doc_descriptions.get(wire_name)
+        advertised.append(
+            AdvertisedHandlerParameter(
+                python_name=name,
+                wire_name=wire_name,
+                annotation=param.annotation,
+                required=param.default is inspect.Parameter.empty,
+                description=description or None,
+            )
+        )
+        advertised_names.add(name)
     return advertised
 
 

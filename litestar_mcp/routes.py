@@ -325,8 +325,13 @@ def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: dict[str, A
             display_name = python_to_wire.get(name, name)
             errors.append({"path": "/arguments", "message": f"Unexpected argument: {display_name}"})
             continue
-        declared = declared_by_name[name]
-        convert_type = annotated_types.get(name, getattr(declared, "annotation", Any))
+        declared = declared_by_name.get(name)
+        # Provider-declared params won't appear in ``parsed_fn_signature``;
+        # fall back to the advertised parameter's annotation in that case.
+        fallback_annotation = getattr(advertised_by_name[name], "annotation", Any)
+        convert_type = annotated_types.get(
+            name, getattr(declared, "annotation", fallback_annotation) if declared is not None else fallback_annotation
+        )
         try:
             msgspec.convert(value, convert_type, strict=False)
         except msgspec.ValidationError as exc:

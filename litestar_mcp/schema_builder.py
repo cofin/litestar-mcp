@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin
 if TYPE_CHECKING:
     from litestar.handlers import BaseRouteHandler
 
+from litestar.constants import RESERVED_KWARGS
 from litestar.params import ParameterKwarg
 
 from litestar_mcp.typing import (
@@ -41,6 +42,80 @@ def _unwrap_annotated(annotation: Any) -> "tuple[Any, list[ParameterKwarg]]":
         args = get_args(annotation)
         return args[0], [m for m in args[1:] if isinstance(m, ParameterKwarg)]
     return annotation, []
+
+
+def _wire_name_for(python_name: str, param: inspect.Parameter) -> str:
+    """Return the externally visible wire name for ``param``."""
+    _, metas = _unwrap_annotated(param.annotation)
+    for meta in metas:
+        if meta.query:
+            return meta.query
+    return python_name
+
+
+def iter_dependency_input_parameters(
+    handler: "BaseRouteHandler",
+) -> "list[tuple[str, inspect.Parameter]]":
+    """Walk dependency providers transitively and yield their user-input params.
+
+    Litestar's HTTP routing inherits query/path/form params declared on a
+    :class:`~litestar.di.Provide` factory up to the route, so the MCP tool
+    schema must mirror them. This walks ``handler.resolve_dependencies()``
+    plus each provider's own ``Provide`` graph, skipping:
+
+    * names that are themselves DI keys (those are providers, not inputs);
+    * :data:`litestar.constants.RESERVED_KWARGS` (framework injections like
+      ``state`` / ``request`` / ``scope``);
+    * :data:`_EXECUTION_CONTEXT_PARAMS` (auth context keys).
+
+    Returns a list of ``(python_name, inspect.Parameter)`` in stable order.
+    Duplicate python names across providers are deduplicated by first-seen.
+    """
+    try:
+        top_deps = dict(handler.resolve_dependencies())
+    except Exception:  # noqa: BLE001
+        return []
+    if not top_deps:
+        return []
+
+    dep_names: set[str] = set(top_deps)
+    framework_skip = RESERVED_KWARGS | _EXECUTION_CONTEXT_PARAMS
+
+    visited: set[int] = set()
+    seen_names: set[str] = set()
+    collected: list[tuple[str, inspect.Parameter]] = []
+    stack: list[Any] = list(top_deps.values())
+
+    while stack:
+        provide = stack.pop(0)
+        provider_fn = getattr(provide, "dependency", None)
+        if provider_fn is None:
+            continue
+        provider_id = id(provider_fn)
+        if provider_id in visited:
+            continue
+        visited.add(provider_id)
+        try:
+            provider_sig = inspect.signature(provider_fn)
+        except (TypeError, ValueError):
+            continue
+
+        for pname, param in provider_sig.parameters.items():
+            if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                continue
+            if pname in framework_skip:
+                continue
+            if pname in dep_names:
+                # Transitive provider — walk it but do not emit as user input.
+                nested = top_deps.get(pname)
+                if nested is not None:
+                    stack.append(nested)
+                continue
+            if pname in seen_names:
+                continue
+            seen_names.add(pname)
+            collected.append((pname, param))
+    return collected
 
 
 _META_FIELD_MAP: "tuple[tuple[str, str], ...]" = (
@@ -291,11 +366,9 @@ def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]"
     properties: dict[str, Any] = {}
     required: list[str] = []
     wire_to_python: dict[str, str] = {}
+    handler_name = getattr(fn, "__name__", "<handler>")
 
-    for python_name, param in sig.parameters.items():
-        if python_name in di_params or python_name in _EXECUTION_CONTEXT_PARAMS:
-            continue
-
+    def _emit(python_name: str, param: inspect.Parameter) -> None:
         _, metas = _unwrap_annotated(param.annotation)
         wire_name = python_name
         for meta in metas:
@@ -303,9 +376,10 @@ def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]"
                 wire_name = meta.query
                 break
 
-        if wire_name in wire_to_python and wire_to_python[wire_name] != python_name:
+        if wire_name in wire_to_python:
+            if wire_to_python[wire_name] == python_name:
+                return
             existing = wire_to_python[wire_name]
-            handler_name = getattr(fn, "__name__", "<handler>")
             msg = (
                 f"Wire-name collision in handler {handler_name!r}: "
                 f"{wire_name!r} maps to both {existing!r} and {python_name!r}"
@@ -324,6 +398,14 @@ def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]"
 
         if param.default is inspect.Parameter.empty:
             required.append(wire_name)
+
+    for python_name, param in sig.parameters.items():
+        if python_name in di_params or python_name in _EXECUTION_CONTEXT_PARAMS:
+            continue
+        _emit(python_name, param)
+
+    for python_name, param in iter_dependency_input_parameters(handler):
+        _emit(python_name, param)
 
     schema: dict[str, Any] = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -369,6 +451,13 @@ def parameter_aliases(handler: "BaseRouteHandler") -> "dict[str, str]":
         for meta in metas:
             wire_name = meta.query
             if wire_name and wire_name != python_name:
+                aliases[wire_name] = python_name
+                break
+    for python_name, param in iter_dependency_input_parameters(handler):
+        _, metas = _unwrap_annotated(param.annotation)
+        for meta in metas:
+            wire_name = meta.query
+            if wire_name and wire_name != python_name and wire_name not in aliases:
                 aliases[wire_name] = python_name
                 break
     return aliases

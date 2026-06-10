@@ -35,7 +35,7 @@ from litestar.response import Response
 from litestar.types.empty import Empty
 from litestar.utils.sync import ensure_async_callable
 
-from litestar_mcp.schema_builder import parameter_aliases
+from litestar_mcp.schema_builder import iter_dependency_input_parameters, parameter_aliases
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -427,6 +427,9 @@ def _split_tool_args(
     sig_params = handler.parsed_fn_signature.parameters
     has_data = "data" in sig_params
     scalar_sig_names = {name for name in sig_params if name != "data"}
+    # Provider-declared query/path params bubble up to the route through
+    # Litestar's DI inheritance, so the MCP wire surface accepts them too.
+    scalar_sig_names.update(name for name, _ in iter_dependency_input_parameters(handler))
 
     # Build a set of wire keys that resolve to scalar sig params via aliases
     # (or directly when no alias exists).  Keeps wire names in query_payload so
