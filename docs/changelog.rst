@@ -9,6 +9,20 @@ notes, and important protocol fixes.
 Recent Updates
 ==============
 
+.. changelog:: 0.7.2
+    :date: 2026-06-11
+
+    .. change:: include provider-declared query parameters in MCP schemas
+        :type: bugfix
+        :pr: 65
+        :issue: 64
+
+        Query parameters declared on Litestar dependency providers now appear in
+        MCP tool input schemas and are forwarded during tool execution, so
+        provider-backed pagination and aliases are discoverable and callable by
+        MCP clients.
+
+
 .. changelog:: 0.7.1
     :date: 2026-06-09
 
