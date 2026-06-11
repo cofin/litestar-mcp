@@ -877,3 +877,276 @@ class TestGenerateSchemaWireNamesAndDocClobber:
         assert set(schema["properties"]) == {"is_paid", "name"}
         assert "anyOf" in schema["properties"]["is_paid"]
         assert "anyOf" in schema["properties"]["name"]
+
+
+class TestDependencyProviderParameters:
+    """Provider params (e.g. limit/offset on a Provide(...) factory) must surface."""
+
+    @staticmethod
+    def _build_handler(handler_func: Any, dependencies: dict[str, Any]) -> Any:
+        from litestar import Litestar, get
+
+        from tests.unit.conftest import get_handler_from_app
+
+        decorated = get("/x", sync_to_thread=False)(handler_func)
+        app = Litestar(route_handlers=[decorated], dependencies=dependencies)
+        return get_handler_from_app(app, "/x")
+
+    def test_direct_provider_params_appear_in_schema(self) -> None:
+        from litestar.di import Provide
+        from litestar.params import Dependency
+
+        async def provide_pagination(limit: int = 20, offset: int = 0) -> dict[str, int]:
+            return {"limit": limit, "offset": offset}
+
+        async def handler(
+            pagination: Annotated[dict[str, int], Dependency(skip_validation=True)],
+        ) -> dict[str, int]:
+            return pagination
+
+        h = self._build_handler(handler, {"pagination": Provide(provide_pagination)})
+        schema = generate_schema_for_handler(h)
+        assert set(schema["properties"]) == {"limit", "offset"}
+        assert schema["properties"]["limit"] == {"type": "integer"}
+        assert schema["properties"]["offset"] == {"type": "integer"}
+        assert "required" not in schema  # both have defaults
+
+    def test_transitive_provider_params_appear_in_schema(self) -> None:
+        from litestar.di import Provide
+        from litestar.params import Dependency, Parameter
+
+        async def provide_base(
+            filter_q: Annotated[str | None, Parameter(query="q")] = None,
+        ) -> dict[str, Any]:
+            return {"q": filter_q}
+
+        async def provide_pagination(base: dict[str, Any], limit: int = 20, offset: int = 0) -> dict[str, Any]:
+            return {"limit": limit, "offset": offset, **base}
+
+        async def handler(
+            pagination: Annotated[dict[str, Any], Dependency(skip_validation=True)],
+        ) -> dict[str, Any]:
+            return pagination
+
+        h = self._build_handler(
+            handler,
+            {"pagination": Provide(provide_pagination), "base": Provide(provide_base)},
+        )
+        schema = generate_schema_for_handler(h)
+        assert set(schema["properties"]) == {"limit", "offset", "q"}
+
+    def test_provider_framework_kwargs_are_skipped(self) -> None:
+        """Providers that take state/request etc. must not leak those as user input."""
+        from litestar import Request
+        from litestar.datastructures import State
+        from litestar.di import Provide
+        from litestar.params import Dependency
+
+        async def provide_context(state: State, request: Request[Any, Any, Any], limit: int = 10) -> dict[str, Any]:
+            return {"limit": limit}
+
+        async def handler(
+            ctx: Annotated[dict[str, Any], Dependency(skip_validation=True)],
+        ) -> dict[str, Any]:
+            return ctx
+
+        h = self._build_handler(handler, {"ctx": Provide(provide_context)})
+        schema = generate_schema_for_handler(h)
+        assert set(schema["properties"]) == {"limit"}
+
+    def test_provider_with_no_params_does_not_break(self) -> None:
+        from litestar.di import Provide
+        from litestar.params import Dependency
+
+        async def provide_thing() -> dict[str, Any]:
+            return {}
+
+        async def handler(
+            thing: Annotated[dict[str, Any], Dependency(skip_validation=True)],
+        ) -> dict[str, Any]:
+            return thing
+
+        h = self._build_handler(handler, {"thing": Provide(provide_thing)})
+        schema = generate_schema_for_handler(h)
+        assert schema["properties"] == {}
+
+    def test_path_param_collision_dedupes_to_single_emission(self) -> None:
+        """If a provider declares the same name as a path param, the handler's
+        own sig walk emits it first; the provider walk must be a no-op for
+        that name rather than raising a wire-name collision.
+        """
+        from litestar import Litestar, get
+        from litestar.di import Provide
+        from litestar.params import Dependency
+
+        async def provide_audit(user_id: str) -> dict[str, str]:
+            return {"user_id": user_id}
+
+        async def handler(
+            user_id: str,
+            audit: Annotated[dict[str, str], Dependency(skip_validation=True)],
+        ) -> dict[str, str]:
+            return {"user_id": user_id, **audit}
+
+        decorated = get("/items/{user_id:str}", sync_to_thread=False)(handler)
+        app = Litestar(route_handlers=[decorated], dependencies={"audit": Provide(provide_audit)})
+        h = next(
+            rh
+            for route in app.routes
+            for rh in getattr(route, "route_handlers", [getattr(route, "route_handler", None)])
+            if rh is not None and "user_id" in getattr(route, "path", "")
+        )
+        schema = generate_schema_for_handler(h)
+        assert set(schema["properties"]) == {"user_id"}
+
+    def test_provider_param_wire_alias_round_trips(self) -> None:
+        from litestar.di import Provide
+        from litestar.params import Dependency, Parameter
+
+        from litestar_mcp.schema_builder import parameter_aliases
+
+        async def provide_filter(
+            user_id: Annotated[str | None, Parameter(query="userId")] = None,
+        ) -> dict[str, Any]:
+            return {"user_id": user_id}
+
+        async def handler(
+            flt: Annotated[dict[str, Any], Dependency(skip_validation=True)],
+        ) -> dict[str, Any]:
+            return flt
+
+        h = self._build_handler(handler, {"flt": Provide(provide_filter)})
+        schema = generate_schema_for_handler(h)
+        assert "userId" in schema["properties"]
+        assert "user_id" not in schema["properties"]
+        assert parameter_aliases(h) == {"userId": "user_id"}
+
+    def test_shared_callable_across_providers_is_walked_once(self) -> None:
+        """Cycle protection keys on the provider function, not the Provide wrapper.
+
+        Two ``Provide`` entries that wrap the same callable have identical
+        signatures; the BFS visited set keyed on ``id(provider_fn)`` should
+        keep the walk O(unique providers) and emit each param once.
+        """
+        from litestar.di import Provide
+        from litestar.params import Dependency
+
+        async def shared(limit: int = 20) -> int:
+            return limit
+
+        async def handler(
+            a: Annotated[int, Dependency(skip_validation=True)],
+            b: Annotated[int, Dependency(skip_validation=True)],
+        ) -> dict[str, int]:
+            return {"a": a, "b": b}
+
+        # Litestar rejects two equal ``Provide`` instances under different
+        # keys; differentiate via ``use_cache`` so the wrappers are unequal
+        # while the underlying callable is shared.
+        h = self._build_handler(
+            handler,
+            {"a": Provide(shared), "b": Provide(shared, use_cache=True)},
+        )
+        schema = generate_schema_for_handler(h)
+        assert set(schema["properties"]) == {"limit"}
+
+    def test_sync_provider_params_appear_in_schema(self) -> None:
+        """The BFS uses ``inspect.signature`` which handles sync providers identically."""
+        from litestar.di import Provide
+        from litestar.params import Dependency
+
+        def provide_pagination(limit: int = 20, offset: int = 0) -> dict[str, int]:
+            return {"limit": limit, "offset": offset}
+
+        async def handler(
+            pagination: Annotated[dict[str, int], Dependency(skip_validation=True)],
+        ) -> dict[str, int]:
+            return pagination
+
+        h = self._build_handler(handler, {"pagination": Provide(provide_pagination, sync_to_thread=False)})
+        schema = generate_schema_for_handler(h)
+        assert set(schema["properties"]) == {"limit", "offset"}
+
+    def test_provider_return_type_does_not_leak_into_schema(self) -> None:
+        """Only the provider's *inputs* matter; the model it returns must not surface its own fields."""
+        from litestar.di import Provide
+        from litestar.params import Dependency
+
+        @dataclass
+        class FilterModel:
+            limit: int
+            offset: int
+
+        async def provide_filter(q: str | None = None) -> FilterModel:
+            return FilterModel(limit=20, offset=0)
+
+        async def handler(
+            flt: Annotated[FilterModel, Dependency(skip_validation=True)],
+        ) -> dict[str, Any]:
+            return {"q": flt}
+
+        h = self._build_handler(handler, {"flt": Provide(provide_filter)})
+        schema = generate_schema_for_handler(h)
+        assert set(schema["properties"]) == {"q"}
+
+    def test_handler_provider_query_collision_raises(self) -> None:
+        """Two distinct python names aliased to the same wire name -> ValueError."""
+        from litestar.di import Provide
+        from litestar.params import Dependency
+
+        async def provide_filter(
+            other_id: Annotated[str | None, Parameter(query="id")] = None,
+        ) -> dict[str, Any]:
+            return {"id": other_id}
+
+        async def handler(
+            user_id: Annotated[str | None, Parameter(query="id")] = None,
+            flt: Annotated[dict[str, Any] | None, Dependency(skip_validation=True)] = None,
+        ) -> dict[str, Any]:
+            return {"user_id": user_id, **(flt or {})}
+
+        h = self._build_handler(handler, {"flt": Provide(provide_filter)})
+        with pytest.raises(ValueError, match="Wire-name collision"):
+            generate_schema_for_handler(h)
+
+    def test_handler_provider_same_python_name_dedupes(self) -> None:
+        """Same python name appearing on both handler and provider is a no-op dedupe, not a collision."""
+        from litestar.di import Provide
+        from litestar.params import Dependency
+
+        async def provide_audit(limit: int = 20) -> dict[str, int]:
+            return {"limit": limit}
+
+        async def handler(
+            limit: int = 20,
+            audit: Annotated[dict[str, int] | None, Dependency(skip_validation=True)] = None,
+        ) -> dict[str, int]:
+            return {"limit": limit, **(audit or {})}
+
+        h = self._build_handler(handler, {"audit": Provide(provide_audit)})
+        schema = generate_schema_for_handler(h)
+        assert set(schema["properties"]) == {"limit"}
+
+    def test_provider_header_param_does_not_become_query_alias(self) -> None:
+        """Header-sourced provider params surface under their python name, not as wire aliases."""
+        from litestar.di import Provide
+        from litestar.params import Dependency
+
+        async def provide_ctx(
+            tenant: Annotated[str | None, Parameter(header="X-Tenant")] = None,
+        ) -> dict[str, Any]:
+            return {"tenant": tenant}
+
+        async def handler(
+            ctx: Annotated[dict[str, Any], Dependency(skip_validation=True)],
+        ) -> dict[str, Any]:
+            return ctx
+
+        h = self._build_handler(handler, {"ctx": Provide(provide_ctx)})
+        schema = generate_schema_for_handler(h)
+        # Header param falls back to python name -- not aliased to the header name.
+        from litestar_mcp.schema_builder import parameter_aliases as _pa
+
+        assert "tenant" in schema["properties"]
+        assert "X-Tenant" not in schema["properties"]
+        assert _pa(h) == {}

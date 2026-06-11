@@ -54,7 +54,7 @@ from litestar_mcp.registry import (
     resolve_prompt_description,
     should_include_prompt,
 )
-from litestar_mcp.schema_builder import generate_schema_for_handler, parameter_aliases
+from litestar_mcp.schema_builder import _unwrap_annotated, generate_schema_for_handler, parameter_aliases
 from litestar_mcp.sessions import MCPSessionManager, SessionTerminated
 from litestar_mcp.sse import StreamLimitExceeded
 from litestar_mcp.tasks import InMemoryTaskStore, TaskLookupError, TaskRecord, TaskStateError
@@ -325,8 +325,20 @@ def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: dict[str, A
             display_name = python_to_wire.get(name, name)
             errors.append({"path": "/arguments", "message": f"Unexpected argument: {display_name}"})
             continue
-        declared = declared_by_name[name]
-        convert_type = annotated_types.get(name, getattr(declared, "annotation", Any))
+        # Provider-declared params won't appear in ``parsed_fn_signature``;
+        # fall back to the advertised parameter's annotation in that case.
+        # The advertised annotation is the raw ``inspect.Parameter.annotation``
+        # which may still be wrapped in ``Annotated[..., ParameterKwarg(...)]``;
+        # ``msgspec.convert`` rejects Litestar's ``ParameterKwarg`` metadata, so
+        # peel it to the inner type before validation.
+        declared = declared_by_name.get(name)
+        if declared is not None:
+            default_annotation = getattr(declared, "annotation", Any)
+        else:
+            raw = getattr(advertised_by_name[name], "annotation", Any)
+            inner, _ = _unwrap_annotated(raw)
+            default_annotation = inner
+        convert_type = annotated_types.get(name, default_annotation)
         try:
             msgspec.convert(value, convert_type, strict=False)
         except msgspec.ValidationError as exc:
