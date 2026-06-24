@@ -71,6 +71,7 @@ def test_extract_advertised_handler_arguments_filters_dishka_resolved_provider_p
     from dishka import Provider, Scope, make_async_container, provide
     from dishka.integrations.litestar import LitestarProvider, setup_dishka
     from litestar import Litestar, get
+    from litestar.params import FromQuery
 
     from tests.unit.conftest import get_handler_from_app
 
@@ -96,7 +97,7 @@ def test_extract_advertised_handler_arguments_filters_dishka_resolved_provider_p
         dependencies={"task_service": Provide(provide_task_service)},
         sync_to_thread=False,
     )
-    def hello(name: str) -> dict[str, str]:
+    def hello(name: FromQuery[str]) -> dict[str, str]:
         return {"hello": name}
 
     app = Litestar(route_handlers=[hello])

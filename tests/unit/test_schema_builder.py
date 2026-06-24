@@ -1089,6 +1089,28 @@ class TestDependencyProviderParameters:
         schema = generate_schema_for_handler(h)
         assert set(schema["properties"]) == {"q"}
 
+    def test_non_dishka_provider_params_do_not_use_dishka_key_lookup(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Plain Litestar DI must not touch Dishka internals."""
+        from litestar.di import NamedDependency, Provide
+        from litestar.params import FromQuery, SkipValidation
+
+        async def provide_task_service(driver: FromQuery[str]) -> dict[str, str]:
+            return {"driver": driver}
+
+        def handler(
+            task_service: NamedDependency[SkipValidation[dict[str, str]]],
+        ) -> dict[str, str]:
+            return task_service
+
+        def fail_dishka_key_lookup(_annotation: Any) -> Any:
+            pytest.fail("Dishka dependency-key lookup should not run without a Dishka container")
+
+        monkeypatch.setattr("litestar_mcp.schema_builder._dishka_dependency_key", fail_dishka_key_lookup)
+
+        h = self._build_handler(handler, {"task_service": Provide(provide_task_service)})
+        schema = generate_schema_for_handler(h)
+        assert set(schema["properties"]) == {"driver"}
+
     def test_handler_provider_query_collision_raises(self) -> None:
         """Two distinct python names aliased to the same wire name -> ValueError."""
         from litestar.di import Provide
@@ -1156,6 +1178,7 @@ class TestDependencyProviderParameters:
         from dishka.integrations.litestar import LitestarProvider, setup_dishka
         from litestar import Litestar, get
         from litestar.di import Provide
+        from litestar.params import FromQuery
 
         from tests.unit.conftest import get_handler_from_app
 
@@ -1176,7 +1199,7 @@ class TestDependencyProviderParameters:
             return TaskService()
 
         @get("/hello", opt={"mcp_tool": "hello"}, sync_to_thread=False)
-        def hello(name: str) -> dict[str, str]:
+        def hello(name: FromQuery[str]) -> dict[str, str]:
             return {"hello": name}
 
         app = Litestar(

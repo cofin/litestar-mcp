@@ -15,6 +15,7 @@ import msgspec
 import pytest
 from litestar import Litestar, get
 from litestar.di import Provide
+from litestar.params import FromQuery  # noqa: TC002 - Litestar resolves handler markers at runtime.
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig
@@ -271,7 +272,7 @@ class TestInputValidation:
             return _DishkaTaskService()
 
         @get("/hello", opt={"mcp_tool": "hello"}, sync_to_thread=False)
-        def hello(name: str) -> dict[str, str]:
+        def hello(name: FromQuery[str]) -> dict[str, str]:
             return {"hello": name}
 
         app = Litestar(

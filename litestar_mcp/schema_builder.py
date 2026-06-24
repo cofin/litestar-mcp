@@ -488,8 +488,10 @@ def _dishka_registry_has_factory(registry: Any, key: Any) -> bool:
 
 def _dishka_can_resolve(container: Any, annotation: Any) -> bool:
     """Return ``True`` when a Dishka container registry can provide ``annotation``."""
+    if container is None:
+        return False
     key = _dishka_dependency_key(annotation)
-    if container is None or key is None:
+    if key is None:
         return False
     return _dishka_registry_has_factory(getattr(container, "registry", None), key)
 
