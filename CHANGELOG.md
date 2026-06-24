@@ -27,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `google-adk` is a client-side optional integration, not a runtime
   dependency; an `adk` dependency group (`google-adk[mcp]>=2`) installs it
   for the compatibility test harness. See `docs/usage/adk.rst`.
+- `MCPConfig.before_tool_call` and `MCPConfig.after_tool_call` callbacks
+  provide a route-layer-independent audit / metrics hook around each
+  `tools/call` dispatch. Hooks receive the tool name, a shallow copy of
+  submitted arguments, and the synthesized `Request`; the after hook also
+  receives the result or exception plus elapsed dispatch duration. Hook
+  failures are logged and swallowed so observability code cannot change
+  tool-call behavior. Closes
+  [#68](https://github.com/cofin/litestar-mcp/issues/68).
 
 ### Changed
 
@@ -90,6 +98,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `cursor` / `nextCursor` tokens and `INVALID_PARAMS` (`-32602`) for
   invalid cursors. Closes
   [#47](https://github.com/cofin/litestar-mcp/issues/47).
+- Litestar `Provide(...)` factory parameters that are satisfied by a
+  Dishka container are no longer emitted as required MCP tool arguments.
+  When `setup_dishka()` stores a container on `app.state.dishka_container`,
+  provider-factory parameters whose annotated type is resolvable from that
+  container are excluded from generated schemas, advertised arguments,
+  validation, and dispatch argument splitting. Ordinary provider params
+  such as pagination/filter inputs still surface as tool arguments.
+  Closes [#67](https://github.com/cofin/litestar-mcp/issues/67).
 - Prompt and resource JSON-RPC errors now map by MCP primitive instead of a
   generic HTTP-status table. Tool execution failures continue to return
   `isError: true`; prompt handler execution failures return

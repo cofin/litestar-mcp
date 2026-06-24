@@ -65,3 +65,44 @@ def test_extract_advertised_handler_arguments_filters_litestar_signature_namespa
     _, route_handler = create_app_with_handler(handler)
     args = extract_advertised_handler_arguments(route_handler)
     assert [arg["name"] for arg in args] == ["text"]
+
+
+def test_extract_advertised_handler_arguments_filters_dishka_resolved_provider_params() -> None:
+    from dishka import Provider, Scope, make_async_container, provide
+    from dishka.integrations.litestar import LitestarProvider, setup_dishka
+    from litestar import Litestar, get
+
+    from tests.unit.conftest import get_handler_from_app
+
+    class Driver:
+        pass
+
+    class TaskService:
+        pass
+
+    class DishkaProvider(Provider):
+        scope = Scope.REQUEST
+
+        @provide
+        def driver(self) -> Driver:
+            return Driver()
+
+    async def provide_task_service(driver: Driver) -> TaskService:
+        return TaskService()
+
+    @get(
+        "/hello",
+        opt={"mcp_tool": "hello"},
+        dependencies={"task_service": Provide(provide_task_service)},
+        sync_to_thread=False,
+    )
+    def hello(name: str) -> dict[str, str]:
+        return {"hello": name}
+
+    app = Litestar(route_handlers=[hello])
+    container = make_async_container(LitestarProvider(), DishkaProvider())
+    setup_dishka(container=container, app=app)
+    route_handler = get_handler_from_app(app, "/hello")
+
+    args = extract_advertised_handler_arguments(route_handler)
+    assert [arg["name"] for arg in args] == ["name"]

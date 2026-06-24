@@ -174,6 +174,8 @@ config = MCPConfig()
 | `exclude_tags` | `list[str] \| None` | `None` | Exclude routes with matching OpenAPI tags |
 | `auth` | `MCPAuthConfig \| None` | `None` | Metadata for `/.well-known/oauth-protected-resource` discovery |
 | `tasks` | `bool \| MCPTaskConfig` | `False` | Enable experimental in-memory MCP task support |
+| `before_tool_call` | `BeforeToolCallHook \| None` | `None` | Observe each `tools/call` before dispatch |
+| `after_tool_call` | `AfterToolCallHook \| None` | `None` | Observe each `tools/call` result, exception, and duration |
 
 ## Complete Example
 

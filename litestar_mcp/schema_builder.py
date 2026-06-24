@@ -30,47 +30,6 @@ _logger = logging.getLogger(__name__)
 _EXECUTION_CONTEXT_PARAMS = {"resolved_user", "user_claims"}
 
 
-def _unwrap_annotated(annotation: Any) -> "tuple[Any, list[ParameterKwarg]]":
-    """Return ``(inner_type, [ParameterKwarg, ...])``.
-
-    For non-Annotated annotations, returns ``(annotation, [])``.
-    Foreign metadata (strings, ``msgspec.Meta``, etc.) is ignored.
-
-    .. note::
-       If the handler's module uses ``from __future__ import annotations``,
-       parameter annotations are stringified at definition time. ``get_origin``
-       on a string returns ``None``, so this helper falls through to the
-       no-Annotated branch and the schema builder will not emit
-       ``Parameter`` metadata or wire-name aliases for that handler. Use
-       runtime ``Annotated[...]`` annotations (i.e. omit the future import,
-       or rely on Litestar's own type-hint resolution).
-    """
-    if get_origin(annotation) is Annotated:
-        args = get_args(annotation)
-        return args[0], [m for m in args[1:] if isinstance(m, ParameterKwarg)]
-    return annotation, []
-
-
-def _wire_name_for(python_name: str, param: inspect.Parameter) -> str:
-    """Return the externally visible wire name for ``param``.
-
-    Only ``Parameter(query=...)`` aliases produce a distinct wire name. Header
-    and cookie sources are not yet routed by the MCP dispatcher, so a provider
-    that declares ``Parameter(header=...)`` will surface under its python name
-    in the inputSchema; this is logged at DEBUG so it's discoverable.
-    """
-    _, metas = _unwrap_annotated(param.annotation)
-    for meta in metas:
-        if meta.query:
-            return meta.query
-        if meta.header or meta.cookie:
-            _logger.debug(
-                "Provider param %r declares non-query source (header/cookie); wire name falls back to python name.",
-                python_name,
-            )
-    return python_name
-
-
 def iter_dependency_input_parameters(
     handler: "BaseRouteHandler",
     *,
@@ -122,6 +81,7 @@ def iter_dependency_input_parameters(
     dep_names: set[str] = set(top_deps)
     path_skip: set[str] = set(path_param_names) if path_param_names else set()
     framework_skip = RESERVED_KWARGS | _EXECUTION_CONTEXT_PARAMS | path_skip
+    dishka_container = _handler_dishka_container(handler)
 
     # Cycle key is the provider *function* identity, not the Provide wrapper:
     # two Provides registered under different names with sync/cache flag
@@ -161,58 +121,21 @@ def iter_dependency_input_parameters(
             resolved_hints = {}
 
         for pname, param in provider_sig.parameters.items():
-            if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+            if not _should_collect_dependency_parameter(
+                pname,
+                param,
+                framework_skip=framework_skip,
+                dep_names=dep_names,
+                top_deps=top_deps,
+                queue=queue,
+                seen_names=seen_names,
+            ):
                 continue
-            if pname in framework_skip:
+            param = _resolve_provider_parameter_annotation(pname, param, resolved_hints)
+            if _dishka_can_resolve(dishka_container, param.annotation):
                 continue
-            if pname in dep_names:
-                # Transitive provider — walk it but do not emit as user input.
-                nested = top_deps.get(pname)
-                if nested is not None:
-                    queue.append(nested)
-                continue
-            if pname in seen_names:
-                continue
-            seen_names.add(pname)
-            # Only swap in the resolved hint when the source annotation was a
-            # string (PEP 563). For live ``Annotated[...]`` objects we already
-            # have the real type, and ``get_type_hints`` on Python 3.10/3.11
-            # would silently wrap params with ``None`` defaults in
-            # ``Optional[...]``, hiding the inner ``Annotated`` from
-            # ``_unwrap_annotated`` and dropping wire-name aliases.
-            if isinstance(param.annotation, str):
-                resolved = resolved_hints.get(pname)
-                if resolved is not None:
-                    param = param.replace(annotation=resolved)
             collected.append((pname, param))
     return collected
-
-
-_META_FIELD_MAP: "tuple[tuple[str, str], ...]" = (
-    ("description", "description"),
-    ("title", "title"),
-    ("examples", "examples"),
-    ("ge", "minimum"),
-    ("le", "maximum"),
-    ("gt", "exclusiveMinimum"),
-    ("lt", "exclusiveMaximum"),
-    ("min_length", "minLength"),
-    ("max_length", "maxLength"),
-    ("pattern", "pattern"),
-    ("multiple_of", "multipleOf"),
-)
-
-
-def _merge_parameter_meta(schema: "dict[str, Any]", meta: ParameterKwarg) -> None:
-    """Copy non-None fields from ``meta`` into ``schema`` using JSON Schema names."""
-    for attr, key in _META_FIELD_MAP:
-        value = getattr(meta, attr, None)
-        if value is None:
-            continue
-        if key == "examples" and not isinstance(value, list):
-            schema[key] = [value]
-        else:
-            schema[key] = value
 
 
 def basic_type_to_json_schema(annotation: Any) -> "dict[str, Any] | None":
@@ -390,26 +313,6 @@ def type_to_json_schema(annotation: Any) -> "dict[str, Any]":  # noqa: PLR0911
     }
 
 
-def _resolve_string_annotation(annotation: str) -> Any:
-    """Resolve a string annotation to a Python type."""
-    # Common basic types
-    basic_types = {
-        "int": int,
-        "str": str,
-        "float": float,
-        "bool": bool,
-        "list": list,
-        "dict": dict,
-        "set": set,
-    }
-
-    if annotation in basic_types:
-        return basic_types[annotation]
-
-    # For complex string annotations, return object schema
-    return {"type": "object", "description": "Parameter of type " + str(annotation)}
-
-
 def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]":
     """Generate a JSON Schema for an MCP tool handler.
 
@@ -493,33 +396,6 @@ def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]"
     return schema
 
 
-def _record_alias(
-    aliases: "dict[str, str]",
-    python_name: str,
-    wire_name: str,
-    handler_name: str,
-) -> None:
-    """Insert ``{wire_name: python_name}`` into ``aliases``; raise on real collision.
-
-    Same-python-name re-emissions (e.g. a path param echoed by a provider) are
-    no-ops, matching the dedupe semantics in :func:`generate_schema_for_handler`.
-    Different python names mapping to one wire name is a wire-contract bug --
-    raise rather than silently dropping the later entry.
-    """
-    if wire_name == python_name:
-        return
-    existing = aliases.get(wire_name)
-    if existing is None:
-        aliases[wire_name] = python_name
-        return
-    if existing == python_name:
-        return
-    msg = (
-        f"Wire-name collision in handler {handler_name!r}: {wire_name!r} maps to both {existing!r} and {python_name!r}"
-    )
-    raise ValueError(msg)
-
-
 def parameter_aliases(handler: "BaseRouteHandler") -> "dict[str, str]":
     """Return ``{wire_name: python_name}`` for handler params whose wire name differs.
 
@@ -548,3 +424,232 @@ def parameter_aliases(handler: "BaseRouteHandler") -> "dict[str, str]":
     for python_name, param in iter_dependency_input_parameters(handler):
         _record_alias(aliases, python_name, _wire_name_for(python_name, param), handler_name)
     return aliases
+
+
+def _handler_dishka_container(handler: "BaseRouteHandler") -> Any:
+    """Return the Dishka root container stored on the handler's owning app, if any."""
+    app = getattr(handler, "app", None)
+    if app is None:
+        for layer in getattr(handler, "ownership_layers", ()) or ():
+            if getattr(layer, "state", None) is not None:
+                app = layer
+                break
+    state = getattr(app, "state", None)
+    if state is None:
+        return None
+    return getattr(state, "dishka_container", None)
+
+
+def _dishka_component(metas: list[ParameterKwarg]) -> str:
+    """Return a Dishka component marker from ``Annotated`` metadata, if present."""
+    for meta in metas:
+        component = getattr(meta, "component", None)
+        if isinstance(component, str):
+            return component
+    return ""
+
+
+def _dishka_dependency_key(annotation: Any) -> Any:
+    """Build a Dishka dependency key for ``annotation`` when it is meaningful."""
+    inner, metas = _unwrap_annotated(annotation)
+    if inner in (Any, inspect.Parameter.empty) or isinstance(inner, str):
+        return None
+
+    try:
+        from dishka.entities.key import DependencyKey
+    except ImportError:
+        return None
+
+    try:
+        return DependencyKey(inner, component=_dishka_component(metas))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _dishka_registry_has_factory(registry: Any, key: Any) -> bool:
+    """Return ``True`` when ``registry`` or a child registry can provide ``key``."""
+    seen: set[int] = set()
+    while registry is not None:
+        registry_id = id(registry)
+        if registry_id in seen:
+            break
+        seen.add(registry_id)
+
+        get_factory = getattr(registry, "get_factory", None)
+        if callable(get_factory):
+            try:
+                if get_factory(key) is not None:
+                    return True
+            except Exception:  # noqa: BLE001
+                return False
+        registry = getattr(registry, "child_registry", None)
+    return False
+
+
+def _dishka_can_resolve(container: Any, annotation: Any) -> bool:
+    """Return ``True`` when a Dishka container registry can provide ``annotation``."""
+    key = _dishka_dependency_key(annotation)
+    if container is None or key is None:
+        return False
+    return _dishka_registry_has_factory(getattr(container, "registry", None), key)
+
+
+def _unwrap_annotated(annotation: Any) -> "tuple[Any, list[ParameterKwarg]]":
+    """Return ``(inner_type, [ParameterKwarg, ...])``.
+
+    For non-Annotated annotations, returns ``(annotation, [])``.
+    Foreign metadata (strings, ``msgspec.Meta``, etc.) is ignored.
+
+    .. note::
+       If the handler's module uses ``from __future__ import annotations``,
+       parameter annotations are stringified at definition time. ``get_origin``
+       on a string returns ``None``, so this helper falls through to the
+       no-Annotated branch and the schema builder will not emit
+       ``Parameter`` metadata or wire-name aliases for that handler. Use
+       runtime ``Annotated[...]`` annotations (i.e. omit the future import,
+       or rely on Litestar's own type-hint resolution).
+    """
+    if get_origin(annotation) is Annotated:
+        args = get_args(annotation)
+        return args[0], [m for m in args[1:] if isinstance(m, ParameterKwarg)]
+    return annotation, []
+
+
+def _wire_name_for(python_name: str, param: inspect.Parameter) -> str:
+    """Return the externally visible wire name for ``param``.
+
+    Only ``Parameter(query=...)`` aliases produce a distinct wire name. Header
+    and cookie sources are not yet routed by the MCP dispatcher, so a provider
+    that declares ``Parameter(header=...)`` will surface under its python name
+    in the inputSchema; this is logged at DEBUG so it's discoverable.
+    """
+    _, metas = _unwrap_annotated(param.annotation)
+    for meta in metas:
+        if meta.query:
+            return meta.query
+        if meta.header or meta.cookie:
+            _logger.debug(
+                "Provider param %r declares non-query source (header/cookie); wire name falls back to python name.",
+                python_name,
+            )
+    return python_name
+
+
+def _should_collect_dependency_parameter(
+    pname: str,
+    param: inspect.Parameter,
+    *,
+    framework_skip: set[str],
+    dep_names: set[str],
+    top_deps: dict[str, Any],
+    queue: deque[Any],
+    seen_names: set[str],
+) -> bool:
+    """Return whether provider parameter ``pname`` should be exposed to MCP callers."""
+    if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+        return False
+    if pname in framework_skip:
+        return False
+    if pname in dep_names:
+        # Transitive provider — walk it but do not emit as user input.
+        nested = top_deps.get(pname)
+        if nested is not None:
+            queue.append(nested)
+        return False
+    if pname in seen_names:
+        return False
+    seen_names.add(pname)
+    return True
+
+
+def _resolve_provider_parameter_annotation(
+    pname: str,
+    param: inspect.Parameter,
+    resolved_hints: dict[str, Any],
+) -> inspect.Parameter:
+    """Replace stringified provider annotations with resolved runtime hints."""
+    # Only swap in the resolved hint when the source annotation was a
+    # string (PEP 563). For live ``Annotated[...]`` objects we already
+    # have the real type, and ``get_type_hints`` on Python 3.10/3.11
+    # would silently wrap params with ``None`` defaults in
+    # ``Optional[...]``, hiding the inner ``Annotated`` from
+    # ``_unwrap_annotated`` and dropping wire-name aliases.
+    if isinstance(param.annotation, str):
+        resolved = resolved_hints.get(pname)
+        if resolved is not None:
+            return param.replace(annotation=resolved)
+    return param
+
+
+_META_FIELD_MAP: "tuple[tuple[str, str], ...]" = (
+    ("description", "description"),
+    ("title", "title"),
+    ("examples", "examples"),
+    ("ge", "minimum"),
+    ("le", "maximum"),
+    ("gt", "exclusiveMinimum"),
+    ("lt", "exclusiveMaximum"),
+    ("min_length", "minLength"),
+    ("max_length", "maxLength"),
+    ("pattern", "pattern"),
+    ("multiple_of", "multipleOf"),
+)
+
+
+def _merge_parameter_meta(schema: "dict[str, Any]", meta: ParameterKwarg) -> None:
+    """Copy non-None fields from ``meta`` into ``schema`` using JSON Schema names."""
+    for attr, key in _META_FIELD_MAP:
+        value = getattr(meta, attr, None)
+        if value is None:
+            continue
+        if key == "examples" and not isinstance(value, list):
+            schema[key] = [value]
+        else:
+            schema[key] = value
+
+
+def _resolve_string_annotation(annotation: str) -> Any:
+    """Resolve a string annotation to a Python type."""
+    # Common basic types
+    basic_types = {
+        "int": int,
+        "str": str,
+        "float": float,
+        "bool": bool,
+        "list": list,
+        "dict": dict,
+        "set": set,
+    }
+
+    if annotation in basic_types:
+        return basic_types[annotation]
+
+    # For complex string annotations, return object schema
+    return {"type": "object", "description": "Parameter of type " + str(annotation)}
+
+
+def _record_alias(
+    aliases: "dict[str, str]",
+    python_name: str,
+    wire_name: str,
+    handler_name: str,
+) -> None:
+    """Insert ``{wire_name: python_name}`` into ``aliases``; raise on real collision.
+
+    Same-python-name re-emissions (e.g. a path param echoed by a provider) are
+    no-ops, matching the dedupe semantics in :func:`generate_schema_for_handler`.
+    Different python names mapping to one wire name is a wire-contract bug --
+    raise rather than silently dropping the later entry.
+    """
+    if wire_name == python_name:
+        return
+    existing = aliases.get(wire_name)
+    if existing is None:
+        aliases[wire_name] = python_name
+        return
+    if existing == python_name:
+        return
+    msg = (
+        f"Wire-name collision in handler {handler_name!r}: {wire_name!r} maps to both {existing!r} and {python_name!r}"
+    )
+    raise ValueError(msg)

@@ -1150,3 +1150,43 @@ class TestDependencyProviderParameters:
         assert "tenant" in schema["properties"]
         assert "X-Tenant" not in schema["properties"]
         assert _pa(h) == {}
+
+    def test_dishka_resolved_provider_param_does_not_appear_in_schema(self) -> None:
+        from dishka import Provider, Scope, make_async_container, provide
+        from dishka.integrations.litestar import LitestarProvider, setup_dishka
+        from litestar import Litestar, get
+        from litestar.di import Provide
+
+        from tests.unit.conftest import get_handler_from_app
+
+        class Driver:
+            pass
+
+        class TaskService:
+            pass
+
+        class DishkaProvider(Provider):
+            scope = Scope.REQUEST
+
+            @provide
+            def driver(self) -> Driver:
+                return Driver()
+
+        async def provide_task_service(driver: Driver) -> TaskService:
+            return TaskService()
+
+        @get("/hello", opt={"mcp_tool": "hello"}, sync_to_thread=False)
+        def hello(name: str) -> dict[str, str]:
+            return {"hello": name}
+
+        app = Litestar(
+            route_handlers=[hello],
+            dependencies={"task_service": Provide(provide_task_service)},
+        )
+        container = make_async_container(LitestarProvider(), DishkaProvider())
+        setup_dishka(container=container, app=app)
+        h = get_handler_from_app(app, "/hello")
+
+        schema = generate_schema_for_handler(h)
+        assert set(schema["properties"]) == {"name"}
+        assert schema["required"] == ["name"]
