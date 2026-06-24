@@ -9,6 +9,29 @@ notes, and important protocol fixes.
 Recent Updates
 ==============
 
+.. changelog:: 0.7.3
+    :date: 2026-06-24
+
+    .. change:: add tool-call observability callbacks
+        :type: feature
+        :issue: 68
+
+        Adds ``MCPConfig.before_tool_call`` and
+        ``MCPConfig.after_tool_call`` hooks around ``tools/call`` dispatch for
+        audit, metrics, and tracing use cases. The after hook receives either
+        the result or exception plus elapsed dispatch duration, and hook
+        failures are logged without changing tool-call behavior.
+
+    .. change:: exclude Dishka-resolved provider params from tool inputs
+        :type: bugfix
+        :issue: 67
+
+        Litestar ``Provide(...)`` factory parameters whose annotated type can
+        be resolved from ``app.state.dishka_container`` are no longer emitted
+        as MCP tool arguments. Ordinary provider-declared inputs, such as
+        pagination and filter values, still appear in schemas and dispatch.
+
+
 .. changelog:: 0.7.2
     :date: 2026-06-11
 

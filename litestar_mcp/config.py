@@ -1,11 +1,43 @@
 """Configuration for Litestar MCP Plugin."""
 
+from collections.abc import Awaitable
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
+from litestar import Request
 from litestar.stores.base import Store
 
 from litestar_mcp.auth import MCPAuthConfig  # noqa: TC001
+
+
+class BeforeToolCallHook(Protocol):
+    """Callback invoked before an MCP ``tools/call`` dispatch."""
+
+    def __call__(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        request: Request[Any, Any, Any],
+        /,
+    ) -> Awaitable[None] | None:
+        """Observe a tool call before guards and handler execution."""
+
+
+class AfterToolCallHook(Protocol):
+    """Callback invoked after an MCP ``tools/call`` dispatch."""
+
+    def __call__(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        request: Request[Any, Any, Any],
+        /,
+        *,
+        result: Any,
+        exception: Exception | None,
+        duration: float,
+    ) -> Awaitable[None] | None:
+        """Observe a completed, failed, or rejected tool call."""
 
 
 @dataclass(frozen=True)
@@ -116,6 +148,12 @@ class MCPConfig:
             lets servers choose the page size; clients cannot override it per
             request — they page through results via the opaque ``cursor`` /
             ``nextCursor`` round-trip. Must be a positive integer.
+        before_tool_call: Optional callback invoked once before each
+            ``tools/call`` dispatch, after the synthesized request is built
+            and before guards run.
+        after_tool_call: Optional callback invoked once after each
+            ``tools/call`` dispatch with either the result or exception and
+            elapsed dispatch duration in seconds.
     """
 
     base_path: str = "/mcp"
@@ -135,6 +173,8 @@ class MCPConfig:
     sse_max_streams: int = 10_000
     sse_max_idle_seconds: float = 3600.0
     list_page_size: int = 100
+    before_tool_call: BeforeToolCallHook | None = None
+    after_tool_call: AfterToolCallHook | None = None
     _session_manager: Any = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:

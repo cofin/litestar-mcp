@@ -15,6 +15,7 @@ import msgspec
 import pytest
 from litestar import Litestar, get
 from litestar.di import Provide
+from litestar.params import FromQuery  # noqa: TC002 - Litestar resolves handler markers at runtime.
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig
@@ -73,6 +74,14 @@ class Point(msgspec.Struct):
 
     x: int
     y: int
+
+
+class _DishkaDriver:
+    pass
+
+
+class _DishkaTaskService:
+    pass
 
 
 class TestInputValidation:
@@ -247,3 +256,36 @@ class TestInputValidation:
             assert "result" in ok
             assert ok["result"]["isError"] is False
             assert json.loads(ok["result"]["content"][0]["text"]) == {"limit": 7, "offset": 3}
+
+    def test_dishka_resolved_provider_param_is_not_required(self) -> None:
+        from dishka import Provider, Scope, make_async_container, provide
+        from dishka.integrations.litestar import LitestarProvider, setup_dishka
+
+        class DishkaProvider(Provider):
+            scope = Scope.REQUEST
+
+            @provide
+            def driver(self) -> _DishkaDriver:
+                return _DishkaDriver()
+
+        async def provide_task_service(driver: _DishkaDriver) -> _DishkaTaskService:
+            return _DishkaTaskService()
+
+        @get("/hello", opt={"mcp_tool": "hello"}, sync_to_thread=False)
+        def hello(name: FromQuery[str]) -> dict[str, str]:
+            return {"hello": name}
+
+        app = Litestar(
+            route_handlers=[hello],
+            dependencies={"task_service": Provide(provide_task_service)},
+            plugins=[LitestarMCP(MCPConfig())],
+        )
+        container = make_async_container(LitestarProvider(), DishkaProvider())
+        setup_dishka(container=container, app=app)
+
+        with TestClient(app=app) as client:
+            result = _call(client, "hello", {"name": "Ada"})
+
+        assert "result" in result
+        assert result["result"]["isError"] is False
+        assert json.loads(result["result"]["content"][0]["text"]) == {"hello": "Ada"}

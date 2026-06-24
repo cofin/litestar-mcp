@@ -116,6 +116,13 @@ Configuration Options
     * - ``tasks``
       - ``False``
       - Enable experimental in-memory MCP task support.
+    * - ``before_tool_call``
+      - ``None``
+      - Optional callback invoked once before each ``tools/call`` dispatch.
+    * - ``after_tool_call``
+      - ``None``
+      - Optional callback invoked once after each ``tools/call`` dispatch
+        with the result or exception and elapsed duration.
     * - ``list_page_size``
       - ``100``
       - Server-chosen page size for the ``*/list`` methods (see below).
@@ -130,6 +137,26 @@ or resource is omitted from ``tools/list``, ``resources/list``, or
 returns the same not-found response as an unknown name or URI. Filters narrow
 the MCP exposure surface; use ``guards`` or auth middleware for access
 control.
+
+Tool-Call Callbacks
+===================
+
+Use ``before_tool_call`` and ``after_tool_call`` when you need audit,
+metrics, or tracing hooks that are independent of route ownership layers.
+Both callbacks receive the MCP tool name, a shallow copy of the submitted
+arguments, and the synthesized :class:`litestar.Request` used for the
+handler dispatch. ``after_tool_call`` also receives ``result``,
+``exception``, and ``duration`` keyword-only values, and fires for
+successes, guard failures, error responses, and unhandled exceptions.
+Callback exceptions are logged and swallowed so observability code does
+not alter tool-call behavior.
+
+.. literalinclude:: /examples/snippets/configuration_tool_callbacks.py
+    :language: python
+    :caption: ``docs/examples/snippets/configuration_tool_callbacks.py``
+    :start-after: # start-example
+    :end-before: # end-example
+    :dedent:
 
 List Pagination
 ===============

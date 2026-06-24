@@ -22,6 +22,18 @@ discovery time.
     :end-before: # end-example
     :dedent:
 
+Dependency Providers and Dishka
+===============================
+
+Tool input schemas include user-supplied parameters declared on Litestar
+``Provide(...)`` factories, such as pagination or filter parameters. When
+an app also uses Dishka via ``dishka.integrations.litestar.setup_dishka``,
+provider-factory parameters whose annotated type is resolvable from the
+Dishka container are treated as external DI inputs instead of MCP tool
+arguments. This keeps Dishka-backed services out of ``tools/list``
+schemas and ``tools/call`` validation while preserving ordinary Litestar
+provider parameters.
+
 OpenAPI Integration
 ===================
 

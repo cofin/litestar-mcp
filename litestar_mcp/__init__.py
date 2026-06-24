@@ -23,12 +23,14 @@ from litestar_mcp.auth import (
     TokenValidator,
     create_oidc_validator,
 )
-from litestar_mcp.config import MCPConfig, MCPOptKeys
+from litestar_mcp.config import AfterToolCallHook, BeforeToolCallHook, MCPConfig, MCPOptKeys
 from litestar_mcp.plugin import LitestarMCP
 from litestar_mcp.routes import MCPController
 from litestar_mcp.utils import mcp_prompt, mcp_resource, mcp_tool
 
 __all__ = (
+    "AfterToolCallHook",
+    "BeforeToolCallHook",
     "DefaultJWKSCache",
     "JWKSCache",
     "LitestarMCP",
