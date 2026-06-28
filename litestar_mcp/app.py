@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from litestar import Litestar, Response
-from litestar.exceptions import SerializationException
+from litestar.exceptions import PermissionDeniedException, SerializationException
 from litestar.handlers import get, post
 from litestar.serialization import decode_json, encode_json
 
@@ -31,6 +31,15 @@ from litestar_mcp.services.handler import RequestContext
 
 if TYPE_CHECKING:
     from litestar.types import ControllerRouterHandler
+
+_INTERNAL_DISPATCH_SCOPE_KEY = "litestar_mcp.internal_dispatch"
+
+
+def _require_internal_dispatch(connection: Any, _route_handler: Any) -> None:
+    """Reject direct HTTP access to standalone wrapper internal routes."""
+    if not connection.scope.get(_INTERNAL_DISPATCH_SCOPE_KEY):
+        msg = "Standalone MCP internal routes are not directly accessible"
+        raise PermissionDeniedException(msg)
 
 
 def _convert_kwargs_to_flags(kwargs: dict[str, Any]) -> list[str]:
@@ -176,11 +185,6 @@ class MCP:
         route_handlers: list[ControllerRouterHandler] | None = None,
         **kwargs: Any,
     ) -> None:
-        self.config = config or MCPConfig()
-        self.config.name = name
-        if instructions is not None:
-            self.config.instructions = instructions
-
         resolved_plugins = plugins or []
         found_plugin: LitestarMCP | None = None
         for p in resolved_plugins:
@@ -189,8 +193,17 @@ class MCP:
                 break
 
         if found_plugin is None:
+            self.config = config or MCPConfig()
+            self.config.name = name
+            if instructions is not None:
+                self.config.instructions = instructions
             found_plugin = LitestarMCP(config=self.config)
             resolved_plugins.append(found_plugin)
+        else:
+            self.config = found_plugin.config
+            self.config.name = name
+            if instructions is not None:
+                self.config.instructions = instructions
 
         self.plugin: LitestarMCP = found_plugin
 
@@ -233,6 +246,7 @@ class MCP:
                 path=path,
                 mcp_tool=tool_name,
                 mcp_description=description or fn.__doc__ or "",
+                guards=[_require_internal_dispatch],
             )(_json_response_wrapper(fn))
             self.plugin.register_dynamic_handler(handler)
             return fn
@@ -263,6 +277,7 @@ class MCP:
                 mcp_resource=resource_name,
                 mcp_resource_template=uri,
                 mcp_resource_description=description or fn.__doc__ or "",
+                guards=[_require_internal_dispatch],
             )(_json_response_wrapper(fn))
             self.plugin.register_dynamic_handler(handler)
             return fn
@@ -288,6 +303,7 @@ class MCP:
                 path=path,
                 mcp_prompt=prompt_name,
                 mcp_prompt_description=description or fn.__doc__ or "",
+                guards=[_require_internal_dispatch],
             )(_json_response_wrapper(fn))
             self.plugin.register_dynamic_handler(handler)
             return fn

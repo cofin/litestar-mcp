@@ -13,7 +13,7 @@ from typing import Annotated, Any
 
 import msgspec
 import pytest
-from litestar import Litestar, get
+from litestar import Litestar, get, post
 from litestar.di import Provide
 from litestar.params import FromQuery  # noqa: TC002 - Litestar resolves handler markers at runtime.
 from litestar.testing import TestClient
@@ -74,6 +74,12 @@ class Point(msgspec.Struct):
 
     x: int
     y: int
+
+
+class Payload(msgspec.Struct):
+    """Payload used for data-wrapper validation assertions."""
+
+    title: str
 
 
 class _DishkaDriver:
@@ -170,6 +176,18 @@ class TestInputValidation:
             payload = _error_payload(result)
             paths = {e["path"] for e in payload["errors"]}
             assert "/arguments/point/x" in paths, payload
+
+    def test_empty_data_wrapper_validates_required_struct_fields(self) -> None:
+        @post("/payload", opt={"mcp_tool": "create_payload"}, sync_to_thread=False)
+        def create_payload(data: Payload) -> dict[str, str]:
+            return {"title": data.title}
+
+        app = Litestar(route_handlers=[create_payload], plugins=[LitestarMCP(MCPConfig())])
+        with TestClient(app=app) as client:
+            result = _call(client, "create_payload", {"data": {}})
+            payload = _error_payload(result)
+            paths = {e["path"] for e in payload["errors"]}
+            assert "/arguments/data" in paths, payload
 
     def test_di_param_not_treated_as_user_arg(self) -> None:
         async def provide_secret() -> str:

@@ -515,6 +515,29 @@ class TestMsgspecAsHandlerParam:
         assert "count" in target["properties"]
         assert target["required"] == ["name"]
 
+    def test_generate_schema_for_post_data_struct_param(self) -> None:
+        """A POST body declared as ``data: Struct`` is advertised to MCP clients."""
+        import msgspec
+
+        class Payload(msgspec.Struct):
+            title: str
+            count: int = 1
+
+        def create_payload(data: Payload) -> dict[str, Any]:
+            return {"title": data.title, "count": data.count}
+
+        _, handler = create_app_with_handler(create_payload, route_path="/payload", method="POST")
+        schema = generate_schema_for_handler(handler)
+
+        assert schema["required"] == ["data"]
+        data_schema = schema["properties"]["data"]
+        assert "$defs" in data_schema
+        assert "Payload" in data_schema["$defs"]
+        payload_schema = data_schema["$defs"]["Payload"]
+        assert payload_schema["properties"]["title"]["type"] == "string"
+        assert payload_schema["properties"]["count"]["type"] == "integer"
+        assert payload_schema["required"] == ["title"]
+
 
 class TestPydanticToJsonSchema:
     """Test suite for pydantic_to_json_schema function."""

@@ -19,6 +19,7 @@ from litestar_mcp.utils import get_handler_function
 _logger = logging.getLogger(__name__)
 
 _EXECUTION_CONTEXT_PARAMS = {"resolved_user", "user_claims"}
+_ADVERTISED_RESERVED_KWARGS = set(RESERVED_KWARGS) - {"data"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,7 +132,7 @@ def get_advertised_handler_parameters(
     with contextlib.suppress(AttributeError, TypeError):
         di_params = set(handler.resolve_dependencies().keys())
 
-    skipped_names = set(RESERVED_KWARGS) | di_params | set(_path_parameter_names(path_parameters))
+    skipped_names = _ADVERTISED_RESERVED_KWARGS | di_params | set(_path_parameter_names(path_parameters))
     aliases = parameter_aliases(handler)
     python_to_wire = {python_name: wire_name for wire_name, python_name in aliases.items()}
     fn = get_handler_function(handler)

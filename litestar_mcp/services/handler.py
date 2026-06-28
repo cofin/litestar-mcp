@@ -167,12 +167,13 @@ def _validate_tool_arguments(handler: BaseRouteHandler, tool_args: dict[str, Any
     # recognized scalar fields are treated as members of the data struct.
     # Validate them by building a mapping and converting it to the struct.
     if data_type is not None:
+        has_explicit_data = "data" in tool_args
         data_payload = (
             tool_args["data"]
-            if "data" in tool_args
+            if has_explicit_data
             else {k: v for k, v in tool_args.items() if k not in recognized_scalar_names}
         )
-        if data_payload:
+        if has_explicit_data or data_payload:
             try:
                 msgspec.convert(data_payload, data_type, strict=False)
             except msgspec.ValidationError as exc:
@@ -184,6 +185,10 @@ def _validate_tool_arguments(handler: BaseRouteHandler, tool_args: dict[str, Any
     for name, parameter in advertised_by_name.items():
         if name in tool_args:
             continue
+        if name == "data" and data_type is not None:
+            data_member_names = set(tool_args) - recognized_scalar_names
+            if data_member_names:
+                continue
         if parameter.required:
             errors.append({"path": _to_pointer(parameter.wire_name, ""), "message": "Missing required argument"})
 
@@ -319,11 +324,14 @@ class MCPHandlerService:
                 task_capabilities["cancel"] = {}
             capabilities["tasks"] = task_capabilities
 
-        return {
+        result: dict[str, Any] = {
             "protocolVersion": MCP_PROTOCOL_VERSION,
             "capabilities": capabilities,
             "serverInfo": {"name": server_name, "version": server_version},
         }
+        if self.config.instructions is not None:
+            result["instructions"] = self.config.instructions
+        return result
 
     async def initialized(self, params: dict[str, Any], context: RequestContext) -> dict[str, Any]:
         return {}

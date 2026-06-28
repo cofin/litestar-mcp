@@ -18,6 +18,10 @@ import msgspec
 _polar = "[Polar.sh](https://polar.sh/litestar-org)"
 _open_collective = "[OpenCollective](https://opencollective.com/litestar)"
 _github_sponsors = "[GitHub Sponsors](https://github.com/sponsors/litestar-org/)"
+_repository_owner = "cofin"
+_repository_name = "litestar-mcp"
+_repository = f"{_repository_owner}/{_repository_name}"
+_repository_url = f"https://github.com/{_repository}"
 
 
 class PullRequest(msgspec.Struct, kw_only=True):
@@ -68,7 +72,7 @@ class ReleaseInfo:
 
     @property
     def compare_url(self) -> str:
-        return f"https://github.com/litestar-org/litestar-mcp/compare/{self.base}...{self.release_tag}"
+        return f"{_repository_url}/compare/{self.base}...{self.release_tag}"
 
 
 def _pr_number_from_commit(comp: Comp) -> int | None:
@@ -99,12 +103,12 @@ class _Thing:
                 "X-GitHub-Api-Version": "2022-11-28",
                 "Accept": "application/vnd.github+json",
             },
-            base_url="https://api.github.com/repos/litestar-org/litestar-mcp/",
+            base_url=f"https://api.github.com/repos/{_repository}/",
         )
 
     async def get_closing_issues_references(self, pr_number: int) -> list[int]:
         graphql_query = """{
-        repository(owner: "litestar-org", name: "litestar-mcp") {
+        repository(owner: "%s", name: "%s") {
             pullRequest(number: %d) {
                 id
                 closingIssuesReferences (first: 10) {
@@ -117,7 +121,7 @@ class _Thing:
             }
         }
     }"""
-        query = graphql_query % (pr_number,)
+        query = graphql_query % (_repository_owner, _repository_name, pr_number)
         res = await self._base_client.post("https://api.github.com/graphql", json={"query": query})
         if res.is_client_error:
             return []
@@ -151,7 +155,7 @@ class _Thing:
             number=pr.number,
             cc_type=cc_type,
             clean_title=clean_title.strip(),
-            url=f"https://github.com/litestar-org/litestar-mcp/pull/{pr.number}",
+            url=f"{_repository_url}/pull/{pr.number}",
             closes=closes_issues,
             title=pr.title,
             created_at=datetime.datetime.strptime(pr.created_at, "%Y-%m-%dT%H:%M:%S%z"),

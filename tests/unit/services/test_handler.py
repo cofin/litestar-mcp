@@ -58,6 +58,22 @@ async def test_initialize_returns_capabilities(
 
 
 @pytest.mark.asyncio
+async def test_initialize_returns_configured_instructions(dummy_app: Litestar, request_context: RequestContext) -> None:
+    service = MCPHandlerService(
+        config=MCPConfig(name="Test Server", instructions="Use the audited workflow."),
+        discovered_tools={},
+        discovered_resources={},
+        discovered_prompts={},
+        app_ref=dummy_app,
+        registry=None,
+    )
+
+    result = await service.initialize({}, request_context)
+
+    assert result["instructions"] == "Use the audited workflow."
+
+
+@pytest.mark.asyncio
 async def test_initialize_with_prompts_and_tasks(dummy_app: Litestar, request_context: RequestContext) -> None:
     config = MCPConfig(name="Test Server", tasks=True)
     prompt_reg = PromptRegistration(name="test_prompt", fn=lambda: "hello")

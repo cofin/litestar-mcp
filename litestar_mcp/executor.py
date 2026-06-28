@@ -59,6 +59,7 @@ _logger = logging.getLogger(__name__)
 
 _NON_JSON_STATUS = 500
 _ERROR_STATUS_FLOOR = 400
+_INTERNAL_DISPATCH_SCOPE_KEY = "litestar_mcp.internal_dispatch"
 
 
 class NotCallableInCLIContextError(ImproperlyConfiguredException):
@@ -711,6 +712,7 @@ def _build_dispatch_scope(
             "path_params": coerced_path_values,
             "route_handler": handler,
             "path_template": path_template,
+            _INTERNAL_DISPATCH_SCOPE_KEY: True,
         },
     )
 

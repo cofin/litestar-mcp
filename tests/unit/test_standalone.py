@@ -7,10 +7,39 @@ if TYPE_CHECKING:
 
 from litestar import Litestar
 from litestar.plugins import InitPluginProtocol
+from litestar.testing import TestClient
 
 from litestar_mcp import MCP
 from litestar_mcp.config import MCPConfig
 from litestar_mcp.plugin import LitestarMCP
+
+
+def _rpc(client: TestClient[Any], method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
+    if params is not None:
+        body["params"] = params
+    headers: dict[str, str] = {}
+    if method != "initialize":
+        sid = getattr(client, "_mcp_session", "")
+        if not sid:
+            init = _rpc(client, "initialize")
+            sid = init.get("_session_id", "")
+            if not sid:
+                sid = getattr(client, "_mcp_session", "")
+        if sid:
+            headers["Mcp-Session-Id"] = str(sid)
+    response = client.post("/mcp", json=body, headers=headers)
+    result = response.json()
+    sid = response.headers.get("mcp-session-id")
+    if method == "initialize" and sid:
+        client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+            headers={"Mcp-Session-Id": sid},
+        )
+        client._mcp_session = sid  # type: ignore[attr-defined]
+        result["_session_id"] = sid
+    return result  # type: ignore[no-any-return]
 
 
 def test_mcp_init_defaults() -> None:
@@ -34,6 +63,22 @@ def test_mcp_init_uses_plugin() -> None:
     assert mcp.plugin is plugin
     mcp_plugins = [p for p in mcp._plugins if isinstance(p, LitestarMCP)]
     assert len(mcp_plugins) == 1
+
+
+def test_mcp_init_synchronizes_existing_plugin_metadata() -> None:
+    plugin = LitestarMCP()
+    mcp = MCP(name="existing-plugin", instructions="Follow these instructions", plugins=[plugin])
+
+    assert mcp.plugin is plugin
+    assert mcp.config is plugin.config
+    assert plugin.config.name == "existing-plugin"
+    assert plugin.config.instructions == "Follow these instructions"
+
+    with TestClient(app=mcp.app) as client:
+        response = _rpc(client, "initialize")
+
+    assert response["result"]["serverInfo"]["name"] == "existing-plugin"
+    assert response["result"]["instructions"] == "Follow these instructions"
 
 
 def test_mcp_lazy_app() -> None:
@@ -81,6 +126,22 @@ def test_mcp_decorators_registration() -> None:
 
     prompt_reg = registry.prompts["my_prompt"]
     assert prompt_reg.description == "prompt desc"
+
+
+def test_standalone_internal_tool_route_rejects_direct_http() -> None:
+    mcp = MCP(name="test-mcp")
+
+    @mcp.tool(name="echo", description="Echo")
+    def echo(message: str) -> str:
+        return message
+
+    with TestClient(app=mcp.app) as client:
+        direct = client.post("/mcp/internal/tools/echo", json={"message": "hello"})
+        via_mcp = _rpc(client, "tools/call", {"name": "echo", "arguments": {"message": "hello"}})
+
+    assert direct.status_code == 403
+    assert via_mcp["result"]["isError"] is False
+    assert via_mcp["result"]["content"][0]["text"] == "hello"
 
 
 def test_standalone_plugin_coexistence() -> None:

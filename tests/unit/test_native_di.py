@@ -127,6 +127,24 @@ def test_data_param_parses_via_signature_model() -> None:
     assert '"title":"T"' in payload["text"]
 
 
+def test_data_param_accepts_wrapped_data_argument() -> None:
+    """Handlers with ``data: StructT`` accept the explicit MCP ``data`` wrapper."""
+
+    @post("/notes", opt={"mcp_tool": "create_note"}, sync_to_thread=False)
+    def create_note(data: NoteInput) -> dict[str, str]:
+        assert isinstance(data, NoteInput)
+        return {"title": data.title, "body": data.body}
+
+    app = Litestar(route_handlers=[create_note], plugins=[LitestarMCP()])
+
+    with TestClient(app=app) as client:
+        resp = _call_tool(client, "create_note", {"data": {"title": "T", "body": "B"}})
+
+    assert resp["result"]["isError"] is False
+    payload = resp["result"]["content"][0]
+    assert '"title":"T"' in payload["text"]
+
+
 def test_path_param_routes_through_scope() -> None:
     """Handler with a path-param kwarg receives it from ``tool_args``.
 
