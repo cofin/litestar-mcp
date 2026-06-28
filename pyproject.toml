@@ -14,6 +14,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: Python",
     "Topic :: Software Development",
     "Typing :: Typed",
@@ -34,7 +35,7 @@ maintainers = [
 name = "litestar-mcp"
 readme = "README.md"
 requires-python = ">=3.10"
-version = "0.8.0"
+version = "0.9.0"
 
 [project.urls]
 Changelog = "https://cofin.github.io/litestar-mcp/latest/changelog"
@@ -116,7 +117,7 @@ test = [
 allow_dirty = true
 commit = false
 commit_args = "--no-verify"
-current_version = "0.8.0"
+current_version = "0.9.0"
 ignore_missing_files = false
 ignore_missing_version = false
 message = "chore(release): bump to v{new_version}"
