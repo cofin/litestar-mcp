@@ -9,8 +9,8 @@ rendering (``render_description``, ``extract_description_sources``,
 ``DescriptionSources``), and the RFC 6570 Level 1 URI template helpers
 (``parse_template``, ``match_uri``, ``expand_template``). Before v0.5.0
 these lived in separate modules (``filters.py``, ``decorators.py``,
-``_descriptions.py``, ``_uri_template.py``); Ch5 of the v0.5.0 roadmap
-flattens them into this single module.
+``_descriptions.py``, ``_uri_template.py``); they are now flattened into
+this single module.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from litestar_mcp.config import MCPOptKeys
 
@@ -35,9 +35,7 @@ _VAR_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
-# ---------------------------------------------------------------------------
 # Public MetadataRegistry and DescriptionSources
-# ---------------------------------------------------------------------------
 
 
 class MetadataRegistry:
@@ -99,9 +97,7 @@ class DescriptionSources:
     agent_instructions: str | None
 
 
-# ---------------------------------------------------------------------------
 # Public functions
-# ---------------------------------------------------------------------------
 
 
 def get_handler_function(handler: BaseRouteHandler) -> Callable[..., Any]:
@@ -502,9 +498,7 @@ def expand_template(template: str, values: dict[str, str]) -> str:
     return "".join(parts)
 
 
-# ---------------------------------------------------------------------------
 # Private helper functions and classes
-# ---------------------------------------------------------------------------
 
 
 def _clean(value: Any) -> str | None:

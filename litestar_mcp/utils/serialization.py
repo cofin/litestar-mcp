@@ -202,9 +202,7 @@ def reset_serializer_cache() -> None:
         _SCHEMA_SERIALIZERS.clear()
 
 
-# ---------------------------------------------------------------------------
 # Private helper functions
-# ---------------------------------------------------------------------------
 
 
 def _dump_identity_dict(value: Any) -> dict[str, Any]:

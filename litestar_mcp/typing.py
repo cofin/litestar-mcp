@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
 
 from litestar_mcp._typing import (
     ATTRS_INSTALLED,
+    DISHKA_INSTALLED,
     MSGSPEC_INSTALLED,
     PYDANTIC_INSTALLED,
     AttrsInstance,
@@ -27,6 +28,7 @@ from litestar_mcp._typing import (
     BaseModel,
     BaseModelStub,
     DataclassProtocol,
+    DishkaDependencyKey,
     Struct,
     StructStub,
     attrs_fields,
@@ -63,12 +65,14 @@ SupportedSchemaModel: TypeAlias = DictLike | StructStub | BaseModelStub | Datacl
 
 __all__ = (
     "ATTRS_INSTALLED",
+    "DISHKA_INSTALLED",
     "MSGSPEC_INSTALLED",
     "PYDANTIC_INSTALLED",
     "AttrsInstance",
     "BaseModel",
     "DataclassProtocol",
     "DictLike",
+    "DishkaDependencyKey",
     "Struct",
     "SupportedSchemaModel",
     "attrs_fields",

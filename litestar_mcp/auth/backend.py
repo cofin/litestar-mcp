@@ -4,8 +4,7 @@ This module consolidates the built-in bearer/OIDC authentication
 middleware (:class:`MCPAuthBackend`) with the configuration dataclasses
 that describe OIDC providers (:class:`OIDCProviderConfig`) and the
 protected-resource discovery manifest (:class:`MCPAuthConfig`). Before
-v0.5.0 these lived in separate modules; Ch5 of the v0.5.0 roadmap
-flattens them here.
+v0.5.0 these lived in separate modules; they are now consolidated here.
 """
 
 from __future__ import annotations
@@ -52,9 +51,7 @@ _MISSING_HEADER_MSG = "Missing or invalid Authorization header"
 _INVALID_TOKEN_MSG = "Invalid token"  # noqa: S105 — auth failure message, not a credential
 
 
-# ---------------------------------------------------------------------------
 # Configuration dataclasses
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -104,9 +101,7 @@ class MCPAuthConfig:
     scopes: dict[str, str] | None = None
 
 
-# ---------------------------------------------------------------------------
 # Authentication middleware
-# ---------------------------------------------------------------------------
 
 
 class MCPAuthBackend(AbstractAuthenticationMiddleware):

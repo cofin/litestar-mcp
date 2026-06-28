@@ -16,9 +16,9 @@ from litestar_mcp.registry import (
     PromptRegistration,
     Registry,
     _normalize_prompt_result,
-    _parse_docstring_args,
 )
 from litestar_mcp.utils import get_mcp_metadata
+from litestar_mcp.utils.handler_signature import _parse_docstring_args
 
 # ---------------------------------------------------------------------------
 # Helpers — mirrors _ensure_session / _rpc pattern from test_plugin.py

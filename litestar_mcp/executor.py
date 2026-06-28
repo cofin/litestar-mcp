@@ -675,8 +675,8 @@ def _build_dispatch_scope(
     """Shape ``tool_args`` into an ASGI scope + receive for ``handler``.
 
     HTTP mode (``base_scope`` from the inbound /mcp request) inherits
-    middleware-populated state (``scope["state"]`` — e.g. Dishka's request
-    container, Ch3's auth-middleware user) so request-scoped DI flows through.
+    middleware-populated state (``scope["state"]`` — e.g., Dishka's request
+    container, authentication user) so request-scoped DI flows through.
     Stdio mode starts from a blank scope.
     """
     path_values, query_values, body = _split_tool_args(handler, tool_args, path_parameters)

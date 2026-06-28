@@ -30,8 +30,10 @@ def test_snippet_build_returns_litestar(module_name: str) -> None:
         app = mod.build()
     elif hasattr(mod, "app"):
         app = mod.app
+    elif hasattr(mod, "mcp"):
+        app = mod.mcp.app
     else:
-        pytest.fail(f"{module_name} has neither build() nor app variable")
+        pytest.fail(f"{module_name} has neither build(), app, nor mcp variable")
     assert isinstance(app, Litestar)
 
 

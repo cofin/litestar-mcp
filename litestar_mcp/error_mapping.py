@@ -1,6 +1,6 @@
 """Primitive-aware MCP JSON-RPC error helpers.
 
-Error contract (GH #48). The JSON-RPC ``error.code`` reflects the *primitive-
+Error contract. The JSON-RPC ``error.code`` reflects the *primitive-
 level* error class defined by the MCP spec, **not** the handler's HTTP status:
 
 * ``resources/read`` unknown URI -> ``-32002`` (spec-mandated "Resource not found").
@@ -14,8 +14,12 @@ level* error class defined by the MCP spec, **not** the handler's HTTP status:
 The handler's real HTTP status is never dropped: it is preserved in
 ``error.data.statusCode`` so clients can recover the finer signal without the
 server minting non-standard JSON-RPC codes. MCP defines no codes for
-401/403/409/429, so none are invented here (this deliberately supersedes the
-``http_to_jsonrpc_code`` status->code table proposed in GH #48).
+401/403/409/429, so none are invented here (this deliberately supersedes
+status->code mapping proposals).
+
+RESOURCE_NOT_FOUND is the Spec-mandated resources/read "Resource not found" code
+(MCP 2025-06-18, Resources §Error Handling). Note: future spec updates may migrate
+this to -32602 (Invalid params).
 """
 
 from typing import Any
@@ -23,9 +27,6 @@ from typing import Any
 from litestar_mcp.executor import MCPToolErrorResult
 from litestar_mcp.jsonrpc import INTERNAL_ERROR, JSONRPCError
 
-# Spec-mandated resources/read "Resource not found" code (MCP 2025-06-18,
-# Resources §Error Handling). Known risk: SEP-2164 proposes migrating this to
-# -32602 (Invalid params); revisit if/when that lands upstream.
 RESOURCE_NOT_FOUND = -32002
 
 

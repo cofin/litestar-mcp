@@ -17,9 +17,7 @@ from litestar_mcp.utils import (
     should_include_handler,
 )
 from litestar_mcp.utils.handler_signature import (
-    _parse_docstring_args as _parse_handler_docstring_args,
-)
-from litestar_mcp.utils.handler_signature import (
+    _parse_docstring_args,
     extract_advertised_handler_arguments,
 )
 
@@ -39,11 +37,6 @@ _PROMPT_CONTENT_REQUIRED_KEYS: dict[str, frozenset[str]] = {
     "resource_link": frozenset({"uri", "name"}),
     "resource": frozenset({"resource"}),
 }
-
-
-def _parse_docstring_args(docstring: str | None) -> dict[str, str]:
-    """Extract parameter descriptions from a Google-style docstring."""
-    return _parse_handler_docstring_args(docstring)
 
 
 @dataclass(frozen=True, slots=True)

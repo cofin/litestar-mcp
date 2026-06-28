@@ -68,7 +68,7 @@ class ReleaseInfo:
 
     @property
     def compare_url(self) -> str:
-        return f"https://github.com/litestar-org/advanced-alchemy/compare/{self.base}...{self.release_tag}"
+        return f"https://github.com/litestar-org/litestar-mcp/compare/{self.base}...{self.release_tag}"
 
 
 def _pr_number_from_commit(comp: Comp) -> int | None:
@@ -99,12 +99,12 @@ class _Thing:
                 "X-GitHub-Api-Version": "2022-11-28",
                 "Accept": "application/vnd.github+json",
             },
-            base_url="https://api.github.com/repos/litestar-org/advanced-alchemy/",
+            base_url="https://api.github.com/repos/litestar-org/litestar-mcp/",
         )
 
     async def get_closing_issues_references(self, pr_number: int) -> list[int]:
         graphql_query = """{
-        repository(owner: "litestar-org", name: "advanced-alchemy") {
+        repository(owner: "litestar-org", name: "litestar-mcp") {
             pullRequest(number: %d) {
                 id
                 closingIssuesReferences (first: 10) {
@@ -151,7 +151,7 @@ class _Thing:
             number=pr.number,
             cc_type=cc_type,
             clean_title=clean_title.strip(),
-            url=f"https://github.com/litestar-org/advanced-alchemy/pull/{pr.number}",
+            url=f"https://github.com/litestar-org/litestar-mcp/pull/{pr.number}",
             closes=closes_issues,
             title=pr.title,
             created_at=datetime.datetime.strptime(pr.created_at, "%Y-%m-%dT%H:%M:%S%z"),

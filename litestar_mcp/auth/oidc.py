@@ -13,8 +13,8 @@ This module is the single home for all OIDC machinery in litestar-mcp:
   :class:`~litestar_mcp.auth.MCPAuthBackend`.
 
 Before v0.5.0 the cache, private helpers, and public factory lived in
-separate modules (``auth/_cache.py``, ``auth/_oidc.py``, ``auth/oidc.py``).
-Ch5 of the v0.5.0 roadmap flattens them here.
+separate modules (``auth/_cache.py``, ``auth/_oidc.py``, ``auth/oidc.py``);
+they are now consolidated in this single module.
 """
 
 from __future__ import annotations
@@ -58,9 +58,7 @@ DEFAULT_CLOCK_SKEW_SECONDS = 30
 DEFAULT_JWKS_CACHE_TTL_SECONDS = 3600
 
 
-# ---------------------------------------------------------------------------
 # JWKS cache protocol + default implementation
-# ---------------------------------------------------------------------------
 
 
 @runtime_checkable
@@ -131,9 +129,7 @@ def reset_default_cache() -> None:
     _default_cache.clear()
 
 
-# ---------------------------------------------------------------------------
 # Public factory
-# ---------------------------------------------------------------------------
 
 
 def create_oidc_validator(
@@ -196,9 +192,7 @@ def create_oidc_validator(
     return _validator
 
 
-# ---------------------------------------------------------------------------
 # Internal OIDC validation helpers
-# ---------------------------------------------------------------------------
 
 # Per-URL single-flight locks. These are an implementation detail of the
 # read-through wrapper (NOT the cache protocol) — concurrent cold readers on

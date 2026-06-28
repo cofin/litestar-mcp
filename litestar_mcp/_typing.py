@@ -189,6 +189,23 @@ except ImportError:
     ATTRS_INSTALLED = False  # pyright: ignore[reportConstantRedefinition]
 
 
+# Always define stub types for dishka
+class DishkaDependencyKeyStub:
+    """Placeholder implementation for Dishka DependencyKey."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+
+try:
+    from dishka.entities.key import DependencyKey as DishkaDependencyKey
+
+    DISHKA_INSTALLED = True
+except ImportError:
+    DishkaDependencyKey = DishkaDependencyKeyStub  # type: ignore[assignment,misc]
+    DISHKA_INSTALLED = False
+
+
 class EmptyEnum(Enum):
     """A sentinel enum used as placeholder."""
 
@@ -201,6 +218,7 @@ Empty = EmptyEnum.EMPTY
 
 __all__ = (
     "ATTRS_INSTALLED",
+    "DISHKA_INSTALLED",
     "MSGSPEC_INSTALLED",
     "PYDANTIC_INSTALLED",
     "UNSET",
@@ -210,6 +228,8 @@ __all__ = (
     "BaseModel",
     "BaseModelStub",
     "DataclassProtocol",
+    "DishkaDependencyKey",
+    "DishkaDependencyKeyStub",
     "Empty",
     "EmptyEnum",
     "EmptyType",

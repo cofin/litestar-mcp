@@ -2,13 +2,15 @@
 
 import inspect
 import logging
+from dataclasses import MISSING, fields
 from types import UnionType
 from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
 
+import msgspec
 from litestar.params import ParameterKwarg
 
 from litestar_mcp.typing import (
-    MSGSPEC_INSTALLED,
+    attrs_fields,
     is_attrs_instance,
     is_dataclass,
     is_msgspec_struct,
@@ -74,18 +76,11 @@ def msgspec_to_json_schema(struct_type: Any) -> "dict[str, Any]":
     2020-12 coverage including ``$defs`` for nested Structs, Enum support,
     tagged-union discriminators, and ``msgspec.Meta`` constraint translation.
     """
-    if not MSGSPEC_INSTALLED:
-        return {"type": "object", "description": "msgspec Struct (msgspec not installed)"}
-
-    import msgspec
-
     return msgspec.json.schema(struct_type)
 
 
 def dataclass_to_json_schema(dataclass_type: Any) -> "dict[str, Any]":
     """Convert dataclass to JSON Schema format."""
-    from dataclasses import MISSING, fields
-
     properties = {}
     required = []
 
@@ -103,8 +98,6 @@ def dataclass_to_json_schema(dataclass_type: Any) -> "dict[str, Any]":
 
 def attrs_to_json_schema(attrs_type: Any) -> "dict[str, Any]":
     """Convert attrs class to JSON Schema format."""
-    from litestar_mcp.typing import attrs_fields
-
     properties = {}
     required = []
 
@@ -144,11 +137,11 @@ def union_type_to_json_schema(annotation: Any) -> "dict[str, Any] | None":
     """Convert Union types (including Optional) to JSON Schema format."""
     origin = get_origin(annotation)
 
-    if origin is type(None):  # NoneType
+    if origin is type(None):
         return {"type": "null"}
 
     # Handle Union types, including Optional[T] which is Union[T, None]
-    if origin in (Union, UnionType):
+    if origin in {Union, UnionType}:
         args = get_args(annotation)
         if len(args) == 1:
             return type_to_json_schema(args[0])

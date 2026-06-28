@@ -5,7 +5,7 @@ import asyncio
 import inspect
 import logging
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any, TypeVar, get_type_hints
 
 import msgspec
 from litestar import Litestar, Request
@@ -124,11 +124,9 @@ def _split_msgspec_error(exc: Exception) -> tuple[str, str]:
 
 def _resolve_annotated_types(handler: BaseRouteHandler) -> dict[str, Any]:
     """Return ``{param_name: annotated_type}`` from the original handler function."""
-    import typing as _typing
-
     fn = get_handler_function(handler)
     try:
-        return _typing.get_type_hints(fn, include_extras=True)
+        return get_type_hints(fn, include_extras=True)
     except Exception:  # noqa: BLE001
         return {}
 

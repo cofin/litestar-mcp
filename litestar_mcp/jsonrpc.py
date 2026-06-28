@@ -177,9 +177,7 @@ def parse_request(raw: Any) -> JSONRPCRequest:
     )
 
 
-# ---------------------------------------------------------------------------
 # Response helpers
-# ---------------------------------------------------------------------------
 
 
 def error_response(msg_id: Any, error: JSONRPCError) -> dict[str, Any]:

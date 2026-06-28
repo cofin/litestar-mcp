@@ -7,13 +7,14 @@ import logging
 import os
 import sys
 import urllib.parse
-from collections.abc import Callable
+from collections.abc import Callable  # noqa: TC003
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-import msgspec
 from litestar import Litestar, Response
+from litestar.exceptions import SerializationException
 from litestar.handlers import get, post
+from litestar.serialization import decode_json, encode_json
 
 from litestar_mcp.config import MCPConfig
 from litestar_mcp.jsonrpc import (
@@ -29,8 +30,6 @@ from litestar_mcp.routes import _build_cached_router
 from litestar_mcp.services.handler import RequestContext
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from litestar.types import ControllerRouterHandler
 
 
@@ -141,7 +140,7 @@ def _json_response_wrapper(fn: Callable[..., Any]) -> Callable[..., Any]:
             if isinstance(res, Response):
                 return res
             return Response(
-                content=msgspec.json.encode(res),
+                content=encode_json(res),
                 media_type="application/json",
             )
 
@@ -153,7 +152,7 @@ def _json_response_wrapper(fn: Callable[..., Any]) -> Callable[..., Any]:
         if isinstance(res, Response):
             return res
         return Response(
-            content=msgspec.json.encode(res),
+            content=encode_json(res),
             media_type="application/json",
         )
 
@@ -344,10 +343,13 @@ class MCP:
             asyncio.run(self._async_run_stdio())
 
     async def _async_run_stdio(self) -> None:
-        """Run the server asynchronously using manual ASGI lifespan driver."""
+        """Run the server asynchronously using manual ASGI lifespan driver.
+
+        This sets up queues, coordinates lifespan events, starts the app task,
+        triggers startup, runs the stdio loop, and triggers shutdown on exit.
+        """
         logger = logging.getLogger(__name__)
 
-        # 1. Setup queues and coordinate events
         receive_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         startup_complete = asyncio.Event()
         shutdown_complete = asyncio.Event()
@@ -374,7 +376,6 @@ class MCP:
 
         async def run_app() -> None:
             try:
-                # App receives messages from receive and sends response to send
                 await self.app(scope, receive, send)  # type: ignore[arg-type]
             except Exception as e:
                 nonlocal startup_error
@@ -384,24 +385,19 @@ class MCP:
                 logger.exception("Error in background ASGI application task")
                 raise
 
-        # 2. Start app task
         app_task = asyncio.create_task(run_app())
 
-        # 3. Trigger startup
         await receive_queue.put({"type": "lifespan.startup"})
         await startup_complete.wait()
 
         if startup_error:
-            # Shutdown task just in case
             app_task.cancel()
             msg = f"Application startup failed: {startup_error}"
             raise RuntimeError(msg)
 
-        # 4. Run the stdio loop
         try:
             await self._stdio_loop()
         finally:
-            # 5. Trigger shutdown
             await receive_queue.put({"type": "lifespan.shutdown"})
             try:
                 await asyncio.wait_for(shutdown_complete.wait(), timeout=5.0)
@@ -449,43 +445,42 @@ class MCP:
                 continue
 
             try:
-                # 1. Parse JSON
-                try:
-                    raw = msgspec.json.decode(line_bytes)
-                except msgspec.DecodeError as exc:
-                    resp = error_response(
-                        None,
-                        JSONRPCError(code=PARSE_ERROR, message=f"Parse error: {exc}"),
-                    )
-                    writer.write(msgspec.json.encode(resp) + b"\n")
-                    await writer.drain()
-                    continue
+                raw = decode_json(line_bytes)
+            except SerializationException as exc:
+                resp = error_response(
+                    None,
+                    JSONRPCError(code=PARSE_ERROR, message=f"Parse error: {exc}"),
+                )
+                writer.write(encode_json(resp) + b"\n")
+                await writer.drain()
+                continue
 
-                # 2. Parse JSON-RPC Request
-                try:
-                    rpc_request = parse_request(raw)
-                except JSONRPCErrorException as exc:
-                    resp = error_response(
-                        raw.get("id") if isinstance(raw, dict) else None,
-                        exc.error,
-                    )
-                    writer.write(msgspec.json.encode(resp) + b"\n")
-                    await writer.drain()
-                    continue
+            try:
+                rpc_request = parse_request(raw)
+            except JSONRPCErrorException as exc:
+                resp = error_response(
+                    raw.get("id") if isinstance(raw, dict) else None,
+                    exc.error,
+                )
+                writer.write(encode_json(resp) + b"\n")
+                await writer.drain()
+                continue
 
-                # 3. Dispatch to internal router
+            try:
                 result = await router.dispatch(rpc_request, request_context)
-
-                # 4. Write response back
-                if result is not None:
-                    writer.write(msgspec.json.encode(result) + b"\n")
-                    await writer.drain()
-
             except Exception as exc:
                 logger.exception("Unexpected error in stdio loop processing line")
                 resp = error_response(
-                    None,
+                    rpc_request.id,
                     JSONRPCError(code=INTERNAL_ERROR, message=f"Internal error: {exc}"),
                 )
-                writer.write(msgspec.json.encode(resp) + b"\n")
+                writer.write(encode_json(resp) + b"\n")
                 await writer.drain()
+                continue
+
+            if result is not None:
+                try:
+                    writer.write(encode_json(result) + b"\n")
+                    await writer.drain()
+                except Exception:
+                    logger.exception("Failed to write stdio response")

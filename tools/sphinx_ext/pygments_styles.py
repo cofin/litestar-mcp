@@ -4,6 +4,12 @@ Provides light and dark themes tuned to the Shibuya amber accent used by the
 litestar-mcp documentation site. Ported from ``sqlspec``'s style module with
 the keyword accent palette swapped from purple to amber so code blocks align
 with the rest of the theme.
+
+This module exposes the following style aliases for backward compatibility and
+to prevent import or environment collisions:
+
+* ``SQLSpecDarkStyle``: Alias for ``LitestarMcpDarkStyle``
+* ``SQLSpecLightStyle``: Alias for ``LitestarMcpLightStyle``
 """
 
 from pygments.style import Style
@@ -216,7 +222,5 @@ class LitestarMcpDarkStyle(Style):
     }
 
 
-# Aliases to prevent collisions with sqlspec documentation builds when both
-# are present in the same development environment.
 SQLSpecDarkStyle = LitestarMcpDarkStyle
 SQLSpecLightStyle = LitestarMcpLightStyle

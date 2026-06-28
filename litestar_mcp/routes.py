@@ -187,8 +187,6 @@ class MCPController(Controller):
                 )
             )
 
-        _build_request_context(request)
-
         session_id = request.headers.get(MCP_SESSION_HEADER) or request.headers.get(MCP_SESSION_HEADER.lower())
         if not session_id:
             return _add_protocol_headers(

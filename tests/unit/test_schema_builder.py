@@ -388,20 +388,6 @@ class TestDataclassToJsonSchema:
 class TestMsgspecToJsonSchema:
     """Test suite for msgspec_to_json_schema function."""
 
-    def test_msgspec_to_json_schema_not_installed(self) -> None:
-        """Test behavior when msgspec is not installed."""
-        import unittest.mock
-
-        with unittest.mock.patch("litestar_mcp.schema_builder.MSGSPEC_INSTALLED", False):
-
-            class MockStruct:
-                pass
-
-            result = msgspec_to_json_schema(MockStruct)
-
-            assert result["type"] == "object"
-            assert "msgspec not installed" in result["description"]
-
     def test_msgspec_to_json_schema_imports(self) -> None:
         """Test that msgspec import is handled correctly."""
         # This test verifies the import behavior inside the function

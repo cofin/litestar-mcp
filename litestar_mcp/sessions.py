@@ -93,8 +93,8 @@ class MCPSessionManager:
         (Redis, SQLAlchemy via advanced_alchemy, SQLSpec) and configure
         your load balancer for sticky routing on the ``Mcp-Session-Id``
         header so in-process SSE streams land on the replica that
-        opened them. The deploy-docs chapter of the v0.4.0 release-prep
-        PRD ships the full prose and example manifests.
+        opened them. See the deployment documentation for full prose and
+        example manifests.
     """
 
     def __init__(self, store: Store, *, max_idle_seconds: float = 3600.0) -> None:

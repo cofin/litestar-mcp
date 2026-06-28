@@ -4,16 +4,16 @@ import contextlib
 import inspect
 import logging
 import re
-import typing as _typing
 from collections import deque
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Annotated, Any, get_args, get_origin
+from typing import Annotated, Any, get_args, get_origin, get_type_hints
 
 from litestar.constants import RESERVED_KWARGS
 from litestar.handlers import BaseRouteHandler
 from litestar.params import ParameterKwarg
 
+from litestar_mcp.typing import DISHKA_INSTALLED, DishkaDependencyKey
 from litestar_mcp.utils import get_handler_function
 
 _logger = logging.getLogger(__name__)
@@ -241,7 +241,7 @@ def iter_dependency_input_parameters(
             continue
 
         try:
-            resolved_hints = _typing.get_type_hints(provider_fn, include_extras=True)
+            resolved_hints = get_type_hints(provider_fn, include_extras=True)
         except Exception:  # noqa: BLE001
             resolved_hints = {}
 
@@ -307,16 +307,14 @@ def _dishka_component(metas: list[ParameterKwarg]) -> str:
 
 def _dishka_dependency_key(annotation: Any) -> Any:
     inner, metas = _unwrap_annotated(annotation)
-    if inner in (Any, inspect.Parameter.empty) or isinstance(inner, str):
+    if inner in {Any, inspect.Parameter.empty} or isinstance(inner, str):
+        return None
+
+    if not DISHKA_INSTALLED or DishkaDependencyKey is None:
         return None
 
     try:
-        from dishka.entities.key import DependencyKey
-    except ImportError:
-        return None
-
-    try:
-        return DependencyKey(inner, component=_dishka_component(metas))
+        return DishkaDependencyKey(inner, component=_dishka_component(metas))
     except Exception:  # noqa: BLE001
         return None
 
@@ -379,7 +377,7 @@ def _should_collect_dependency_parameter(
     queue: deque[Any],
     seen_names: set[str],
 ) -> bool:
-    if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+    if param.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}:
         return False
     if pname in framework_skip:
         return False
