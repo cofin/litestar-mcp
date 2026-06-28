@@ -22,7 +22,7 @@ pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture
-def anyio_backend() -> str:
+def anyio_backend() -> "str":
     return "asyncio"
 
 
@@ -31,7 +31,7 @@ AUDIENCE = "my-mcp-audience"
 KID = "test-key"
 
 
-def _hs256_jwk(secret: bytes, kid: str = KID) -> dict[str, Any]:
+def _hs256_jwk(secret: "bytes", kid: "str" = KID) -> "dict[str, Any]":
     return {
         "kty": "oct",
         "k": base64.urlsafe_b64encode(secret).rstrip(b"=").decode("ascii"),
@@ -40,13 +40,13 @@ def _hs256_jwk(secret: bytes, kid: str = KID) -> dict[str, Any]:
     }
 
 
-def _encode(claims: dict[str, Any], secret: bytes, *, kid: str = KID) -> str:
+def _encode(claims: "dict[str, Any]", secret: "bytes", *, kid: "str" = KID) -> "str":
     jwt = pytest.importorskip("jwt")
     return cast("str", jwt.encode(claims, secret, algorithm="HS256", headers={"kid": kid}))
 
 
 @pytest.fixture(autouse=True)
-def _clear_cache() -> Any:
+def _clear_cache() -> "Any":
     reset_default_cache()
     mcp_auth._FETCH_LOCKS.clear()
     yield
@@ -54,7 +54,7 @@ def _clear_cache() -> Any:
     mcp_auth._FETCH_LOCKS.clear()
 
 
-async def test_factory_returns_claims_for_valid_token() -> None:
+async def test_factory_returns_claims_for_valid_token() -> "None":
     pytest.importorskip("jwt")
     secret = b"super-secret-key"
     jwks = {"keys": [_hs256_jwk(secret)]}
@@ -67,7 +67,7 @@ async def test_factory_returns_claims_for_valid_token() -> None:
     )
     token = _encode({"sub": "alice", "iss": ISSUER, "aud": AUDIENCE}, secret)
 
-    async def fake_fetch(url: str) -> dict[str, Any]:
+    async def fake_fetch(url: "str") -> "dict[str, Any]":
         assert url == "https://issuer.example.com/keys"
         return jwks
 
@@ -78,7 +78,7 @@ async def test_factory_returns_claims_for_valid_token() -> None:
     assert claims["sub"] == "alice"
 
 
-async def test_factory_rejects_wrong_signature() -> None:
+async def test_factory_rejects_wrong_signature() -> "None":
     pytest.importorskip("jwt")
     real_secret = b"real-secret"
     rogue_secret = b"rogue-secret"
@@ -89,7 +89,7 @@ async def test_factory_rejects_wrong_signature() -> None:
     )
     token = _encode({"sub": "alice", "iss": ISSUER, "aud": AUDIENCE}, rogue_secret)
 
-    async def fake_fetch(url: str) -> dict[str, Any]:
+    async def fake_fetch(url: "str") -> "dict[str, Any]":
         return jwks
 
     with patch("litestar_mcp.auth.oidc._fetch_json_document", side_effect=fake_fetch):
@@ -98,7 +98,7 @@ async def test_factory_rejects_wrong_signature() -> None:
     assert claims is None
 
 
-async def test_factory_rejects_wrong_issuer() -> None:
+async def test_factory_rejects_wrong_issuer() -> "None":
     pytest.importorskip("jwt")
     secret = b"secret"
     jwks = {"keys": [_hs256_jwk(secret)]}
@@ -108,7 +108,7 @@ async def test_factory_rejects_wrong_issuer() -> None:
     )
     token = _encode({"sub": "alice", "iss": "https://attacker.example.com", "aud": AUDIENCE}, secret)
 
-    async def fake_fetch(url: str) -> dict[str, Any]:
+    async def fake_fetch(url: "str") -> "dict[str, Any]":
         return jwks
 
     with patch("litestar_mcp.auth.oidc._fetch_json_document", side_effect=fake_fetch):
@@ -117,7 +117,7 @@ async def test_factory_rejects_wrong_issuer() -> None:
     assert claims is None
 
 
-async def test_factory_rejects_wrong_audience() -> None:
+async def test_factory_rejects_wrong_audience() -> "None":
     pytest.importorskip("jwt")
     secret = b"secret"
     jwks = {"keys": [_hs256_jwk(secret)]}
@@ -127,7 +127,7 @@ async def test_factory_rejects_wrong_audience() -> None:
     )
     token = _encode({"sub": "alice", "iss": ISSUER, "aud": "some-other-audience"}, secret)
 
-    async def fake_fetch(url: str) -> dict[str, Any]:
+    async def fake_fetch(url: "str") -> "dict[str, Any]":
         return jwks
 
     with patch("litestar_mcp.auth.oidc._fetch_json_document", side_effect=fake_fetch):
@@ -136,7 +136,7 @@ async def test_factory_rejects_wrong_audience() -> None:
     assert claims is None
 
 
-async def test_factory_clock_skew_accepts_recently_expired() -> None:
+async def test_factory_clock_skew_accepts_recently_expired() -> "None":
     pytest.importorskip("jwt")
     secret = b"secret"
     jwks = {"keys": [_hs256_jwk(secret)]}
@@ -155,7 +155,7 @@ async def test_factory_clock_skew_accepts_recently_expired() -> None:
         secret,
     )
 
-    async def fake_fetch(url: str) -> dict[str, Any]:
+    async def fake_fetch(url: "str") -> "dict[str, Any]":
         return jwks
 
     with patch("litestar_mcp.auth.oidc._fetch_json_document", side_effect=fake_fetch):
@@ -165,7 +165,7 @@ async def test_factory_clock_skew_accepts_recently_expired() -> None:
     assert claims["sub"] == "alice"
 
 
-async def test_factory_clock_skew_rejects_far_expired() -> None:
+async def test_factory_clock_skew_rejects_far_expired() -> "None":
     pytest.importorskip("jwt")
     secret = b"secret"
     jwks = {"keys": [_hs256_jwk(secret)]}
@@ -184,7 +184,7 @@ async def test_factory_clock_skew_rejects_far_expired() -> None:
         secret,
     )
 
-    async def fake_fetch(url: str) -> dict[str, Any]:
+    async def fake_fetch(url: "str") -> "dict[str, Any]":
         return jwks
 
     with patch("litestar_mcp.auth.oidc._fetch_json_document", side_effect=fake_fetch):
@@ -193,21 +193,21 @@ async def test_factory_clock_skew_rejects_far_expired() -> None:
     assert claims is None
 
 
-async def test_factory_jwks_cache_ttl_respected(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_factory_jwks_cache_ttl_respected(monkeypatch: "pytest.MonkeyPatch") -> "None":
     pytest.importorskip("jwt")
     secret = b"secret"
     jwks = {"keys": [_hs256_jwk(secret)]}
 
     fetch_count = 0
 
-    async def fake_fetch(url: str) -> dict[str, Any]:
+    async def fake_fetch(url: "str") -> "dict[str, Any]":
         nonlocal fetch_count
         fetch_count += 1
         return jwks
 
     current_time = [1000.0]
 
-    def fake_monotonic() -> float:
+    def fake_monotonic() -> "float":
         return current_time[0]
 
     monkeypatch.setattr("litestar_mcp.auth.oidc.monotonic", fake_monotonic)
@@ -237,12 +237,12 @@ async def test_factory_jwks_cache_ttl_respected(monkeypatch: pytest.MonkeyPatch)
         assert fetch_count == 2
 
 
-async def test_factory_auto_discovery_when_no_jwks_uri() -> None:
+async def test_factory_auto_discovery_when_no_jwks_uri() -> "None":
     pytest.importorskip("jwt")
     secret = b"secret"
     jwks = {"keys": [_hs256_jwk(secret)]}
 
-    async def fake_fetch(url: str) -> dict[str, Any]:
+    async def fake_fetch(url: "str") -> "dict[str, Any]":
         if url.endswith("/.well-known/openid-configuration"):
             return {"jwks_uri": "https://issuer.example.com/keys"}
         if url == "https://issuer.example.com/keys":

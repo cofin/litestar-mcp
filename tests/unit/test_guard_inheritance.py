@@ -5,8 +5,6 @@ declared at app / router / controller / route scope, matching Litestar's own
 ``resolve_guards()`` traversal.
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -24,13 +22,13 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 
-def _targets_mcp_tool(handler: BaseRouteHandler) -> bool:
+def _targets_mcp_tool(handler: "BaseRouteHandler") -> "bool":
     """Only fire the guard for MCP-marked tool handlers, not for /mcp itself."""
     opt = getattr(handler, "opt", {}) or {}
     return "mcp_tool" in opt
 
 
-def _ensure_session(client: TestClient[Any]) -> str:
+def _ensure_session(client: "TestClient[Any]") -> "str":
     sid = getattr(client, "_mcp_session", None)
     if sid is not None:
         return sid  # type: ignore[no-any-return]
@@ -53,7 +51,7 @@ def _ensure_session(client: TestClient[Any]) -> str:
     return str(sid)
 
 
-def _rpc(client: TestClient[Any], method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+def _rpc(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None) -> "dict[str, Any]":
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
     if params is not None:
         body["params"] = params
@@ -65,7 +63,7 @@ def _rpc(client: TestClient[Any], method: str, params: dict[str, Any] | None = N
     return client.post("/mcp", json=body, headers=headers).json()  # type: ignore[no-any-return]
 
 
-def _call_tool(client: TestClient[Any], name: str) -> dict[str, Any]:
+def _call_tool(client: "TestClient[Any]", name: "str") -> "dict[str, Any]":
     return _rpc(client, "tools/call", {"name": name, "arguments": {}})
 
 
@@ -75,7 +73,7 @@ _CONTROLLER_BLOCKED = "controller-guard blocked"
 _ROUTE_BLOCKED = "route-guard blocked"
 
 
-async def _app_guard(connection: ASGIConnection[Any, Any, Any, Any], handler: BaseRouteHandler) -> None:
+async def _app_guard(connection: "ASGIConnection[Any, Any, Any, Any]", handler: "BaseRouteHandler") -> "None":
     if not _targets_mcp_tool(handler):
         return
     if getattr(connection.app.state, "block_app", False):
@@ -83,7 +81,7 @@ async def _app_guard(connection: ASGIConnection[Any, Any, Any, Any], handler: Ba
     getattr(connection.app.state, "order", []).append("app")
 
 
-def _router_guard(connection: ASGIConnection[Any, Any, Any, Any], handler: BaseRouteHandler) -> None:
+def _router_guard(connection: "ASGIConnection[Any, Any, Any, Any]", handler: "BaseRouteHandler") -> "None":
     if not _targets_mcp_tool(handler):
         return
     if getattr(connection.app.state, "block_router", False):
@@ -91,7 +89,7 @@ def _router_guard(connection: ASGIConnection[Any, Any, Any, Any], handler: BaseR
     getattr(connection.app.state, "order", []).append("router")
 
 
-async def _controller_guard(connection: ASGIConnection[Any, Any, Any, Any], handler: BaseRouteHandler) -> None:
+async def _controller_guard(connection: "ASGIConnection[Any, Any, Any, Any]", handler: "BaseRouteHandler") -> "None":
     if not _targets_mcp_tool(handler):
         return
     if getattr(connection.app.state, "block_controller", False):
@@ -99,7 +97,7 @@ async def _controller_guard(connection: ASGIConnection[Any, Any, Any, Any], hand
     getattr(connection.app.state, "order", []).append("controller")
 
 
-def _route_guard(connection: ASGIConnection[Any, Any, Any, Any], handler: BaseRouteHandler) -> None:
+def _route_guard(connection: "ASGIConnection[Any, Any, Any, Any]", handler: "BaseRouteHandler") -> "None":
     if not _targets_mcp_tool(handler):
         return
     if getattr(connection.app.state, "block_route", False):
@@ -108,11 +106,11 @@ def _route_guard(connection: ASGIConnection[Any, Any, Any, Any], handler: BaseRo
 
 
 @get("/x", opt={"mcp_tool": "x"}, sync_to_thread=False)
-def _plain_tool() -> dict[str, str]:
+def _plain_tool() -> "dict[str, str]":
     return {"ok": "yes"}
 
 
-def test_app_guard_blocks_mcp_tool_call() -> None:
+def test_app_guard_blocks_mcp_tool_call() -> "None":
     app = Litestar(route_handlers=[_plain_tool], plugins=[LitestarMCP()], guards=[_app_guard])
     app.state.block_app = True
 
@@ -123,7 +121,7 @@ def test_app_guard_blocks_mcp_tool_call() -> None:
     assert "app-guard blocked" in str(resp["result"])
 
 
-def test_router_guard_blocks_mcp_tool_call() -> None:
+def test_router_guard_blocks_mcp_tool_call() -> "None":
     router = Router(path="/api", guards=[_router_guard], route_handlers=[_plain_tool])
     app = Litestar(route_handlers=[router], plugins=[LitestarMCP()])
     app.state.block_router = True
@@ -135,13 +133,13 @@ def test_router_guard_blocks_mcp_tool_call() -> None:
     assert "router-guard blocked" in str(resp["result"])
 
 
-def test_controller_guard_blocks_mcp_tool_call() -> None:
+def test_controller_guard_blocks_mcp_tool_call() -> "None":
     class Notes(Controller):
         path = "/notes"
         guards = [_controller_guard]
 
         @get("/x", opt={"mcp_tool": "x"}, sync_to_thread=False)
-        def tool(self) -> dict[str, str]:
+        def tool(self) -> "dict[str, str]":
             return {"ok": "yes"}
 
     app = Litestar(route_handlers=[Notes], plugins=[LitestarMCP()])
@@ -154,9 +152,9 @@ def test_controller_guard_blocks_mcp_tool_call() -> None:
     assert "controller-guard blocked" in str(resp["result"])
 
 
-def test_route_guard_blocks_mcp_tool_call() -> None:
+def test_route_guard_blocks_mcp_tool_call() -> "None":
     @get("/x", guards=[_route_guard], opt={"mcp_tool": "x"}, sync_to_thread=False)
-    def tool() -> dict[str, str]:
+    def tool() -> "dict[str, str]":
         return {"ok": "yes"}
 
     app = Litestar(route_handlers=[tool], plugins=[LitestarMCP()])
@@ -169,13 +167,13 @@ def test_route_guard_blocks_mcp_tool_call() -> None:
     assert "route-guard blocked" in str(resp["result"])
 
 
-def test_all_layers_compose_in_order() -> None:
+def test_all_layers_compose_in_order() -> "None":
     class Notes(Controller):
         path = "/notes"
         guards = [_controller_guard]
 
         @get("/x", guards=[_route_guard], opt={"mcp_tool": "x"}, sync_to_thread=False)
-        def tool(self) -> dict[str, str]:
+        def tool(self) -> "dict[str, str]":
             return {"ok": "yes"}
 
     router = Router(path="/api", guards=[_router_guard], route_handlers=[Notes])
@@ -189,14 +187,14 @@ def test_all_layers_compose_in_order() -> None:
     assert app.state.order == ["app", "router", "controller", "route"]
 
 
-def test_permission_denied_aborts_cleanly() -> None:
+def test_permission_denied_aborts_cleanly() -> "None":
     denied = "nope"
 
-    def denier(_connection: ASGIConnection[Any, Any, Any, Any], _handler: BaseRouteHandler) -> None:
+    def denier(_connection: "ASGIConnection[Any, Any, Any, Any]", _handler: "BaseRouteHandler") -> "None":
         raise PermissionDeniedException(denied)
 
     @get("/x", guards=[denier], opt={"mcp_tool": "x"}, sync_to_thread=False)
-    def tool() -> dict[str, str]:
+    def tool() -> "dict[str, str]":
         return {"ok": "yes"}
 
     app = Litestar(route_handlers=[tool], plugins=[LitestarMCP()])
@@ -208,17 +206,17 @@ def test_permission_denied_aborts_cleanly() -> None:
     assert "nope" in str(resp["result"])
 
 
-def test_sync_and_async_guards_both_run() -> None:
+def test_sync_and_async_guards_both_run() -> "None":
     calls: list[str] = []
 
-    async def async_guard(_c: ASGIConnection[Any, Any, Any, Any], _h: BaseRouteHandler) -> None:
+    async def async_guard(_c: "ASGIConnection[Any, Any, Any, Any]", _h: "BaseRouteHandler") -> "None":
         calls.append("async")
 
-    def sync_guard(_c: ASGIConnection[Any, Any, Any, Any], _h: BaseRouteHandler) -> None:
+    def sync_guard(_c: "ASGIConnection[Any, Any, Any, Any]", _h: "BaseRouteHandler") -> "None":
         calls.append("sync")
 
     @get("/x", guards=[async_guard, sync_guard], opt={"mcp_tool": "x"}, sync_to_thread=False)
-    def tool() -> dict[str, str]:
+    def tool() -> "dict[str, str]":
         return {"ok": "yes"}
 
     app = Litestar(route_handlers=[tool], plugins=[LitestarMCP()])
@@ -230,14 +228,14 @@ def test_sync_and_async_guards_both_run() -> None:
     assert calls == ["async", "sync"]
 
 
-def test_guard_runs_before_dependency_resolution() -> None:
+def test_guard_runs_before_dependency_resolution() -> "None":
     dep_err = "dep should not be invoked"
     guard_err = "guard-first"
 
-    def broken_dep() -> str:
+    def broken_dep() -> "str":
         raise RuntimeError(dep_err)
 
-    def guard(_c: ASGIConnection[Any, Any, Any, Any], _h: BaseRouteHandler) -> None:
+    def guard(_c: "ASGIConnection[Any, Any, Any, Any]", _h: "BaseRouteHandler") -> "None":
         raise NotAuthorizedException(guard_err)
 
     @get(
@@ -247,7 +245,7 @@ def test_guard_runs_before_dependency_resolution() -> None:
         opt={"mcp_tool": "x"},
         sync_to_thread=False,
     )
-    def tool(value: str) -> dict[str, str]:
+    def tool(value: "str") -> "dict[str, str]":
         return {"value": value}
 
     app = Litestar(route_handlers=[tool], plugins=[LitestarMCP()])

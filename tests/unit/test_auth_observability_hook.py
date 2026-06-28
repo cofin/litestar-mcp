@@ -6,8 +6,6 @@ or pass it through the internal ``_validate_oidc_bearer`` call path. These
 tests cover the core hook mechanics.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 from unittest.mock import patch
@@ -19,7 +17,7 @@ from litestar_mcp.auth.oidc import _validate_oidc_bearer, reset_default_cache
 
 
 @pytest.fixture(autouse=True)
-def _reset_cache() -> Any:
+def _reset_cache() -> "Any":
     reset_default_cache()
     oidc_internals._FETCH_LOCKS.clear()
     yield
@@ -28,13 +26,13 @@ def _reset_cache() -> Any:
 
 
 @pytest.mark.asyncio
-async def test_sync_hook_called_on_jwks_resolution_failure() -> None:
+async def test_sync_hook_called_on_jwks_resolution_failure() -> "None":
     calls: list[tuple[str, BaseException]] = []
 
-    def hook(issuer: str, exc: BaseException) -> None:
+    def hook(issuer: "str", exc: "BaseException") -> "None":
         calls.append((issuer, exc))
 
-    async def failing_resolve(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    async def failing_resolve(*args: "Any", **kwargs: "Any") -> "dict[str, Any]":
         msg = "jwks fetch blew up"
         raise RuntimeError(msg)
 
@@ -55,13 +53,13 @@ async def test_sync_hook_called_on_jwks_resolution_failure() -> None:
 
 
 @pytest.mark.asyncio
-async def test_async_hook_is_awaited() -> None:
+async def test_async_hook_is_awaited() -> "None":
     captured: list[BaseException] = []
 
-    async def hook(issuer: str, exc: BaseException) -> None:
+    async def hook(issuer: "str", exc: "BaseException") -> "None":
         captured.append(exc)
 
-    async def failing_resolve(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    async def failing_resolve(*args: "Any", **kwargs: "Any") -> "dict[str, Any]":
         msg = "async hook path"
         raise RuntimeError(msg)
 
@@ -80,14 +78,14 @@ async def test_async_hook_is_awaited() -> None:
 
 
 @pytest.mark.asyncio
-async def test_hook_exceptions_are_swallowed(caplog: pytest.LogCaptureFixture) -> None:
+async def test_hook_exceptions_are_swallowed(caplog: "pytest.LogCaptureFixture") -> "None":
     """A raise inside the hook must not change the auth outcome."""
 
-    def bad_hook(issuer: str, exc: BaseException) -> None:
+    def bad_hook(issuer: "str", exc: "BaseException") -> "None":
         msg = "observability plumbing exploded"
         raise RuntimeError(msg)
 
-    async def failing_resolve(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    async def failing_resolve(*args: "Any", **kwargs: "Any") -> "dict[str, Any]":
         msg = "underlying failure"
         raise RuntimeError(msg)
 
@@ -109,16 +107,16 @@ async def test_hook_exceptions_are_swallowed(caplog: pytest.LogCaptureFixture) -
 
 
 @pytest.mark.asyncio
-async def test_factory_forwards_hook() -> None:
+async def test_factory_forwards_hook() -> "None":
     """create_oidc_validator forwards on_validation_error through to the core."""
     from litestar_mcp.auth import create_oidc_validator
 
     captured: list[BaseException] = []
 
-    def hook(issuer: str, exc: BaseException) -> None:
+    def hook(issuer: "str", exc: "BaseException") -> "None":
         captured.append(exc)
 
-    async def failing_resolve(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    async def failing_resolve(*args: "Any", **kwargs: "Any") -> "dict[str, Any]":
         msg = "factory boom"
         raise RuntimeError(msg)
 

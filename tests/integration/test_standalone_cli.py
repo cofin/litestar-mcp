@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import subprocess
 import sys
 import textwrap
@@ -13,7 +11,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.integration
 
 
-def test_mcp_run_cli_execution(tmp_path: Path) -> None:
+def test_mcp_run_cli_execution(tmp_path: "Path") -> "None":
     # 1. Write the test app file
     app_file = tmp_path / "cli_test_app.py"
     app_file.write_text(

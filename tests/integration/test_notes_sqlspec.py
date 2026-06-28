@@ -9,13 +9,15 @@ through the database file. Bearer coverage lives in
 
 import importlib
 import json
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from litestar.testing import TestClient
 
 from tests.integration.conftest import parse_tool_payload, rpc
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 VARIANTS = [
     pytest.param(False, id="dishka-off"),
@@ -23,14 +25,14 @@ VARIANTS = [
 ]
 
 
-def _load_create_app(*, dishka: bool) -> Any:
+def _load_create_app(*, dishka: "bool") -> "Any":
     module_name = "docs.examples.notes.sqlspec.no_auth_dishka" if dishka else "docs.examples.notes.sqlspec.no_auth"
     module = importlib.import_module(module_name)
     return module.create_app
 
 
 @pytest.mark.parametrize("dishka", VARIANTS)
-def test_notes_sqlspec_round_trip(tmp_path: Path, dishka: bool) -> None:
+def test_notes_sqlspec_round_trip(tmp_path: "Path", dishka: "bool") -> "None":
     """Every SQLSpec no-auth notes variant exposes the shared contract over MCP."""
     create_app = _load_create_app(dishka=dishka)
     app = create_app(database_path=str(tmp_path / f"notes-sqlspec-{dishka}.sqlite"))

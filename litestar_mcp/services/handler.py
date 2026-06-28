@@ -5,15 +5,12 @@ import asyncio
 import inspect
 import logging
 from dataclasses import dataclass
-from typing import Any, TypeVar, get_type_hints
+from typing import TYPE_CHECKING, Any, TypeVar, get_type_hints
 
 import msgspec
-from litestar import Litestar, Request
-from litestar.handlers import BaseRouteHandler
 from litestar.serialization import encode_json
 
 from litestar_mcp._cursor import decode_cursor, encode_cursor
-from litestar_mcp.config import MCPConfig
 from litestar_mcp.error_mapping import (
     mcp_error_for_prompt_execution,
     mcp_error_for_resource_not_found,
@@ -47,6 +44,12 @@ from litestar_mcp.utils import (
 )
 from litestar_mcp.utils.handler_signature import _unwrap_annotated, get_advertised_handler_parameters
 
+if TYPE_CHECKING:
+    from litestar import Litestar, Request
+    from litestar.handlers import BaseRouteHandler
+
+    from litestar_mcp.config import MCPConfig
+
 _logger = logging.getLogger(__name__)
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
@@ -62,15 +65,15 @@ class RequestContext:
     (client id, task-owner id, and the live request handle).
     """
 
-    client_id: str
-    owner_id: str
-    request: Request[Any, Any, Any] | None = None
+    client_id: "str"
+    owner_id: "str"
+    request: "Request[Any, Any, Any] | None" = None
 
 
 _T = TypeVar("_T")
 
 
-def _paginate_list(items: list[_T], params: dict[str, Any], page_size: int) -> tuple[list[_T], str | None]:
+def _paginate_list(items: "list[_T]", params: "dict[str, Any]", page_size: "int") -> "tuple[list[_T], str | None]":
     """Slice ``items`` by the opaque cursor in ``params`` and return ``(page, next_cursor)``."""
     cursor = params.get("cursor")
     if cursor is not None and not isinstance(cursor, str):
@@ -86,13 +89,13 @@ def _paginate_list(items: list[_T], params: dict[str, Any], page_size: int) -> t
     return page, next_cursor
 
 
-def _serialize_tool_content(value: Any) -> str:
+def _serialize_tool_content(value: "Any") -> "str":
     if isinstance(value, str):
         return value
     return encode_json(value).decode("utf-8")
 
 
-def _build_tool_result(value: Any, *, is_error: bool, task_id: str | None = None) -> dict[str, Any]:
+def _build_tool_result(value: "Any", *, is_error: "bool", task_id: "str | None" = None) -> "dict[str, Any]":
     result: dict[str, Any] = {
         "content": [{"type": "text", "text": _serialize_tool_content(value)}],
         "isError": is_error,
@@ -102,7 +105,7 @@ def _build_tool_result(value: Any, *, is_error: bool, task_id: str | None = None
     return result
 
 
-def _to_pointer(name: str, msgspec_path: str) -> str:
+def _to_pointer(name: "str", msgspec_path: "str") -> "str":
     """Turn ``name`` + ``$.age.limit`` into ``/arguments/age/limit`` JSON Pointer."""
     suffix = msgspec_path.removeprefix("$").lstrip(".")
     parts = ["arguments", name]
@@ -111,7 +114,7 @@ def _to_pointer(name: str, msgspec_path: str) -> str:
     return "/" + "/".join(parts)
 
 
-def _split_msgspec_error(exc: Exception) -> tuple[str, str]:
+def _split_msgspec_error(exc: "Exception") -> "tuple[str, str]":
     """Split a ``msgspec.ValidationError`` string into (reason, path)."""
     text = str(exc)
     marker = " - at `"
@@ -122,7 +125,7 @@ def _split_msgspec_error(exc: Exception) -> tuple[str, str]:
     return text, ""
 
 
-def _resolve_annotated_types(handler: BaseRouteHandler) -> dict[str, Any]:
+def _resolve_annotated_types(handler: "BaseRouteHandler") -> "dict[str, Any]":
     """Return ``{param_name: annotated_type}`` from the original handler function."""
     fn = get_handler_function(handler)
     try:
@@ -131,7 +134,7 @@ def _resolve_annotated_types(handler: BaseRouteHandler) -> dict[str, Any]:
         return {}
 
 
-def _validate_tool_arguments(handler: BaseRouteHandler, tool_args: dict[str, Any]) -> list[dict[str, str]]:
+def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: "dict[str, Any]") -> "list[dict[str, str]]":
     """Validate ``tool_args`` against the handler's Litestar signature.
 
     Path parameters are excluded since Litestar extracts them directly from
@@ -226,14 +229,14 @@ class MCPHandlerService:
 
     def __init__(
         self,
-        config: MCPConfig,
-        discovered_tools: dict[str, BaseRouteHandler],
-        discovered_resources: dict[str, BaseRouteHandler],
-        discovered_prompts: dict[str, PromptRegistration],
-        app_ref: Litestar,
-        registry: Registry | None,
-        task_store: InMemoryTaskStore | None = None,
-    ) -> None:
+        config: "MCPConfig",
+        discovered_tools: "dict[str, BaseRouteHandler]",
+        discovered_resources: "dict[str, BaseRouteHandler]",
+        discovered_prompts: "dict[str, PromptRegistration]",
+        app_ref: "Litestar",
+        registry: "Registry | None",
+        task_store: "InMemoryTaskStore | None" = None,
+    ) -> "None":
         self.config = config
         self.discovered_tools = discovered_tools
         self.discovered_resources = discovered_resources
@@ -245,13 +248,13 @@ class MCPHandlerService:
 
     async def _execute_tool_call(
         self,
-        tool_name: str,
-        handler: BaseRouteHandler,
-        tool_args: dict[str, Any],
-        context: RequestContext,
+        tool_name: "str",
+        handler: "BaseRouteHandler",
+        tool_args: "dict[str, Any]",
+        context: "RequestContext",
         *,
-        task_id: str | None = None,
-    ) -> dict[str, Any]:
+        task_id: "str | None" = None,
+    ) -> "dict[str, Any]":
         validation_errors = _validate_tool_arguments(handler, tool_args)
         if validation_errors:
             return _build_tool_result(
@@ -278,12 +281,12 @@ class MCPHandlerService:
 
     async def _run_task(
         self,
-        record: TaskRecord,
-        tool_name: str,
-        handler: BaseRouteHandler,
-        tool_args: dict[str, Any],
-        context: RequestContext,
-    ) -> None:
+        record: "TaskRecord",
+        tool_name: "str",
+        handler: "BaseRouteHandler",
+        tool_args: "dict[str, Any]",
+        context: "RequestContext",
+    ) -> "None":
         if self.task_store is None:
             return
         try:
@@ -300,7 +303,7 @@ class MCPHandlerService:
                 status_message=str(exc),
             )
 
-    async def initialize(self, params: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+    async def initialize(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
         server_name = self.config.name or "Litestar MCP Server"
         server_version = "1.0.0"
 
@@ -333,13 +336,13 @@ class MCPHandlerService:
             result["instructions"] = self.config.instructions
         return result
 
-    async def initialized(self, params: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+    async def initialized(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
         return {}
 
-    async def ping(self, params: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+    async def ping(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
         return {}
 
-    async def tools_list(self, params: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+    async def tools_list(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
         tools = []
         for name, handler in self.discovered_tools.items():
             handler_tags = set(getattr(handler, "tags", None) or [])
@@ -375,7 +378,7 @@ class MCPHandlerService:
             result["nextCursor"] = next_cursor
         return result
 
-    async def tools_call(self, params: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+    async def tools_call(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
         tool_name = params.get("name")
         if not tool_name:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'name'"))
@@ -430,7 +433,7 @@ class MCPHandlerService:
         await self.task_store.attach_background_task(record.task_id, background_task)
         return {"task": record.to_dict()}
 
-    async def resources_list(self, params: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+    async def resources_list(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
         resources = [
             {
                 "uri": "litestar://openapi",
@@ -468,7 +471,7 @@ class MCPHandlerService:
             result["nextCursor"] = next_cursor
         return result
 
-    async def resources_templates_list(self, params: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+    async def resources_templates_list(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
         if self.registry is None:
             return {"resourceTemplates": []}
         templates = []
@@ -500,7 +503,7 @@ class MCPHandlerService:
             result["nextCursor"] = next_cursor
         return result
 
-    async def resources_read(self, params: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+    async def resources_read(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
         uri = params.get("uri", "")
         if not isinstance(uri, str) or not uri:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=f"Invalid resource URI: {uri}"))
@@ -579,10 +582,10 @@ class MCPHandlerService:
 
         raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
 
-    async def completion_complete(self, params: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+    async def completion_complete(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
         return {"completion": {"values": [], "total": 0, "hasMore": False}}
 
-    async def prompts_list(self, params: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+    async def prompts_list(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
         prompts = [
             render_prompt_entry(registration, self.config)
             for registration in self.discovered_prompts.values()
@@ -597,7 +600,7 @@ class MCPHandlerService:
             result["nextCursor"] = next_cursor
         return result
 
-    async def prompts_get(self, params: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+    async def prompts_get(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
         prompt_name = params.get("name")
         if not prompt_name:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'name'"))
@@ -703,7 +706,7 @@ class MCPHandlerService:
 
         raise JSONRPCErrorException(JSONRPCError(code=INTERNAL_ERROR, message=f"Prompt has no callable: {prompt_name}"))
 
-    async def tasks_get(self, params: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+    async def tasks_get(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
         if self.task_store is None:
             raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message="Task store not configured"))
         task_id = params.get("taskId")
@@ -715,7 +718,7 @@ class MCPHandlerService:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
         return record.to_dict()
 
-    async def tasks_result(self, params: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+    async def tasks_result(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
         if self.task_store is None:
             raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message="Task store not configured"))
         task_id = params.get("taskId")
@@ -734,7 +737,7 @@ class MCPHandlerService:
             raise JSONRPCErrorException(record.error)
         raise JSONRPCErrorException(JSONRPCError(code=INTERNAL_ERROR, message="Task did not produce a final result"))
 
-    async def tasks_list(self, params: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+    async def tasks_list(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
         if self.task_store is None:
             raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message="Task store not configured"))
         limit = params.get("limit", 50)
@@ -758,7 +761,7 @@ class MCPHandlerService:
             result["nextCursor"] = next_cursor
         return result
 
-    async def tasks_cancel(self, params: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+    async def tasks_cancel(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
         if self.task_store is None:
             raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message="Task store not configured"))
         task_id = params.get("taskId")

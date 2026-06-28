@@ -1,12 +1,16 @@
 """Tests for the schema builder module."""
 
+import enum
 from dataclasses import dataclass
 from typing import Annotated, Any
 
+import msgspec
 import pytest
 from litestar import get
+from litestar.datastructures import State  # noqa: TC002
+from litestar.di import NamedDependency  # noqa: TC002
 from litestar.handlers import BaseRouteHandler
-from litestar.params import Parameter, ParameterKwarg
+from litestar.params import FromQuery, Parameter, ParameterKwarg, SkipValidation
 
 from litestar_mcp.schema_builder import (
     _merge_parameter_meta,
@@ -23,17 +27,78 @@ from litestar_mcp.utils.handler_signature import _unwrap_annotated
 from tests.unit.conftest import create_app_with_handler
 
 
+class Color(enum.Enum):
+    RED = "red"
+    GREEN = "green"
+    BLUE = "blue"
+
+
+class Paint(msgspec.Struct):
+    color: "Color"
+
+
+class Inner(msgspec.Struct):
+    x: "int"
+
+
+class Outer(msgspec.Struct):
+    inner: "Inner"
+
+
+class Cat(msgspec.Struct, tag="cat"):
+    name: "str"
+
+
+class Dog(msgspec.Struct, tag="dog"):
+    name: "str"
+
+
+class Carrier(msgspec.Struct):
+    pet: "Cat | Dog"
+
+
+class HandlerPayload(msgspec.Struct):
+    name: "str"
+    count: "int" = 1
+
+
+class CreatePayload(msgspec.Struct):
+    title: "str"
+    count: "int" = 1
+
+
+@dataclass
+class Filter:
+    """Filter dataclass with a meaningful docstring."""
+
+    name: "str"
+
+
+@dataclass
+class SchemaFilterModel:
+    limit: "int"
+    offset: "int"
+
+
+class _SchemaDriver:
+    pass
+
+
+class _SchemaTaskService:
+    pass
+
+
 class TestSchemaBuilder:
     """Test suite for schema builder functionality."""
 
-    def test_basic_type_mappings(self) -> None:
+    def test_basic_type_mappings(self) -> "None":
         """Test mapping of basic Python types to JSON Schema."""
         assert type_to_json_schema(str) == {"type": "string"}
         assert type_to_json_schema(int) == {"type": "integer"}
         assert type_to_json_schema(float) == {"type": "number"}
         assert type_to_json_schema(bool) == {"type": "boolean"}
 
-    def test_list_type_mappings(self) -> None:
+    def test_list_type_mappings(self) -> "None":
         """Test mapping of list types to JSON Schema."""
         # Basic list
         assert type_to_json_schema(list) == {"type": "array"}
@@ -46,12 +111,12 @@ class TestSchemaBuilder:
         list_int_schema = type_to_json_schema(list[int])
         assert list_int_schema == {"type": "array", "items": {"type": "integer"}}
 
-    def test_dict_type_mappings(self) -> None:
+    def test_dict_type_mappings(self) -> "None":
         """Test mapping of dict types to JSON Schema."""
         assert type_to_json_schema(dict) == {"type": "object"}
         assert type_to_json_schema(dict[str, Any]) == {"type": "object"}
 
-    def test_set_type_mappings(self) -> None:
+    def test_set_type_mappings(self) -> "None":
         """Test mapping of set types to JSON Schema."""
         # Basic set
         assert type_to_json_schema(set) == {"type": "array", "uniqueItems": True}
@@ -60,7 +125,7 @@ class TestSchemaBuilder:
         set_str_schema = type_to_json_schema(set[str])
         assert set_str_schema == {"type": "array", "items": {"type": "string"}, "uniqueItems": True}
 
-    def test_complex_type_fallback(self) -> None:
+    def test_complex_type_fallback(self) -> "None":
         """Test fallback for complex types we can't handle."""
 
         class CustomClass:
@@ -70,10 +135,10 @@ class TestSchemaBuilder:
         assert schema["type"] == "object"
         assert "Parameter of type" in schema["description"]
 
-    def test_generate_schema_for_simple_handler(self) -> None:
+    def test_generate_schema_for_simple_handler(self) -> "None":
         """Test schema generation for a handler with simple parameters."""
 
-        def simple_handler(name: str, age: int, active: bool = True) -> dict[str, Any]:
+        def simple_handler(name: "str", age: "int", active: "bool" = True) -> "dict[str, Any]":
             return {"name": name, "age": age, "active": active}
 
         _, handler = create_app_with_handler(simple_handler)
@@ -92,10 +157,12 @@ class TestSchemaBuilder:
         # Check required fields (active has default, so not required)
         assert set(schema["required"]) == {"name", "age"}
 
-    def test_generate_schema_for_handler_with_optional_params(self) -> None:
+    def test_generate_schema_for_handler_with_optional_params(self) -> "None":
         """Test schema generation for handler with optional parameters."""
 
-        def handler_with_optional(message: str, count: int = 1, tags: list[str] | None = None) -> dict[str, Any]:
+        def handler_with_optional(
+            message: "str", count: "int" = 1, tags: "list[str] | None" = None
+        ) -> "dict[str, Any]":
             return {"message": message, "count": count, "tags": tags}
 
         _, handler = create_app_with_handler(handler_with_optional)
@@ -119,10 +186,12 @@ class TestSchemaBuilder:
         assert "array" in tag_types
         assert "null" in tag_types
 
-    def test_generate_schema_with_complex_types(self) -> None:
+    def test_generate_schema_with_complex_types(self) -> "None":
         """Test schema generation with complex parameter types."""
 
-        def complex_handler(config: dict[str, Any], items: list[str], metadata: dict[str, int]) -> dict[str, Any]:
+        def complex_handler(
+            config: "dict[str, Any]", items: "list[str]", metadata: "dict[str, int]"
+        ) -> "dict[str, Any]":
             return {"processed": True}
 
         _, handler = create_app_with_handler(complex_handler)
@@ -139,14 +208,14 @@ class TestSchemaBuilder:
         # All should be required
         assert set(schema["required"]) == {"config", "items", "metadata"}
 
-    def test_generate_schema_excludes_di_parameters(self) -> None:
+    def test_generate_schema_excludes_di_parameters(self) -> "None":
         """Test that dependency injection parameters are excluded from schema."""
         from litestar.di import Provide
 
-        def provide_config() -> dict[str, str]:
+        def provide_config() -> "dict[str, str]":
             return {"setting": "value"}
 
-        def handler_with_di(user_id: int, config: dict[str, str]) -> dict[str, Any]:
+        def handler_with_di(user_id: "int", config: "dict[str, str]") -> "dict[str, Any]":
             return {"user_id": user_id, "config": config}
 
         _, handler = create_app_with_handler(
@@ -160,10 +229,10 @@ class TestSchemaBuilder:
         assert "config" not in schema["properties"]
         assert schema["required"] == ["user_id"]
 
-    def test_generate_schema_no_parameters(self) -> None:
+    def test_generate_schema_no_parameters(self) -> "None":
         """Test schema generation for handler with no parameters."""
 
-        def status_handler() -> dict[str, str]:
+        def status_handler() -> "dict[str, str]":
             """Get system status."""
             return {"status": "ok"}
 
@@ -174,10 +243,10 @@ class TestSchemaBuilder:
         assert schema["properties"] == {}
         assert "required" not in schema or schema["required"] == []
 
-    def test_generate_schema_with_docstring(self) -> None:
+    def test_generate_schema_with_docstring(self) -> "None":
         """Test that schema includes description from function docstring."""
 
-        def documented_handler(value: str) -> str:
+        def documented_handler(value: "str") -> "str":
             """This is a test handler that processes a value."""
             return f"Processed: {value}"
 
@@ -187,10 +256,10 @@ class TestSchemaBuilder:
         assert "description" in schema
         assert "This is a test handler that processes a value" in schema["description"]
 
-    def test_generate_schema_without_docstring(self) -> None:
+    def test_generate_schema_without_docstring(self) -> "None":
         """Test schema generation for handler without docstring."""
 
-        def undocumented_handler(value: str) -> str:
+        def undocumented_handler(value: "str") -> "str":
             return f"Processed: {value}"
 
         _, handler = create_app_with_handler(undocumented_handler)
@@ -200,18 +269,18 @@ class TestSchemaBuilder:
         assert "undocumented_handler" in schema["description"]
 
     @pytest.mark.skipif(True, reason="Pydantic not required dependency")
-    def test_pydantic_model_integration(self) -> None:
+    def test_pydantic_model_integration(self) -> "None":
         """Test integration with Pydantic models if available."""
         try:
             from pydantic import BaseModel
 
             class UserModel(BaseModel):
-                name: str
-                age: int
-                email: str | None = None
+                name: "str"
+                age: "int"
+                email: "str | None" = None
 
             @get("/test")
-            def pydantic_handler(user: UserModel) -> dict[str, Any]:
+            def pydantic_handler(user: "UserModel") -> "dict[str, Any]":
                 return {"user": user.model_dump()}
 
             handler = BaseRouteHandler(fn=pydantic_handler, http_method="GET", path="/test")
@@ -227,10 +296,10 @@ class TestSchemaBuilder:
         except ImportError:
             pytest.skip("Pydantic not available")
 
-    def test_type_annotation_edge_cases(self) -> None:
+    def test_type_annotation_edge_cases(self) -> "None":
         """Test edge cases in type annotation handling."""
 
-        def edge_case_handler(any_param: Any, union_param: str | None, raw_param: Any) -> dict[str, Any]:
+        def edge_case_handler(any_param: "Any", union_param: "str | None", raw_param: "Any") -> "dict[str, Any]":
             return {"processed": True}
 
         _, handler = create_app_with_handler(edge_case_handler)
@@ -247,10 +316,10 @@ class TestSchemaBuilder:
         # Parameter without annotation should be handled gracefully
         assert "raw_param" in properties
 
-    def test_nested_complex_types(self) -> None:
+    def test_nested_complex_types(self) -> "None":
         """Test schema generation with nested complex types."""
 
-        def nested_handler(nested_data: dict[str, list[dict[str, str]]]) -> dict[str, Any]:
+        def nested_handler(nested_data: "dict[str, list[dict[str, str]]]") -> "dict[str, Any]":
             return {"processed": True}
 
         _, handler = create_app_with_handler(nested_handler)
@@ -264,23 +333,23 @@ class TestSchemaBuilder:
 class TestBasicTypeToJsonSchema:
     """Test suite for basic_type_to_json_schema function."""
 
-    def test_basic_type_to_json_schema_string(self) -> None:
+    def test_basic_type_to_json_schema_string(self) -> "None":
         """Test string type conversion."""
         assert basic_type_to_json_schema(str) == {"type": "string"}
 
-    def test_basic_type_to_json_schema_integer(self) -> None:
+    def test_basic_type_to_json_schema_integer(self) -> "None":
         """Test integer type conversion."""
         assert basic_type_to_json_schema(int) == {"type": "integer"}
 
-    def test_basic_type_to_json_schema_float(self) -> None:
+    def test_basic_type_to_json_schema_float(self) -> "None":
         """Test float type conversion."""
         assert basic_type_to_json_schema(float) == {"type": "number"}
 
-    def test_basic_type_to_json_schema_boolean(self) -> None:
+    def test_basic_type_to_json_schema_boolean(self) -> "None":
         """Test boolean type conversion."""
         assert basic_type_to_json_schema(bool) == {"type": "boolean"}
 
-    def test_basic_type_to_json_schema_unsupported(self) -> None:
+    def test_basic_type_to_json_schema_unsupported(self) -> "None":
         """Test unsupported type returns None."""
         assert basic_type_to_json_schema(list) is None
         assert basic_type_to_json_schema(dict) is None
@@ -290,38 +359,38 @@ class TestBasicTypeToJsonSchema:
 class TestCollectionTypeToJsonSchema:
     """Test suite for collection_type_to_json_schema function."""
 
-    def test_collection_type_list_basic(self) -> None:
+    def test_collection_type_list_basic(self) -> "None":
         """Test basic list type conversion."""
         assert collection_type_to_json_schema(list) == {"type": "array"}
 
-    def test_collection_type_list_typed(self) -> None:
+    def test_collection_type_list_typed(self) -> "None":
         """Test typed list conversion."""
         result = collection_type_to_json_schema(list[str])
         expected = {"type": "array", "items": {"type": "string"}}
         assert result == expected
 
-    def test_collection_type_dict_basic(self) -> None:
+    def test_collection_type_dict_basic(self) -> "None":
         """Test basic dict type conversion."""
         assert collection_type_to_json_schema(dict) == {"type": "object"}
 
-    def test_collection_type_dict_typed(self) -> None:
+    def test_collection_type_dict_typed(self) -> "None":
         """Test typed dict conversion."""
         result = collection_type_to_json_schema(dict[str, int])
         assert result == {"type": "object"}
 
-    def test_collection_type_set_basic(self) -> None:
+    def test_collection_type_set_basic(self) -> "None":
         """Test basic set type conversion."""
         result = collection_type_to_json_schema(set)
         expected = {"type": "array", "uniqueItems": True}
         assert result == expected
 
-    def test_collection_type_set_typed(self) -> None:
+    def test_collection_type_set_typed(self) -> "None":
         """Test typed set conversion."""
         result = collection_type_to_json_schema(set[str])
         expected = {"type": "array", "items": {"type": "string"}, "uniqueItems": True}
         assert result == expected
 
-    def test_collection_type_unsupported(self) -> None:
+    def test_collection_type_unsupported(self) -> "None":
         """Test unsupported collection type returns None."""
         assert collection_type_to_json_schema(str) is None
         assert collection_type_to_json_schema(int) is None
@@ -330,13 +399,13 @@ class TestCollectionTypeToJsonSchema:
 class TestDataclassToJsonSchema:
     """Test suite for dataclass_to_json_schema function."""
 
-    def test_dataclass_to_json_schema_basic(self) -> None:
+    def test_dataclass_to_json_schema_basic(self) -> "None":
         """Test basic dataclass conversion."""
 
         @dataclass
         class TestDataclass:
-            name: str
-            age: int
+            name: "str"
+            age: "int"
 
         result = dataclass_to_json_schema(TestDataclass)
 
@@ -350,14 +419,14 @@ class TestDataclassToJsonSchema:
 
         assert set(result["required"]) == {"name", "age"}
 
-    def test_dataclass_to_json_schema_with_defaults(self) -> None:
+    def test_dataclass_to_json_schema_with_defaults(self) -> "None":
         """Test dataclass with default values."""
 
         @dataclass
         class TestDataclass:
-            name: str
-            age: int = 25
-            active: bool = True
+            name: "str"
+            age: "int" = 25
+            active: "bool" = True
 
         result = dataclass_to_json_schema(TestDataclass)
 
@@ -371,13 +440,13 @@ class TestDataclassToJsonSchema:
         assert "age" in properties
         assert "active" in properties
 
-    def test_dataclass_to_json_schema_optional_fields(self) -> None:
+    def test_dataclass_to_json_schema_optional_fields(self) -> "None":
         """Test dataclass with optional fields."""
 
         @dataclass
         class TestDataclass:
-            name: str
-            description: str | None = None
+            name: "str"
+            description: "str | None" = None
 
         result = dataclass_to_json_schema(TestDataclass)
 
@@ -388,7 +457,7 @@ class TestDataclassToJsonSchema:
 class TestMsgspecToJsonSchema:
     """Test suite for msgspec_to_json_schema function."""
 
-    def test_msgspec_to_json_schema_imports(self) -> None:
+    def test_msgspec_to_json_schema_imports(self) -> "None":
         """Test that msgspec import is handled correctly."""
         # This test verifies the import behavior inside the function
         try:
@@ -398,8 +467,8 @@ class TestMsgspecToJsonSchema:
             if hasattr(msgspec, "Struct"):
 
                 class TestStruct(msgspec.Struct):
-                    name: str
-                    age: int = 25
+                    name: "str"
+                    age: "int" = 25
 
                 result = msgspec_to_json_schema(TestStruct)
                 # msgspec.json.schema emits a $ref + $defs envelope by default.
@@ -412,20 +481,8 @@ class TestMsgspecToJsonSchema:
             # If msgspec is not available, just pass
             pass
 
-    def test_msgspec_struct_with_enum_field(self) -> None:
+    def test_msgspec_struct_with_enum_field(self) -> "None":
         """Enum fields should serialize to JSON Schema enum constraints."""
-        import enum
-
-        import msgspec
-
-        class Color(enum.Enum):
-            RED = "red"
-            GREEN = "green"
-            BLUE = "blue"
-
-        class Paint(msgspec.Struct):
-            color: Color
-
         result = msgspec_to_json_schema(Paint)
         # msgspec emits Enums into $defs with an "enum" array.
         defs = result.get("$defs", {})
@@ -433,16 +490,8 @@ class TestMsgspecToJsonSchema:
         enum_values = next(value["enum"] for value in defs.values() if "enum" in value)
         assert set(enum_values) == {"red", "green", "blue"}
 
-    def test_msgspec_struct_with_nested_struct(self) -> None:
+    def test_msgspec_struct_with_nested_struct(self) -> "None":
         """Nested Structs should produce $ref entries in $defs."""
-        import msgspec
-
-        class Inner(msgspec.Struct):
-            x: int
-
-        class Outer(msgspec.Struct):
-            inner: Inner
-
         result = msgspec_to_json_schema(Outer)
         assert "$defs" in result
         assert "Inner" in result["$defs"]
@@ -451,14 +500,13 @@ class TestMsgspecToJsonSchema:
         outer_schema = result["$defs"]["Outer"]
         assert outer_schema["properties"]["inner"] == {"$ref": "#/$defs/Inner"}
 
-    def test_msgspec_struct_with_meta_constraints(self) -> None:
+    def test_msgspec_struct_with_meta_constraints(self) -> "None":
         """msgspec.Meta constraints should translate to JSON Schema keywords."""
-        from typing import Annotated
 
         import msgspec
 
         class Ranged(msgspec.Struct):
-            score: Annotated[int, msgspec.Meta(ge=0, le=100)]
+            score: "Annotated[int, msgspec.Meta(ge=0, le=100)]"
 
         result = msgspec_to_json_schema(Ranged)
         target = result["$defs"]["Ranged"]
@@ -466,21 +514,8 @@ class TestMsgspecToJsonSchema:
         assert score_schema["minimum"] == 0
         assert score_schema["maximum"] == 100
 
-    def test_msgspec_struct_with_tagged_union(self) -> None:
+    def test_msgspec_struct_with_tagged_union(self) -> "None":
         """Tagged union Structs should produce oneOf/anyOf with discriminator."""
-        from typing import Union
-
-        import msgspec
-
-        class Cat(msgspec.Struct, tag="cat"):
-            name: str
-
-        class Dog(msgspec.Struct, tag="dog"):
-            name: str
-
-        class Carrier(msgspec.Struct):
-            pet: Union[Cat, Dog]  # noqa: UP007
-
         result = msgspec_to_json_schema(Carrier)
         defs = result["$defs"]
         pet_schema = defs["Carrier"]["properties"]["pet"]
@@ -491,15 +526,10 @@ class TestMsgspecToJsonSchema:
 class TestMsgspecAsHandlerParam:
     """Schema generation for handlers whose parameters are msgspec.Struct types."""
 
-    def test_generate_schema_for_handler_with_msgspec_struct_param(self) -> None:
+    def test_generate_schema_for_handler_with_msgspec_struct_param(self) -> "None":
         """A msgspec.Struct handler param should be expanded via msgspec.json.schema."""
-        import msgspec
 
-        class Payload(msgspec.Struct):
-            name: str
-            count: int = 1
-
-        def struct_handler(payload: Payload) -> dict[str, Any]:
+        def struct_handler(payload: "HandlerPayload") -> "dict[str, Any]":
             return {"ok": True, "name": payload.name, "count": payload.count}
 
         _, handler = create_app_with_handler(struct_handler)
@@ -508,22 +538,17 @@ class TestMsgspecAsHandlerParam:
         payload_schema = schema["properties"]["payload"]
         # msgspec.json.schema emits a $ref into $defs.
         assert "$defs" in payload_schema
-        assert "Payload" in payload_schema["$defs"]
-        target = payload_schema["$defs"]["Payload"]
+        assert "HandlerPayload" in payload_schema["$defs"]
+        target = payload_schema["$defs"]["HandlerPayload"]
         assert target["type"] == "object"
         assert "name" in target["properties"]
         assert "count" in target["properties"]
         assert target["required"] == ["name"]
 
-    def test_generate_schema_for_post_data_struct_param(self) -> None:
+    def test_generate_schema_for_post_data_struct_param(self) -> "None":
         """A POST body declared as ``data: Struct`` is advertised to MCP clients."""
-        import msgspec
 
-        class Payload(msgspec.Struct):
-            title: str
-            count: int = 1
-
-        def create_payload(data: Payload) -> dict[str, Any]:
+        def create_payload(data: "CreatePayload") -> "dict[str, Any]":
             return {"title": data.title, "count": data.count}
 
         _, handler = create_app_with_handler(create_payload, route_path="/payload", method="POST")
@@ -532,8 +557,8 @@ class TestMsgspecAsHandlerParam:
         assert schema["required"] == ["data"]
         data_schema = schema["properties"]["data"]
         assert "$defs" in data_schema
-        assert "Payload" in data_schema["$defs"]
-        payload_schema = data_schema["$defs"]["Payload"]
+        assert "CreatePayload" in data_schema["$defs"]
+        payload_schema = data_schema["$defs"]["CreatePayload"]
         assert payload_schema["properties"]["title"]["type"] == "string"
         assert payload_schema["properties"]["count"]["type"] == "integer"
         assert payload_schema["required"] == ["title"]
@@ -542,12 +567,12 @@ class TestMsgspecAsHandlerParam:
 class TestPydanticToJsonSchema:
     """Test suite for pydantic_to_json_schema function."""
 
-    def test_pydantic_to_json_schema_mock(self) -> None:
+    def test_pydantic_to_json_schema_mock(self) -> "None":
         """Test pydantic schema generation with mock model."""
 
         class MockPydanticModel:
             @classmethod
-            def model_json_schema(cls) -> dict[str, Any]:
+            def model_json_schema(cls) -> "dict[str, Any]":
                 return {
                     "type": "object",
                     "properties": {"name": {"type": "string"}, "age": {"type": "integer"}},
@@ -565,21 +590,21 @@ class TestPydanticToJsonSchema:
 class TestTypeToJsonSchemaIntegration:
     """Integration tests for type_to_json_schema function."""
 
-    def test_type_to_json_schema_recursive_lists(self) -> None:
+    def test_type_to_json_schema_recursive_lists(self) -> "None":
         """Test recursive type conversion with nested lists."""
         result = type_to_json_schema(list[list[str]])
 
         expected = {"type": "array", "items": {"type": "array", "items": {"type": "string"}}}
         assert result == expected
 
-    def test_type_to_json_schema_complex_nested(self) -> None:
+    def test_type_to_json_schema_complex_nested(self) -> "None":
         """Test complex nested type conversion."""
         result = type_to_json_schema(dict[str, list[int]])
 
         # Should handle the dict but may not fully parse the value type
         assert result["type"] == "object"
 
-    def test_type_to_json_schema_unknown_type(self) -> None:
+    def test_type_to_json_schema_unknown_type(self) -> "None":
         """Test handling of unknown/custom types."""
 
         class CustomType:
@@ -595,7 +620,7 @@ class TestTypeToJsonSchemaIntegration:
 class TestEdgeCasesAndErrorHandling:
     """Test edge cases and error handling in schema builder."""
 
-    def test_generate_schema_handler_with_no_function(self) -> None:
+    def test_generate_schema_handler_with_no_function(self) -> "None":
         """Test error handling when handler has no function."""
 
         # Create a mock handler without fn attribute
@@ -610,7 +635,7 @@ class TestEdgeCasesAndErrorHandling:
         with contextlib.suppress(AttributeError):
             generate_schema_for_handler(handler)  # type: ignore[arg-type]
 
-    def test_type_to_json_schema_with_none(self) -> None:
+    def test_type_to_json_schema_with_none(self) -> "None":
         """Test type_to_json_schema with None input."""
         result = type_to_json_schema(None)
 
@@ -618,7 +643,7 @@ class TestEdgeCasesAndErrorHandling:
         assert result is not None
         assert result["type"] == "object"
 
-    def test_dataclass_to_json_schema_empty_dataclass(self) -> None:
+    def test_dataclass_to_json_schema_empty_dataclass(self) -> "None":
         """Test dataclass with no fields."""
 
         @dataclass
@@ -631,14 +656,14 @@ class TestEdgeCasesAndErrorHandling:
         assert result["properties"] == {}
         assert "required" not in result or result["required"] == []
 
-    def test_generate_schema_with_complex_defaults(self) -> None:
+    def test_generate_schema_with_complex_defaults(self) -> "None":
         """Test schema generation with complex default values."""
 
         def handler_with_complex_defaults(
-            name: str,
-            config: dict[str, Any] | None = None,
-            items: list[str] | None = None,
-        ) -> dict[str, Any]:
+            name: "str",
+            config: "dict[str, Any] | None" = None,
+            items: "list[str] | None" = None,
+        ) -> "dict[str, Any]":
             return {"name": name, "config": config or {}, "items": items or []}
 
         _, handler = create_app_with_handler(handler_with_complex_defaults)
@@ -657,28 +682,28 @@ class TestEdgeCasesAndErrorHandling:
 class TestOptionalNullability:
     """Tests for Optional[T] producing anyOf with null type."""
 
-    def test_optional_str_includes_null(self) -> None:
+    def test_optional_str_includes_null(self) -> "None":
         result = type_to_json_schema(str | None)
         assert "anyOf" in result
         types = [s.get("type") for s in result["anyOf"]]
         assert "string" in types
         assert "null" in types
 
-    def test_optional_int_includes_null(self) -> None:
+    def test_optional_int_includes_null(self) -> "None":
         result = type_to_json_schema(int | None)
         assert "anyOf" in result
         types = [s.get("type") for s in result["anyOf"]]
         assert "integer" in types
         assert "null" in types
 
-    def test_optional_list_str_includes_null(self) -> None:
+    def test_optional_list_str_includes_null(self) -> "None":
         result = type_to_json_schema(list[str] | None)
         assert "anyOf" in result
         types = [s.get("type") for s in result["anyOf"]]
         assert "array" in types
         assert "null" in types
 
-    def test_plain_str_no_null(self) -> None:
+    def test_plain_str_no_null(self) -> "None":
         result = type_to_json_schema(str)
         assert result == {"type": "string"}
         assert "anyOf" not in result
@@ -687,14 +712,14 @@ class TestOptionalNullability:
 class TestUnionHandling:
     """Tests for Union[A, B] producing anyOf."""
 
-    def test_union_str_int(self) -> None:
+    def test_union_str_int(self) -> "None":
         result = type_to_json_schema(str | int)
         assert "anyOf" in result
         types = [s.get("type") for s in result["anyOf"]]
         assert "string" in types
         assert "integer" in types
 
-    def test_union_str_int_none(self) -> None:
+    def test_union_str_int_none(self) -> "None":
         result = type_to_json_schema(str | int | None)
         assert "anyOf" in result
         types = [s.get("type") for s in result["anyOf"]]
@@ -702,7 +727,7 @@ class TestUnionHandling:
         assert "integer" in types
         assert "null" in types
 
-    def test_union_single_type(self) -> None:
+    def test_union_single_type(self) -> "None":
         # Union[str] collapses to str in Python
         result = union_type_to_json_schema(str)
         # Python collapses Union[str, str] to just str, which isn't a Union
@@ -713,12 +738,12 @@ class TestUnionHandling:
 
 
 class TestUnwrapAnnotated:
-    def test_non_annotated_returns_input_and_empty_list(self) -> None:
+    def test_non_annotated_returns_input_and_empty_list(self) -> "None":
         inner, metas = _unwrap_annotated(int)
         assert inner is int
         assert metas == []
 
-    def test_annotated_with_parameter_kwarg_returns_inner_and_meta(self) -> None:
+    def test_annotated_with_parameter_kwarg_returns_inner_and_meta(self) -> "None":
         annotation = Annotated[bool, Parameter(description="paid")]
         inner, metas = _unwrap_annotated(annotation)
         assert inner is bool
@@ -726,7 +751,7 @@ class TestUnwrapAnnotated:
         assert isinstance(metas[0], ParameterKwarg)
         assert metas[0].description == "paid"
 
-    def test_annotated_filters_foreign_metadata(self) -> None:
+    def test_annotated_filters_foreign_metadata(self) -> "None":
         annotation = Annotated[int, "doc string", Parameter(ge=1)]
         inner, metas = _unwrap_annotated(annotation)
         assert inner is int
@@ -735,12 +760,12 @@ class TestUnwrapAnnotated:
 
 
 class TestMergeParameterMeta:
-    def test_description_merges(self) -> None:
+    def test_description_merges(self) -> "None":
         schema: dict[str, Any] = {"type": "boolean"}
         _merge_parameter_meta(schema, Parameter(description="paid"))
         assert schema == {"type": "boolean", "description": "paid"}
 
-    def test_numeric_constraints_map_to_json_schema_keywords(self) -> None:
+    def test_numeric_constraints_map_to_json_schema_keywords(self) -> "None":
         schema: dict[str, Any] = {"type": "integer"}
         _merge_parameter_meta(schema, Parameter(ge=1, le=100, gt=0, lt=200, multiple_of=5))
         assert schema == {
@@ -752,7 +777,7 @@ class TestMergeParameterMeta:
             "multipleOf": 5,
         }
 
-    def test_string_constraints_map_to_json_schema_keywords(self) -> None:
+    def test_string_constraints_map_to_json_schema_keywords(self) -> "None":
         schema: dict[str, Any] = {"type": "string"}
         _merge_parameter_meta(schema, Parameter(min_length=3, max_length=50, pattern="^[a-z]+$"))
         assert schema == {
@@ -762,25 +787,25 @@ class TestMergeParameterMeta:
             "pattern": "^[a-z]+$",
         }
 
-    def test_title_and_examples_merge(self) -> None:
+    def test_title_and_examples_merge(self) -> "None":
         schema: dict[str, Any] = {"type": "string"}
         _merge_parameter_meta(schema, Parameter(title="Email", examples=["a@b.com"]))  # type: ignore[list-item]
         assert schema["title"] == "Email"
         assert schema["examples"] == ["a@b.com"]
 
-    def test_none_fields_skipped(self) -> None:
+    def test_none_fields_skipped(self) -> "None":
         schema: dict[str, Any] = {"type": "string"}
         _merge_parameter_meta(schema, Parameter())
         assert schema == {"type": "string"}
 
-    def test_examples_scalar_value_is_wrapped_in_list(self) -> None:
+    def test_examples_scalar_value_is_wrapped_in_list(self) -> "None":
         schema: dict[str, Any] = {"type": "string"}
         _merge_parameter_meta(schema, Parameter(examples="one@example.com"))  # type: ignore[arg-type]
         assert schema["examples"] == ["one@example.com"]
 
 
 class TestTypeToJsonSchemaAnnotated:
-    def test_annotated_bool_optional_yields_any_of_with_description(self) -> None:
+    def test_annotated_bool_optional_yields_any_of_with_description(self) -> "None":
         annotation = Annotated[
             bool | None,
             Parameter(query="isPaid", description="Whether the order is paid"),
@@ -791,7 +816,7 @@ class TestTypeToJsonSchemaAnnotated:
         assert types_seen == {"boolean", "null"}
         assert schema["description"] == "Whether the order is paid"
 
-    def test_annotated_int_with_constraints(self) -> None:
+    def test_annotated_int_with_constraints(self) -> "None":
         annotation = Annotated[int, Parameter(ge=1, le=100, description="qty")]
         schema = type_to_json_schema(annotation)
         assert schema == {
@@ -801,7 +826,7 @@ class TestTypeToJsonSchemaAnnotated:
             "description": "qty",
         }
 
-    def test_annotated_str_pattern_and_length(self) -> None:
+    def test_annotated_str_pattern_and_length(self) -> "None":
         annotation = Annotated[str, Parameter(min_length=3, max_length=50, pattern="^[a-z]+$")]
         schema = type_to_json_schema(annotation)
         assert schema == {
@@ -811,16 +836,16 @@ class TestTypeToJsonSchemaAnnotated:
             "pattern": "^[a-z]+$",
         }
 
-    def test_annotated_without_parameter_metadata_still_unwraps(self) -> None:
+    def test_annotated_without_parameter_metadata_still_unwraps(self) -> "None":
         annotation = Annotated[int, "doc string"]
         assert type_to_json_schema(annotation) == {"type": "integer"}
 
 
 class TestGenerateSchemaWireNamesAndDocClobber:
-    def test_query_alias_used_as_property_key(self) -> None:
+    def test_query_alias_used_as_property_key(self) -> "None":
         def handler(
-            is_paid: Annotated[bool | None, Parameter(query="isPaid", description="paid?")] = None,
-        ) -> dict[str, Any]:
+            is_paid: "Annotated[bool | None, Parameter(query='isPaid', description='paid?')]" = None,
+        ) -> "dict[str, Any]":
             return {"is_paid": is_paid}
 
         _, h = create_app_with_handler(handler)
@@ -829,20 +854,20 @@ class TestGenerateSchemaWireNamesAndDocClobber:
         assert "is_paid" not in schema["properties"]
         assert schema["properties"]["isPaid"]["description"] == "paid?"
 
-    def test_required_uses_wire_names(self) -> None:
+    def test_required_uses_wire_names(self) -> "None":
         def handler(
-            user_id: Annotated[str, Parameter(query="userId")],
-        ) -> dict[str, Any]:
+            user_id: "Annotated[str, Parameter(query='userId')]",
+        ) -> "dict[str, Any]":
             return {"user_id": user_id}
 
         _, h = create_app_with_handler(handler)
         schema = generate_schema_for_handler(h)
         assert schema["required"] == ["userId"]
 
-    def test_no_doc_clobber_on_annotated_parameter(self) -> None:
+    def test_no_doc_clobber_on_annotated_parameter(self) -> "None":
         def handler(
-            is_paid: Annotated[bool | None, Parameter(query="isPaid")] = None,
-        ) -> dict[str, Any]:
+            is_paid: "Annotated[bool | None, Parameter(query='isPaid')]" = None,
+        ) -> "dict[str, Any]":
             return {"is_paid": is_paid}
 
         _, h = create_app_with_handler(handler)
@@ -851,14 +876,8 @@ class TestGenerateSchemaWireNamesAndDocClobber:
         description = prop.get("description", "")
         assert "Runtime representation of an annotated type" not in description
 
-    def test_no_doc_clobber_on_dataclass_parameter(self) -> None:
-        @dataclass
-        class Filter:
-            """Filter dataclass with a meaningful docstring."""
-
-            name: str
-
-        def handler(filter: Filter) -> dict[str, Any]:  # noqa: A002
+    def test_no_doc_clobber_on_dataclass_parameter(self) -> "None":
+        def handler(filter: "Filter") -> "dict[str, Any]":  # noqa: A002
             return {"filter": filter}
 
         _, h = create_app_with_handler(handler)
@@ -866,19 +885,19 @@ class TestGenerateSchemaWireNamesAndDocClobber:
         prop = schema["properties"]["filter"]
         assert "Filter dataclass with a meaningful docstring" not in prop.get("description", "")
 
-    def test_wire_name_collision_raises(self) -> None:
+    def test_wire_name_collision_raises(self) -> "None":
         def handler(
-            a: Annotated[str, Parameter(query="same")] = "",
-            b: Annotated[str, Parameter(query="same")] = "",
-        ) -> dict[str, Any]:
+            a: "Annotated[str, Parameter(query='same')]" = "",
+            b: "Annotated[str, Parameter(query='same')]" = "",
+        ) -> "dict[str, Any]":
             return {"a": a, "b": b}
 
         _, h = create_app_with_handler(handler)
         with pytest.raises(ValueError, match="Wire-name collision"):
             generate_schema_for_handler(h)
 
-    def test_bare_types_regression(self) -> None:
-        def handler(is_paid: bool | None = None, name: str | None = None) -> dict[str, Any]:
+    def test_bare_types_regression(self) -> "None":
+        def handler(is_paid: "bool | None" = None, name: "str | None" = None) -> "dict[str, Any]":
             return {"is_paid": is_paid, "name": name}
 
         _, h = create_app_with_handler(handler)
@@ -892,7 +911,7 @@ class TestDependencyProviderParameters:
     """Provider params (e.g. limit/offset on a Provide(...) factory) must surface."""
 
     @staticmethod
-    def _build_handler(handler_func: Any, dependencies: dict[str, Any]) -> Any:
+    def _build_handler(handler_func: "Any", dependencies: "dict[str, Any]") -> "Any":
         from litestar import Litestar, get
 
         from tests.unit.conftest import get_handler_from_app
@@ -901,16 +920,16 @@ class TestDependencyProviderParameters:
         app = Litestar(route_handlers=[decorated], dependencies=dependencies)
         return get_handler_from_app(app, "/x")
 
-    def test_direct_provider_params_appear_in_schema(self) -> None:
+    def test_direct_provider_params_appear_in_schema(self) -> "None":
         from litestar.di import Provide
         from litestar.params import Dependency
 
-        async def provide_pagination(limit: int = 20, offset: int = 0) -> dict[str, int]:
+        async def provide_pagination(limit: "int" = 20, offset: "int" = 0) -> "dict[str, int]":
             return {"limit": limit, "offset": offset}
 
         async def handler(
-            pagination: Annotated[dict[str, int], Dependency(skip_validation=True)],
-        ) -> dict[str, int]:
+            pagination: "Annotated[dict[str, int], Dependency(skip_validation=True)]",
+        ) -> "dict[str, int]":
             return pagination
 
         h = self._build_handler(handler, {"pagination": Provide(provide_pagination)})
@@ -920,21 +939,21 @@ class TestDependencyProviderParameters:
         assert schema["properties"]["offset"] == {"type": "integer"}
         assert "required" not in schema  # both have defaults
 
-    def test_transitive_provider_params_appear_in_schema(self) -> None:
+    def test_transitive_provider_params_appear_in_schema(self) -> "None":
         from litestar.di import Provide
-        from litestar.params import Dependency, Parameter
+        from litestar.params import Dependency
 
         async def provide_base(
-            filter_q: Annotated[str | None, Parameter(query="q")] = None,
-        ) -> dict[str, Any]:
+            filter_q: "Annotated[str | None, Parameter(query='q')]" = None,
+        ) -> "dict[str, Any]":
             return {"q": filter_q}
 
-        async def provide_pagination(base: dict[str, Any], limit: int = 20, offset: int = 0) -> dict[str, Any]:
+        async def provide_pagination(base: "dict[str, Any]", limit: "int" = 20, offset: "int" = 0) -> "dict[str, Any]":
             return {"limit": limit, "offset": offset, **base}
 
         async def handler(
-            pagination: Annotated[dict[str, Any], Dependency(skip_validation=True)],
-        ) -> dict[str, Any]:
+            pagination: "Annotated[dict[str, Any], Dependency(skip_validation=True)]",
+        ) -> "dict[str, Any]":
             return pagination
 
         h = self._build_handler(
@@ -944,42 +963,43 @@ class TestDependencyProviderParameters:
         schema = generate_schema_for_handler(h)
         assert set(schema["properties"]) == {"limit", "offset", "q"}
 
-    def test_provider_framework_kwargs_are_skipped(self) -> None:
+    def test_provider_framework_kwargs_are_skipped(self) -> "None":
         """Providers that take state/request etc. must not leak those as user input."""
         from litestar import Request
-        from litestar.datastructures import State
         from litestar.di import Provide
         from litestar.params import Dependency
 
-        async def provide_context(state: State, request: Request[Any, Any, Any], limit: int = 10) -> dict[str, Any]:
+        async def provide_context(
+            state: "State", request: "Request[Any, Any, Any]", limit: "int" = 10
+        ) -> "dict[str, Any]":
             return {"limit": limit}
 
         async def handler(
-            ctx: Annotated[dict[str, Any], Dependency(skip_validation=True)],
-        ) -> dict[str, Any]:
+            ctx: "Annotated[dict[str, Any], Dependency(skip_validation=True)]",
+        ) -> "dict[str, Any]":
             return ctx
 
         h = self._build_handler(handler, {"ctx": Provide(provide_context)})
         schema = generate_schema_for_handler(h)
         assert set(schema["properties"]) == {"limit"}
 
-    def test_provider_with_no_params_does_not_break(self) -> None:
+    def test_provider_with_no_params_does_not_break(self) -> "None":
         from litestar.di import Provide
         from litestar.params import Dependency
 
-        async def provide_thing() -> dict[str, Any]:
+        async def provide_thing() -> "dict[str, Any]":
             return {}
 
         async def handler(
-            thing: Annotated[dict[str, Any], Dependency(skip_validation=True)],
-        ) -> dict[str, Any]:
+            thing: "Annotated[dict[str, Any], Dependency(skip_validation=True)]",
+        ) -> "dict[str, Any]":
             return thing
 
         h = self._build_handler(handler, {"thing": Provide(provide_thing)})
         schema = generate_schema_for_handler(h)
         assert schema["properties"] == {}
 
-    def test_path_param_collision_dedupes_to_single_emission(self) -> None:
+    def test_path_param_collision_dedupes_to_single_emission(self) -> "None":
         """If a provider declares the same name as a path param, the handler's
         own sig walk emits it first; the provider walk must be a no-op for
         that name rather than raising a wire-name collision.
@@ -988,13 +1008,13 @@ class TestDependencyProviderParameters:
         from litestar.di import Provide
         from litestar.params import Dependency
 
-        async def provide_audit(user_id: str) -> dict[str, str]:
+        async def provide_audit(user_id: "str") -> "dict[str, str]":
             return {"user_id": user_id}
 
         async def handler(
-            user_id: str,
-            audit: Annotated[dict[str, str], Dependency(skip_validation=True)],
-        ) -> dict[str, str]:
+            user_id: "str",
+            audit: "Annotated[dict[str, str], Dependency(skip_validation=True)]",
+        ) -> "dict[str, str]":
             return {"user_id": user_id, **audit}
 
         decorated = get("/items/{user_id:str}", sync_to_thread=False)(handler)
@@ -1008,20 +1028,20 @@ class TestDependencyProviderParameters:
         schema = generate_schema_for_handler(h)
         assert set(schema["properties"]) == {"user_id"}
 
-    def test_provider_param_wire_alias_round_trips(self) -> None:
+    def test_provider_param_wire_alias_round_trips(self) -> "None":
         from litestar.di import Provide
-        from litestar.params import Dependency, Parameter
+        from litestar.params import Dependency
 
         from litestar_mcp.utils.handler_signature import parameter_aliases
 
         async def provide_filter(
-            user_id: Annotated[str | None, Parameter(query="userId")] = None,
-        ) -> dict[str, Any]:
+            user_id: "Annotated[str | None, Parameter(query='userId')]" = None,
+        ) -> "dict[str, Any]":
             return {"user_id": user_id}
 
         async def handler(
-            flt: Annotated[dict[str, Any], Dependency(skip_validation=True)],
-        ) -> dict[str, Any]:
+            flt: "Annotated[dict[str, Any], Dependency(skip_validation=True)]",
+        ) -> "dict[str, Any]":
             return flt
 
         h = self._build_handler(handler, {"flt": Provide(provide_filter)})
@@ -1030,7 +1050,7 @@ class TestDependencyProviderParameters:
         assert "user_id" not in schema["properties"]
         assert parameter_aliases(h) == {"userId": "user_id"}
 
-    def test_shared_callable_across_providers_is_walked_once(self) -> None:
+    def test_shared_callable_across_providers_is_walked_once(self) -> "None":
         """Cycle protection keys on the provider function, not the Provide wrapper.
 
         Two ``Provide`` entries that wrap the same callable have identical
@@ -1040,13 +1060,13 @@ class TestDependencyProviderParameters:
         from litestar.di import Provide
         from litestar.params import Dependency
 
-        async def shared(limit: int = 20) -> int:
+        async def shared(limit: "int" = 20) -> "int":
             return limit
 
         async def handler(
-            a: Annotated[int, Dependency(skip_validation=True)],
-            b: Annotated[int, Dependency(skip_validation=True)],
-        ) -> dict[str, int]:
+            a: "Annotated[int, Dependency(skip_validation=True)]",
+            b: "Annotated[int, Dependency(skip_validation=True)]",
+        ) -> "dict[str, int]":
             return {"a": a, "b": b}
 
         # Litestar rejects two equal ``Provide`` instances under different
@@ -1059,59 +1079,53 @@ class TestDependencyProviderParameters:
         schema = generate_schema_for_handler(h)
         assert set(schema["properties"]) == {"limit"}
 
-    def test_sync_provider_params_appear_in_schema(self) -> None:
+    def test_sync_provider_params_appear_in_schema(self) -> "None":
         """The BFS uses ``inspect.signature`` which handles sync providers identically."""
         from litestar.di import Provide
         from litestar.params import Dependency
 
-        def provide_pagination(limit: int = 20, offset: int = 0) -> dict[str, int]:
+        def provide_pagination(limit: "int" = 20, offset: "int" = 0) -> "dict[str, int]":
             return {"limit": limit, "offset": offset}
 
         async def handler(
-            pagination: Annotated[dict[str, int], Dependency(skip_validation=True)],
-        ) -> dict[str, int]:
+            pagination: "Annotated[dict[str, int], Dependency(skip_validation=True)]",
+        ) -> "dict[str, int]":
             return pagination
 
         h = self._build_handler(handler, {"pagination": Provide(provide_pagination, sync_to_thread=False)})
         schema = generate_schema_for_handler(h)
         assert set(schema["properties"]) == {"limit", "offset"}
 
-    def test_provider_return_type_does_not_leak_into_schema(self) -> None:
+    def test_provider_return_type_does_not_leak_into_schema(self) -> "None":
         """Only the provider's *inputs* matter; the model it returns must not surface its own fields."""
         from litestar.di import Provide
         from litestar.params import Dependency
 
-        @dataclass
-        class FilterModel:
-            limit: int
-            offset: int
-
-        async def provide_filter(q: str | None = None) -> FilterModel:
-            return FilterModel(limit=20, offset=0)
+        async def provide_filter(q: "str | None" = None) -> "SchemaFilterModel":
+            return SchemaFilterModel(limit=20, offset=0)
 
         async def handler(
-            flt: Annotated[FilterModel, Dependency(skip_validation=True)],
-        ) -> dict[str, Any]:
+            flt: "Annotated[SchemaFilterModel, Dependency(skip_validation=True)]",
+        ) -> "dict[str, Any]":
             return {"q": flt}
 
         h = self._build_handler(handler, {"flt": Provide(provide_filter)})
         schema = generate_schema_for_handler(h)
         assert set(schema["properties"]) == {"q"}
 
-    def test_non_dishka_provider_params_do_not_use_dishka_key_lookup(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_non_dishka_provider_params_do_not_use_dishka_key_lookup(self, monkeypatch: "pytest.MonkeyPatch") -> "None":
         """Plain Litestar DI must not touch Dishka internals."""
-        from litestar.di import NamedDependency, Provide
-        from litestar.params import FromQuery, SkipValidation
+        from litestar.di import Provide
 
-        async def provide_task_service(driver: FromQuery[str]) -> dict[str, str]:
+        async def provide_task_service(driver: "FromQuery[str]") -> "dict[str, str]":
             return {"driver": driver}
 
         def handler(
-            task_service: NamedDependency[SkipValidation[dict[str, str]]],
-        ) -> dict[str, str]:
+            task_service: "NamedDependency[SkipValidation[dict[str, str]]]",
+        ) -> "dict[str, str]":
             return task_service
 
-        def fail_dishka_key_lookup(_annotation: Any) -> Any:
+        def fail_dishka_key_lookup(_annotation: "Any") -> "Any":
             pytest.fail("Dishka dependency-key lookup should not run without a Dishka container")
 
         monkeypatch.setattr("litestar_mcp.utils.handler_signature._dishka_dependency_key", fail_dishka_key_lookup)
@@ -1120,57 +1134,57 @@ class TestDependencyProviderParameters:
         schema = generate_schema_for_handler(h)
         assert set(schema["properties"]) == {"driver"}
 
-    def test_handler_provider_query_collision_raises(self) -> None:
+    def test_handler_provider_query_collision_raises(self) -> "None":
         """Two distinct python names aliased to the same wire name -> ValueError."""
         from litestar.di import Provide
         from litestar.params import Dependency
 
         async def provide_filter(
-            other_id: Annotated[str | None, Parameter(query="id")] = None,
-        ) -> dict[str, Any]:
+            other_id: "Annotated[str | None, Parameter(query='id')]" = None,
+        ) -> "dict[str, Any]":
             return {"id": other_id}
 
         async def handler(
-            user_id: Annotated[str | None, Parameter(query="id")] = None,
-            flt: Annotated[dict[str, Any] | None, Dependency(skip_validation=True)] = None,
-        ) -> dict[str, Any]:
+            user_id: "Annotated[str | None, Parameter(query='id')]" = None,
+            flt: "Annotated[dict[str, Any] | None, Dependency(skip_validation=True)]" = None,
+        ) -> "dict[str, Any]":
             return {"user_id": user_id, **(flt or {})}
 
         h = self._build_handler(handler, {"flt": Provide(provide_filter)})
         with pytest.raises(ValueError, match="Wire-name collision"):
             generate_schema_for_handler(h)
 
-    def test_handler_provider_same_python_name_dedupes(self) -> None:
+    def test_handler_provider_same_python_name_dedupes(self) -> "None":
         """Same python name appearing on both handler and provider is a no-op dedupe, not a collision."""
         from litestar.di import Provide
         from litestar.params import Dependency
 
-        async def provide_audit(limit: int = 20) -> dict[str, int]:
+        async def provide_audit(limit: "int" = 20) -> "dict[str, int]":
             return {"limit": limit}
 
         async def handler(
-            limit: int = 20,
-            audit: Annotated[dict[str, int] | None, Dependency(skip_validation=True)] = None,
-        ) -> dict[str, int]:
+            limit: "int" = 20,
+            audit: "Annotated[dict[str, int] | None, Dependency(skip_validation=True)]" = None,
+        ) -> "dict[str, int]":
             return {"limit": limit, **(audit or {})}
 
         h = self._build_handler(handler, {"audit": Provide(provide_audit)})
         schema = generate_schema_for_handler(h)
         assert set(schema["properties"]) == {"limit"}
 
-    def test_provider_header_param_does_not_become_query_alias(self) -> None:
+    def test_provider_header_param_does_not_become_query_alias(self) -> "None":
         """Header-sourced provider params surface under their python name, not as wire aliases."""
         from litestar.di import Provide
         from litestar.params import Dependency
 
         async def provide_ctx(
-            tenant: Annotated[str | None, Parameter(header="X-Tenant")] = None,
-        ) -> dict[str, Any]:
+            tenant: "Annotated[str | None, Parameter(header='X-Tenant')]" = None,
+        ) -> "dict[str, Any]":
             return {"tenant": tenant}
 
         async def handler(
-            ctx: Annotated[dict[str, Any], Dependency(skip_validation=True)],
-        ) -> dict[str, Any]:
+            ctx: "Annotated[dict[str, Any], Dependency(skip_validation=True)]",
+        ) -> "dict[str, Any]":
             return ctx
 
         h = self._build_handler(handler, {"ctx": Provide(provide_ctx)})
@@ -1182,33 +1196,26 @@ class TestDependencyProviderParameters:
         assert "X-Tenant" not in schema["properties"]
         assert _pa(h) == {}
 
-    def test_dishka_resolved_provider_param_does_not_appear_in_schema(self) -> None:
+    def test_dishka_resolved_provider_param_does_not_appear_in_schema(self) -> "None":
         from dishka import Provider, Scope, make_async_container, provide
         from dishka.integrations.litestar import LitestarProvider, setup_dishka
         from litestar import Litestar, get
         from litestar.di import Provide
-        from litestar.params import FromQuery
 
         from tests.unit.conftest import get_handler_from_app
-
-        class Driver:
-            pass
-
-        class TaskService:
-            pass
 
         class DishkaProvider(Provider):
             scope = Scope.REQUEST
 
             @provide
-            def driver(self) -> Driver:
-                return Driver()
+            def driver(self) -> "_SchemaDriver":
+                return _SchemaDriver()
 
-        async def provide_task_service(driver: Driver) -> TaskService:
-            return TaskService()
+        async def provide_task_service(driver: "_SchemaDriver") -> "_SchemaTaskService":
+            return _SchemaTaskService()
 
         @get("/hello", opt={"mcp_tool": "hello"}, sync_to_thread=False)
-        def hello(name: FromQuery[str]) -> dict[str, str]:
+        def hello(name: "FromQuery[str]") -> "dict[str, str]":
             return {"hello": name}
 
         app = Litestar(

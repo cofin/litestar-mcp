@@ -23,50 +23,58 @@ from tests.unit.conftest import create_app_with_handler
 pytestmark = pytest.mark.unit
 
 
+class _IntrospectionDriver:
+    pass
+
+
+class _IntrospectionTaskService:
+    pass
+
+
 # ==============================================================================
 # 1. Parameter Aliases Coverage (from test_parameter_aliases.py)
 # ==============================================================================
 
 
 class TestParameterAliases:
-    def test_no_aliases_returns_empty_map(self) -> None:
-        def handler(name: str, age: int) -> dict[str, Any]:
+    def test_no_aliases_returns_empty_map(self) -> "None":
+        def handler(name: "str", age: "int") -> "dict[str, Any]":
             return {"name": name, "age": age}
 
         _, h = create_app_with_handler(handler)
         assert parameter_aliases(h) == {}
 
-    def test_query_alias_is_included(self) -> None:
+    def test_query_alias_is_included(self) -> "None":
         def handler(
-            is_paid: Annotated[bool, Parameter(query="isPaid")] = False,
-        ) -> dict[str, Any]:
+            is_paid: "Annotated[bool, Parameter(query='isPaid')]" = False,
+        ) -> "dict[str, Any]":
             return {"is_paid": is_paid}
 
         _, h = create_app_with_handler(handler)
         assert parameter_aliases(h) == {"isPaid": "is_paid"}
 
-    def test_query_matching_python_name_is_omitted(self) -> None:
+    def test_query_matching_python_name_is_omitted(self) -> "None":
         def handler(
-            page: Annotated[int, Parameter(query="page")] = 1,
-        ) -> dict[str, Any]:
+            page: "Annotated[int, Parameter(query='page')]" = 1,
+        ) -> "dict[str, Any]":
             return {"page": page}
 
         _, h = create_app_with_handler(handler)
         assert parameter_aliases(h) == {}
 
-    def test_header_alias_ignored(self) -> None:
+    def test_header_alias_ignored(self) -> "None":
         def handler(
-            tenant_id: Annotated[str, Parameter(header="X-Tenant")] = "",
-        ) -> dict[str, Any]:
+            tenant_id: "Annotated[str, Parameter(header='X-Tenant')]" = "",
+        ) -> "dict[str, Any]":
             return {"tenant_id": tenant_id}
 
         _, h = create_app_with_handler(handler)
         assert parameter_aliases(h) == {}
 
-    def test_no_query_omitted_even_when_annotated(self) -> None:
+    def test_no_query_omitted_even_when_annotated(self) -> "None":
         def handler(
-            n: Annotated[int, Parameter(description="count")] = 0,
-        ) -> dict[str, Any]:
+            n: "Annotated[int, Parameter(description='count')]" = 0,
+        ) -> "dict[str, Any]":
             return {"n": n}
 
         _, h = create_app_with_handler(handler)
@@ -79,17 +87,17 @@ class TestParameterAliases:
 
 
 class TestHandlerSignature:
-    def test_extract_advertised_handler_arguments_filters_di_reserved_and_path_params(self) -> None:
-        async def provide_secret() -> str:
+    def test_extract_advertised_handler_arguments_filters_di_reserved_and_path_params(self) -> "None":
+        async def provide_secret() -> "str":
             return "secret"
 
         def handler(
-            item_id: str,
-            request: Request[Any, Any, Any],
-            secret: str,
-            q: str,
-            limit: int = 10,
-        ) -> dict[str, Any]:
+            item_id: "str",
+            request: "Request[Any, Any, Any]",
+            secret: "str",
+            q: "str",
+            limit: "int" = 10,
+        ) -> "dict[str, Any]":
             return {"item_id": item_id, "q": q, "limit": limit, "secret": secret, "path": request.url.path}
 
         _, route_handler = create_app_with_handler(
@@ -102,11 +110,11 @@ class TestHandlerSignature:
         args = extract_advertised_handler_arguments(route_handler, path_parameters={"item_id"})
         assert [(arg["name"], arg["required"]) for arg in args] == [("q", True), ("limit", False)]
 
-    def test_extract_advertised_handler_arguments_uses_query_alias_and_docstring_description(self) -> None:
+    def test_extract_advertised_handler_arguments_uses_query_alias_and_docstring_description(self) -> "None":
         def handler(
-            is_paid: Annotated[bool, Parameter(query="isPaid")],
-            page_size: Annotated[int, Parameter(query="pageSize")] = 50,
-        ) -> dict[str, Any]:
+            is_paid: "Annotated[bool, Parameter(query='isPaid')]",
+            page_size: "Annotated[int, Parameter(query='pageSize')]" = 50,
+        ) -> "dict[str, Any]":
             """List invoices.
 
             Args:
@@ -122,15 +130,15 @@ class TestHandlerSignature:
             {"name": "pageSize", "description": "Number of invoices to return.", "required": False},
         ]
 
-    def test_extract_advertised_handler_arguments_filters_litestar_signature_namespace(self) -> None:
-        def handler(headers: dict[str, str], text: str) -> dict[str, str]:
+    def test_extract_advertised_handler_arguments_filters_litestar_signature_namespace(self) -> "None":
+        def handler(headers: "dict[str, str]", text: "str") -> "dict[str, str]":
             return {"text": text, "headers": str(headers)}
 
         _, route_handler = create_app_with_handler(handler)
         args = extract_advertised_handler_arguments(route_handler)
         assert [arg["name"] for arg in args] == ["text"]
 
-    def test_extract_advertised_handler_arguments_filters_dishka_resolved_provider_params(self) -> None:
+    def test_extract_advertised_handler_arguments_filters_dishka_resolved_provider_params(self) -> "None":
         from dishka import Provider, Scope, make_async_container, provide
         from dishka.integrations.litestar import LitestarProvider, setup_dishka
         from litestar import Litestar, get
@@ -138,21 +146,15 @@ class TestHandlerSignature:
 
         from tests.unit.conftest import get_handler_from_app
 
-        class Driver:
-            pass
-
-        class TaskService:
-            pass
-
         class DishkaProvider(Provider):
             scope = Scope.REQUEST
 
             @provide
-            def driver(self) -> Driver:
-                return Driver()
+            def driver(self) -> "_IntrospectionDriver":
+                return _IntrospectionDriver()
 
-        async def provide_task_service(driver: Driver) -> TaskService:
-            return TaskService()
+        async def provide_task_service(driver: "_IntrospectionDriver") -> "_IntrospectionTaskService":
+            return _IntrospectionTaskService()
 
         @get(
             "/hello",
@@ -160,7 +162,7 @@ class TestHandlerSignature:
             dependencies={"task_service": Provide(provide_task_service)},
             sync_to_thread=False,
         )
-        def hello(name: FromQuery[str]) -> dict[str, str]:
+        def hello(name: "FromQuery[str]") -> "dict[str, str]":
             return {"hello": name}
 
         app = Litestar(route_handlers=[hello])
@@ -171,21 +173,21 @@ class TestHandlerSignature:
         args = extract_advertised_handler_arguments(route_handler)
         assert [arg["name"] for arg in args] == ["name"]
 
-    def test_import_iter_dependency_input_parameters(self) -> None:
+    def test_import_iter_dependency_input_parameters(self) -> "None":
         from litestar_mcp.utils.handler_signature import iter_dependency_input_parameters
 
         # A simple test to verify it works
-        def handler(q: str) -> None:
+        def handler(q: "str") -> "None":
             pass
 
         _, route_handler = create_app_with_handler(handler)
         params = iter_dependency_input_parameters(route_handler)
         assert isinstance(params, list)
 
-    def test_import_parameter_aliases(self) -> None:
+    def test_import_parameter_aliases(self) -> "None":
         from litestar_mcp.utils.handler_signature import parameter_aliases
 
-        def handler(q: Annotated[str, Parameter(query="query_alias")]) -> None:
+        def handler(q: "Annotated[str, Parameter(query='query_alias')]") -> "None":
             pass
 
         _, route_handler = create_app_with_handler(handler)
@@ -199,49 +201,49 @@ class TestHandlerSignature:
 
 
 class TestToolDescriptionPrecedence:
-    def test_opt_wins_over_decorator_and_docstring(self) -> None:
+    def test_opt_wins_over_decorator_and_docstring(self) -> "None":
         @mcp_tool("foo", description="from-decorator")
         @get("/", opt={"mcp_description": "from-opt"})
-        def handler() -> str:
+        def handler() -> "str":
             """from-docstring."""
             return ""
 
         fn = get_handler_function(handler)
         assert render_description(handler, fn, kind="tool", fallback_name="foo") == "from-opt"
 
-    def test_decorator_wins_over_docstring(self) -> None:
+    def test_decorator_wins_over_docstring(self) -> "None":
         @mcp_tool("foo", description="from-decorator")
         @get("/")
-        def handler() -> str:
+        def handler() -> "str":
             """from-docstring."""
             return ""
 
         fn = get_handler_function(handler)
         assert render_description(handler, fn, kind="tool", fallback_name="foo") == "from-decorator"
 
-    def test_docstring_wins_over_fallback(self) -> None:
+    def test_docstring_wins_over_fallback(self) -> "None":
         @mcp_tool("foo")
         @get("/")
-        def handler() -> str:
+        def handler() -> "str":
             """from-docstring."""
             return ""
 
         fn = get_handler_function(handler)
         assert render_description(handler, fn, kind="tool", fallback_name="foo") == "from-docstring."
 
-    def test_fallback_when_nothing_set(self) -> None:
+    def test_fallback_when_nothing_set(self) -> "None":
         @mcp_tool("foo")
         @get("/")
-        def handler() -> str:
+        def handler() -> "str":
             return ""
 
         fn = get_handler_function(handler)
         assert render_description(handler, fn, kind="tool", fallback_name="foo") == "Tool: foo"
 
-    def test_empty_string_treated_as_absent(self) -> None:
+    def test_empty_string_treated_as_absent(self) -> "None":
         @mcp_tool("foo", description="")
         @get("/", opt={"mcp_description": ""})
-        def handler() -> str:
+        def handler() -> "str":
             """from-docstring."""
             return ""
 
@@ -250,10 +252,10 @@ class TestToolDescriptionPrecedence:
 
 
 class TestStructuredRendering:
-    def test_plain_when_no_structured_fields(self) -> None:
+    def test_plain_when_no_structured_fields(self) -> "None":
         @mcp_tool("foo", description="simple")
         @get("/")
-        def handler() -> str:
+        def handler() -> "str":
             return ""
 
         fn = get_handler_function(handler)
@@ -261,7 +263,7 @@ class TestStructuredRendering:
         assert result == "simple"
         assert "##" not in result
 
-    def test_sections_when_structured_fields_set(self) -> None:
+    def test_sections_when_structured_fields_set(self) -> "None":
         @mcp_tool(
             "foo",
             description="Do the thing.",
@@ -270,7 +272,7 @@ class TestStructuredRendering:
             agent_instructions="Never do this without confirming.",
         )
         @get("/")
-        def handler() -> str:
+        def handler() -> "str":
             return ""
 
         fn = get_handler_function(handler)
@@ -281,10 +283,10 @@ class TestStructuredRendering:
         assert "## Instructions\nNever do this without confirming." in result
         assert result.index("## When to use") < result.index("## Returns") < result.index("## Instructions")
 
-    def test_partial_structured_fields(self) -> None:
+    def test_partial_structured_fields(self) -> "None":
         @mcp_tool("foo", description="Do.", when_to_use="Sometimes.")
         @get("/")
-        def handler() -> str:
+        def handler() -> "str":
             return ""
 
         fn = get_handler_function(handler)
@@ -293,10 +295,10 @@ class TestStructuredRendering:
         assert "## Returns" not in result
         assert "## Instructions" not in result
 
-    def test_structured_false_ignores_structured_fields(self) -> None:
+    def test_structured_false_ignores_structured_fields(self) -> "None":
         @mcp_tool("foo", description="Do.", when_to_use="Sometimes.")
         @get("/")
-        def handler() -> str:
+        def handler() -> "str":
             return ""
 
         fn = get_handler_function(handler)
@@ -304,7 +306,7 @@ class TestStructuredRendering:
         assert result == "Do."
         assert "##" not in result
 
-    def test_opt_form_structured_fields(self) -> None:
+    def test_opt_form_structured_fields(self) -> "None":
         @get(
             "/",
             opt={
@@ -314,7 +316,7 @@ class TestStructuredRendering:
                 "mcp_agent_instructions": "opt-ai",
             },
         )
-        def handler() -> str:
+        def handler() -> "str":
             return ""
 
         fn = get_handler_function(handler)
@@ -326,40 +328,40 @@ class TestStructuredRendering:
 
 
 class TestResourceDescriptionPrecedence:
-    def test_opt_key_is_mcp_resource_description(self) -> None:
+    def test_opt_key_is_mcp_resource_description(self) -> "None":
         @mcp_resource("bar", description="decorator-desc")
         @get("/", opt={"mcp_resource_description": "opt-desc"})
-        def handler() -> str:
+        def handler() -> "str":
             return ""
 
         fn = get_handler_function(handler)
         assert render_description(handler, fn, kind="resource", fallback_name="bar") == "opt-desc"
 
-    def test_resource_docstring_wins_over_fallback(self) -> None:
+    def test_resource_docstring_wins_over_fallback(self) -> "None":
         @mcp_resource("bar")
         @get("/")
-        def handler() -> str:
+        def handler() -> "str":
             """res-docstring."""
             return ""
 
         fn = get_handler_function(handler)
         assert render_description(handler, fn, kind="resource", fallback_name="bar") == "res-docstring."
 
-    def test_resource_fallback(self) -> None:
+    def test_resource_fallback(self) -> "None":
         @mcp_resource("bar")
         @get("/")
-        def handler() -> str:
+        def handler() -> "str":
             return ""
 
         fn = get_handler_function(handler)
         assert render_description(handler, fn, kind="resource", fallback_name="bar") == "Resource: bar"
 
-    def test_resource_opt_description_key_does_not_apply_to_resources(self) -> None:
+    def test_resource_opt_description_key_does_not_apply_to_resources(self) -> "None":
         """``mcp_description`` is the tool key; resources use ``mcp_resource_description``."""
 
         @mcp_resource("bar")
         @get("/", opt={"mcp_description": "wrong-key"})
-        def handler() -> str:
+        def handler() -> "str":
             """res-docstring."""
             return ""
 
@@ -370,14 +372,14 @@ class TestResourceDescriptionPrecedence:
 class TestCustomOptKeys:
     """Downstream apps can rename opt keys via ``MCPConfig.opt_keys``."""
 
-    def test_renamed_tool_description_opt_key_is_honoured(self) -> None:
+    def test_renamed_tool_description_opt_key_is_honoured(self) -> "None":
         from litestar_mcp.config import MCPOptKeys
 
         opt_keys = MCPOptKeys(description="x_mcp_description")
 
         @mcp_tool("foo")
         @get("/", opt={"x_mcp_description": "opt-prose"})
-        def handler() -> str:
+        def handler() -> "str":
             """Docstring."""
             return ""
 
@@ -388,20 +390,20 @@ class TestCustomOptKeys:
         default_result = render_description(handler, fn, kind="tool", fallback_name="foo")
         assert default_result == "Docstring."
 
-    def test_renamed_resource_description_opt_key(self) -> None:
+    def test_renamed_resource_description_opt_key(self) -> "None":
         from litestar_mcp.config import MCPOptKeys
 
         opt_keys = MCPOptKeys(resource_description="x_mcp_resource_description")
 
         @mcp_resource("bar")
         @get("/", opt={"x_mcp_resource_description": "opt-res"})
-        def handler() -> str:
+        def handler() -> "str":
             return ""
 
         fn = get_handler_function(handler)
         assert render_description(handler, fn, kind="resource", fallback_name="bar", opt_keys=opt_keys) == "opt-res"
 
-    def test_renamed_structured_field_opt_keys(self) -> None:
+    def test_renamed_structured_field_opt_keys(self) -> "None":
         from litestar_mcp.config import MCPOptKeys
 
         opt_keys = MCPOptKeys(
@@ -420,7 +422,7 @@ class TestCustomOptKeys:
                 "x_ai": "ai",
             },
         )
-        def handler() -> str:
+        def handler() -> "str":
             return ""
 
         fn = get_handler_function(handler)
@@ -432,10 +434,10 @@ class TestCustomOptKeys:
 
 
 class TestExtractDescriptionSources:
-    def test_returns_structured_dataclass(self) -> None:
+    def test_returns_structured_dataclass(self) -> "None":
         @mcp_tool("foo", description="d", when_to_use="wtu", returns="r", agent_instructions="ai")
         @get("/")
-        def handler() -> str:
+        def handler() -> "str":
             return ""
 
         fn = get_handler_function(handler)
@@ -445,10 +447,10 @@ class TestExtractDescriptionSources:
         assert sources.returns == "r"
         assert sources.agent_instructions == "ai"
 
-    def test_missing_structured_fields_are_none(self) -> None:
+    def test_missing_structured_fields_are_none(self) -> "None":
         @mcp_tool("foo", description="d")
         @get("/")
-        def handler() -> str:
+        def handler() -> "str":
             return ""
 
         fn = get_handler_function(handler)
@@ -466,11 +468,11 @@ class TestExtractDescriptionSources:
 
 class TestDescriptionRenderingEndpoints:
     @staticmethod
-    def _make_app(*handlers: Any) -> Litestar:
+    def _make_app(*handlers: "Any") -> "Litestar":
         return Litestar(route_handlers=list(handlers), plugins=[LitestarMCP(MCPConfig())])
 
     @staticmethod
-    def _init_and_get_session(client: TestClient[Any]) -> str:
+    def _init_and_get_session(client: "TestClient[Any]") -> "str":
         init = client.post(
             "/mcp",
             json={
@@ -490,17 +492,19 @@ class TestDescriptionRenderingEndpoints:
         return sid
 
     @staticmethod
-    def _rpc(client: TestClient[Any], method: str, sid: str, params: "dict[str, Any] | None" = None) -> dict[str, Any]:
+    def _rpc(
+        client: "TestClient[Any]", method: "str", sid: "str", params: "dict[str, Any] | None" = None
+    ) -> "dict[str, Any]":
         body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
         if params is not None:
             body["params"] = params
         resp = client.post("/mcp", json=body, headers={"Mcp-Session-Id": sid})
         return resp.json()  # type: ignore[no-any-return]
 
-    def test_tools_list_returns_decorator_description(self) -> None:
+    def test_tools_list_returns_decorator_description(self) -> "None":
         @mcp_tool("t", description="LLM prose", when_to_use="When asked")
         @get("/x", sync_to_thread=False)
-        def handler() -> dict[str, Any]:
+        def handler() -> "dict[str, Any]":
             return {}
 
         with TestClient(app=self._make_app(handler)) as client:
@@ -511,9 +515,9 @@ class TestDescriptionRenderingEndpoints:
             assert descr.startswith("LLM prose")
             assert "## When to use\nWhen asked" in descr
 
-    def test_tools_list_opt_form_overrides_docstring(self) -> None:
+    def test_tools_list_opt_form_overrides_docstring(self) -> "None":
         @get("/x", opt={"mcp_tool": "t", "mcp_description": "opt-prose"}, sync_to_thread=False)
-        def handler() -> dict[str, Any]:
+        def handler() -> "dict[str, Any]":
             """docstring-prose."""
             return {}
 
@@ -524,11 +528,11 @@ class TestDescriptionRenderingEndpoints:
             descr = next(t["description"] for t in tools if t["name"] == "t")
             assert descr == "opt-prose"
 
-    def test_tools_list_docstring_fallback_unchanged(self) -> None:
+    def test_tools_list_docstring_fallback_unchanged(self) -> "None":
         """v0.4.0 regression guard: plain docstring → unchanged plain string."""
 
         @get("/x", opt={"mcp_tool": "t"}, sync_to_thread=False)
-        def handler() -> dict[str, Any]:
+        def handler() -> "dict[str, Any]":
             """plain-docstring."""
             return {}
 
@@ -540,10 +544,10 @@ class TestDescriptionRenderingEndpoints:
             assert descr == "plain-docstring."
             assert "##" not in descr
 
-    def test_resources_list_returns_rendered_description(self) -> None:
+    def test_resources_list_returns_rendered_description(self) -> "None":
         @mcp_resource("r", description="res-prose", when_to_use="Sometimes")
         @get("/y", sync_to_thread=False)
-        def handler() -> dict[str, Any]:
+        def handler() -> "dict[str, Any]":
             return {}
 
         with TestClient(app=self._make_app(handler)) as client:
@@ -554,13 +558,13 @@ class TestDescriptionRenderingEndpoints:
             assert descr.startswith("res-prose")
             assert "## When to use\nSometimes" in descr
 
-    def test_resources_list_opt_form_resource_description_key(self) -> None:
+    def test_resources_list_opt_form_resource_description_key(self) -> "None":
         @get(
             "/y",
             opt={"mcp_resource": "r", "mcp_resource_description": "opt-res-prose"},
             sync_to_thread=False,
         )
-        def handler() -> dict[str, Any]:
+        def handler() -> "dict[str, Any]":
             """docstring-prose."""
             return {}
 
@@ -571,10 +575,10 @@ class TestDescriptionRenderingEndpoints:
             descr = next(r["description"] for r in resources if r["name"] == "r")
             assert descr == "opt-res-prose"
 
-    def test_agent_card_and_mcp_server_manifest_match_tools_list(self) -> None:
+    def test_agent_card_and_mcp_server_manifest_match_tools_list(self) -> "None":
         @mcp_tool("t", description="primary", when_to_use="wtu", returns="r")
         @get("/x", sync_to_thread=False)
-        def handler() -> dict[str, Any]:
+        def handler() -> "dict[str, Any]":
             return {}
 
         with TestClient(app=self._make_app(handler)) as client:
@@ -600,11 +604,11 @@ class TestDescriptionRenderingEndpoints:
             "trailing newline.\n",
         ],
     )
-    def test_tools_list_docstring_stripped_like_legacy(self, doc: str) -> None:
+    def test_tools_list_docstring_stripped_like_legacy(self, doc: "str") -> "None":
         """Plain-mode output must equal legacy ``(fn.__doc__ or ...).strip()``."""
 
         @get("/x", opt={"mcp_tool": "t"}, sync_to_thread=False)
-        def handler() -> dict[str, Any]:
+        def handler() -> "dict[str, Any]":
             return {}
 
         handler.fn.__doc__ = doc

@@ -16,13 +16,13 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def dummy_app() -> Litestar:
+def dummy_app() -> "Litestar":
     """A dummy Litestar application for testing."""
     return Litestar(route_handlers=[])
 
 
 @pytest.fixture
-def request_context() -> RequestContext:
+def request_context() -> "RequestContext":
     """Mock RequestContext."""
     return RequestContext(
         client_id="test-client-id",
@@ -32,14 +32,14 @@ def request_context() -> RequestContext:
 
 
 @pytest.fixture
-def basic_config() -> MCPConfig:
+def basic_config() -> "MCPConfig":
     return MCPConfig(name="Test Server")
 
 
 @pytest.mark.asyncio
 async def test_initialize_returns_capabilities(
-    dummy_app: Litestar, request_context: RequestContext, basic_config: MCPConfig
-) -> None:
+    dummy_app: "Litestar", request_context: "RequestContext", basic_config: "MCPConfig"
+) -> "None":
     service = MCPHandlerService(
         config=basic_config,
         discovered_tools={},
@@ -58,7 +58,9 @@ async def test_initialize_returns_capabilities(
 
 
 @pytest.mark.asyncio
-async def test_initialize_returns_configured_instructions(dummy_app: Litestar, request_context: RequestContext) -> None:
+async def test_initialize_returns_configured_instructions(
+    dummy_app: "Litestar", request_context: "RequestContext"
+) -> "None":
     service = MCPHandlerService(
         config=MCPConfig(name="Test Server", instructions="Use the audited workflow."),
         discovered_tools={},
@@ -74,7 +76,7 @@ async def test_initialize_returns_configured_instructions(dummy_app: Litestar, r
 
 
 @pytest.mark.asyncio
-async def test_initialize_with_prompts_and_tasks(dummy_app: Litestar, request_context: RequestContext) -> None:
+async def test_initialize_with_prompts_and_tasks(dummy_app: "Litestar", request_context: "RequestContext") -> "None":
     config = MCPConfig(name="Test Server", tasks=True)
     prompt_reg = PromptRegistration(name="test_prompt", fn=lambda: "hello")
     service = MCPHandlerService(
@@ -93,10 +95,12 @@ async def test_initialize_with_prompts_and_tasks(dummy_app: Litestar, request_co
 
 
 @pytest.mark.asyncio
-async def test_tools_list(dummy_app: Litestar, request_context: RequestContext, basic_config: MCPConfig) -> None:
+async def test_tools_list(
+    dummy_app: "Litestar", request_context: "RequestContext", basic_config: "MCPConfig"
+) -> "None":
     # Set up a real handler for schema generation tests
     @get("/tool1", sync_to_thread=False)
-    def tool_one(param1: str, param2: int = 1) -> str:
+    def tool_one(param1: "str", param2: "int" = 1) -> "str":
         return "result"
 
     # Extract the route handler from dummy app (need to register it first)
@@ -122,13 +126,13 @@ async def test_tools_list(dummy_app: Litestar, request_context: RequestContext, 
 
 
 @pytest.mark.asyncio
-async def test_tools_list_pagination(dummy_app: Litestar, request_context: RequestContext) -> None:
+async def test_tools_list_pagination(dummy_app: "Litestar", request_context: "RequestContext") -> "None":
     @get("/t1", sync_to_thread=False)
-    def t1() -> str:
+    def t1() -> "str":
         return ""
 
     @get("/t2", sync_to_thread=False)
-    def t2() -> str:
+    def t2() -> "str":
         return ""
 
     app = Litestar(route_handlers=[t1, t2])
@@ -165,12 +169,12 @@ async def test_tools_list_pagination(dummy_app: Litestar, request_context: Reque
 
 @pytest.mark.asyncio
 async def test_tools_call_success(
-    dummy_app: Litestar, request_context: RequestContext, basic_config: MCPConfig
-) -> None:
+    dummy_app: "Litestar", request_context: "RequestContext", basic_config: "MCPConfig"
+) -> "None":
     called_with: dict[str, Any] = {}
 
     @get("/tool", sync_to_thread=False)
-    def my_tool(x: str, y: int) -> dict[str, Any]:
+    def my_tool(x: "str", y: "int") -> "dict[str, Any]":
         called_with["x"] = x
         called_with["y"] = y
         return {"ok": True}
@@ -197,10 +201,10 @@ async def test_tools_call_success(
 
 @pytest.mark.asyncio
 async def test_tools_call_invalid_arguments(
-    dummy_app: Litestar, request_context: RequestContext, basic_config: MCPConfig
-) -> None:
+    dummy_app: "Litestar", request_context: "RequestContext", basic_config: "MCPConfig"
+) -> "None":
     @get("/tool", sync_to_thread=False)
-    def my_tool(x: int) -> str:
+    def my_tool(x: "int") -> "str":
         return "ok"
 
     app = Litestar(route_handlers=[my_tool])
@@ -225,8 +229,8 @@ async def test_tools_call_invalid_arguments(
 
 @pytest.mark.asyncio
 async def test_tools_call_missing_name(
-    dummy_app: Litestar, request_context: RequestContext, basic_config: MCPConfig
-) -> None:
+    dummy_app: "Litestar", request_context: "RequestContext", basic_config: "MCPConfig"
+) -> "None":
     service = MCPHandlerService(
         config=basic_config,
         discovered_tools={},
@@ -242,8 +246,8 @@ async def test_tools_call_missing_name(
 
 @pytest.mark.asyncio
 async def test_tools_call_tool_not_found(
-    dummy_app: Litestar, request_context: RequestContext, basic_config: MCPConfig
-) -> None:
+    dummy_app: "Litestar", request_context: "RequestContext", basic_config: "MCPConfig"
+) -> "None":
     service = MCPHandlerService(
         config=basic_config,
         discovered_tools={},
@@ -259,9 +263,9 @@ async def test_tools_call_tool_not_found(
 
 @pytest.mark.asyncio
 async def test_prompts_list_and_get(
-    dummy_app: Litestar, request_context: RequestContext, basic_config: MCPConfig
-) -> None:
-    def dummy_prompt_fn(arg1: str) -> str:
+    dummy_app: "Litestar", request_context: "RequestContext", basic_config: "MCPConfig"
+) -> "None":
+    def dummy_prompt_fn(arg1: "str") -> "str":
         return f"Prompt: {arg1}"
 
     prompt_reg = PromptRegistration(
@@ -305,9 +309,9 @@ async def test_prompts_list_and_get(
 
 
 @pytest.mark.asyncio
-async def test_resources_list_and_read(request_context: RequestContext, basic_config: MCPConfig) -> None:
+async def test_resources_list_and_read(request_context: "RequestContext", basic_config: "MCPConfig") -> "None":
     @get("/resource1", sync_to_thread=False)
-    def resource_one() -> dict[str, str]:
+    def resource_one() -> "dict[str, str]":
         return {"data": "my-resource-data"}
 
     app = Litestar(route_handlers=[resource_one])

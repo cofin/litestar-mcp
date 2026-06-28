@@ -8,8 +8,6 @@ If any of these files disappear or drift away from the expected
 headings, the reference-examples chooser regresses.
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import pytest
@@ -18,7 +16,7 @@ DOCS_DIR = Path(__file__).resolve().parents[2] / "docs"
 NOTES_DIR = DOCS_DIR / "examples" / "notes"
 USAGE_DIR = DOCS_DIR / "usage"
 
-EXPECTED_FILES: tuple[Path, ...] = (
+EXPECTED_FILES: "tuple[Path, ...]" = (
     NOTES_DIR / "README.md",
     NOTES_DIR / "advanced_alchemy" / "README.md",
     NOTES_DIR / "sqlspec" / "README.md",
@@ -28,7 +26,7 @@ EXPECTED_FILES: tuple[Path, ...] = (
 
 
 @pytest.mark.parametrize("path", EXPECTED_FILES, ids=lambda p: str(p.relative_to(DOCS_DIR)))
-def test_reference_doc_file_present(path: Path) -> None:
+def test_reference_doc_file_present(path: "Path") -> "None":
     assert path.is_file(), f"Expected docs file {path} to exist"
 
 
@@ -40,14 +38,14 @@ README_FILES = (
 
 
 @pytest.mark.parametrize("path", README_FILES, ids=lambda p: str(p.relative_to(DOCS_DIR)))
-def test_readme_has_variants_and_uvx(path: Path) -> None:
+def test_readme_has_variants_and_uvx(path: "Path") -> "None":
     text = path.read_text(encoding="utf-8")
     assert "uvx" in text, f"{path} must mention 'uvx'"
     # Accept either 'Variants' or 'Variant matrix' as the variants heading.
     assert "Variant" in text, f"{path} must contain a 'Variants' heading"
 
 
-def test_reference_examples_links_both_families() -> None:
+def test_reference_examples_links_both_families() -> "None":
     text = (USAGE_DIR / "reference_examples.rst").read_text(encoding="utf-8")
     assert "advanced_alchemy" in text, "reference_examples.rst must link the AA family"
     assert "sqlspec" in text, "reference_examples.rst must link the SQLSpec family"
@@ -56,14 +54,14 @@ def test_reference_examples_links_both_families() -> None:
         assert needle in text, f"reference_examples.rst missing comparison label: {needle!r}"
 
 
-def test_uvx_guide_contains_template_and_pitfalls() -> None:
+def test_uvx_guide_contains_template_and_pitfalls() -> "None":
     text = (USAGE_DIR / "uvx_guide.rst").read_text(encoding="utf-8")
     assert "uvx" in text
     assert "--from litestar-mcp" in text, "uvx_guide.rst must show the uvx --from template"
     assert "Common pitfalls" in text or "Common Pitfalls" in text
 
 
-def test_usage_index_links_reference_examples() -> None:
+def test_usage_index_links_reference_examples() -> "None":
     text = (USAGE_DIR / "index.rst").read_text(encoding="utf-8")
     assert "reference_examples" in text, "usage/index.rst must link to reference_examples"
     assert "uvx_guide" in text, "usage/index.rst must include uvx_guide in its toctree"

@@ -5,7 +5,7 @@ from litestar import Litestar
 from litestar_mcp import LitestarMCP, MCPConfig
 
 
-def build() -> Litestar:
+def build() -> "Litestar":
     # start-example
     config = MCPConfig(
         base_path="/api/mcp",

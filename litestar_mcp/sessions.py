@@ -13,11 +13,13 @@ backend (memory, Redis, SQLAlchemy/advanced_alchemy, SQLSpec, etc).
 
 import secrets
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import msgspec
 from litestar.serialization import decode_json, encode_json
-from litestar.stores.base import Store
+
+if TYPE_CHECKING:
+    from litestar.stores.base import Store
 
 __all__ = (
     "MCPSession",
@@ -35,14 +37,14 @@ _PRE_INIT_ALLOWED_METHODS = frozenset({"initialize", "ping", "notifications/init
 class SessionMissingError(ValueError):
     """Raised when Mcp-Session-Id is missing but required."""
 
-    def __init__(self, message: str = "Missing required header: Mcp-Session-Id") -> None:
+    def __init__(self, message: "str" = "Missing required header: Mcp-Session-Id") -> "None":
         super().__init__(message)
 
 
 class SessionNotInitializedError(RuntimeError):
     """Raised when a method is called on a session that has not been initialized."""
 
-    def __init__(self, message: str = "Session not initialized") -> None:
+    def __init__(self, message: "str" = "Session not initialized") -> "None":
         super().__init__(message)
 
 
@@ -62,13 +64,13 @@ class MCPSession(msgspec.Struct, kw_only=True):
         last_activity: Wall-clock timestamp of the last manager touch.
     """
 
-    id: str
-    protocol_version: str
-    created_at: float
-    last_activity: float
-    client_info: dict[str, Any] = {}
-    capabilities: dict[str, Any] = {}
-    initialized: bool = False
+    id: "str"
+    protocol_version: "str"
+    created_at: "float"
+    last_activity: "float"
+    client_info: "dict[str, Any]" = {}
+    capabilities: "dict[str, Any]" = {}
+    initialized: "bool" = False
 
 
 class SessionTerminated(Exception):  # noqa: N818
@@ -97,7 +99,7 @@ class MCPSessionManager:
         example manifests.
     """
 
-    def __init__(self, store: Store, *, max_idle_seconds: float = 3600.0) -> None:
+    def __init__(self, store: "Store", *, max_idle_seconds: "float" = 3600.0) -> "None":
         """Initialize the session manager.
 
         Args:
@@ -112,10 +114,10 @@ class MCPSessionManager:
     async def create(
         self,
         *,
-        protocol_version: str,
-        client_info: dict[str, Any] | None = None,
-        capabilities: dict[str, Any] | None = None,
-    ) -> MCPSession:
+        protocol_version: "str",
+        client_info: "dict[str, Any] | None" = None,
+        capabilities: "dict[str, Any] | None" = None,
+    ) -> "MCPSession":
         """Create and persist a new session.
 
         Args:
@@ -138,7 +140,7 @@ class MCPSessionManager:
         await self._store.set(session.id, encode_json(session), expires_in=self._ttl())
         return session
 
-    async def get(self, session_id: str, *, touch: bool = True) -> MCPSession:
+    async def get(self, session_id: "str", *, touch: "bool" = True) -> "MCPSession":
         """Fetch a session, renewing its TTL by default.
 
         Args:
@@ -157,7 +159,7 @@ class MCPSessionManager:
             raise SessionTerminated(session_id)
         return msgspec.convert(decode_json(raw), MCPSession)
 
-    async def mark_initialized(self, session_id: str) -> None:
+    async def mark_initialized(self, session_id: "str") -> "None":
         """Flip ``initialized`` to ``True`` and persist.
 
         Args:
@@ -171,25 +173,25 @@ class MCPSessionManager:
         session.last_activity = time.time()
         await self._store.set(session.id, encode_json(session), expires_in=self._ttl())
 
-    async def touch(self, session_id: str) -> MCPSession:
+    async def touch(self, session_id: "str") -> "MCPSession":
         """Update ``last_activity`` and persist. Returns the session."""
         session = await self.get(session_id)
         session.last_activity = time.time()
         await self._store.set(session.id, encode_json(session), expires_in=self._ttl())
         return session
 
-    async def delete(self, session_id: str) -> None:
+    async def delete(self, session_id: "str") -> "None":
         """Remove a session from the Store. Idempotent."""
         await self._store.delete(session_id)
 
     @staticmethod
-    def _generate_id() -> str:
+    def _generate_id() -> "str":
         return secrets.token_urlsafe(24)
 
-    def _ttl(self) -> int:
+    def _ttl(self) -> "int":
         return int(self._max_idle_seconds)
 
-    async def validate_session(self, session_id: str | None, method: str) -> MCPSession | None:
+    async def validate_session(self, session_id: "str | None", method: "str") -> "MCPSession | None":
         """Validate the session ID for a given RPC method.
 
         Args:

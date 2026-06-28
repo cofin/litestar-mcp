@@ -2,13 +2,12 @@
 
 import inspect
 import logging
-from collections.abc import Callable
+from collections.abc import Callable  # noqa: TC003
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from litestar.handlers import BaseRouteHandler
+from litestar.handlers import BaseRouteHandler  # noqa: TC002
 
-from litestar_mcp.sse import SSEManager
 from litestar_mcp.utils import (
     get_handler_function,
     get_mcp_metadata,
@@ -23,6 +22,7 @@ from litestar_mcp.utils.handler_signature import (
 
 if TYPE_CHECKING:
     from litestar_mcp.config import MCPConfig
+    from litestar_mcp.sse import SSEManager
 
 _logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ _logger = logging.getLogger(__name__)
 # Per the 2025-11-25 schema, every content block carries a ``type`` and the
 # variant-specific payload keys listed here. Used by ``_normalize_prompt_result``
 # to validate dict-shaped messages without silently coercing them to text.
-_PROMPT_CONTENT_REQUIRED_KEYS: dict[str, frozenset[str]] = {
+_PROMPT_CONTENT_REQUIRED_KEYS: "dict[str, frozenset[str]]" = {
     "text": frozenset({"text"}),
     "image": frozenset({"data", "mimeType"}),
     "audio": frozenset({"data", "mimeType"}),
@@ -43,9 +43,9 @@ _PROMPT_CONTENT_REQUIRED_KEYS: dict[str, frozenset[str]] = {
 class ResourceTemplate:
     """A declared RFC 6570 Level 1 URI template bound to a resource handler."""
 
-    name: str
-    template: str
-    handler: BaseRouteHandler
+    name: "str"
+    template: "str"
+    handler: "BaseRouteHandler"
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,15 +71,15 @@ class PromptRegistration:
         icons: Optional list of icon objects for UI display.
     """
 
-    name: str
-    fn: Callable[..., Any] | None = None
-    handler: BaseRouteHandler | None = None
-    title: str | None = None
-    description: str | None = None
-    arguments: list[dict[str, Any]] | None = field(default=None, hash=False)
-    icons: list[dict[str, Any]] | None = field(default=None, hash=False)
+    name: "str"
+    fn: "Callable[..., Any] | None" = None
+    handler: "BaseRouteHandler | None" = None
+    title: "str | None" = None
+    description: "str | None" = None
+    arguments: "list[dict[str, Any]] | None" = field(default=None, hash=False)
+    icons: "list[dict[str, Any]] | None" = field(default=None, hash=False)
 
-    def __post_init__(self) -> None:
+    def __post_init__(self) -> "None":
         if self.fn is not None and self.handler is not None:
             msg = "PromptRegistration cannot have both fn and handler set"
             raise ValueError(msg)
@@ -87,7 +87,7 @@ class PromptRegistration:
             msg = "PromptRegistration must have either fn or handler set"
             raise ValueError(msg)
 
-    def get_arguments(self) -> list[dict[str, Any]]:
+    def get_arguments(self) -> "list[dict[str, Any]]":
         """Return prompt arguments, introspecting from signature if needed.
 
         When ``arguments`` was set explicitly, returns that list unchanged.
@@ -126,7 +126,7 @@ class PromptRegistration:
         return args
 
 
-def _introspect_handler_arguments(handler: BaseRouteHandler) -> list[dict[str, Any]]:
+def _introspect_handler_arguments(handler: "BaseRouteHandler") -> "list[dict[str, Any]]":
     """Derive prompt arguments from a route handler's parsed signature.
 
     DI dependencies and framework-injected names (``request``, ``headers``,
@@ -138,7 +138,7 @@ def _introspect_handler_arguments(handler: BaseRouteHandler) -> list[dict[str, A
     return extract_advertised_handler_arguments(handler)
 
 
-def _normalize_prompt_result(result: Any) -> list[dict[str, Any]]:
+def _normalize_prompt_result(result: "Any") -> "list[dict[str, Any]]":
     """Normalize a prompt's return value to a list of PromptMessage dicts.
 
     * ``str`` → single user-role text message.
@@ -166,7 +166,7 @@ def _normalize_prompt_result(result: Any) -> list[dict[str, Any]]:
     return [{"role": "user", "content": {"type": "text", "text": str(result)}}]
 
 
-def _coerce_prompt_message(item: Any, *, index: int | None) -> dict[str, Any]:
+def _coerce_prompt_message(item: "Any", *, index: "int | None") -> "dict[str, Any]":
     """Coerce a single result element into a valid ``PromptMessage`` dict.
 
     Recognises:
@@ -200,7 +200,7 @@ def _coerce_prompt_message(item: Any, *, index: int | None) -> dict[str, Any]:
     return {"role": "user", "content": {"type": "text", "text": str(item)}}
 
 
-def _looks_like_content(value: Any) -> bool:
+def _looks_like_content(value: "Any") -> "bool":
     """True when ``value`` is a dict matching a known content-block variant."""
     if not isinstance(value, dict):
         return False
@@ -209,12 +209,12 @@ def _looks_like_content(value: Any) -> bool:
     return required is not None and required.issubset(value.keys())
 
 
-def _looks_like_content_list(value: Any) -> bool:
+def _looks_like_content_list(value: "Any") -> "bool":
     """True when ``value`` is a non-empty list of valid content-block dicts."""
     return isinstance(value, list) and bool(value) and all(_looks_like_content(item) for item in value)
 
 
-def resolve_prompt_description(registration: "PromptRegistration", config: "MCPConfig") -> str | None:
+def resolve_prompt_description(registration: "PromptRegistration", config: "MCPConfig") -> "str | None":
     """Resolve the description string for a registered prompt.
 
     Handler-based prompts run through ``render_description`` so opt-key
@@ -235,7 +235,7 @@ def resolve_prompt_description(registration: "PromptRegistration", config: "MCPC
     return registration.description
 
 
-def render_prompt_entry(registration: "PromptRegistration", config: "MCPConfig") -> dict[str, Any]:
+def render_prompt_entry(registration: "PromptRegistration", config: "MCPConfig") -> "dict[str, Any]":
     """Build a Prompt entry dict for ``prompts/list`` and the server manifest.
 
     Single source of truth for the wire shape so route + manifest
@@ -257,7 +257,7 @@ def render_prompt_entry(registration: "PromptRegistration", config: "MCPConfig")
     return entry
 
 
-def should_include_prompt(registration: "PromptRegistration", config: "MCPConfig") -> bool:
+def should_include_prompt(registration: "PromptRegistration", config: "MCPConfig") -> "bool":
     """Apply ``include/exclude_operations`` and tag filters to a prompt.
 
     Handler-based prompts get the full filter set (tags + name).
@@ -290,7 +290,7 @@ class Registry:
         can't live on a bare callable.
     """
 
-    def __init__(self) -> None:
+    def __init__(self) -> "None":
         """Initialize the registry."""
         self._tools: dict[str, BaseRouteHandler] = {}
         self._resources: dict[str, BaseRouteHandler] = {}
@@ -299,7 +299,7 @@ class Registry:
         self._sse_manager: SSEManager | None = None
         self._change_callbacks: list[Callable[[], None]] = []
 
-    def register_change_callback(self, callback: Callable[[], None]) -> None:
+    def register_change_callback(self, callback: "Callable[[], None]") -> "None":
         """Register a callback to be invoked when the registry changes.
 
         Args:
@@ -307,7 +307,7 @@ class Registry:
         """
         self._change_callbacks.append(callback)
 
-    def unregister_change_callback(self, callback: Callable[[], None]) -> None:
+    def unregister_change_callback(self, callback: "Callable[[], None]") -> "None":
         """Unregister a change callback.
 
         Args:
@@ -316,7 +316,7 @@ class Registry:
         if callback in self._change_callbacks:
             self._change_callbacks.remove(callback)
 
-    def _trigger_change(self) -> None:
+    def _trigger_change(self) -> "None":
         """Invoke all registered change callbacks."""
         _logger.warning("Triggering change callbacks, count: %d", len(self._change_callbacks))
         for callback in self._change_callbacks:
@@ -325,12 +325,12 @@ class Registry:
             )
             callback()
 
-    def set_sse_manager(self, manager: SSEManager) -> None:
+    def set_sse_manager(self, manager: "SSEManager") -> "None":
         """Set the SSE manager for notifications."""
         self._sse_manager = manager
 
     @property
-    def sse_manager(self) -> SSEManager:
+    def sse_manager(self) -> "SSEManager":
         """Return the configured SSE manager."""
         if self._sse_manager is None:
             msg = "SSE manager has not been configured"
@@ -338,16 +338,16 @@ class Registry:
         return self._sse_manager
 
     @property
-    def tools(self) -> dict[str, BaseRouteHandler]:
+    def tools(self) -> "dict[str, BaseRouteHandler]":
         """Get registered tools."""
         return self._tools
 
     @property
-    def resources(self) -> dict[str, BaseRouteHandler]:
+    def resources(self) -> "dict[str, BaseRouteHandler]":
         """Get registered resources."""
         return self._resources
 
-    def register_tool(self, name: str, handler: BaseRouteHandler) -> None:
+    def register_tool(self, name: "str", handler: "BaseRouteHandler") -> "None":
         """Register a tool.
 
         Args:
@@ -359,7 +359,7 @@ class Registry:
         self._tools[name] = handler
         self._trigger_change()
 
-    def register_resource(self, name: str, handler: BaseRouteHandler) -> None:
+    def register_resource(self, name: "str", handler: "BaseRouteHandler") -> "None":
         """Register a resource.
 
         Args:
@@ -372,11 +372,11 @@ class Registry:
         self._trigger_change()
 
     @property
-    def templates(self) -> dict[str, ResourceTemplate]:
+    def templates(self) -> "dict[str, ResourceTemplate]":
         """Get registered resource templates, keyed by resource name."""
         return self._templates
 
-    def register_resource_template(self, name: str, handler: BaseRouteHandler, template: str) -> None:
+    def register_resource_template(self, name: "str", handler: "BaseRouteHandler", template: "str") -> "None":
         """Register an RFC 6570 Level 1 URI template for a resource.
 
         Args:
@@ -392,20 +392,20 @@ class Registry:
         self._trigger_change()
 
     @property
-    def prompts(self) -> dict[str, PromptRegistration]:
+    def prompts(self) -> "dict[str, PromptRegistration]":
         """Get registered prompts."""
         return self._prompts
 
     def register_prompt(
         self,
-        name: str,
-        fn: Callable[..., Any],
+        name: "str",
+        fn: "Callable[..., Any]",
         *,
-        title: str | None = None,
-        description: str | None = None,
-        arguments: list[dict[str, Any]] | None = None,
-        icons: list[dict[str, Any]] | None = None,
-    ) -> None:
+        title: "str | None" = None,
+        description: "str | None" = None,
+        arguments: "list[dict[str, Any]] | None" = None,
+        icons: "list[dict[str, Any]] | None" = None,
+    ) -> "None":
         """Register a standalone prompt function.
 
         Args:
@@ -436,14 +436,14 @@ class Registry:
 
     def register_prompt_handler(
         self,
-        name: str,
-        handler: BaseRouteHandler,
+        name: "str",
+        handler: "BaseRouteHandler",
         *,
-        title: str | None = None,
-        description: str | None = None,
-        arguments: list[dict[str, Any]] | None = None,
-        icons: list[dict[str, Any]] | None = None,
-    ) -> None:
+        title: "str | None" = None,
+        description: "str | None" = None,
+        arguments: "list[dict[str, Any]] | None" = None,
+        icons: "list[dict[str, Any]] | None" = None,
+    ) -> "None":
         """Register a route-handler-based prompt.
 
         Storage only — runtime dispatch and the
@@ -481,10 +481,10 @@ class Registry:
 
     async def publish_notification(
         self,
-        method: str,
-        params: dict[str, Any],
-        session_id: str | None = None,
-    ) -> None:
+        method: "str",
+        params: "dict[str, Any]",
+        session_id: "str | None" = None,
+    ) -> "None":
         """Publish a JSON-RPC 2.0 notification to connected clients.
 
         Args:
@@ -504,7 +504,7 @@ class Registry:
                 session_id=session_id,
             )
 
-    async def notify_resource_updated(self, uri: str) -> None:
+    async def notify_resource_updated(self, uri: "str") -> "None":
         """Notify clients that a resource has been updated.
 
         Args:
@@ -512,10 +512,10 @@ class Registry:
         """
         await self.publish_notification("notifications/resources/updated", {"uri": uri})
 
-    async def notify_tools_list_changed(self) -> None:
+    async def notify_tools_list_changed(self) -> "None":
         """Notify clients that the tool list has changed."""
         await self.publish_notification("notifications/tools/list_changed", {})
 
-    async def notify_prompts_list_changed(self) -> None:
+    async def notify_prompts_list_changed(self) -> "None":
         """Notify clients that the prompt list has changed."""
         await self.publish_notification("notifications/prompts/list_changed", {})

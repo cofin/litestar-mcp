@@ -8,7 +8,7 @@ from tests.integration.conftest import AUTH_MODES, auth_headers, parse_tool_payl
 
 
 @pytest.mark.parametrize("auth_mode", AUTH_MODES)
-def test_sqlspec_dishka_tool_round_trip(postgres_asyncpg_dsn: str, auth_mode: AuthMode) -> None:
+def test_sqlspec_dishka_tool_round_trip(postgres_asyncpg_dsn: "str", auth_mode: "AuthMode") -> "None":
     """Dishka-backed SQLSpec handlers should execute through MCP."""
 
     app = build_sqlspec_dishka_app(postgres_asyncpg_dsn, auth_mode=auth_mode)

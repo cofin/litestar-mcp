@@ -1,18 +1,21 @@
 """Integration fixtures shared across the database-backed MCP test matrix."""
 
 import json
-from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import psycopg
 import pytest
-from litestar.testing import TestClient
-from pytest_databases.docker.postgres import PostgresService
 
 from tests.integration.apps import POSTGRES_TEST_TABLES, AuthMode
 
+if TYPE_CHECKING:
+    from pathlib import Path
 
-def _postgres_dsn(postgres_service: PostgresService) -> str:
+    from litestar.testing import TestClient
+    from pytest_databases.docker.postgres import PostgresService
+
+
+def _postgres_dsn(postgres_service: "PostgresService") -> "str":
     return (
         f"postgresql://{postgres_service.user}:{postgres_service.password}"
         f"@{postgres_service.host}:{postgres_service.port}/{postgres_service.database}"
@@ -20,14 +23,14 @@ def _postgres_dsn(postgres_service: PostgresService) -> str:
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _ensure_postgres_tables(postgres_service: PostgresService) -> None:
+def _ensure_postgres_tables(postgres_service: "PostgresService") -> "None":
     """Ensure the Postgres service is ready. Tables are created by the apps."""
     # This fixture now just acts as a session-level dependency on the service
     _ = _postgres_dsn(postgres_service)
 
 
 @pytest.fixture(autouse=True)
-def reset_postgres_tables(request: pytest.FixtureRequest) -> None:
+def reset_postgres_tables(request: "pytest.FixtureRequest") -> "None":
     """Delete all data from shared Postgres test tables before each integration test."""
 
     if "postgres_asyncpg_dsn" not in request.fixturenames and "postgres_sqlalchemy_dsn" not in request.fixturenames:
@@ -57,30 +60,30 @@ def reset_postgres_tables(request: pytest.FixtureRequest) -> None:
 
 
 @pytest.fixture(scope="session")
-def postgres_asyncpg_dsn(postgres_service: PostgresService) -> str:
+def postgres_asyncpg_dsn(postgres_service: "PostgresService") -> "str":
     """Postgres DSN for SQLSpec asyncpg-backed tests."""
 
     return _postgres_dsn(postgres_service)
 
 
 @pytest.fixture(scope="session")
-def postgres_sqlalchemy_dsn(postgres_service: PostgresService) -> str:
+def postgres_sqlalchemy_dsn(postgres_service: "PostgresService") -> "str":
     """SQLAlchemy async Postgres connection string for Advanced Alchemy tests."""
 
     return _postgres_dsn(postgres_service).replace("postgresql://", "postgresql+asyncpg://", 1)
 
 
 @pytest.fixture
-def duckdb_database_path(tmp_path: Path) -> str:
+def duckdb_database_path(tmp_path: "Path") -> "str":
     """File-backed DuckDB path so sync sessions share state within a test."""
 
     return str(tmp_path / "integration-matrix.duckdb")
 
 
-AUTH_MODES: tuple[AuthMode, ...] = ("none", "bearer")
+AUTH_MODES: "tuple[AuthMode, ...]" = ("none", "bearer")
 
 
-def auth_headers(auth_mode: AuthMode) -> dict[str, str]:
+def auth_headers(auth_mode: "AuthMode") -> "dict[str, str]":
     """Return the HTTP ``Authorization`` header(s) for the given auth mode.
 
     In ``"none"`` mode this returns an empty dict; in ``"bearer"`` mode it
@@ -94,7 +97,7 @@ def auth_headers(auth_mode: AuthMode) -> dict[str, str]:
     return {}
 
 
-def _ensure_session(client: TestClient[Any], headers: "dict[str, str] | None" = None) -> str:
+def _ensure_session(client: "TestClient[Any]", headers: "dict[str, str] | None" = None) -> "str":
     """Lazily initialize an MCP session per (client, auth) pair and cache it."""
     auth_token = (headers or {}).get("Authorization", "") or (headers or {}).get("authorization", "")
     key = f"_mcp_session::{auth_token}"
@@ -124,10 +127,10 @@ def _ensure_session(client: TestClient[Any], headers: "dict[str, str] | None" = 
 
 
 def _inject_session_header(
-    client: TestClient[Any],
-    method: str,
+    client: "TestClient[Any]",
+    method: "str",
     headers: "dict[str, str] | None",
-) -> dict[str, str]:
+) -> "dict[str, str]":
     final_headers = dict(headers or {})
     if method == "initialize":
         return final_headers
@@ -140,13 +143,13 @@ def _inject_session_header(
 
 
 def rpc(
-    client: TestClient[Any],
-    method: str,
+    client: "TestClient[Any]",
+    method: "str",
     params: "dict[str, Any] | None" = None,
     *,
-    msg_id: int = 1,
+    msg_id: "int" = 1,
     headers: "dict[str, str] | None" = None,
-) -> dict[str, Any]:
+) -> "dict[str, Any]":
     """Execute an MCP JSON-RPC request against the test app."""
 
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": msg_id, "method": method}
@@ -157,13 +160,13 @@ def rpc(
 
 
 def rpc_response(
-    client: TestClient[Any],
-    method: str,
+    client: "TestClient[Any]",
+    method: "str",
     params: "dict[str, Any] | None" = None,
     *,
-    msg_id: int = 1,
+    msg_id: "int" = 1,
     headers: "dict[str, str] | None" = None,
-) -> Any:
+) -> "Any":
     """Execute an MCP JSON-RPC request and return the raw HTTP response."""
 
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": msg_id, "method": method}
@@ -172,7 +175,7 @@ def rpc_response(
     return client.post("/mcp", json=body, headers=_inject_session_header(client, method, headers))
 
 
-def parse_tool_payload(result: dict[str, Any]) -> dict[str, Any]:
+def parse_tool_payload(result: "dict[str, Any]") -> "dict[str, Any]":
     """Decode the JSON payload returned in an MCP tool response."""
 
     return cast("dict[str, Any]", json.loads(result["result"]["content"][0]["text"]))

@@ -3,11 +3,10 @@
 
 import contextlib
 import logging
-from collections.abc import AsyncGenerator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from litestar import Controller, Litestar, MediaType, Request, Response, delete, get, post
-from litestar.di import NamedDependency
+from litestar.di import NamedDependency  # noqa: TC002
 from litestar.exceptions import SerializationException
 from litestar.response import ServerSentEvent, ServerSentEventMessage
 from litestar.serialization import decode_json
@@ -22,7 +21,7 @@ from litestar.status_codes import (
     HTTP_503_SERVICE_UNAVAILABLE,
 )
 
-from litestar_mcp.config import MCPConfig
+from litestar_mcp.config import MCPConfig  # noqa: TC001
 from litestar_mcp.jsonrpc import (
     PARSE_ERROR,
     JSONRPCError,
@@ -31,10 +30,7 @@ from litestar_mcp.jsonrpc import (
     error_response,
     parse_request,
 )
-from litestar_mcp.registry import (
-    PromptRegistration,
-    Registry,
-)
+from litestar_mcp.registry import PromptRegistration, Registry  # noqa: TC001
 from litestar_mcp.services.handler import MCPHandlerService, RequestContext
 from litestar_mcp.sessions import (
     MCPSessionManager,
@@ -43,7 +39,10 @@ from litestar_mcp.sessions import (
     SessionTerminated,
 )
 from litestar_mcp.sse import StreamLimitExceeded
-from litestar_mcp.tasks import InMemoryTaskStore
+from litestar_mcp.tasks import InMemoryTaskStore  # noqa: TC001
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
 _logger = logging.getLogger(__name__)
 
@@ -54,7 +53,7 @@ SESSION_ERROR = -32000
 SESSION_NOT_INITIALIZED = -32002
 
 
-def _validate_origin(request: Request[Any, Any, Any], config: MCPConfig) -> Response[Any] | None:
+def _validate_origin(request: "Request[Any, Any, Any]", config: "MCPConfig") -> "Response[Any] | None":
     """Validate the Origin header if allowed_origins is configured."""
     if not config.allowed_origins:
         return None
@@ -69,13 +68,13 @@ def _validate_origin(request: Request[Any, Any, Any], config: MCPConfig) -> Resp
     return None
 
 
-def _add_protocol_headers(response: Response[Any]) -> Response[Any]:
+def _add_protocol_headers(response: "Response[Any]") -> "Response[Any]":
     """Add standard MCP protocol headers to a response."""
     response.headers["mcp-protocol-version"] = MCP_PROTOCOL_VERSION
     return response
 
 
-def _request_subject(request: Request[Any, Any, Any]) -> str | None:
+def _request_subject(request: "Request[Any, Any, Any]") -> "str | None":
     """Best-effort ``sub``-like identifier from ``request.auth`` claims dict.
 
     Middleware populates ``scope["auth"]`` with whatever shape it sets — this
@@ -91,7 +90,7 @@ def _request_subject(request: Request[Any, Any, Any]) -> str | None:
     return None
 
 
-def _resolve_client_id(request: Request[Any, Any, Any]) -> str:
+def _resolve_client_id(request: "Request[Any, Any, Any]") -> "str":
     explicit_client_id = (
         request.headers.get("x-mcp-client-id")
         or request.headers.get("mcp-client-id")
@@ -108,7 +107,7 @@ def _resolve_client_id(request: Request[Any, Any, Any]) -> str:
     return "anonymous"
 
 
-def _build_request_context(request: Request[Any, Any, Any]) -> RequestContext:
+def _build_request_context(request: "Request[Any, Any, Any]") -> "RequestContext":
     client_id = _resolve_client_id(request)
     sub = _request_subject(request)
     owner_id = f"user:{sub}" if sub is not None else f"client:{client_id}"
@@ -116,18 +115,18 @@ def _build_request_context(request: Request[Any, Any, Any]) -> RequestContext:
 
 
 def _build_cached_router(
-    app: Litestar,
-    config: MCPConfig,
-    discovered_tools: dict[str, Any],
-    discovered_resources: dict[str, Any],
-    discovered_prompts: dict[str, PromptRegistration],
-    registry: Registry,
-    task_store: InMemoryTaskStore | None,
-) -> JSONRPCRouter:
+    app: "Litestar",
+    config: "MCPConfig",
+    discovered_tools: "dict[str, Any]",
+    discovered_resources: "dict[str, Any]",
+    discovered_prompts: "dict[str, PromptRegistration]",
+    registry: "Registry",
+    task_store: "InMemoryTaskStore | None",
+) -> "JSONRPCRouter":
     """Build and register handlers on a new JSONRPCRouter instance."""
     router = JSONRPCRouter()
 
-    def make_handler_service() -> MCPHandlerService:
+    def make_handler_service() -> "MCPHandlerService":
         return MCPHandlerService(
             config=config,
             discovered_tools=discovered_tools,
@@ -167,11 +166,11 @@ class MCPController(Controller):
     @get("/", name="mcp_sse", media_type=MediaType.TEXT)
     async def handle_sse(
         self,
-        request: Request[Any, Any, Any],
-        config: NamedDependency[MCPConfig],
-        registry: NamedDependency[Registry],
-        session_manager: NamedDependency[MCPSessionManager],
-    ) -> Response[Any]:
+        request: "Request[Any, Any, Any]",
+        config: "NamedDependency[MCPConfig]",
+        registry: "NamedDependency[Registry]",
+        session_manager: "NamedDependency[MCPSessionManager]",
+    ) -> "Response[Any]":
         """Handle GET-based Streamable HTTP SSE streams on the MCP endpoint."""
         origin_err = _validate_origin(request, config)
         if origin_err is not None:
@@ -223,7 +222,7 @@ class MCPController(Controller):
                 )
             )
 
-        async def event_stream() -> AsyncGenerator[ServerSentEventMessage, None]:
+        async def event_stream() -> "AsyncGenerator[ServerSentEventMessage, None]":
             try:
                 async for message in stream:
                     yield ServerSentEventMessage(data=message.data, event=message.event, id=message.id)
@@ -237,11 +236,11 @@ class MCPController(Controller):
     @delete("/", name="mcp_session_delete", status_code=HTTP_200_OK)
     async def handle_delete(
         self,
-        request: Request[Any, Any, Any],
-        config: NamedDependency[MCPConfig],
-        registry: NamedDependency[Registry],
-        session_manager: NamedDependency[MCPSessionManager],
-    ) -> Response[Any]:
+        request: "Request[Any, Any, Any]",
+        config: "NamedDependency[MCPConfig]",
+        registry: "NamedDependency[Registry]",
+        session_manager: "NamedDependency[MCPSessionManager]",
+    ) -> "Response[Any]":
         """Terminate an MCP session and close its attached SSE streams."""
         origin_err = _validate_origin(request, config)
         if origin_err is not None:
@@ -264,15 +263,15 @@ class MCPController(Controller):
     @post("/", name="mcp_jsonrpc", media_type=MediaType.JSON, status_code=HTTP_200_OK)
     async def handle_jsonrpc(
         self,
-        request: Request[Any, Any, Any],
-        config: NamedDependency[MCPConfig],
-        discovered_tools: NamedDependency[dict[str, Any]],
-        discovered_resources: NamedDependency[dict[str, Any]],
-        discovered_prompts: NamedDependency[dict[str, PromptRegistration]],
-        registry: NamedDependency[Registry],
-        session_manager: NamedDependency[MCPSessionManager],
-        task_store: NamedDependency[InMemoryTaskStore | None] = None,
-    ) -> Response[Any]:
+        request: "Request[Any, Any, Any]",
+        config: "NamedDependency[MCPConfig]",
+        discovered_tools: "NamedDependency[dict[str, Any]]",
+        discovered_resources: "NamedDependency[dict[str, Any]]",
+        discovered_prompts: "NamedDependency[dict[str, PromptRegistration]]",
+        registry: "NamedDependency[Registry]",
+        session_manager: "NamedDependency[MCPSessionManager]",
+        task_store: "NamedDependency[InMemoryTaskStore | None]" = None,
+    ) -> "Response[Any]":
         """Handle a JSON-RPC 2.0 request over Streamable HTTP."""
         origin_err = _validate_origin(request, config)
         if origin_err is not None:

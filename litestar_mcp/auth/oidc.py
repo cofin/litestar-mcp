@@ -17,8 +17,6 @@ separate modules (``auth/_cache.py``, ``auth/_oidc.py``, ``auth/oidc.py``);
 they are now consolidated in this single module.
 """
 
-from __future__ import annotations
-
 import asyncio
 import inspect
 import logging
@@ -71,9 +69,9 @@ class JWKSCache(Protocol):
     ``invalidate`` as a no-op for unknown URLs.
     """
 
-    async def get(self, url: str) -> dict[str, Any] | None: ...
-    async def set(self, url: str, document: dict[str, Any], *, ttl: int) -> None: ...
-    async def invalidate(self, url: str) -> None: ...
+    async def get(self, url: "str") -> "dict[str, Any] | None": ...
+    async def set(self, url: "str", document: "dict[str, Any]", *, ttl: "int") -> "None": ...
+    async def invalidate(self, url: "str") -> "None": ...
 
 
 class DefaultJWKSCache:
@@ -86,14 +84,14 @@ class DefaultJWKSCache:
 
     __slots__ = ("_locks", "_store")
 
-    def __init__(self) -> None:
+    def __init__(self) -> "None":
         self._store: dict[str, tuple[float, dict[str, Any]]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
-    def _lock_for(self, url: str) -> asyncio.Lock:
+    def _lock_for(self, url: "str") -> "asyncio.Lock":
         return self._locks.setdefault(url, asyncio.Lock())
 
-    async def get(self, url: str) -> dict[str, Any] | None:
+    async def get(self, url: "str") -> "dict[str, Any] | None":
         entry = self._store.get(url)
         if entry is None:
             return None
@@ -102,15 +100,15 @@ class DefaultJWKSCache:
             return None
         return document
 
-    async def set(self, url: str, document: dict[str, Any], *, ttl: int) -> None:
+    async def set(self, url: "str", document: "dict[str, Any]", *, ttl: "int") -> "None":
         async with self._lock_for(url):
             self._store[url] = (monotonic() + ttl, document)
 
-    async def invalidate(self, url: str) -> None:
+    async def invalidate(self, url: "str") -> "None":
         async with self._lock_for(url):
             self._store.pop(url, None)
 
-    def clear(self) -> None:
+    def clear(self) -> "None":
         """Drop every cached entry and all per-URL locks."""
         self._store.clear()
         self._locks.clear()
@@ -119,12 +117,12 @@ class DefaultJWKSCache:
 _default_cache = DefaultJWKSCache()
 
 
-def get_default_cache() -> DefaultJWKSCache:
+def get_default_cache() -> "DefaultJWKSCache":
     """Return the process-wide default cache instance."""
     return _default_cache
 
 
-def reset_default_cache() -> None:
+def reset_default_cache() -> "None":
     """Clear the process-wide default cache (test hook)."""
     _default_cache.clear()
 
@@ -133,16 +131,16 @@ def reset_default_cache() -> None:
 
 
 def create_oidc_validator(
-    issuer: str,
-    audience: str,
+    issuer: "str",
+    audience: "str",
     *,
-    jwks_uri: str | None = None,
-    algorithms: tuple[str, ...] = ("RS256",),
-    clock_skew: int = DEFAULT_CLOCK_SKEW_SECONDS,
-    jwks_cache_ttl: int = DEFAULT_JWKS_CACHE_TTL_SECONDS,
-    jwks_cache: JWKSCache | None = None,
-    on_validation_error: ValidationErrorHook | None = None,
-) -> TokenValidator:
+    jwks_uri: "str | None" = None,
+    algorithms: "tuple[str, ...]" = ("RS256",),
+    clock_skew: "int" = DEFAULT_CLOCK_SKEW_SECONDS,
+    jwks_cache_ttl: "int" = DEFAULT_JWKS_CACHE_TTL_SECONDS,
+    jwks_cache: "JWKSCache | None" = None,
+    on_validation_error: "ValidationErrorHook | None" = None,
+) -> "TokenValidator":
     """Build an async token validator that verifies bearer tokens against an OIDC IdP.
 
     If ``jwks_uri`` is omitted, the validator auto-discovers it from
@@ -176,7 +174,7 @@ def create_oidc_validator(
         >>> middleware = DefineMiddleware(MCPAuthBackend, token_validator=validator)
     """
 
-    async def _validator(token: str) -> dict[str, Any] | None:
+    async def _validator(token: "str") -> "dict[str, Any] | None":
         return await _validate_oidc_bearer(
             token,
             issuer=issuer,
@@ -198,18 +196,18 @@ def create_oidc_validator(
 # read-through wrapper (NOT the cache protocol) — concurrent cold readers on
 # the same URL serialise here so only one ``_fetch_json_document`` call goes
 # out across N waiters.
-_FETCH_LOCKS: dict[str, asyncio.Lock] = {}
+_FETCH_LOCKS: "dict[str, asyncio.Lock]" = {}
 
 
-def _normalize_issuer(issuer: str) -> str:
+def _normalize_issuer(issuer: "str") -> "str":
     return issuer.rstrip("/")
 
 
-def _default_discovery_url(issuer: str) -> str:
+def _default_discovery_url(issuer: "str") -> "str":
     return f"{_normalize_issuer(issuer)}/.well-known/openid-configuration"
 
 
-async def _fetch_json_document(url: str) -> dict[str, Any]:
+async def _fetch_json_document(url: "str") -> "dict[str, Any]":
     """Fetch a JSON document from a remote URL."""
     async with httpx.AsyncClient(timeout=5.0) as client:
         response = await client.get(url)
@@ -218,10 +216,10 @@ async def _fetch_json_document(url: str) -> dict[str, Any]:
 
 
 async def _get_cached_json_document(
-    url: str,
-    cache_ttl: int,
-    cache: JWKSCache | None = None,
-) -> dict[str, Any]:
+    url: "str",
+    cache_ttl: "int",
+    cache: "JWKSCache | None" = None,
+) -> "dict[str, Any]":
     """Read-through cache fetch with per-URL single-flight on cold misses."""
     resolved_cache = cache if cache is not None else get_default_cache()
     hit = await resolved_cache.get(url)
@@ -239,13 +237,13 @@ async def _get_cached_json_document(
 
 
 async def _resolve_jwks(
-    issuer: str,
+    issuer: "str",
     *,
-    jwks_uri: str | None,
-    discovery_url: str | None,
-    cache_ttl: int,
-    cache: JWKSCache | None = None,
-) -> dict[str, Any]:
+    jwks_uri: "str | None",
+    discovery_url: "str | None",
+    cache_ttl: "int",
+    cache: "JWKSCache | None" = None,
+) -> "dict[str, Any]":
     resolved_uri = jwks_uri
     if resolved_uri is None:
         discovery = await _get_cached_json_document(
@@ -257,7 +255,7 @@ async def _resolve_jwks(
     return await _get_cached_json_document(resolved_uri, cache_ttl, cache)
 
 
-def _load_signing_key(token: str, jwks: dict[str, Any], algorithms: tuple[str, ...] | list[str]) -> Any:
+def _load_signing_key(token: "str", jwks: "dict[str, Any]", algorithms: "tuple[str, ...] | list[str]") -> "Any":
     header = jwt.get_unverified_header(token)
     key_id = header.get("kid")
     header_alg = header.get("alg")
@@ -284,10 +282,10 @@ def _load_signing_key(token: str, jwks: dict[str, Any], algorithms: tuple[str, .
 
 
 async def _invoke_validation_error_hook(
-    hook: ValidationErrorHook,
-    issuer: str,
-    exc: BaseException,
-) -> None:
+    hook: "ValidationErrorHook",
+    issuer: "str",
+    exc: "BaseException",
+) -> "None":
     try:
         result = hook(issuer, exc)
         if inspect.isawaitable(result):
@@ -297,18 +295,18 @@ async def _invoke_validation_error_hook(
 
 
 async def _validate_oidc_bearer(
-    token: str,
+    token: "str",
     *,
-    issuer: str,
-    audience: str | list[str] | None,
-    jwks_uri: str | None,
-    discovery_url: str | None = None,
-    algorithms: tuple[str, ...] | list[str],
-    clock_skew: int = DEFAULT_CLOCK_SKEW_SECONDS,
-    jwks_cache_ttl: int = DEFAULT_JWKS_CACHE_TTL_SECONDS,
-    jwks_cache: JWKSCache | None = None,
-    on_validation_error: ValidationErrorHook | None = None,
-) -> dict[str, Any] | None:
+    issuer: "str",
+    audience: "str | list[str] | None",
+    jwks_uri: "str | None",
+    discovery_url: "str | None" = None,
+    algorithms: "tuple[str, ...] | list[str]",
+    clock_skew: "int" = DEFAULT_CLOCK_SKEW_SECONDS,
+    jwks_cache_ttl: "int" = DEFAULT_JWKS_CACHE_TTL_SECONDS,
+    jwks_cache: "JWKSCache | None" = None,
+    on_validation_error: "ValidationErrorHook | None" = None,
+) -> "dict[str, Any] | None":
     """Validate a bearer token against an OIDC issuer.
 
     Single source of truth for OIDC validation used by both
@@ -343,11 +341,11 @@ async def _validate_oidc_bearer(
 
 
 async def _validate_with_oidc_provider(
-    token: str,
-    provider: Any,
+    token: "str",
+    provider: "Any",
     *,
-    on_validation_error: ValidationErrorHook | None = None,
-) -> dict[str, Any] | None:
+    on_validation_error: "ValidationErrorHook | None" = None,
+) -> "dict[str, Any] | None":
     """Validate ``token`` against a single :class:`OIDCProviderConfig`."""
     return await _validate_oidc_bearer(
         token,

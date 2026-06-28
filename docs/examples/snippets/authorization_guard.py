@@ -24,7 +24,7 @@ _UNAUTHENTICATED = "Unauthenticated"
 def requires_authenticated_user(
     connection: "ASGIConnection[Any, Any, Any, Any]",
     handler: "BaseRouteHandler",
-) -> None:
+) -> "None":
     """Reject callers whose middleware did not populate ``scope['auth']``."""
     _ = handler
     if connection.scope.get("auth") is None:
@@ -36,7 +36,7 @@ class ReportController(Controller):
     guards = [requires_authenticated_user]
 
     @get("/", mcp_tool="generate_report", scopes=["report:read"], sync_to_thread=False)
-    def generate_report(self) -> dict[str, str]:
+    def generate_report(self) -> "dict[str, str]":
         return {"status": "ok"}
 
 

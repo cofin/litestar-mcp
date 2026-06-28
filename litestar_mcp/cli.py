@@ -27,10 +27,10 @@ if TYPE_CHECKING:
 
 def _append_cli_option(
     params: "list[click.Option]",
-    seen: set[str],
-    name: str,
-    param: inspect.Parameter,
-) -> None:
+    seen: "set[str]",
+    name: "str",
+    param: "inspect.Parameter",
+) -> "None":
     """Append a ``click.Option`` derived from a handler/provider parameter.
 
     Deduplicates on ``name`` so handler-sig and provider-walk passes can both
@@ -87,12 +87,12 @@ def get_mcp_plugin(app: "Litestar") -> "LitestarMCP":
 class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-ignore]  # pragma: no cover
     """A dynamic click MultiCommand to run discovered MCP tools."""
 
-    def __init__(self, **attrs: Any) -> None:  # pragma: no cover
+    def __init__(self, **attrs: "Any") -> "None":  # pragma: no cover
         """Initialize the tool executor."""
         super().__init__(**attrs)
         self._console = Console()
 
-    def list_commands(self, ctx: click.Context) -> list[str]:  # pragma: no cover
+    def list_commands(self, ctx: "click.Context") -> "list[str]":  # pragma: no cover
         """List the names of all discovered tools and resources."""
         app: Litestar = ctx.obj.app
         try:
@@ -103,7 +103,7 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
         except RuntimeError:
             return []
 
-    def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:  # pragma: no cover
+    def get_command(self, ctx: "click.Context", cmd_name: "str") -> "click.Command | None":  # pragma: no cover
         """Create a click.Command for a specific tool or resource by its name."""
         app: Litestar = ctx.obj.app
         try:
@@ -135,7 +135,7 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
             _append_cli_option(params, seen, name, param)
 
         @click.pass_context
-        def callback(ctx: click.Context, /, **kwargs: Any) -> None:
+        def callback(ctx: "click.Context", /, **kwargs: "Any") -> "None":
             """The actual command callback that executes the tool."""
             app: Litestar = ctx.obj.app
 
@@ -175,14 +175,14 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
 
 
 @click.group(cls=LitestarGroup, name="mcp")
-def mcp_group(ctx: "click.Context") -> None:
+def mcp_group(ctx: "click.Context") -> "None":
     """Manage MCP tools and resources."""
     plugin = get_mcp_plugin(ctx.obj.app)
     ctx.obj = {"app": ctx.obj, "plugin": plugin}
 
 
 @mcp_group.command(name="list-tools")  # type: ignore[untyped-decorator]
-def list_tools(ctx: click.Context) -> None:
+def list_tools(ctx: "click.Context") -> "None":
     """List all available MCP tools.
 
     Uses plain description so terminal output never shows ``##`` headers.
@@ -212,7 +212,7 @@ def list_tools(ctx: click.Context) -> None:
 
 
 @mcp_group.command(name="list-resources")  # type: ignore[untyped-decorator]
-def list_resources(ctx: click.Context) -> None:
+def list_resources(ctx: "click.Context") -> "None":
     """List all available MCP resources.
 
     Uses plain description so terminal output never shows ``##`` headers.
@@ -243,7 +243,7 @@ def list_resources(ctx: click.Context) -> None:
         console.print(f"- [bold]{name}[/bold]: {first_line}")  # pragma: no cover
 
 
-def _parse_cli_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:  # pragma: no cover
+def _parse_cli_kwargs(kwargs: "dict[str, Any]") -> "dict[str, Any]":  # pragma: no cover
     """Parse CLI kwargs, converting JSON strings to objects.
 
     Attempts to parse a value if it looks like JSON.
@@ -264,7 +264,7 @@ def _parse_cli_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:  # pragma: no c
     return parsed_kwargs
 
 
-def _display_result(console: Console, result: Any) -> None:  # pragma: no cover
+def _display_result(console: "Console", result: "Any") -> "None":  # pragma: no cover
     """Display the result of tool execution."""
     if isinstance(result, str):
         console.print(result)

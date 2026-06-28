@@ -18,8 +18,6 @@ Tests are expected to fail against the current executor. Phase 2 makes them
 pass.
 """
 
-from __future__ import annotations
-
 import asyncio
 import uuid
 from collections.abc import AsyncIterator  # noqa: TC003
@@ -55,7 +53,7 @@ pytestmark = pytest.mark.unit
 # --- JSON-RPC helpers -------------------------------------------------------
 
 
-def _ensure_session(client: TestClient[Any]) -> str:
+def _ensure_session(client: "TestClient[Any]") -> "str":
     sid = getattr(client, "_mcp_session", None)
     if sid is not None:
         return sid  # type: ignore[no-any-return]
@@ -78,7 +76,7 @@ def _ensure_session(client: TestClient[Any]) -> str:
     return str(sid)
 
 
-def _rpc(client: TestClient[Any], method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+def _rpc(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None) -> "dict[str, Any]":
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
     if params is not None:
         body["params"] = params
@@ -90,7 +88,7 @@ def _rpc(client: TestClient[Any], method: str, params: dict[str, Any] | None = N
     return client.post("/mcp", json=body, headers=headers).json()  # type: ignore[no-any-return]
 
 
-def _call_tool(client: TestClient[Any], name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+def _call_tool(client: "TestClient[Any]", name: "str", arguments: "dict[str, Any]") -> "dict[str, Any]":
     return _rpc(client, "tools/call", {"name": name, "arguments": arguments})
 
 
@@ -98,22 +96,22 @@ def _call_tool(client: TestClient[Any], name: str, arguments: dict[str, Any]) ->
 
 
 class NoteInput(msgspec.Struct):
-    title: str
-    body: str
+    title: "str"
+    body: "str"
 
 
 class UpdateInput(msgspec.Struct):
-    body: str
+    body: "str"
 
 
 # --- Data / signature-model path -------------------------------------------
 
 
-def test_data_param_parses_via_signature_model() -> None:
+def test_data_param_parses_via_signature_model() -> "None":
     """Handler declaring ``data: StructT`` receives a parsed msgspec struct."""
 
     @post("/notes", opt={"mcp_tool": "create_note"}, sync_to_thread=False)
-    def create_note(data: NoteInput) -> dict[str, str]:
+    def create_note(data: "NoteInput") -> "dict[str, str]":
         assert isinstance(data, NoteInput)
         return {"title": data.title, "body": data.body}
 
@@ -127,11 +125,11 @@ def test_data_param_parses_via_signature_model() -> None:
     assert '"title":"T"' in payload["text"]
 
 
-def test_data_param_accepts_wrapped_data_argument() -> None:
+def test_data_param_accepts_wrapped_data_argument() -> "None":
     """Handlers with ``data: StructT`` accept the explicit MCP ``data`` wrapper."""
 
     @post("/notes", opt={"mcp_tool": "create_note"}, sync_to_thread=False)
-    def create_note(data: NoteInput) -> dict[str, str]:
+    def create_note(data: "NoteInput") -> "dict[str, str]":
         assert isinstance(data, NoteInput)
         return {"title": data.title, "body": data.body}
 
@@ -145,7 +143,7 @@ def test_data_param_accepts_wrapped_data_argument() -> None:
     assert '"title":"T"' in payload["text"]
 
 
-def test_path_param_routes_through_scope() -> None:
+def test_path_param_routes_through_scope() -> "None":
     """Handler with a path-param kwarg receives it from ``tool_args``.
 
     `@delete("/notes/{note_id:str}")` + `arguments={"note_id": "abc"}` lands
@@ -158,7 +156,7 @@ def test_path_param_routes_through_scope() -> None:
         opt={"mcp_tool": "delete_note"},
         sync_to_thread=False,
     )
-    def delete_note(note_id: str) -> dict[str, str]:
+    def delete_note(note_id: "str") -> "dict[str, str]":
         return {"id": note_id}
 
     app = Litestar(route_handlers=[delete_note], plugins=[LitestarMCP()])
@@ -170,7 +168,7 @@ def test_path_param_routes_through_scope() -> None:
     assert '"id":"abc"' in resp["result"]["content"][0]["text"]
 
 
-def test_query_param_routes_through_scope() -> None:
+def test_query_param_routes_through_scope() -> "None":
     """Plain scalar kwargs (non-path, non-data) survive native dispatch.
 
     Today's executor treats them as query params and raises
@@ -179,7 +177,7 @@ def test_query_param_routes_through_scope() -> None:
     """
 
     @get("/search", opt={"mcp_tool": "search_notes"}, sync_to_thread=False)
-    def search(q: str, limit: int = 10) -> dict[str, object]:
+    def search(q: "str", limit: "int" = 10) -> "dict[str, object]":
         return {"q": q, "limit": limit}
 
     app = Litestar(route_handlers=[search], plugins=[LitestarMCP()])
@@ -193,7 +191,7 @@ def test_query_param_routes_through_scope() -> None:
     assert '"limit":5' in text
 
 
-def test_mixed_path_data_and_query_params() -> None:
+def test_mixed_path_data_and_query_params() -> "None":
     """Path param + ``data`` struct + scalar kwarg all populate from one tool_args."""
 
     @post(
@@ -201,7 +199,7 @@ def test_mixed_path_data_and_query_params() -> None:
         opt={"mcp_tool": "update_note"},
         sync_to_thread=False,
     )
-    def update_note(note_id: str, data: UpdateInput, notify: bool = False) -> dict[str, object]:
+    def update_note(note_id: "str", data: "UpdateInput", notify: "bool" = False) -> "dict[str, object]":
         return {"id": note_id, "body": data.body, "notify": notify}
 
     app = Litestar(route_handlers=[update_note], plugins=[LitestarMCP()])
@@ -220,11 +218,11 @@ def test_mixed_path_data_and_query_params() -> None:
     assert '"notify":true' in text
 
 
-def test_dto_validation_error_surfaces_cleanly() -> None:
+def test_dto_validation_error_surfaces_cleanly() -> "None":
     """Malformed payload → MCP tool-error carrying the framework validation message."""
 
     @post("/notes", opt={"mcp_tool": "create_note"}, sync_to_thread=False)
-    def create_note(data: NoteInput) -> dict[str, str]:
+    def create_note(data: "NoteInput") -> "dict[str, str]":
         return {"title": data.title}
 
     app = Litestar(route_handlers=[create_note], plugins=[LitestarMCP()])
@@ -238,11 +236,11 @@ def test_dto_validation_error_surfaces_cleanly() -> None:
 # --- Live-request passthrough -----------------------------------------------
 
 
-def test_request_param_receives_dispatch_request() -> None:
+def test_request_param_receives_dispatch_request() -> "None":
     """Handler taking ``request: Request`` sees a Request shaped for its route."""
 
     @get("/ping", opt={"mcp_tool": "ping"}, sync_to_thread=False)
-    def ping(request: Request[Any, Any, Any]) -> dict[str, str]:
+    def ping(request: "Request[Any, Any, Any]") -> "dict[str, str]":
         return {"method": request.method, "path": request.url.path}
 
     app = Litestar(route_handlers=[ping], plugins=[LitestarMCP()])
@@ -256,7 +254,7 @@ def test_request_param_receives_dispatch_request() -> None:
     assert '"path":"/ping"' in text
 
 
-def test_inbound_request_state_passes_through() -> None:
+def test_inbound_request_state_passes_through() -> "None":
     """Middleware-populated state on the inbound /mcp request flows into the handler.
 
     Seed ``app.state`` with a sentinel; handler reads it via ``state: State``.
@@ -266,7 +264,7 @@ def test_inbound_request_state_passes_through() -> None:
     """
 
     @get("/state", opt={"mcp_tool": "read_state"}, sync_to_thread=False)
-    def read_state(state: State) -> dict[str, object]:
+    def read_state(state: "State") -> "dict[str, object]":
         return {"seeded": state.seeded}
 
     app = Litestar(route_handlers=[read_state], plugins=[LitestarMCP()])
@@ -279,10 +277,10 @@ def test_inbound_request_state_passes_through() -> None:
     assert '"seeded":"sentinel-123"' in resp["result"]["content"][0]["text"]
 
 
-def test_request_scope_dependency_resolves_natively() -> None:
+def test_request_scope_dependency_resolves_natively() -> "None":
     """A ``Provide(...)`` that itself depends on ``request: Request`` works."""
 
-    async def make_greeting(request: Request[Any, Any, Any]) -> str:
+    async def make_greeting(request: "Request[Any, Any, Any]") -> "str":
         return f"hello from {request.url.path}"
 
     @get(
@@ -291,7 +289,7 @@ def test_request_scope_dependency_resolves_natively() -> None:
         dependencies={"greeting": Provide(make_greeting)},
         sync_to_thread=False,
     )
-    def greet(greeting: str) -> dict[str, str]:
+    def greet(greeting: "str") -> "dict[str, str]":
         return {"greeting": greeting}
 
     app = Litestar(route_handlers=[greet], plugins=[LitestarMCP()])
@@ -307,7 +305,7 @@ def test_request_scope_dependency_resolves_natively() -> None:
 
 
 class _Service:
-    def __init__(self, token: str) -> None:
+    def __init__(self, token: "str") -> "None":
         self.token = token
 
 
@@ -315,11 +313,11 @@ class _ServiceProvider(Provider):
     scope = Scope.REQUEST
 
     @provide
-    def service(self) -> _Service:
+    def service(self) -> "_Service":
         return _Service(token=str(uuid.uuid4()))
 
 
-def _build_dishka_app() -> Litestar:
+def _build_dishka_app() -> "Litestar":
     app = Litestar(route_handlers=[_get_service], plugins=[LitestarMCP()])
     container = make_async_container(_ServiceProvider())
     setup_dishka(container=container, app=app)
@@ -328,7 +326,7 @@ def _build_dishka_app() -> Litestar:
 
 @get("/svc", opt={"mcp_tool": "get_service"})
 @inject
-async def _get_service(service: FromDishka[_Service]) -> dict[str, str]:
+async def _get_service(service: "FromDishka[_Service]") -> "dict[str, str]":
     return {"token": service.token}
 
 
@@ -336,14 +334,14 @@ class _Resource:
     pass
 
 
-_CLEANUP_LOG: list[bool] = []
+_CLEANUP_LOG: "list[bool]" = []
 
 
 class _InstrumentedProvider(Provider):
     scope = Scope.REQUEST
 
     @provide
-    async def resource(self) -> AsyncIterator[_Resource]:
+    async def resource(self) -> "AsyncIterator[_Resource]":
         try:
             yield _Resource()
         finally:
@@ -352,11 +350,11 @@ class _InstrumentedProvider(Provider):
 
 @get("/res", opt={"mcp_tool": "use_res"})
 @inject
-async def _use_resource(res: FromDishka[_Resource]) -> dict[str, str]:
+async def _use_resource(res: "FromDishka[_Resource]") -> "dict[str, str]":
     return {"ok": "yes"}
 
 
-def test_fromdishka_resolves_without_mcp_hook() -> None:
+def test_fromdishka_resolves_without_mcp_hook() -> "None":
     """HTTP mode: ``@inject`` + ``FromDishka[T]`` resolves with no MCP plumbing."""
     app = _build_dishka_app()
 
@@ -375,12 +373,12 @@ def test_fromdishka_resolves_without_mcp_hook() -> None:
 # --- Stdio-mode contract ----------------------------------------------------
 
 
-def test_stdio_mode_synthesizes_request() -> None:
+def test_stdio_mode_synthesizes_request() -> "None":
     """Direct ``execute_tool(..., request=None)`` builds a Request and hands it to the handler."""
     seen: dict[str, Any] = {}
 
     @get("/probe", opt={"mcp_tool": "probe"}, sync_to_thread=False)
-    def probe(request: Request[Any, Any, Any]) -> dict[str, str]:
+    def probe(request: "Request[Any, Any, Any]") -> "dict[str, str]":
         seen["method"] = request.method
         seen["path"] = request.url.path
         return {"ok": "yes"}
@@ -395,7 +393,7 @@ def test_stdio_mode_synthesizes_request() -> None:
     assert seen["path"] == "/probe"
 
 
-def test_stdio_mode_opens_dishka_child_container() -> None:
+def test_stdio_mode_opens_dishka_child_container() -> "None":
     """Stdio invocation of a Dishka-injected handler resolves ``FromDishka[T]``."""
     app = _build_dishka_app()
     handler = get_handler_from_app(app, "/svc")
@@ -407,7 +405,7 @@ def test_stdio_mode_opens_dishka_child_container() -> None:
     assert r1["token"] != r2["token"]
 
 
-def test_stdio_mode_cleans_up_dishka_child_container() -> None:
+def test_stdio_mode_cleans_up_dishka_child_container() -> "None":
     """Child container closes after the call — verified via an instrumented provider."""
     _CLEANUP_LOG.clear()
 
@@ -420,15 +418,15 @@ def test_stdio_mode_cleans_up_dishka_child_container() -> None:
     assert _CLEANUP_LOG == [True]
 
 
-def test_guards_run_in_stdio_mode() -> None:
+def test_guards_run_in_stdio_mode() -> "None":
     """Ch2 supersedes Ch1's stdio-skip: guards always run against the dispatch request."""
     denied_msg = "stdio should enforce"
 
-    def deny(_c: ASGIConnection[Any, Any, Any, Any], _h: BaseRouteHandler) -> None:
+    def deny(_c: "ASGIConnection[Any, Any, Any, Any]", _h: "BaseRouteHandler") -> "None":
         raise NotAuthorizedException(denied_msg)
 
     @get("/x", guards=[deny], opt={"mcp_tool": "x"}, sync_to_thread=False)
-    def tool() -> dict[str, str]:
+    def tool() -> "dict[str, str]":
         return {"ok": "yes"}
 
     app = Litestar(route_handlers=[tool], plugins=[LitestarMCP()])
@@ -441,7 +439,7 @@ def test_guards_run_in_stdio_mode() -> None:
 # --- MCPToolErrorResult.status_code capture ---------------------------------
 
 
-def test_execute_tool_captures_handler_4xx_status_code() -> None:
+def test_execute_tool_captures_handler_4xx_status_code() -> "None":
     """Regression sentinel for the executor refactor in PR #46.
 
     ``MCPToolErrorResult.status_code`` is the load-bearing field that the
@@ -453,7 +451,7 @@ def test_execute_tool_captures_handler_4xx_status_code() -> None:
     """
 
     @get("/bad", opt={"mcp_tool": "bad_status"}, sync_to_thread=False)
-    def bad() -> Response[dict[str, str]]:
+    def bad() -> "Response[dict[str, str]]":
         return Response(content={"error": "nope"}, status_code=HTTP_422_UNPROCESSABLE_ENTITY)
 
     app = Litestar(route_handlers=[bad], plugins=[LitestarMCP()])
@@ -466,9 +464,9 @@ def test_execute_tool_captures_handler_4xx_status_code() -> None:
     assert excinfo.value.is_client_error is True
 
 
-def test_execute_tool_captures_handler_5xx_status_code() -> None:
+def test_execute_tool_captures_handler_5xx_status_code() -> "None":
     @get("/down", opt={"mcp_tool": "down_status"}, sync_to_thread=False)
-    def down() -> Response[dict[str, str]]:
+    def down() -> "Response[dict[str, str]]":
         return Response(content={"error": "down"}, status_code=HTTP_503_SERVICE_UNAVAILABLE)
 
     app = Litestar(route_handlers=[down], plugins=[LitestarMCP()])

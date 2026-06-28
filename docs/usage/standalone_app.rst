@@ -48,6 +48,14 @@ Use the ``@mcp.prompt()`` decorator to expose pre-defined templates or instructi
     :language: python
     :pyobject: explain
 
+Route Handler Options
+~~~~~~~~~~~~~~~~~~~~~
+
+The standalone decorators accept the same route-handler keyword arguments as Litestar's ``@get`` / ``@post`` decorators, including ``dependencies``, ``guards``, ``response_headers``, ``responses``, ``summary``, ``tags``, DTO options, hooks, and arbitrary extra keyword arguments that Litestar stores in ``handler.opt``. The ``name`` keyword is reserved for the MCP primitive name; use ``route_name`` when you need to set Litestar's route-handler name separately.
+
+.. literalinclude:: /examples/snippets/standalone_dependencies.py
+    :language: python
+
 Accessing the Litestar App
 --------------------------
 

@@ -7,7 +7,6 @@ from types import UnionType
 from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
 
 import msgspec
-from litestar.params import ParameterKwarg
 
 from litestar_mcp.typing import (
     attrs_fields,
@@ -24,11 +23,12 @@ from litestar_mcp.utils.handler_signature import (
 
 if TYPE_CHECKING:
     from litestar.handlers import BaseRouteHandler
+    from litestar.params import ParameterKwarg
 
 _logger = logging.getLogger(__name__)
 
 
-def basic_type_to_json_schema(annotation: Any) -> "dict[str, Any] | None":
+def basic_type_to_json_schema(annotation: "Any") -> "dict[str, Any] | None":
     """Convert basic Python types to JSON Schema format."""
     if annotation is str:
         return {"type": "string"}
@@ -41,7 +41,7 @@ def basic_type_to_json_schema(annotation: Any) -> "dict[str, Any] | None":
     return None
 
 
-def collection_type_to_json_schema(annotation: Any) -> "dict[str, Any] | None":
+def collection_type_to_json_schema(annotation: "Any") -> "dict[str, Any] | None":
     """Convert collection types (list, dict, set) to JSON Schema format."""
     origin = get_origin(annotation)
 
@@ -63,13 +63,13 @@ def collection_type_to_json_schema(annotation: Any) -> "dict[str, Any] | None":
     return None
 
 
-def pydantic_to_json_schema(model: Any) -> "dict[str, Any]":
+def pydantic_to_json_schema(model: "Any") -> "dict[str, Any]":
     """Convert Pydantic model to JSON Schema format."""
     schema: dict[str, Any] = model.model_json_schema()
     return schema
 
 
-def msgspec_to_json_schema(struct_type: Any) -> "dict[str, Any]":
+def msgspec_to_json_schema(struct_type: "Any") -> "dict[str, Any]":
     """Generate JSON Schema 2020-12 for a msgspec.Struct via msgspec's built-in.
 
     Delegates to ``msgspec.json.schema`` which provides full JSON Schema
@@ -79,7 +79,7 @@ def msgspec_to_json_schema(struct_type: Any) -> "dict[str, Any]":
     return msgspec.json.schema(struct_type)
 
 
-def dataclass_to_json_schema(dataclass_type: Any) -> "dict[str, Any]":
+def dataclass_to_json_schema(dataclass_type: "Any") -> "dict[str, Any]":
     """Convert dataclass to JSON Schema format."""
     properties = {}
     required = []
@@ -96,7 +96,7 @@ def dataclass_to_json_schema(dataclass_type: Any) -> "dict[str, Any]":
     return schema
 
 
-def attrs_to_json_schema(attrs_type: Any) -> "dict[str, Any]":
+def attrs_to_json_schema(attrs_type: "Any") -> "dict[str, Any]":
     """Convert attrs class to JSON Schema format."""
     properties = {}
     required = []
@@ -113,7 +113,7 @@ def attrs_to_json_schema(attrs_type: Any) -> "dict[str, Any]":
     return schema
 
 
-def model_to_json_schema(annotation: Any) -> "dict[str, Any] | None":
+def model_to_json_schema(annotation: "Any") -> "dict[str, Any] | None":
     """Convert a model class (Pydantic, msgspec, attrs, dataclass) to JSON Schema format.
 
     This is the main entry point for structured type conversion.
@@ -133,7 +133,7 @@ def model_to_json_schema(annotation: Any) -> "dict[str, Any] | None":
     return None
 
 
-def union_type_to_json_schema(annotation: Any) -> "dict[str, Any] | None":
+def union_type_to_json_schema(annotation: "Any") -> "dict[str, Any] | None":
     """Convert Union types (including Optional) to JSON Schema format."""
     origin = get_origin(annotation)
 
@@ -157,7 +157,7 @@ def union_type_to_json_schema(annotation: Any) -> "dict[str, Any] | None":
     return None
 
 
-def type_to_json_schema(annotation: Any) -> "dict[str, Any]":  # noqa: PLR0911
+def type_to_json_schema(annotation: "Any") -> "dict[str, Any]":  # noqa: PLR0911
     """Convert a Python type annotation to JSON Schema format.
 
     Args:
@@ -258,7 +258,7 @@ _META_FIELD_MAP: "tuple[tuple[str, str], ...]" = (
 )
 
 
-def _merge_parameter_meta(schema: "dict[str, Any]", meta: ParameterKwarg) -> None:
+def _merge_parameter_meta(schema: "dict[str, Any]", meta: "ParameterKwarg") -> "None":
     """Copy non-None fields from ``meta`` into ``schema`` using JSON Schema names."""
     for attr, key in _META_FIELD_MAP:
         value = getattr(meta, attr, None)
@@ -270,7 +270,7 @@ def _merge_parameter_meta(schema: "dict[str, Any]", meta: ParameterKwarg) -> Non
             schema[key] = value
 
 
-def _resolve_string_annotation(annotation: str) -> Any:
+def _resolve_string_annotation(annotation: "str") -> "Any":
     """Resolve a string annotation to a Python type."""
     # Common basic types
     basic_types = {

@@ -1,20 +1,21 @@
-from collections.abc import Callable
 from functools import partial
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
 from docutils import nodes
 from docutils.parsers.rst import directives
-from sphinx.application import Sphinx
 from sphinx.util.docutils import SphinxDirective
 from sphinx.util.nodes import clean_astext
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from sphinx.application import Sphinx
     from sphinx.domains.std import StandardDomain
 
 _GH_BASE_URL = "https://github.com/cofin/litestar-mcp"
 
 
-def _parse_gh_reference(raw: str, type_: Literal["issues", "pull"]) -> list[str]:
+def _parse_gh_reference(raw: "str", type_: "Literal['issues', 'pull']") -> "list[str]":
     return [f"{_GH_BASE_URL}/{type_}/{r.strip()}" for r in raw.split(" ") if r]
 
 
@@ -28,14 +29,14 @@ class ChangeDirective(SphinxDirective):
     required_arguments = 1
     has_content = True
     final_argument_whitespace = True
-    option_spec: ClassVar[dict[str, Callable[[str], Any]] | None] = {
+    option_spec: "ClassVar[dict[str, Callable[[str], Any]] | None]" = {
         "type": partial(directives.choice, values=("feature", "bugfix", "misc")),
         "breaking": directives.flag,
         "issue": directives.unchanged,
         "pr": directives.unchanged,
     }
 
-    def run(self) -> list[nodes.Node]:
+    def run(self) -> "list[nodes.Node]":
         """Run the directive.
 
         Returns:
@@ -83,7 +84,7 @@ class ChangelogDirective(SphinxDirective):
     has_content = True
     option_spec = {"date": directives.unchanged}
 
-    def run(self) -> list[nodes.Node]:
+    def run(self) -> "list[nodes.Node]":
         self.assert_has_content()
 
         version = self.arguments[0]
@@ -171,7 +172,7 @@ class ChangelogDirective(SphinxDirective):
         return [section_target, changelog_node]
 
 
-def setup(app: Sphinx) -> dict[str, str | bool]:
+def setup(app: "Sphinx") -> "dict[str, str | bool]":
     app.add_directive("changelog", ChangelogDirective)
     app.add_directive("change", ChangeDirective)
 

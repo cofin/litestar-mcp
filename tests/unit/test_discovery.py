@@ -7,17 +7,17 @@ from litestar_mcp import LitestarMCP
 from litestar_mcp.utils import mcp_tool
 
 
-def _make_discovery_app() -> Litestar:
+def _make_discovery_app() -> "Litestar":
     @get("/check", sync_to_thread=False)
     @mcp_tool(name="check_health")
-    def check_health() -> dict[str, str]:
+    def check_health() -> "dict[str, str]":
         """Check service health."""
         return {"status": "ok"}
 
     return Litestar(route_handlers=[check_health], plugins=[LitestarMCP()])
 
 
-def test_agent_card_endpoint_generated() -> None:
+def test_agent_card_endpoint_generated() -> "None":
     app = _make_discovery_app()
     with TestClient(app=app) as client:
         response = client.get("/.well-known/agent-card.json")
@@ -30,7 +30,7 @@ def test_agent_card_endpoint_generated() -> None:
         assert any(skill["id"] == "check_health" for skill in payload["skills"])
 
 
-def test_experimental_mcp_server_manifest_generated() -> None:
+def test_experimental_mcp_server_manifest_generated() -> "None":
     app = _make_discovery_app()
     with TestClient(app=app) as client:
         response = client.get("/.well-known/mcp-server.json")

@@ -34,15 +34,15 @@ from litestar_mcp import LitestarMCP, MCPConfig, mcp_prompt
 
 
 class Task(BaseModel):
-    id: int
-    title: str
-    description: str
-    completed: bool = False
+    id: "int"
+    title: "str"
+    description: "str"
+    completed: "bool" = False
 
 
 class CreateTaskRequest(BaseModel):
-    title: str
-    description: str
+    title: "str"
+    description: "str"
 
 
 DEFAULT_TASKS: "dict[int, Task]" = {
@@ -57,7 +57,7 @@ def register_resources(store: "dict[int, Task]") -> "list[Any]":
 
     # start-example
     @get("/tasks/schema", mcp_resource="task_schema")
-    async def get_task_schema() -> dict[str, Any]:
+    async def get_task_schema() -> "dict[str, Any]":
         """Get the task data model schema - exposed as MCP resource."""
         return {
             "type": "object",
@@ -71,7 +71,7 @@ def register_resources(store: "dict[int, Task]") -> "list[Any]":
         }
 
     @get("/api/info", mcp_resource="api_info")
-    async def get_api_info() -> dict[str, Any]:
+    async def get_api_info() -> "dict[str, Any]":
         """Get API information and capabilities - exposed as MCP resource."""
         return {
             "name": "Task Management API",
@@ -101,7 +101,7 @@ def register_prompts(store: "dict[int, Task]") -> "list[Any]":
         title="Summarize tasks",
         description="Ask the model to summarize the current task list in a chosen style.",
     )
-    async def summarize_tasks(style: str = "concise") -> str:
+    async def summarize_tasks(style: "str" = "concise") -> "str":
         """Build a prompt summarizing the task store.
 
         Args:
@@ -128,14 +128,14 @@ def register_tools(store: "dict[int, Task]") -> "list[Any]":
         return [task for task in store.values() if task.completed == completed]
 
     @get("/tasks/{task_id:int}", mcp_tool="get_task")
-    async def get_task(task_id: int) -> Task:
+    async def get_task(task_id: "int") -> "Task":
         """Get a specific task by ID."""
         if task_id not in store:
             raise NotFoundException(detail=f"Task {task_id} not found")
         return store[task_id]
 
     @post("/tasks", status_code=HTTP_201_CREATED, mcp_tool="create_task")
-    async def create_task(data: CreateTaskRequest) -> Task:
+    async def create_task(data: "CreateTaskRequest") -> "Task":
         """Create a new task."""
         new_id = max(store.keys(), default=0) + 1
         new_task = Task(id=new_id, title=data.title, description=data.description, completed=False)
@@ -143,7 +143,7 @@ def register_tools(store: "dict[int, Task]") -> "list[Any]":
         return new_task
 
     @post("/tasks/{task_id:int}/complete", mcp_tool="complete_task")
-    async def complete_task(task_id: int) -> Task:
+    async def complete_task(task_id: "int") -> "Task":
         """Mark a task as completed."""
         if task_id not in store:
             raise NotFoundException(detail=f"Task {task_id} not found")
@@ -151,7 +151,7 @@ def register_tools(store: "dict[int, Task]") -> "list[Any]":
         return store[task_id]
 
     @delete("/tasks/{task_id:int}", mcp_tool="delete_task")
-    async def delete_task(task_id: int) -> None:
+    async def delete_task(task_id: "int") -> "None":
         """Delete a task by ID."""
         if task_id not in store:
             raise NotFoundException(detail=f"Task {task_id} not found")
@@ -162,12 +162,12 @@ def register_tools(store: "dict[int, Task]") -> "list[Any]":
 
 
 @get("/")
-async def root() -> dict[str, str]:
+async def root() -> "dict[str, str]":
     """Root endpoint - not exposed to MCP."""
     return {"message": "Welcome to the Task Management API with MCP integration!"}
 
 
-def build_app(tasks: "dict[int, Task] | None" = None) -> Litestar:
+def build_app(tasks: "dict[int, Task] | None" = None) -> "Litestar":
     """Construct the task-manager Litestar app.
 
     ``tasks`` seeds the in-memory store. It is deep-copied so tests can pass a

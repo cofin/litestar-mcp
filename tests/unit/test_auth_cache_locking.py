@@ -12,7 +12,7 @@ from litestar_mcp.auth.oidc import reset_default_cache
 
 
 @pytest.fixture(autouse=True)
-def _reset_cache() -> Any:
+def _reset_cache() -> "Any":
     """Clear the default JWKS cache and fetch locks between tests."""
     reset_default_cache()
     auth_module._FETCH_LOCKS.clear()
@@ -22,12 +22,12 @@ def _reset_cache() -> Any:
 
 
 @pytest.mark.asyncio
-async def test_concurrent_cold_fetch_single_flight() -> None:
+async def test_concurrent_cold_fetch_single_flight() -> "None":
     """N concurrent requests to the same URL must trigger exactly one fetch."""
 
     call_count = 0
 
-    async def fake_fetch(url: str) -> dict[str, Any]:
+    async def fake_fetch(url: "str") -> "dict[str, Any]":
         nonlocal call_count
         call_count += 1
         await asyncio.sleep(0.05)
@@ -43,12 +43,12 @@ async def test_concurrent_cold_fetch_single_flight() -> None:
 
 
 @pytest.mark.asyncio
-async def test_concurrent_distinct_urls_run_in_parallel() -> None:
+async def test_concurrent_distinct_urls_run_in_parallel() -> "None":
     """Fetches to distinct URLs must not serialize on the lock."""
 
     fetch_delay = 0.1
 
-    async def slow_fetch(url: str) -> dict[str, Any]:
+    async def slow_fetch(url: "str") -> "dict[str, Any]":
         await asyncio.sleep(fetch_delay)
         return {"url": url}
 
@@ -65,7 +65,7 @@ async def test_concurrent_distinct_urls_run_in_parallel() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cache_hit_does_not_acquire_lock() -> None:
+async def test_cache_hit_does_not_acquire_lock() -> "None":
     """Warm cache reads must not block on the lock (common hot path)."""
 
     fetch_mock = AsyncMock(return_value={"cached": True})
@@ -83,12 +83,12 @@ async def test_cache_hit_does_not_acquire_lock() -> None:
 
 
 @pytest.mark.asyncio
-async def test_expired_cache_entry_triggers_single_refetch() -> None:
+async def test_expired_cache_entry_triggers_single_refetch() -> "None":
     """When the entry is expired, concurrent callers must still single-flight."""
 
     fetch_counter = 0
 
-    async def counting_fetch(url: str) -> dict[str, Any]:
+    async def counting_fetch(url: "str") -> "dict[str, Any]":
         nonlocal fetch_counter
         fetch_counter += 1
         await asyncio.sleep(0.02)

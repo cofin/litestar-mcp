@@ -11,9 +11,9 @@ class NoteRecord(UUIDAuditBase):
 
     __tablename__ = "reference_notes"
 
-    title: Mapped[str] = mapped_column()
-    body: Mapped[str] = mapped_column()
-    owner_sub: Mapped[str | None] = mapped_column(default=None, index=True)
+    title: "Mapped[str]" = mapped_column()
+    body: "Mapped[str]" = mapped_column()
+    owner_sub: "Mapped[str | None]" = mapped_column(default=None, index=True)
 
 
 class NoteService(SQLAlchemyAsyncRepositoryService[NoteRecord]):

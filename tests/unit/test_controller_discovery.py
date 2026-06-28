@@ -9,7 +9,7 @@ from litestar_mcp import LitestarMCP
 from litestar_mcp.utils import mcp_tool
 
 
-def _ensure_session(client: TestClient[Any]) -> str:
+def _ensure_session(client: "TestClient[Any]") -> "str":
     sid = getattr(client, "_mcp_session", None)
     if sid is not None:
         return sid  # type: ignore[no-any-return]
@@ -32,7 +32,7 @@ def _ensure_session(client: TestClient[Any]) -> str:
     return str(sid)
 
 
-def _rpc(client: TestClient[Any], method: str, params: "dict[str, Any] | None" = None) -> dict[str, Any]:
+def _rpc(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None) -> "dict[str, Any]":
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
     if params is not None:
         body["params"] = params
@@ -44,13 +44,13 @@ def _rpc(client: TestClient[Any], method: str, params: "dict[str, Any] | None" =
     return client.post("/mcp", json=body, headers=headers).json()  # type: ignore[no-any-return]
 
 
-def test_controller_discovery() -> None:
+def test_controller_discovery() -> "None":
     class MyController(Controller):
         path = "/test"
 
         @mcp_tool(name="controller_tool")
         @get("/tool", sync_to_thread=False)
-        def my_tool(self) -> str:
+        def my_tool(self) -> "str":
             return "hello"
 
     plugin = LitestarMCP()

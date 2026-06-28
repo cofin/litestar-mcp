@@ -16,47 +16,47 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def anyio_backend() -> str:
+def anyio_backend() -> "str":
     return "asyncio"
 
 
 class _InMemoryJWKSCache:
     """Test double: counts operations so we can prove injection."""
 
-    def __init__(self) -> None:
+    def __init__(self) -> "None":
         self.store: dict[str, dict[str, Any]] = {}
         self.gets = 0
         self.sets = 0
         self.invalidations = 0
 
-    async def get(self, url: str) -> dict[str, Any] | None:
+    async def get(self, url: "str") -> "dict[str, Any] | None":
         self.gets += 1
         return self.store.get(url)
 
-    async def set(self, url: str, document: dict[str, Any], *, ttl: int) -> None:
+    async def set(self, url: "str", document: "dict[str, Any]", *, ttl: "int") -> "None":
         self.sets += 1
         self.store[url] = document
 
-    async def invalidate(self, url: str) -> None:
+    async def invalidate(self, url: "str") -> "None":
         self.invalidations += 1
         self.store.pop(url, None)
 
 
-def test_custom_cache_satisfies_protocol() -> None:
+def test_custom_cache_satisfies_protocol() -> "None":
     """Duck-typed implementations must pass the :class:`JWKSCache` runtime check."""
     cache: JWKSCache = _InMemoryJWKSCache()
     assert isinstance(cache, JWKSCache)
 
 
 @pytest.mark.anyio
-async def test_default_cache_roundtrip() -> None:
+async def test_default_cache_roundtrip() -> "None":
     cache = DefaultJWKSCache()
     await cache.set("https://example/x", {"keys": []}, ttl=10)
     assert (await cache.get("https://example/x")) == {"keys": []}
 
 
 @pytest.mark.anyio
-async def test_default_cache_ttl_expiry(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_default_cache_ttl_expiry(monkeypatch: "pytest.MonkeyPatch") -> "None":
     cache = DefaultJWKSCache()
     now = [100.0]
     monkeypatch.setattr("litestar_mcp.auth.oidc.monotonic", lambda: now[0])
@@ -68,7 +68,7 @@ async def test_default_cache_ttl_expiry(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 @pytest.mark.anyio
-async def test_default_cache_invalidate() -> None:
+async def test_default_cache_invalidate() -> "None":
     cache = DefaultJWKSCache()
     await cache.set("u", {"k": 1}, ttl=60)
     await cache.invalidate("u")
@@ -76,7 +76,7 @@ async def test_default_cache_invalidate() -> None:
 
 
 @pytest.mark.anyio
-async def test_default_cache_clear() -> None:
+async def test_default_cache_clear() -> "None":
     cache = DefaultJWKSCache()
     await cache.set("a", {"k": 1}, ttl=60)
     await cache.set("b", {"k": 2}, ttl=60)
@@ -86,11 +86,11 @@ async def test_default_cache_clear() -> None:
 
 
 @pytest.mark.anyio
-async def test_default_cache_concurrent_writes_last_wins() -> None:
+async def test_default_cache_concurrent_writes_last_wins() -> "None":
     """Concurrent writers don't corrupt the cache; last ``set`` wins."""
     cache = DefaultJWKSCache()
 
-    async def writer(value: int) -> None:
+    async def writer(value: "int") -> "None":
         await cache.set("u", {"k": value}, ttl=60)
 
     await asyncio.gather(writer(1), writer(2))
@@ -99,14 +99,14 @@ async def test_default_cache_concurrent_writes_last_wins() -> None:
 
 
 @pytest.mark.anyio
-async def test_get_default_cache_returns_singleton() -> None:
+async def test_get_default_cache_returns_singleton() -> "None":
     from litestar_mcp.auth.oidc import get_default_cache
 
     assert get_default_cache() is get_default_cache()
 
 
 @pytest.mark.anyio
-async def test_reset_default_cache_clears_state() -> None:
+async def test_reset_default_cache_clears_state() -> "None":
     from litestar_mcp.auth.oidc import get_default_cache, reset_default_cache
 
     cache = get_default_cache()
@@ -116,7 +116,7 @@ async def test_reset_default_cache_clears_state() -> None:
 
 
 @pytest.mark.anyio
-async def test_injected_cache_consulted_before_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_injected_cache_consulted_before_fetch(monkeypatch: "pytest.MonkeyPatch") -> "None":
     """``_validate_oidc_bearer`` reads from the injected cache before dispatching httpx."""
     import base64
 
@@ -146,7 +146,7 @@ async def test_injected_cache_consulted_before_fetch(monkeypatch: pytest.MonkeyP
     cache = _InMemoryJWKSCache()
     await cache.set("https://issuer.test/keys", jwks, ttl=60)
 
-    async def fail_fetch(url: str) -> dict[str, Any]:
+    async def fail_fetch(url: "str") -> "dict[str, Any]":
         msg = "Network fetch must not be called when cache hits"
         raise AssertionError(msg)
 

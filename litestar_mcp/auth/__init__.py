@@ -16,8 +16,6 @@ Exports:
 - :data:`TokenValidator` — type alias for the async validator signature.
 """
 
-from __future__ import annotations
-
 from litestar_mcp.auth.backend import MCPAuthBackend, MCPAuthConfig, OIDCProviderConfig
 from litestar_mcp.auth.oidc import DefaultJWKSCache, JWKSCache, TokenValidator, create_oidc_validator
 

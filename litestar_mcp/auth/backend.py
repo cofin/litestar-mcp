@@ -7,8 +7,6 @@ protected-resource discovery manifest (:class:`MCPAuthConfig`). Before
 v0.5.0 these lived in separate modules; they are now consolidated here.
 """
 
-from __future__ import annotations
-
 import inspect
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
@@ -70,14 +68,14 @@ class OIDCProviderConfig:
             instance. When ``None`` the process-wide default cache is used.
     """
 
-    issuer: str
-    audience: str | list[str] | None = None
-    jwks_uri: str | None = None
-    discovery_url: str | None = None
-    algorithms: list[str] = field(default_factory=lambda: ["RS256"])
-    cache_ttl: int = DEFAULT_JWKS_CACHE_TTL_SECONDS
-    clock_skew: int = DEFAULT_CLOCK_SKEW_SECONDS
-    jwks_cache: JWKSCache | None = None
+    issuer: "str"
+    audience: "str | list[str] | None" = None
+    jwks_uri: "str | None" = None
+    discovery_url: "str | None" = None
+    algorithms: "list[str]" = field(default_factory=lambda: ["RS256"])
+    cache_ttl: "int" = DEFAULT_JWKS_CACHE_TTL_SECONDS
+    clock_skew: "int" = DEFAULT_CLOCK_SKEW_SECONDS
+    jwks_cache: "JWKSCache | None" = None
 
 
 @dataclass
@@ -96,9 +94,9 @@ class MCPAuthConfig:
         scopes: Mapping of scope name to human-readable description.
     """
 
-    issuer: str | None = None
-    audience: str | list[str] | None = None
-    scopes: dict[str, str] | None = None
+    issuer: "str | None" = None
+    audience: "str | list[str] | None" = None
+    scopes: "dict[str, str] | None" = None
 
 
 # Authentication middleware
@@ -132,15 +130,15 @@ class MCPAuthBackend(AbstractAuthenticationMiddleware):
 
     def __init__(
         self,
-        app: ASGIApp,
-        providers: Sequence[OIDCProviderConfig] = (),
-        token_validator: TokenValidatorFn | None = None,
-        user_resolver: UserResolver | None = None,
-        exclude: str | list[str] | None = None,
-        exclude_from_auth_key: str = "exclude_from_auth",
-        exclude_http_methods: Sequence[Method] | None = None,
-        scopes: Scopes | None = None,
-    ) -> None:
+        app: "ASGIApp",
+        providers: "Sequence[OIDCProviderConfig]" = (),
+        token_validator: "TokenValidatorFn | None" = None,
+        user_resolver: "UserResolver | None" = None,
+        exclude: "str | list[str] | None" = None,
+        exclude_from_auth_key: "str" = "exclude_from_auth",
+        exclude_http_methods: "Sequence[Method] | None" = None,
+        scopes: "Scopes | None" = None,
+    ) -> "None":
         super().__init__(
             app=app,
             exclude=exclude,
@@ -152,7 +150,7 @@ class MCPAuthBackend(AbstractAuthenticationMiddleware):
         self.token_validator = token_validator
         self.user_resolver = user_resolver
 
-    async def authenticate_request(self, connection: ASGIConnection[Any, Any, Any, Any]) -> AuthenticationResult:
+    async def authenticate_request(self, connection: "ASGIConnection[Any, Any, Any, Any]") -> "AuthenticationResult":
         auth_header = connection.headers.get("authorization", "")
         if not auth_header.startswith(_BEARER_PREFIX):
             raise NotAuthorizedException(
@@ -171,7 +169,7 @@ class MCPAuthBackend(AbstractAuthenticationMiddleware):
         user = await self._resolve_user(claims, connection.app) if self.user_resolver is not None else None
         return AuthenticationResult(user=user, auth=claims)
 
-    async def _validate(self, token: str) -> dict[str, Any] | None:
+    async def _validate(self, token: "str") -> "dict[str, Any] | None":
         if self.token_validator is not None:
             claims = await self.token_validator(token)
             if claims is not None:
@@ -182,7 +180,7 @@ class MCPAuthBackend(AbstractAuthenticationMiddleware):
                 return claims
         return None
 
-    async def _resolve_user(self, claims: dict[str, Any], app: Any) -> Any:
+    async def _resolve_user(self, claims: "dict[str, Any]", app: "Any") -> "Any":
         assert self.user_resolver is not None  # noqa: S101 - guarded by caller
         result = self.user_resolver(claims, app)
         if inspect.isawaitable(result):

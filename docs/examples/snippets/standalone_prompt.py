@@ -6,7 +6,7 @@ mcp = MCP("my-mcp-server")
 
 
 @mcp.prompt(name="explain_code", description="Ask the model to explain a code snippet.")
-def explain(code: str) -> list[dict[str, Any]]:
+def explain(code: "str") -> "list[dict[str, Any]]":
     return [
         {
             "role": "user",

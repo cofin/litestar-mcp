@@ -7,14 +7,17 @@ import re
 from collections import deque
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Annotated, Any, get_args, get_origin, get_type_hints
+from types import UnionType
+from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin, get_type_hints
 
 from litestar.constants import RESERVED_KWARGS
-from litestar.handlers import BaseRouteHandler
 from litestar.params import ParameterKwarg
 
 from litestar_mcp.typing import DISHKA_INSTALLED, DishkaDependencyKey
 from litestar_mcp.utils import get_handler_function
+
+if TYPE_CHECKING:
+    from litestar.handlers import BaseRouteHandler
 
 _logger = logging.getLogger(__name__)
 
@@ -26,12 +29,12 @@ _ADVERTISED_RESERVED_KWARGS = set(RESERVED_KWARGS) - {"data"}
 class AdvertisedHandlerParameter:
     """Handler parameter metadata relevant to MCP callers."""
 
-    python_name: str
-    wire_name: str
-    annotation: Any
-    required: bool
-    default: Any = inspect.Parameter.empty
-    description: str | None = None
+    python_name: "str"
+    wire_name: "str"
+    annotation: "Any"
+    required: "bool"
+    default: "Any" = inspect.Parameter.empty
+    description: "str | None" = None
 
 
 _GOOGLE_SECTION_HEADERS = frozenset(
@@ -60,7 +63,7 @@ _GOOGLE_SECTION_HEADERS = frozenset(
 )
 
 
-def _parse_docstring_args(docstring: str | None) -> dict[str, str]:
+def _parse_docstring_args(docstring: "str | None") -> "dict[str, str]":
     """Extract parameter descriptions from a Google-style docstring."""
     if not docstring:
         return {}
@@ -109,7 +112,7 @@ def _parse_docstring_args(docstring: str | None) -> dict[str, str]:
     return result
 
 
-def _path_parameter_names(path_parameters: Mapping[str, Any] | Iterable[str] | None) -> frozenset[str]:
+def _path_parameter_names(path_parameters: "Mapping[str, Any] | Iterable[str] | None") -> "frozenset[str]":
     if path_parameters is None:
         return frozenset()
     if isinstance(path_parameters, Mapping):
@@ -118,10 +121,10 @@ def _path_parameter_names(path_parameters: Mapping[str, Any] | Iterable[str] | N
 
 
 def get_advertised_handler_parameters(
-    handler: BaseRouteHandler,
+    handler: "BaseRouteHandler",
     *,
-    path_parameters: Mapping[str, Any] | Iterable[str] | None = None,
-) -> list[AdvertisedHandlerParameter]:
+    path_parameters: "Mapping[str, Any] | Iterable[str] | None" = None,
+) -> "list[AdvertisedHandlerParameter]":
     """Return handler parameters that MCP callers can supply."""
     try:
         parsed_parameters = handler.parsed_fn_signature.parameters
@@ -178,10 +181,10 @@ def get_advertised_handler_parameters(
 
 
 def extract_advertised_handler_arguments(
-    handler: BaseRouteHandler,
+    handler: "BaseRouteHandler",
     *,
-    path_parameters: Mapping[str, Any] | Iterable[str] | None = None,
-) -> list[dict[str, Any]]:
+    path_parameters: "Mapping[str, Any] | Iterable[str] | None" = None,
+) -> "list[dict[str, Any]]":
     """Return MCP prompt-style argument dicts for a Litestar handler."""
     args: list[dict[str, Any]] = []
     for parameter in get_advertised_handler_parameters(handler, path_parameters=path_parameters):
@@ -194,10 +197,10 @@ def extract_advertised_handler_arguments(
 
 
 def iter_dependency_input_parameters(
-    handler: BaseRouteHandler,
+    handler: "BaseRouteHandler",
     *,
-    path_param_names: Iterable[str] | None = None,
-) -> list[tuple[str, inspect.Parameter]]:
+    path_param_names: "Iterable[str] | None" = None,
+) -> "list[tuple[str, inspect.Parameter]]":
     """Walk dependency providers and yield their user-input params."""
     try:
         top_deps = dict(handler.resolve_dependencies())
@@ -264,7 +267,7 @@ def iter_dependency_input_parameters(
     return collected
 
 
-def parameter_aliases(handler: BaseRouteHandler) -> dict[str, str]:
+def parameter_aliases(handler: "BaseRouteHandler") -> "dict[str, str]":
     """Return ``{wire_name: python_name}`` for handler params whose wire name differs."""
     try:
         fn = get_handler_function(handler)
@@ -276,16 +279,32 @@ def parameter_aliases(handler: BaseRouteHandler) -> dict[str, str]:
     except (TypeError, ValueError):
         return {}
 
+    try:
+        parsed_parameters = handler.parsed_fn_signature.parameters
+    except Exception:  # noqa: BLE001
+        parsed_parameters = {}
+
     handler_name = getattr(fn, "__name__", "<handler>")
+    try:
+        resolved_hints = get_type_hints(fn, include_extras=True)
+    except Exception:  # noqa: BLE001
+        resolved_hints = {}
     aliases: dict[str, str] = {}
     for python_name, param in sig.parameters.items():
+        parsed_parameter = parsed_parameters.get(python_name)
+        if parsed_parameter is not None:
+            param = param.replace(
+                annotation=getattr(parsed_parameter, "raw", getattr(parsed_parameter, "annotation", param.annotation))
+            )
+        elif python_name in resolved_hints:
+            param = param.replace(annotation=resolved_hints[python_name])
         _record_alias(aliases, python_name, _wire_name_for(python_name, param), handler_name)
     for python_name, param in iter_dependency_input_parameters(handler):
         _record_alias(aliases, python_name, _wire_name_for(python_name, param), handler_name)
     return aliases
 
 
-def _handler_dishka_container(handler: BaseRouteHandler) -> Any:
+def _handler_dishka_container(handler: "BaseRouteHandler") -> "Any":
     app = getattr(handler, "app", None)
     if app is None:
         for layer in getattr(handler, "ownership_layers", ()) or ():
@@ -298,7 +317,7 @@ def _handler_dishka_container(handler: BaseRouteHandler) -> Any:
     return getattr(state, "dishka_container", None)
 
 
-def _dishka_component(metas: list[ParameterKwarg]) -> str:
+def _dishka_component(metas: "list[ParameterKwarg]") -> "str":
     for meta in metas:
         component = getattr(meta, "component", None)
         if isinstance(component, str):
@@ -306,7 +325,7 @@ def _dishka_component(metas: list[ParameterKwarg]) -> str:
     return ""
 
 
-def _dishka_dependency_key(annotation: Any) -> Any:
+def _dishka_dependency_key(annotation: "Any") -> "Any":
     inner, metas = _unwrap_annotated(annotation)
     if inner in {Any, inspect.Parameter.empty} or isinstance(inner, str):
         return None
@@ -320,7 +339,7 @@ def _dishka_dependency_key(annotation: Any) -> Any:
         return None
 
 
-def _dishka_registry_has_factory(registry: Any, key: Any) -> bool:
+def _dishka_registry_has_factory(registry: "Any", key: "Any") -> "bool":
     seen: set[int] = set()
     while registry is not None:
         registry_id = id(registry)
@@ -339,7 +358,7 @@ def _dishka_registry_has_factory(registry: Any, key: Any) -> bool:
     return False
 
 
-def _dishka_can_resolve(container: Any, annotation: Any) -> bool:
+def _dishka_can_resolve(container: "Any", annotation: "Any") -> "bool":
     if container is None:
         return False
     key = _dishka_dependency_key(annotation)
@@ -348,14 +367,29 @@ def _dishka_can_resolve(container: Any, annotation: Any) -> bool:
     return _dishka_registry_has_factory(getattr(container, "registry", None), key)
 
 
-def _unwrap_annotated(annotation: Any) -> tuple[Any, list[ParameterKwarg]]:
+def _unwrap_annotated(annotation: "Any") -> "tuple[Any, list[ParameterKwarg]]":
     if get_origin(annotation) is Annotated:
         args = get_args(annotation)
         return args[0], [m for m in args[1:] if isinstance(m, ParameterKwarg)]
+    if get_origin(annotation) in {Union, UnionType}:
+        args = get_args(annotation)
+        stripped_args: list[Any] = []
+        metas: list[ParameterKwarg] = []
+        changed = False
+        for arg in args:
+            stripped, arg_metas = _unwrap_annotated(arg)
+            stripped_args.append(stripped)
+            metas.extend(arg_metas)
+            changed = changed or stripped is not arg or bool(arg_metas)
+        if changed and stripped_args:
+            stripped_union = stripped_args[0]
+            for arg in stripped_args[1:]:
+                stripped_union = stripped_union | arg
+            return stripped_union, metas
     return annotation, []
 
 
-def _wire_name_for(python_name: str, param: inspect.Parameter) -> str:
+def _wire_name_for(python_name: "str", param: "inspect.Parameter") -> "str":
     _, metas = _unwrap_annotated(param.annotation)
     for meta in metas:
         if meta.query:
@@ -369,15 +403,15 @@ def _wire_name_for(python_name: str, param: inspect.Parameter) -> str:
 
 
 def _should_collect_dependency_parameter(
-    pname: str,
-    param: inspect.Parameter,
+    pname: "str",
+    param: "inspect.Parameter",
     *,
-    framework_skip: set[str],
-    dep_names: set[str],
-    top_deps: dict[str, Any],
-    queue: deque[Any],
-    seen_names: set[str],
-) -> bool:
+    framework_skip: "set[str]",
+    dep_names: "set[str]",
+    top_deps: "dict[str, Any]",
+    queue: "deque[Any]",
+    seen_names: "set[str]",
+) -> "bool":
     if param.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}:
         return False
     if pname in framework_skip:
@@ -394,10 +428,10 @@ def _should_collect_dependency_parameter(
 
 
 def _resolve_provider_parameter_annotation(
-    pname: str,
-    param: inspect.Parameter,
-    resolved_hints: dict[str, Any],
-) -> inspect.Parameter:
+    pname: "str",
+    param: "inspect.Parameter",
+    resolved_hints: "dict[str, Any]",
+) -> "inspect.Parameter":
     if isinstance(param.annotation, str):
         resolved = resolved_hints.get(pname)
         if resolved is not None:
@@ -406,11 +440,11 @@ def _resolve_provider_parameter_annotation(
 
 
 def _record_alias(
-    aliases: dict[str, str],
-    python_name: str,
-    wire_name: str,
-    handler_name: str,
-) -> None:
+    aliases: "dict[str, str]",
+    python_name: "str",
+    wire_name: "str",
+    handler_name: "str",
+) -> "None":
     if wire_name == python_name:
         return
     existing = aliases.get(wire_name)

@@ -6,8 +6,6 @@ every runnable reference example under ``docs/examples/`` must expose a
 ``dependencies`` list containing ``litestar-mcp`` (optionally with extras).
 """
 
-from __future__ import annotations
-
 import sys
 from pathlib import Path
 
@@ -22,7 +20,7 @@ from tools.ci.validate_pep723_blocks import EXAMPLES, extract_block, validate_fi
 
 
 @pytest.mark.parametrize("path", EXAMPLES, ids=lambda p: str(p.relative_to(Path.cwd())) if p.is_absolute() else str(p))
-def test_pep723_block_present_and_parses(path: Path) -> None:
+def test_pep723_block_present_and_parses(path: "Path") -> "None":
     """Every runnable example declares a parseable PEP 723 block."""
     assert path.is_file(), f"missing example entrypoint: {path}"
     body = extract_block(path.read_text(encoding="utf-8"))
@@ -45,7 +43,7 @@ def test_pep723_block_present_and_parses(path: Path) -> None:
     )
 
 
-def test_validate_file_returns_no_errors_for_shipped_examples() -> None:
+def test_validate_file_returns_no_errors_for_shipped_examples() -> "None":
     """The CI validator agrees with the shipped example set."""
     errors: list[str] = []
     for path in EXAMPLES:
@@ -53,14 +51,14 @@ def test_validate_file_returns_no_errors_for_shipped_examples() -> None:
     assert errors == [], "\n".join(errors)
 
 
-def test_extract_block_handles_missing_block(tmp_path: Path) -> None:
+def test_extract_block_handles_missing_block(tmp_path: "Path") -> "None":
     """A file without a ``# /// script`` block returns ``None``."""
     script = tmp_path / "no_block.py"
     script.write_text('"""no pep 723 here."""\n\nprint("hi")\n', encoding="utf-8")
     assert extract_block(script.read_text(encoding="utf-8")) is None
 
 
-def test_extract_block_round_trip(tmp_path: Path) -> None:
+def test_extract_block_round_trip(tmp_path: "Path") -> "None":
     """A well-formed block parses back to the declared metadata."""
     script = tmp_path / "ok.py"
     script.write_text(

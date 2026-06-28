@@ -8,7 +8,7 @@ from tests.integration.conftest import AUTH_MODES, auth_headers, parse_tool_payl
 
 
 @pytest.mark.parametrize("auth_mode", AUTH_MODES)
-def test_sqlspec_duckdb_tool_round_trip(duckdb_database_path: str, auth_mode: AuthMode) -> None:
+def test_sqlspec_duckdb_tool_round_trip(duckdb_database_path: "str", auth_mode: "AuthMode") -> "None":
     """The sync DuckDB suite should execute a real SQLSpec-backed MCP tool."""
 
     app = build_sqlspec_duckdb_app(duckdb_database_path, auth_mode=auth_mode)

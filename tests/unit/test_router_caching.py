@@ -1,7 +1,5 @@
 """Unit tests for JSONRPCRouter caching and invalidation."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from litestar import Litestar, get
@@ -10,7 +8,7 @@ from litestar.testing import TestClient
 from litestar_mcp import LitestarMCP
 
 
-def _ensure_session(client: TestClient[Any], base: str = "/mcp") -> str:
+def _ensure_session(client: "TestClient[Any]", base: "str" = "/mcp") -> "str":
     key = f"_mcp_session::{base}"
     sid = getattr(client, key, None)
     if sid is not None:
@@ -35,12 +33,12 @@ def _ensure_session(client: TestClient[Any], base: str = "/mcp") -> str:
 
 
 def _rpc(
-    client: TestClient[Any],
-    method: str,
-    params: dict[str, Any] | None = None,
-    msg_id: int = 1,
-    base: str = "/mcp",
-) -> dict[str, Any]:
+    client: "TestClient[Any]",
+    method: "str",
+    params: "dict[str, Any] | None" = None,
+    msg_id: "int" = 1,
+    base: "str" = "/mcp",
+) -> "dict[str, Any]":
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": msg_id, "method": method}
     if params is not None:
         body["params"] = params
@@ -52,13 +50,13 @@ def _rpc(
     return client.post(base, json=body, headers=headers).json()  # type: ignore[no-any-return]
 
 
-def test_router_caching_and_invalidation() -> None:
+def test_router_caching_and_invalidation() -> "None":
     @get("/users", opt={"mcp_tool": "list_users"})
-    async def get_users() -> list[dict[str, Any]]:
+    async def get_users() -> "list[dict[str, Any]]":
         return [{"id": 1, "name": "Alice"}]
 
     @get("/dynamic", opt={"mcp_tool": "dynamic_tool"})
-    async def dynamic_tool() -> dict[str, str]:
+    async def dynamic_tool() -> "dict[str, str]":
         return {"result": "dynamic"}
 
     plugin = LitestarMCP()

@@ -6,8 +6,6 @@ paths under ``errors[]``) and in which parameters are treated as user-supplied
 arguments vs. DI-injected context.
 """
 
-from __future__ import annotations
-
 import json
 from typing import Annotated, Any
 
@@ -23,7 +21,7 @@ from litestar_mcp import LitestarMCP, MCPConfig
 pytestmark = pytest.mark.unit
 
 
-def _initialize(client: TestClient[Any]) -> str:
+def _initialize(client: "TestClient[Any]") -> "str":
     init = client.post(
         "/mcp",
         json={
@@ -46,7 +44,7 @@ def _initialize(client: TestClient[Any]) -> str:
     return str(sid)
 
 
-def _call(client: TestClient[Any], name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+def _call(client: "TestClient[Any]", name: "str", arguments: "dict[str, Any]") -> "dict[str, Any]":
     sid = _initialize(client)
     resp = client.post(
         "/mcp",
@@ -61,7 +59,7 @@ def _call(client: TestClient[Any], name: str, arguments: dict[str, Any]) -> dict
     return resp.json()  # type: ignore[no-any-return]
 
 
-def _error_payload(result: dict[str, Any]) -> dict[str, Any]:
+def _error_payload(result: "dict[str, Any]") -> "dict[str, Any]":
     """Extract the parsed JSON error body from an isError tool result."""
     assert "result" in result
     assert result["result"]["isError"] is True
@@ -72,14 +70,14 @@ def _error_payload(result: dict[str, Any]) -> dict[str, Any]:
 class Point(msgspec.Struct):
     """Nested payload used for JSON Pointer path assertions."""
 
-    x: int
-    y: int
+    x: "int"
+    y: "int"
 
 
 class Payload(msgspec.Struct):
     """Payload used for data-wrapper validation assertions."""
 
-    title: str
+    title: "str"
 
 
 class _DishkaDriver:
@@ -91,9 +89,9 @@ class _DishkaTaskService:
 
 
 class TestInputValidation:
-    def test_valid_args_pass_through(self) -> None:
+    def test_valid_args_pass_through(self) -> "None":
         @get("/greet", opt={"mcp_tool": "greet"}, sync_to_thread=False)
-        def greet(name: str) -> dict[str, str]:
+        def greet(name: "str") -> "dict[str, str]":
             return {"hello": name}
 
         app = Litestar(route_handlers=[greet], plugins=[LitestarMCP(MCPConfig())])
@@ -103,9 +101,9 @@ class TestInputValidation:
             assert result["result"]["isError"] is False
             assert json.loads(result["result"]["content"][0]["text"]) == {"hello": "Alice"}
 
-    def test_missing_required_yields_invalid_params(self) -> None:
+    def test_missing_required_yields_invalid_params(self) -> "None":
         @get("/greet", opt={"mcp_tool": "greet"}, sync_to_thread=False)
-        def greet(name: str) -> dict[str, str]:
+        def greet(name: "str") -> "dict[str, str]":
             return {"hello": name}
 
         app = Litestar(route_handlers=[greet], plugins=[LitestarMCP(MCPConfig())])
@@ -116,9 +114,9 @@ class TestInputValidation:
             paths = {e["path"] for e in payload["errors"]}
             assert "/arguments/name" in paths
 
-    def test_wrong_type_yields_invalid_params_with_path(self) -> None:
+    def test_wrong_type_yields_invalid_params_with_path(self) -> "None":
         @get("/add", opt={"mcp_tool": "add"}, sync_to_thread=False)
-        def add(count: int) -> dict[str, int]:
+        def add(count: "int") -> "dict[str, int]":
             return {"count": count}
 
         app = Litestar(route_handlers=[add], plugins=[LitestarMCP(MCPConfig())])
@@ -127,9 +125,9 @@ class TestInputValidation:
             payload = _error_payload(result)
             assert any(e["path"] == "/arguments/count" for e in payload["errors"])
 
-    def test_unexpected_argument_yields_invalid_params(self) -> None:
+    def test_unexpected_argument_yields_invalid_params(self) -> "None":
         @get("/greet", opt={"mcp_tool": "greet"}, sync_to_thread=False)
-        def greet(name: str) -> dict[str, str]:
+        def greet(name: "str") -> "dict[str, str]":
             return {"hello": name}
 
         app = Litestar(route_handlers=[greet], plugins=[LitestarMCP(MCPConfig())])
@@ -140,9 +138,9 @@ class TestInputValidation:
             assert unexpected, payload
             assert "unknown" in unexpected[0]["message"]
 
-    def test_handler_with_no_typed_args_skips_validation(self) -> None:
+    def test_handler_with_no_typed_args_skips_validation(self) -> "None":
         @get("/ping", opt={"mcp_tool": "ping_tool"}, sync_to_thread=False)
-        def ping_tool() -> dict[str, bool]:
+        def ping_tool() -> "dict[str, bool]":
             return {"ok": True}
 
         app = Litestar(route_handlers=[ping_tool], plugins=[LitestarMCP(MCPConfig())])
@@ -154,9 +152,9 @@ class TestInputValidation:
             assert "result" in result
             assert result["result"]["isError"] is False
 
-    def test_msgspec_meta_constraint_enforced(self) -> None:
+    def test_msgspec_meta_constraint_enforced(self) -> "None":
         @get("/bounded", opt={"mcp_tool": "bounded"}, sync_to_thread=False)
-        def bounded(age: Annotated[int, msgspec.Meta(ge=0, le=120)]) -> dict[str, int]:
+        def bounded(age: "Annotated[int, msgspec.Meta(ge=0, le=120)]") -> "dict[str, int]":
             return {"age": age}
 
         app = Litestar(route_handlers=[bounded], plugins=[LitestarMCP(MCPConfig())])
@@ -165,9 +163,9 @@ class TestInputValidation:
             payload = _error_payload(result)
             assert any(e["path"] == "/arguments/age" for e in payload["errors"])
 
-    def test_nested_struct_path_is_json_pointer(self) -> None:
+    def test_nested_struct_path_is_json_pointer(self) -> "None":
         @get("/place", opt={"mcp_tool": "place"}, sync_to_thread=False)
-        def place(point: Point) -> dict[str, Any]:
+        def place(point: "Point") -> "dict[str, Any]":
             return {"x": point.x, "y": point.y}
 
         app = Litestar(route_handlers=[place], plugins=[LitestarMCP(MCPConfig())])
@@ -177,9 +175,9 @@ class TestInputValidation:
             paths = {e["path"] for e in payload["errors"]}
             assert "/arguments/point/x" in paths, payload
 
-    def test_empty_data_wrapper_validates_required_struct_fields(self) -> None:
+    def test_empty_data_wrapper_validates_required_struct_fields(self) -> "None":
         @post("/payload", opt={"mcp_tool": "create_payload"}, sync_to_thread=False)
-        def create_payload(data: Payload) -> dict[str, str]:
+        def create_payload(data: "Payload") -> "dict[str, str]":
             return {"title": data.title}
 
         app = Litestar(route_handlers=[create_payload], plugins=[LitestarMCP(MCPConfig())])
@@ -189,8 +187,8 @@ class TestInputValidation:
             paths = {e["path"] for e in payload["errors"]}
             assert "/arguments/data" in paths, payload
 
-    def test_di_param_not_treated_as_user_arg(self) -> None:
-        async def provide_secret() -> str:
+    def test_di_param_not_treated_as_user_arg(self) -> "None":
+        async def provide_secret() -> "str":
             return "s3cr3t"
 
         @get(
@@ -199,7 +197,7 @@ class TestInputValidation:
             dependencies={"secret": Provide(provide_secret)},
             sync_to_thread=False,
         )
-        def di_tool(name: str, secret: str) -> dict[str, str]:
+        def di_tool(name: "str", secret: "str") -> "dict[str, str]":
             return {"name": name, "secret": secret}
 
         app = Litestar(route_handlers=[di_tool], plugins=[LitestarMCP(MCPConfig())])
@@ -210,9 +208,9 @@ class TestInputValidation:
             assert "result" in result
             assert result["result"]["isError"] is False
 
-    def test_optional_param_with_default_is_not_required(self) -> None:
+    def test_optional_param_with_default_is_not_required(self) -> "None":
         @get("/opt", opt={"mcp_tool": "opt_tool"}, sync_to_thread=False)
-        def opt_tool(name: str = "world") -> dict[str, str]:
+        def opt_tool(name: "str" = "world") -> "dict[str, str]":
             return {"hello": name}
 
         app = Litestar(route_handlers=[opt_tool], plugins=[LitestarMCP(MCPConfig())])
@@ -222,21 +220,20 @@ class TestInputValidation:
             assert result["result"]["isError"] is False
             assert json.loads(result["result"]["content"][0]["text"]) == {"hello": "world"}
 
-    def test_provider_only_param_does_not_crash_validator(self) -> None:
+    def test_provider_only_param_does_not_crash_validator(self) -> "None":
         """Provider-declared params don't appear in ``parsed_fn_signature``.
 
         Before the fix, ``declared_by_name[name]`` raised ``KeyError`` for any
         provider param that reached ``_validate_tool_arguments``. The fallback
         resolves the provider's annotations via ``typing.get_type_hints`` at
-        walk time, so PEP 563 stringified annotations (this module uses
-        ``from __future__ import annotations``) resolve to real types --
+        walk time, so stringified annotations resolve to real types --
         ``msgspec.convert`` would otherwise see ``'int'`` strings and bail.
         """
         from litestar.params import Dependency
 
         from litestar_mcp.services.handler import _validate_tool_arguments
 
-        async def provide_pagination(limit: int = 20, offset: int = 0) -> dict[str, int]:
+        async def provide_pagination(limit: "int" = 20, offset: "int" = 0) -> "dict[str, int]":
             return {"limit": limit, "offset": offset}
 
         @get(
@@ -246,8 +243,8 @@ class TestInputValidation:
             sync_to_thread=False,
         )
         def pp_tool(
-            pagination: Annotated[dict[str, int], Dependency(skip_validation=True)],
-        ) -> dict[str, int]:
+            pagination: "Annotated[dict[str, int], Dependency(skip_validation=True)]",
+        ) -> "dict[str, int]":
             return pagination
 
         app = Litestar(route_handlers=[pp_tool], plugins=[LitestarMCP(MCPConfig())])
@@ -275,7 +272,7 @@ class TestInputValidation:
             assert ok["result"]["isError"] is False
             assert json.loads(ok["result"]["content"][0]["text"]) == {"limit": 7, "offset": 3}
 
-    def test_dishka_resolved_provider_param_is_not_required(self) -> None:
+    def test_dishka_resolved_provider_param_is_not_required(self) -> "None":
         from dishka import Provider, Scope, make_async_container, provide
         from dishka.integrations.litestar import LitestarProvider, setup_dishka
 
@@ -283,14 +280,14 @@ class TestInputValidation:
             scope = Scope.REQUEST
 
             @provide
-            def driver(self) -> _DishkaDriver:
+            def driver(self) -> "_DishkaDriver":
                 return _DishkaDriver()
 
-        async def provide_task_service(driver: _DishkaDriver) -> _DishkaTaskService:
+        async def provide_task_service(driver: "_DishkaDriver") -> "_DishkaTaskService":
             return _DishkaTaskService()
 
         @get("/hello", opt={"mcp_tool": "hello"}, sync_to_thread=False)
-        def hello(name: FromQuery[str]) -> dict[str, str]:
+        def hello(name: "FromQuery[str]") -> "dict[str, str]":
             return {"hello": name}
 
         app = Litestar(

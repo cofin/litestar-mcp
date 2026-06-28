@@ -23,7 +23,7 @@ START_MARKER = "# start-example"
 END_MARKER = "# end-example"
 
 
-def iter_marker_blocks(text: str) -> list[tuple[int, int, str]]:
+def iter_marker_blocks(text: "str") -> "list[tuple[int, int, str]]":
     """Return ``(start_line, end_line, block_source)`` tuples for each marker pair.
 
     ``start_line`` and ``end_line`` are 1-based. ``block_source`` is the raw
@@ -49,7 +49,7 @@ def iter_marker_blocks(text: str) -> list[tuple[int, int, str]]:
     return blocks
 
 
-def validate_file(path: Path) -> list[str]:
+def validate_file(path: "Path") -> "list[str]":
     """Return a list of error messages for ``path``. Empty list means OK."""
     errors: list[str] = []
     try:
@@ -71,7 +71,7 @@ def validate_file(path: Path) -> list[str]:
     return errors
 
 
-def walk(root: Path) -> list[Path]:
+def walk(root: "Path") -> "list[Path]":
     """Return every ``.py`` file under ``root`` that contains a marker pair."""
     results: list[Path] = []
     for path in sorted(root.rglob("*.py")):
@@ -84,7 +84,7 @@ def walk(root: Path) -> list[Path]:
     return results
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: "list[str] | None" = None) -> "int":
     """CLI entrypoint. Returns process exit code."""
     argv = argv if argv is not None else sys.argv[1:]
     root = Path(argv[0]) if argv else Path("docs/examples")

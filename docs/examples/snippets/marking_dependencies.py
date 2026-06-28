@@ -8,11 +8,11 @@ from litestar.di import Provide
 from litestar_mcp import LitestarMCP
 
 
-async def provide_current_user() -> dict[str, str]:
+async def provide_current_user() -> "dict[str, str]":
     return {"id": "u-1", "role": "admin"}
 
 
-def build() -> Litestar:
+def build() -> "Litestar":
     # start-example
     @get("/me", mcp_tool="whoami", dependencies={"current_user": Provide(provide_current_user)})
     async def whoami(current_user: "dict[str, Any]") -> "dict[str, Any]":

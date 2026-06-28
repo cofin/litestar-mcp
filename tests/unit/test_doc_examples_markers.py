@@ -13,7 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 
-def test_doc_example_markers_are_self_contained() -> None:
+def test_doc_example_markers_are_self_contained() -> "None":
     from tools.ci.validate_doc_markers import main
 
     exit_code = main([str(REPO_ROOT / "docs" / "examples")])

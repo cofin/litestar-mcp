@@ -5,10 +5,10 @@ from litestar import Litestar, get
 from litestar_mcp import LitestarMCP
 
 
-def build() -> Litestar:
+def build() -> "Litestar":
     # start-example
     @get("/users/{user_id:int}", mcp_tool="get_user")
-    async def get_user(user_id: int) -> dict[str, int]:
+    async def get_user(user_id: "int") -> "dict[str, int]":
         """Return a user by ID - exposed as the ``get_user`` MCP tool."""
         return {"id": user_id}
 

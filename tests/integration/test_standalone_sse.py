@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 
 import pytest
@@ -11,11 +9,11 @@ from tests.integration.conftest import rpc
 pytestmark = pytest.mark.integration
 
 
-def test_standalone_mcp_tool_integration() -> None:
+def test_standalone_mcp_tool_integration() -> "None":
     mcp = MCP(name="test-mcp")
 
     @mcp.tool(name="echo", description="Echo message")
-    def echo_fn(message: str) -> str:
+    def echo_fn(message: "str") -> "str":
         return message
 
     with TestClient(app=mcp.app) as client:
@@ -38,11 +36,11 @@ def test_standalone_mcp_tool_integration() -> None:
         assert content[0]["text"] == "hello"
 
 
-def test_standalone_mcp_resource_integration() -> None:
+def test_standalone_mcp_resource_integration() -> "None":
     mcp = MCP(name="test-mcp")
 
     @mcp.resource(uri="file://foo/bar", name="foo", description="Foo file")
-    def read_foo() -> str:
+    def read_foo() -> "str":
         return "foo-content"
 
     with TestClient(app=mcp.app) as client:
@@ -61,11 +59,11 @@ def test_standalone_mcp_resource_integration() -> None:
         assert json.loads(contents[0]["text"]) == "foo-content"
 
 
-def test_standalone_mcp_prompt_integration() -> None:
+def test_standalone_mcp_prompt_integration() -> "None":
     mcp = MCP(name="test-mcp")
 
     @mcp.prompt(name="greet", description="Greet prompt")
-    def greet_prompt(name: str) -> str:
+    def greet_prompt(name: "str") -> "str":
         return f"Hello {name}!"
 
     with TestClient(app=mcp.app) as client:

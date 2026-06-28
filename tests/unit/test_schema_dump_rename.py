@@ -21,33 +21,33 @@ pytestmark = pytest.mark.unit
 class CamelStruct(Struct, rename="camel"):
     """Canonical camelCase struct used across the rename parametrizations."""
 
-    foo_bar: int = 0
-    baz_qux: str = ""
+    foo_bar: "int" = 0
+    baz_qux: "str" = ""
 
 
 class KebabStruct(Struct, rename="kebab"):
-    foo_bar: int = 0
+    foo_bar: "int" = 0
 
 
 class PascalStruct(Struct, rename="pascal"):
-    foo_bar: int = 0
+    foo_bar: "int" = 0
 
 
-def _shout(name: str) -> str:
+def _shout(name: "str") -> "str":
     return name.upper()
 
 
 class CallableRenameStruct(Struct, rename=_shout):
-    foo_bar: int = 0
+    foo_bar: "int" = 0
 
 
 class NoRenameStruct(Struct):
-    foo_bar: int = 0
+    foo_bar: "int" = 0
 
 
 class CamelWithUnset(Struct, rename="camel"):
-    foo_bar: int | UnsetType = UNSET
-    always_set: str = "x"
+    foo_bar: "int | UnsetType" = UNSET
+    always_set: "str" = "x"
 
 
 class Outer(Struct, rename="camel"):
@@ -55,54 +55,54 @@ class Outer(Struct, rename="camel"):
 
 
 class InnerCamel(Struct, rename="camel"):
-    nested_name: str = ""
+    nested_name: "str" = ""
 
 
 @dataclass
 class DcPoint:
-    x: int = 0
-    y: int = 0
+    x: "int" = 0
+    y: "int" = 0
 
 
 @pytest.mark.parametrize("exclude_unset", [True, False])
-def test_schema_dump_honors_camel_rename(exclude_unset: bool) -> None:
+def test_schema_dump_honors_camel_rename(exclude_unset: "bool") -> "None":
     """CamelStruct fields must emit ``fooBar`` / ``bazQux`` keys."""
     dumped = schema_dump(CamelStruct(foo_bar=7, baz_qux="hi"), exclude_unset=exclude_unset)
     assert dumped == {"fooBar": 7, "bazQux": "hi"}
 
 
 @pytest.mark.parametrize("exclude_unset", [True, False])
-def test_schema_dump_honors_kebab_rename(exclude_unset: bool) -> None:
+def test_schema_dump_honors_kebab_rename(exclude_unset: "bool") -> "None":
     dumped = schema_dump(KebabStruct(foo_bar=1), exclude_unset=exclude_unset)
     assert dumped == {"foo-bar": 1}
 
 
 @pytest.mark.parametrize("exclude_unset", [True, False])
-def test_schema_dump_honors_pascal_rename(exclude_unset: bool) -> None:
+def test_schema_dump_honors_pascal_rename(exclude_unset: "bool") -> "None":
     dumped = schema_dump(PascalStruct(foo_bar=1), exclude_unset=exclude_unset)
     assert dumped == {"FooBar": 1}
 
 
 @pytest.mark.parametrize("exclude_unset", [True, False])
-def test_schema_dump_honors_callable_rename(exclude_unset: bool) -> None:
+def test_schema_dump_honors_callable_rename(exclude_unset: "bool") -> "None":
     dumped = schema_dump(CallableRenameStruct(foo_bar=1), exclude_unset=exclude_unset)
     assert dumped == {"FOO_BAR": 1}
 
 
 @pytest.mark.parametrize("exclude_unset", [True, False])
-def test_schema_dump_no_rename_keeps_snake_case(exclude_unset: bool) -> None:
+def test_schema_dump_no_rename_keeps_snake_case(exclude_unset: "bool") -> "None":
     """Regression pin: Structs without ``rename=`` still emit snake_case."""
     dumped = schema_dump(NoRenameStruct(foo_bar=42), exclude_unset=exclude_unset)
     assert dumped == {"foo_bar": 42}
 
 
-def test_schema_dump_exclude_unset_strips_unset_with_rename() -> None:
+def test_schema_dump_exclude_unset_strips_unset_with_rename() -> "None":
     """UNSET values stripped; remaining keys still camelCased."""
     dumped = schema_dump(CamelWithUnset(), exclude_unset=True)
     assert dumped == {"alwaysSet": "x"}
 
 
-def test_schema_dump_include_unset_still_filters_unset_for_msgspec() -> None:
+def test_schema_dump_include_unset_still_filters_unset_for_msgspec() -> "None":
     """``exclude_unset=False`` is a no-op for msgspec Structs.
 
     msgspec's native encoder unconditionally filters ``UNSET`` at the wire
@@ -115,7 +115,7 @@ def test_schema_dump_include_unset_still_filters_unset_for_msgspec() -> None:
     assert "fooBar" not in dumped
 
 
-def test_schema_dump_nested_renamed_struct_recurses_via_native_encoder() -> None:
+def test_schema_dump_nested_renamed_struct_recurses_via_native_encoder() -> "None":
     """Nested Structs now serialize as nested dicts (matches HTTP wire output).
 
     Previous bespoke dumpers stopped at the top-level Struct and left nested
@@ -126,33 +126,33 @@ def test_schema_dump_nested_renamed_struct_recurses_via_native_encoder() -> None
     assert dumped == {"innerField": {"nestedName": "hi"}}
 
 
-def test_schema_dump_dataclass_unchanged() -> None:
+def test_schema_dump_dataclass_unchanged() -> "None":
     """Dataclass path must keep original field names."""
     assert schema_dump(DcPoint(x=1, y=2)) == {"x": 1, "y": 2}
 
 
-def test_schema_dump_primitive_passthrough() -> None:
+def test_schema_dump_primitive_passthrough() -> "None":
     for value in (42, "hello", 3.14, True, None):
         assert schema_dump(value) == value
 
 
-def test_schema_dump_dict_passthrough() -> None:
+def test_schema_dump_dict_passthrough() -> "None":
     source = {"a": 1, "b": {"c": 2}}
     assert schema_dump(source) == source
 
 
 @pytest.fixture
-def camel_roundtrip_app() -> Litestar:
+def camel_roundtrip_app() -> "Litestar":
     """App with a tool returning ``CamelStruct`` — end-to-end path A check."""
 
     @post("/camel", mcp_tool="camel_tool", sync_to_thread=False)
-    def camel_tool() -> CamelStruct:
+    def camel_tool() -> "CamelStruct":
         return CamelStruct(foo_bar=9, baz_qux="wire")
 
     return Litestar(route_handlers=[camel_tool], plugins=[LitestarMCP()])
 
 
-def _rpc(client: TestClient[Any], method: str, params: "dict[str, Any] | None" = None) -> dict[str, Any]:
+def _rpc(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None) -> "dict[str, Any]":
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
     if params is not None:
         body["params"] = params
@@ -164,7 +164,7 @@ def _rpc(client: TestClient[Any], method: str, params: "dict[str, Any] | None" =
     return client.post("/mcp", json=body, headers=headers).json()  # type: ignore[no-any-return]
 
 
-def _ensure_session(client: TestClient[Any]) -> str:
+def _ensure_session(client: "TestClient[Any]") -> "str":
     existing = getattr(client, "_mcp_session", None)
     if existing is not None:
         return str(existing)
@@ -187,7 +187,7 @@ def _ensure_session(client: TestClient[Any]) -> str:
     return str(sid)
 
 
-def test_mcp_tool_emits_camel_case_for_renamed_struct(camel_roundtrip_app: Litestar) -> None:
+def test_mcp_tool_emits_camel_case_for_renamed_struct(camel_roundtrip_app: "Litestar") -> "None":
     """End-to-end: tool returning ``Struct(rename="camel")`` emits camelCase JSON."""
     import json
 

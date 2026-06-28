@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import json
 import os
@@ -16,16 +14,16 @@ pytestmark = pytest.mark.integration
 
 
 class MockStream:
-    def __init__(self, buffer: Any) -> None:
+    def __init__(self, buffer: "Any") -> "None":
         self.buffer = buffer
 
 
 @pytest.mark.anyio
-async def test_standalone_stdio_tool_execution() -> None:
+async def test_standalone_stdio_tool_execution() -> "None":
     mcp = MCP(name="stdio-test")
 
     @mcp.tool(name="greet")
-    def greet(name: str) -> str:
+    def greet(name: "str") -> "str":
         return f"Hello {name}"
 
     # Setup OS pipes
@@ -50,7 +48,7 @@ async def test_standalone_stdio_tool_execution() -> None:
         try:
             loop = asyncio.get_running_loop()
 
-            async def read_line_async() -> bytes:
+            async def read_line_async() -> "bytes":
                 # Timeout after 5s to prevent hanging tests
                 return await asyncio.wait_for(
                     loop.run_in_executor(None, test_stdout_reader.readline),
@@ -108,8 +106,8 @@ async def test_standalone_stdio_tool_execution() -> None:
 
 
 @pytest.mark.anyio
-async def test_standalone_stdio_litestar_dependency_resolution() -> None:
-    def provide_suffix() -> str:
+async def test_standalone_stdio_litestar_dependency_resolution() -> "None":
+    def provide_suffix() -> "str":
         return "!"
 
     @get(
@@ -117,7 +115,7 @@ async def test_standalone_stdio_litestar_dependency_resolution() -> None:
         mcp_tool="greet",
         dependencies={"suffix": Provide(provide_suffix, sync_to_thread=False)},
     )
-    async def greet(name: str, suffix: str) -> dict[str, str]:
+    async def greet(name: "str", suffix: "str") -> "dict[str, str]":
         return {"message": f"Hello {name}{suffix}"}
 
     mcp = MCP(name="stdio-di-test", route_handlers=[greet])
@@ -139,7 +137,7 @@ async def test_standalone_stdio_litestar_dependency_resolution() -> None:
         try:
             loop = asyncio.get_running_loop()
 
-            async def read_line_async() -> bytes:
+            async def read_line_async() -> "bytes":
                 return await asyncio.wait_for(
                     loop.run_in_executor(None, test_stdout_reader.readline),
                     timeout=5.0,
@@ -191,15 +189,15 @@ async def test_standalone_stdio_litestar_dependency_resolution() -> None:
 
 
 @pytest.mark.anyio
-async def test_standalone_stdio_lifespan_hooks() -> None:
+async def test_standalone_stdio_lifespan_hooks() -> "None":
     startup_called = False
     shutdown_called = False
 
-    async def on_startup() -> None:
+    async def on_startup() -> "None":
         nonlocal startup_called
         startup_called = True
 
-    async def on_shutdown() -> None:
+    async def on_shutdown() -> "None":
         nonlocal shutdown_called
         shutdown_called = True
 

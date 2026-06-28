@@ -88,6 +88,8 @@ if __name__ == "__main__":
     mcp.run(port=8000)
 ```
 
+The standalone decorators accept Litestar route-handler keyword arguments such as `dependencies`, `guards`, `response_headers`, `responses`, `summary`, `tags`, DTO options, hooks, and arbitrary extra kwargs stored in `handler.opt`. The `name` keyword names the MCP primitive; use `route_name` to set Litestar's route-handler name separately.
+
 ### With Configuration
 
 ```python

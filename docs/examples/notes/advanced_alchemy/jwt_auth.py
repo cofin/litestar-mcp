@@ -58,13 +58,13 @@ DEFAULT_USER_DIRECTORY = {"alice": "alice-password", "bob": "bob-password"}
 
 
 def create_app(
-    database_path: str | None = None,
+    database_path: "str | None" = None,
     *,
-    token_secret: str,
-    issuer: str = DEFAULT_ISSUER,
-    audience: str = DEFAULT_AUDIENCE,
-    user_directory: dict[str, str] | None = None,
-) -> Litestar:
+    token_secret: "str",
+    issuer: "str" = DEFAULT_ISSUER,
+    audience: "str" = DEFAULT_AUDIENCE,
+    user_directory: "dict[str, str] | None" = None,
+) -> "Litestar":
     """Create the JWT-authenticated Advanced Alchemy reference notes app."""
     sqlite_path = Path(database_path or Path.cwd() / ".reference-notes-aa-jwt.sqlite")
     alchemy_config = SQLAlchemyAsyncConfig(
@@ -74,7 +74,7 @@ def create_app(
         session_config=AsyncSessionConfig(expire_on_commit=False),
     )
 
-    def _sign(sub: str) -> str:
+    def _sign(sub: "str") -> "str":
         return mint_hs256_token(sub, secret=token_secret, issuer=issuer, audience=audience)
 
     login_controller = build_login_controller(
@@ -83,7 +83,7 @@ def create_app(
     )
     oauth_backend = build_oauth_backend(secret=token_secret, issuer=issuer, audience=audience)
 
-    async def _provide_resolved_user(request: Request[Any, Any, Any]) -> AuthenticatedIdentity:
+    async def _provide_resolved_user(request: "Request[Any, Any, Any]") -> "AuthenticatedIdentity":
         user = request.user
         if not isinstance(user, AuthenticatedIdentity):
             msg = "Authenticated identity is required for this endpoint"
@@ -101,18 +101,18 @@ def create_app(
 
         @get("/", mcp_tool=LIST_NOTES_TOOL_NAME)
         async def list_notes(
-            self, note_service: NoteService, resolved_user: AuthenticatedIdentity
-        ) -> OffsetPagination[Note]:
+            self, note_service: "NoteService", resolved_user: "AuthenticatedIdentity"
+        ) -> "OffsetPagination[Note]":
             notes = await note_service.list(NoteRecord.owner_sub == resolved_user.sub)
             return note_service.to_schema(notes, schema_type=Note)
 
         @post("/", mcp_tool=CREATE_NOTE_TOOL_NAME)
         async def create_note(
             self,
-            data: dict[str, Any],
-            note_service: NoteService,
-            resolved_user: AuthenticatedIdentity,
-        ) -> Note:
+            data: "dict[str, Any]",
+            note_service: "NoteService",
+            resolved_user: "AuthenticatedIdentity",
+        ) -> "Note":
             payload = msgspec.convert(data, CreateNoteInput)
             note = await note_service.create(
                 {"title": payload.title, "body": payload.body, "owner_sub": resolved_user.sub},
@@ -123,10 +123,10 @@ def create_app(
         @delete("/{note_id:str}", status_code=HTTP_200_OK, mcp_tool=DELETE_NOTE_TOOL_NAME)
         async def delete_note(
             self,
-            note_id: str,
-            note_service: NoteService,
-            resolved_user: AuthenticatedIdentity,
-        ) -> DeleteNoteResult:
+            note_id: "str",
+            note_service: "NoteService",
+            resolved_user: "AuthenticatedIdentity",
+        ) -> "DeleteNoteResult":
             existing = await note_service.get_one_or_none(
                 NoteRecord.id == UUID(note_id), NoteRecord.owner_sub == resolved_user.sub
             )
@@ -136,11 +136,11 @@ def create_app(
             return DeleteNoteResult(deleted=True, note_id=note_id)
 
     @get("/notes/schema", mcp_resource=NOTES_SCHEMA_RESOURCE_NAME, sync_to_thread=False)
-    def notes_schema() -> NotesSchema:
+    def notes_schema() -> "NotesSchema":
         return NotesSchema()
 
     @get("/app/info", mcp_resource=APP_INFO_RESOURCE_NAME, sync_to_thread=False)
-    def get_api_info() -> AppInfo:
+    def get_api_info() -> "AppInfo":
         return build_app_info(backend="advanced_alchemy", auth_mode="jwt", supports_dishka=False)
 
     mcp_config = MCPConfig(auth=build_mcp_auth_metadata(issuer=issuer, audience=audience))

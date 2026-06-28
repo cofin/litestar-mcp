@@ -11,7 +11,7 @@ from litestar import Litestar
 from litestar_mcp import LitestarMCP
 
 
-def build() -> Litestar:
+def build() -> "Litestar":
     """Build a Litestar application with the LitestarMCP plugin.
 
     Discovery is served at:

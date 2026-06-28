@@ -11,7 +11,7 @@ from litestar_mcp.sse import SSEManager, StreamLimitExceeded
 
 
 @pytest.mark.asyncio
-async def test_sse_manager_enqueue_per_session() -> None:
+async def test_sse_manager_enqueue_per_session() -> "None":
     manager = SSEManager()
     stream_id, stream = await manager.open_stream(session_id="session-a")
     await stream.__anext__()  # Prime event
@@ -26,7 +26,7 @@ async def test_sse_manager_enqueue_per_session() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sse_manager_multiple_sessions() -> None:
+async def test_sse_manager_multiple_sessions() -> "None":
     manager = SSEManager()
     s1_id, s1 = await manager.open_stream(session_id="sess-1")
     s2_id, s2 = await manager.open_stream(session_id="sess-2")
@@ -48,7 +48,7 @@ async def test_sse_manager_multiple_sessions() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sse_manager_broadcast_to_all_sessions() -> None:
+async def test_sse_manager_broadcast_to_all_sessions() -> "None":
     manager = SSEManager()
     s1_id, s1 = await manager.open_stream(session_id="sess-1")
     s2_id, s2 = await manager.open_stream(session_id="sess-2")
@@ -68,7 +68,7 @@ async def test_sse_manager_broadcast_to_all_sessions() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sse_manager_enqueue_direct() -> None:
+async def test_sse_manager_enqueue_direct() -> "None":
     """Verify that enqueue targets a specific stream ID, skipping others in the same session."""
     manager = SSEManager()
     s1_id, s1 = await manager.open_stream(session_id="session-a")
@@ -92,7 +92,7 @@ async def test_sse_manager_enqueue_direct() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sse_manager_prune_throttle(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_sse_manager_prune_throttle(monkeypatch: "pytest.MonkeyPatch") -> "None":
     manager = SSEManager(max_idle_seconds=10.0)
 
     current_time = 100.0
@@ -119,7 +119,7 @@ async def test_sse_manager_prune_throttle(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 @pytest.mark.asyncio
-async def test_max_streams_raises() -> None:
+async def test_max_streams_raises() -> "None":
     manager = SSEManager(max_streams=2, max_idle_seconds=3600.0)
     sid1, _ = await manager.open_stream(session_id="s1")
     sid2, _ = await manager.open_stream(session_id="s2")
@@ -131,7 +131,7 @@ async def test_max_streams_raises() -> None:
 
 
 @pytest.mark.asyncio
-async def test_last_activity_bumps_on_publish(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_last_activity_bumps_on_publish(monkeypatch: "pytest.MonkeyPatch") -> "None":
     manager = SSEManager(max_streams=10, max_idle_seconds=3600.0)
     stream_id, gen = await manager.open_stream(session_id="s1")
     await gen.__anext__()  # prime
@@ -146,7 +146,7 @@ async def test_last_activity_bumps_on_publish(monkeypatch: pytest.MonkeyPatch) -
 
 
 @pytest.mark.asyncio
-async def test_idle_pruning_admits_new_stream(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_idle_pruning_admits_new_stream(monkeypatch: "pytest.MonkeyPatch") -> "None":
     manager = SSEManager(max_streams=1, max_idle_seconds=0.05)
     sid1, gen1 = await manager.open_stream(session_id="s1")
     await gen1.__anext__()
@@ -163,7 +163,7 @@ async def test_idle_pruning_admits_new_stream(monkeypatch: pytest.MonkeyPatch) -
 
 
 @pytest.mark.asyncio
-async def test_replay_from_returns_history_slice() -> None:
+async def test_replay_from_returns_history_slice() -> "None":
     manager = SSEManager()
     stream_id, gen = await manager.open_stream(session_id="s1")
     # prime
@@ -179,7 +179,7 @@ async def test_replay_from_returns_history_slice() -> None:
 
 
 @pytest.mark.asyncio
-async def test_close_session_streams_removes_all() -> None:
+async def test_close_session_streams_removes_all() -> "None":
     manager = SSEManager()
     sid1, _ = await manager.open_stream(session_id="sA")
     sid2, _ = await manager.open_stream(session_id="sA")
@@ -191,7 +191,7 @@ async def test_close_session_streams_removes_all() -> None:
 
 
 @pytest.mark.asyncio
-async def test_published_payload_is_valid_json_decodable_by_litestar() -> None:
+async def test_published_payload_is_valid_json_decodable_by_litestar() -> "None":
     """An enqueued message should be encoded as UTF-8 JSON that Litestar can decode."""
     manager = SSEManager()
     stream_id, gen = await manager.open_stream(session_id="session-a")

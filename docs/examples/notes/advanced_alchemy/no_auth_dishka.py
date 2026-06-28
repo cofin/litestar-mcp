@@ -61,21 +61,21 @@ class NotesDishkaProvider(Provider):
     the ``flow:dishka`` boundary rules.
     """
 
-    def __init__(self, alchemy_config: SQLAlchemyAsyncConfig) -> None:
+    def __init__(self, alchemy_config: "SQLAlchemyAsyncConfig") -> "None":
         super().__init__()
         self.alchemy_config = alchemy_config
 
     @provide(scope=Scope.REQUEST)
-    async def provide_db_session(self) -> AsyncIterator[Any]:
+    async def provide_db_session(self) -> "AsyncIterator[Any]":
         async with self.alchemy_config.get_session() as db_session:
             yield db_session
 
     @provide(scope=Scope.REQUEST)
-    def provide_note_service(self, db_session: Any) -> NoteService:
+    def provide_note_service(self, db_session: "Any") -> "NoteService":
         return NoteService(session=db_session)
 
 
-def create_app(database_path: str | None = None) -> Litestar:
+def create_app(database_path: "str | None" = None) -> "Litestar":
     """Create the Dishka-backed Advanced Alchemy reference notes app (no auth).
 
     Args:
@@ -94,13 +94,13 @@ def create_app(database_path: str | None = None) -> Litestar:
 
     @get("/notes", mcp_tool=LIST_NOTES_TOOL_NAME)
     @inject
-    async def list_notes(note_service: FromDishka[NoteService]) -> OffsetPagination[Note]:
+    async def list_notes(note_service: "FromDishka[NoteService]") -> "OffsetPagination[Note]":
         notes = await note_service.list()
         return note_service.to_schema(notes, schema_type=Note)
 
     @post("/notes", mcp_tool=CREATE_NOTE_TOOL_NAME)
     @inject
-    async def create_note(data: dict[str, Any], note_service: FromDishka[NoteService]) -> Note:
+    async def create_note(data: "dict[str, Any]", note_service: "FromDishka[NoteService]") -> "Note":
         payload = msgspec.convert(data, CreateNoteInput)
         note = await note_service.create({"title": payload.title, "body": payload.body}, auto_commit=True)
         return note_service.to_schema(note, schema_type=Note)
@@ -111,19 +111,19 @@ def create_app(database_path: str | None = None) -> Litestar:
         mcp_tool=DELETE_NOTE_TOOL_NAME,
     )
     @inject
-    async def delete_note(note_id: str, note_service: FromDishka[NoteService]) -> DeleteNoteResult:
+    async def delete_note(note_id: "str", note_service: "FromDishka[NoteService]") -> "DeleteNoteResult":
         await note_service.delete(UUID(note_id), auto_commit=True)
         return DeleteNoteResult(deleted=True, note_id=note_id)
 
     @get("/notes/schema", mcp_resource=NOTES_SCHEMA_RESOURCE_NAME, sync_to_thread=False)
-    def notes_schema() -> NotesSchema:
+    def notes_schema() -> "NotesSchema":
         return NotesSchema()
 
     @get("/app/info", mcp_resource=APP_INFO_RESOURCE_NAME, sync_to_thread=False)
-    def get_api_info() -> AppInfo:
+    def get_api_info() -> "AppInfo":
         return build_app_info(backend="advanced_alchemy", auth_mode="none", supports_dishka=True)
 
-    async def close_container() -> None:
+    async def close_container() -> "None":
         await container.close()
 
     app = Litestar(

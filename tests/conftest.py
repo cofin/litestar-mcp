@@ -5,14 +5,14 @@ import pytest
 pytest_plugins = ["pytest_databases.docker.postgres"]
 
 
-def pytest_configure(config: pytest.Config) -> None:
+def pytest_configure(config: "pytest.Config") -> "None":
     """Register markers for selective unit and integration test runs."""
 
     config.addinivalue_line("markers", "unit: marks tests that do not require external services")
     config.addinivalue_line("markers", "integration: marks tests that require real service backends")
 
 
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+def pytest_collection_modifyitems(items: "list[pytest.Item]") -> "None":
     """Apply default markers based on the split test tree."""
 
     for item in items:

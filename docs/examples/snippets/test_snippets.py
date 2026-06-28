@@ -23,7 +23,7 @@ SNIPPET_MODULES = [
 
 
 @pytest.mark.parametrize("module_name", SNIPPET_MODULES)
-def test_snippet_build_returns_litestar(module_name: str) -> None:
+def test_snippet_build_returns_litestar(module_name: "str") -> "None":
     """Import the snippet module and verify it defines or builds a Litestar application."""
     mod = importlib.import_module(f"docs.examples.snippets.{module_name}")
     if hasattr(mod, "build"):
@@ -38,6 +38,6 @@ def test_snippet_build_returns_litestar(module_name: str) -> None:
 
 
 @pytest.mark.parametrize("module_name", sorted(CLIENT_ONLY_SNIPPET_MODULES))
-def test_client_only_snippet_imports(module_name: str) -> None:
+def test_client_only_snippet_imports(module_name: "str") -> "None":
     """Import client-only snippets that do not define a Litestar application."""
     importlib.import_module(f"docs.examples.snippets.{module_name}")

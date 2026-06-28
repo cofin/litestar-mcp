@@ -11,7 +11,7 @@ from litestar_mcp import LitestarMCP, MCPConfig
 from litestar_mcp.utils import mcp_tool
 
 
-def _ensure_session(client: TestClient[Any]) -> str:
+def _ensure_session(client: "TestClient[Any]") -> "str":
     sid = getattr(client, "_mcp_session", None)
     if sid is not None:
         return sid  # type: ignore[no-any-return]
@@ -36,11 +36,11 @@ def _ensure_session(client: TestClient[Any]) -> str:
 
 
 def _rpc(
-    client: TestClient[Any],
-    method: str,
+    client: "TestClient[Any]",
+    method: "str",
     params: "dict[str, Any] | None" = None,
     headers: "dict[str, str] | None" = None,
-) -> dict[str, Any]:
+) -> "dict[str, Any]":
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
     if params is not None:
         body["params"] = params
@@ -52,10 +52,10 @@ def _rpc(
     return client.post("/mcp", json=body, headers=final_headers).json()  # type: ignore[no-any-return]
 
 
-def _make_task_app() -> Litestar:
+def _make_task_app() -> "Litestar":
     @get("/optional-task", sync_to_thread=False)
     @mcp_tool(name="optional_task", task_support="optional")
-    async def optional_task(delay: float = 0.01) -> dict[str, str]:
+    async def optional_task(delay: "float" = 0.01) -> "dict[str, str]":
         import asyncio
 
         await asyncio.sleep(delay)
@@ -63,7 +63,7 @@ def _make_task_app() -> Litestar:
 
     @get("/required-task", sync_to_thread=False)
     @mcp_tool(name="required_task", task_support="required")
-    async def required_task(delay: float = 0.01) -> dict[str, str]:
+    async def required_task(delay: "float" = 0.01) -> "dict[str, str]":
         import asyncio
 
         await asyncio.sleep(delay)
@@ -71,7 +71,7 @@ def _make_task_app() -> Litestar:
 
     @get("/forbidden-task", sync_to_thread=False)
     @mcp_tool(name="forbidden_task", task_support="forbidden")
-    async def forbidden_task(delay: float = 0.01) -> dict[str, str]:
+    async def forbidden_task(delay: "float" = 0.01) -> "dict[str, str]":
         import asyncio
 
         await asyncio.sleep(delay)
@@ -79,7 +79,7 @@ def _make_task_app() -> Litestar:
 
     @get("/cancel-task", sync_to_thread=False)
     @mcp_tool(name="cancel_task", task_support="optional")
-    async def cancel_task(delay: float = 0.5) -> dict[str, str]:
+    async def cancel_task(delay: "float" = 0.5) -> "dict[str, str]":
         import asyncio
 
         await asyncio.sleep(delay)
@@ -91,7 +91,7 @@ def _make_task_app() -> Litestar:
     )
 
 
-def test_initialize_advertises_task_capabilities() -> None:
+def test_initialize_advertises_task_capabilities() -> "None":
     app = _make_task_app()
     with TestClient(app=app) as client:
         result = _rpc(
@@ -108,7 +108,7 @@ def test_initialize_advertises_task_capabilities() -> None:
         assert result["result"]["capabilities"]["tasks"]["requests"]["tools"]["call"] == {}
 
 
-def test_tools_list_includes_task_support_metadata() -> None:
+def test_tools_list_includes_task_support_metadata() -> "None":
     app = _make_task_app()
     with TestClient(app=app) as client:
         result = _rpc(client, "tools/list")
@@ -119,7 +119,7 @@ def test_tools_list_includes_task_support_metadata() -> None:
         assert tools["forbidden_task"]["execution"]["taskSupport"] == "forbidden"
 
 
-def test_optional_tool_can_be_executed_as_task() -> None:
+def test_optional_tool_can_be_executed_as_task() -> "None":
     app = _make_task_app()
     headers = {"x-mcp-client-id": "task-client-1"}
     with TestClient(app=app) as client:
@@ -146,14 +146,14 @@ def test_optional_tool_can_be_executed_as_task() -> None:
         assert parsed["status"] == "completed"
 
 
-def test_required_task_support_rejects_sync_call() -> None:
+def test_required_task_support_rejects_sync_call() -> "None":
     app = _make_task_app()
     with TestClient(app=app) as client:
         result = _rpc(client, "tools/call", {"name": "required_task", "arguments": {"delay": 0.01}})
         assert result["error"]["code"] == -32600
 
 
-def test_forbidden_task_support_rejects_task_augmentation() -> None:
+def test_forbidden_task_support_rejects_task_augmentation() -> "None":
     app = _make_task_app()
     with TestClient(app=app) as client:
         result = _rpc(
@@ -168,7 +168,7 @@ def test_forbidden_task_support_rejects_task_augmentation() -> None:
         assert result["error"]["code"] == -32601
 
 
-def test_tasks_cancel_marks_task_cancelled() -> None:
+def test_tasks_cancel_marks_task_cancelled() -> "None":
     app = _make_task_app()
     headers = {"x-mcp-client-id": "task-client-2"}
     with TestClient(app=app) as client:

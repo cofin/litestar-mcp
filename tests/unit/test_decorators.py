@@ -5,10 +5,10 @@ from litestar.handlers import get
 from litestar_mcp.utils import get_mcp_metadata, mcp_resource, mcp_tool
 
 
-def test_mcp_tool_decorator_storage() -> None:
+def test_mcp_tool_decorator_storage() -> "None":
     @mcp_tool(name="test_tool")
     @get("/", sync_to_thread=False)
-    def my_handler() -> str:
+    def my_handler() -> "str":
         return "hello"
 
     metadata = get_mcp_metadata(my_handler)
@@ -20,10 +20,10 @@ def test_mcp_tool_decorator_storage() -> None:
     # Note: Litestar handlers might be tricky, but we want a central way to get this.
 
 
-def test_mcp_resource_decorator_storage() -> None:
+def test_mcp_resource_decorator_storage() -> "None":
     @mcp_resource(name="test_resource")
     @get("/", sync_to_thread=False)
-    def my_handler() -> str:
+    def my_handler() -> "str":
         return "hello"
 
     metadata = get_mcp_metadata(my_handler)
@@ -32,7 +32,7 @@ def test_mcp_resource_decorator_storage() -> None:
     assert metadata["name"] == "test_resource"
 
 
-def test_mcp_tool_stores_description_kwargs() -> None:
+def test_mcp_tool_stores_description_kwargs() -> "None":
     @mcp_tool(
         "t",
         description="d",
@@ -41,7 +41,7 @@ def test_mcp_tool_stores_description_kwargs() -> None:
         returns="r",
     )
     @get("/", sync_to_thread=False)
-    def handler() -> str:
+    def handler() -> "str":
         return ""
 
     metadata = get_mcp_metadata(handler)
@@ -52,7 +52,7 @@ def test_mcp_tool_stores_description_kwargs() -> None:
     assert metadata["returns"] == "r"
 
 
-def test_mcp_resource_stores_description_kwargs() -> None:
+def test_mcp_resource_stores_description_kwargs() -> "None":
     @mcp_resource(
         "r",
         description="d",
@@ -61,7 +61,7 @@ def test_mcp_resource_stores_description_kwargs() -> None:
         returns="ret",
     )
     @get("/", sync_to_thread=False)
-    def handler() -> str:
+    def handler() -> "str":
         return ""
 
     metadata = get_mcp_metadata(handler)
@@ -72,10 +72,10 @@ def test_mcp_resource_stores_description_kwargs() -> None:
     assert metadata["returns"] == "ret"
 
 
-def test_description_kwargs_default_to_none_and_omitted_from_metadata() -> None:
+def test_description_kwargs_default_to_none_and_omitted_from_metadata() -> "None":
     @mcp_tool("t")
     @get("/", sync_to_thread=False)
-    def handler() -> str:
+    def handler() -> "str":
         return ""
 
     metadata = get_mcp_metadata(handler)

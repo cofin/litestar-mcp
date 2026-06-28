@@ -10,8 +10,6 @@ If any of these pages disappear, the literalinclude-backed docs grid will
 regress.
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import pytest
@@ -31,16 +29,16 @@ EXPECTED_PAGES = (
 
 
 @pytest.mark.parametrize("page", EXPECTED_PAGES)
-def test_usage_page_present(page: str) -> None:
+def test_usage_page_present(page: "str") -> "None":
     path = USAGE_DIR / page
     assert path.is_file(), f"Expected docs/usage/{page} to exist"
 
 
-def test_usage_index_present() -> None:
+def test_usage_index_present() -> "None":
     assert (USAGE_DIR / "index.rst").is_file()
 
 
-def test_no_code_block_python_in_usage_pages() -> None:
+def test_no_code_block_python_in_usage_pages() -> "None":
     """Every Python example in docs/usage/ must use ``literalinclude``."""
     offenders: list[str] = []
     for rst_path in USAGE_DIR.glob("*.rst"):

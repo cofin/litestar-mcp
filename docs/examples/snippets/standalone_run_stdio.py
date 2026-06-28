@@ -4,7 +4,7 @@ mcp = MCP("stdio-server")
 
 
 @mcp.tool()
-def echo(message: str) -> str:
+def echo(message: "str") -> "str":
     """Echo the message back."""
     return message
 

@@ -4,7 +4,7 @@ mcp = MCP("my-mcp-server", instructions="Exposes utility tools.")
 
 
 @mcp.tool()
-def add(a: int, b: int) -> int:
+def add(a: "int", b: "int") -> "int":
     """Calculate the sum of two integers."""
     return a + b
 

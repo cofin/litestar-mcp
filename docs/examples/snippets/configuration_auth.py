@@ -6,7 +6,7 @@ from litestar_mcp import LitestarMCP, MCPConfig
 from litestar_mcp.auth import MCPAuthConfig
 
 
-def build() -> Litestar:
+def build() -> "Litestar":
     # start-example
     auth = MCPAuthConfig(
         issuer="https://auth.example.com",
