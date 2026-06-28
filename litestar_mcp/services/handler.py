@@ -284,9 +284,7 @@ class MCPHandlerService:
         if self.task_store is None:
             return
         try:
-            result = await self._execute_tool_call(
-                tool_name, handler, tool_args, context, task_id=record.task_id
-            )
+            result = await self._execute_tool_call(tool_name, handler, tool_args, context, task_id=record.task_id)
             await self.task_store.complete(record.task_id, result)
         except JSONRPCErrorException as exc:
             await self.task_store.fail(record.task_id, exc.error)
@@ -374,20 +372,14 @@ class MCPHandlerService:
     async def tools_call(self, params: dict[str, Any], context: RequestContext) -> dict[str, Any]:
         tool_name = params.get("name")
         if not tool_name:
-            raise JSONRPCErrorException(
-                JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'name'")
-            )
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'name'"))
 
         handler = self.discovered_tools.get(tool_name)
         if handler is None:
-            raise JSONRPCErrorException(
-                JSONRPCError(code=INVALID_PARAMS, message=f"Tool not found: {tool_name}")
-            )
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=f"Tool not found: {tool_name}"))
         handler_tags = set(getattr(handler, "tags", None) or [])
         if not should_include_handler(tool_name, handler_tags, self.config):
-            raise JSONRPCErrorException(
-                JSONRPCError(code=INVALID_PARAMS, message=f"Tool not found: {tool_name}")
-            )
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=f"Tool not found: {tool_name}"))
 
         fn = get_handler_function(handler)
         metadata = get_mcp_metadata(handler) or get_mcp_metadata(fn) or {}
@@ -428,9 +420,7 @@ class MCPHandlerService:
             )
 
         record = await self.task_store.create(context.owner_id, task_request.get("ttl"))
-        background_task = asyncio.create_task(
-            self._run_task(record, tool_name, handler, tool_args, context)
-        )
+        background_task = asyncio.create_task(self._run_task(record, tool_name, handler, tool_args, context))
         await self.task_store.attach_background_task(record.task_id, background_task)
         return {"task": record.to_dict()}
 
@@ -507,9 +497,7 @@ class MCPHandlerService:
     async def resources_read(self, params: dict[str, Any], context: RequestContext) -> dict[str, Any]:
         uri = params.get("uri", "")
         if not isinstance(uri, str) or not uri:
-            raise JSONRPCErrorException(
-                JSONRPCError(code=INVALID_PARAMS, message=f"Invalid resource URI: {uri}")
-            )
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=f"Invalid resource URI: {uri}"))
 
         if uri.startswith("litestar://"):
             resource_name = uri[len("litestar://") :]
@@ -606,21 +594,15 @@ class MCPHandlerService:
     async def prompts_get(self, params: dict[str, Any], context: RequestContext) -> dict[str, Any]:
         prompt_name = params.get("name")
         if not prompt_name:
-            raise JSONRPCErrorException(
-                JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'name'")
-            )
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'name'"))
 
         registration = self.discovered_prompts.get(prompt_name)
         if registration is None or not should_include_prompt(registration, self.config):
-            raise JSONRPCErrorException(
-                JSONRPCError(code=INVALID_PARAMS, message=f"Prompt not found: {prompt_name}")
-            )
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=f"Prompt not found: {prompt_name}"))
 
         prompt_args = params.get("arguments", {})
         if not isinstance(prompt_args, dict):
-            raise JSONRPCErrorException(
-                JSONRPCError(code=INVALID_PARAMS, message="Prompt arguments must be an object")
-            )
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Prompt arguments must be an object"))
 
         for arg_key, arg_val in prompt_args.items():
             if not isinstance(arg_val, str):
@@ -636,11 +618,7 @@ class MCPHandlerService:
         if registration.handler is not None:
             declared_args = registration.get_arguments()
             declared_names = {arg["name"] for arg in declared_args}
-            missing = [
-                arg["name"]
-                for arg in declared_args
-                if arg.get("required") and arg["name"] not in prompt_args
-            ]
+            missing = [arg["name"] for arg in declared_args if arg.get("required") and arg["name"] not in prompt_args]
             if missing:
                 raise JSONRPCErrorException(
                     JSONRPCError(
@@ -662,9 +640,7 @@ class MCPHandlerService:
                 )
 
             try:
-                result = await execute_handler(
-                    registration.handler, self.app_ref, prompt_args, request=context.request
-                )
+                result = await execute_handler(registration.handler, self.app_ref, prompt_args, request=context.request)
             except MCPToolErrorResult as err:
                 _logger.warning(
                     "Prompt handler returned error result: %s (status=%d)",
@@ -719,20 +695,14 @@ class MCPHandlerService:
                 get_result["description"] = resolved_description
             return get_result
 
-        raise JSONRPCErrorException(
-            JSONRPCError(code=INTERNAL_ERROR, message=f"Prompt has no callable: {prompt_name}")
-        )
+        raise JSONRPCErrorException(JSONRPCError(code=INTERNAL_ERROR, message=f"Prompt has no callable: {prompt_name}"))
 
     async def tasks_get(self, params: dict[str, Any], context: RequestContext) -> dict[str, Any]:
         if self.task_store is None:
-            raise JSONRPCErrorException(
-                JSONRPCError(code=METHOD_NOT_FOUND, message="Task store not configured")
-            )
+            raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message="Task store not configured"))
         task_id = params.get("taskId")
         if not task_id:
-            raise JSONRPCErrorException(
-                JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'taskId'")
-            )
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'taskId'"))
         try:
             record = await self.task_store.get(task_id, context.owner_id)
         except TaskLookupError as exc:
@@ -741,14 +711,10 @@ class MCPHandlerService:
 
     async def tasks_result(self, params: dict[str, Any], context: RequestContext) -> dict[str, Any]:
         if self.task_store is None:
-            raise JSONRPCErrorException(
-                JSONRPCError(code=METHOD_NOT_FOUND, message="Task store not configured")
-            )
+            raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message="Task store not configured"))
         task_id = params.get("taskId")
         if not task_id:
-            raise JSONRPCErrorException(
-                JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'taskId'")
-            )
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'taskId'"))
         try:
             record = await self.task_store.wait_for_terminal(task_id, context.owner_id)
         except TaskLookupError as exc:
@@ -760,15 +726,11 @@ class MCPHandlerService:
             return record.result
         if record.error is not None:
             raise JSONRPCErrorException(record.error)
-        raise JSONRPCErrorException(
-            JSONRPCError(code=INTERNAL_ERROR, message="Task did not produce a final result")
-        )
+        raise JSONRPCErrorException(JSONRPCError(code=INTERNAL_ERROR, message="Task did not produce a final result"))
 
     async def tasks_list(self, params: dict[str, Any], context: RequestContext) -> dict[str, Any]:
         if self.task_store is None:
-            raise JSONRPCErrorException(
-                JSONRPCError(code=METHOD_NOT_FOUND, message="Task store not configured")
-            )
+            raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message="Task store not configured"))
         limit = params.get("limit", 50)
         if not isinstance(limit, int) or limit <= 0:
             raise JSONRPCErrorException(
@@ -792,14 +754,10 @@ class MCPHandlerService:
 
     async def tasks_cancel(self, params: dict[str, Any], context: RequestContext) -> dict[str, Any]:
         if self.task_store is None:
-            raise JSONRPCErrorException(
-                JSONRPCError(code=METHOD_NOT_FOUND, message="Task store not configured")
-            )
+            raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message="Task store not configured"))
         task_id = params.get("taskId")
         if not task_id:
-            raise JSONRPCErrorException(
-                JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'taskId'")
-            )
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'taskId'"))
         try:
             record = await self.task_store.cancel(task_id, context.owner_id)
         except TaskLookupError as exc:

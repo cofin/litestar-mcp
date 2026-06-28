@@ -103,3 +103,96 @@ async def test_manager_uses_custom_capabilities_and_client_info(manager: MCPSess
     stored = await manager.get(session.id)
     assert stored.capabilities == caps
     assert stored.client_info == info
+
+
+@pytest.mark.asyncio
+async def test_validate_session_exempt_method_no_id(manager: MCPSessionManager) -> None:
+    # Exempt method (ping) with no session ID should return None
+    session = await manager.validate_session(None, "ping")
+    assert session is None
+
+
+@pytest.mark.asyncio
+async def test_validate_session_exempt_method_with_valid_id(manager: MCPSessionManager) -> None:
+    created = await manager.create(protocol_version="2025-11-25")
+    # Exempt method with valid session ID should validate and return the session
+    session = await manager.validate_session(created.id, "ping")
+    assert session is not None
+    assert session.id == created.id
+
+
+@pytest.mark.asyncio
+async def test_validate_session_exempt_method_with_invalid_id(manager: MCPSessionManager) -> None:
+    # Exempt method with invalid session ID should raise SessionTerminated
+    with pytest.raises(SessionTerminated):
+        await manager.validate_session("invalid-id", "ping")
+
+
+@pytest.mark.asyncio
+async def test_validate_session_missing_id_raises(manager: MCPSessionManager) -> None:
+    from litestar_mcp.sessions import SessionMissingError
+
+    # Non-exempt method (tools/list) with no session ID should raise SessionMissingError
+    with pytest.raises(SessionMissingError):
+        await manager.validate_session(None, "tools/list")
+
+
+@pytest.mark.asyncio
+async def test_validate_session_invalid_id_raises(manager: MCPSessionManager) -> None:
+    from litestar_mcp.sessions import SessionMissingError  # noqa: F401
+
+    # Non-exempt method with invalid session ID should raise SessionTerminated
+    with pytest.raises(SessionTerminated):
+        await manager.validate_session("invalid-id", "tools/list")
+
+
+@pytest.mark.asyncio
+async def test_validate_session_valid_initialized(manager: MCPSessionManager) -> None:
+    created = await manager.create(protocol_version="2025-11-25")
+    await manager.mark_initialized(created.id)
+    # Non-exempt method with initialized session should succeed
+    session = await manager.validate_session(created.id, "tools/list")
+    assert session is not None
+    assert session.id == created.id
+    assert session.initialized is True
+
+
+@pytest.mark.asyncio
+async def test_validate_session_uninitialized_raises(manager: MCPSessionManager) -> None:
+    from litestar_mcp.sessions import SessionNotInitializedError
+
+    created = await manager.create(protocol_version="2025-11-25")
+    # Non-exempt method (tools/list) with uninitialized session should raise SessionNotInitializedError
+    with pytest.raises(SessionNotInitializedError):
+        await manager.validate_session(created.id, "tools/list")
+
+
+@pytest.mark.asyncio
+async def test_validate_session_uninitialized_pre_init_allowed(manager: MCPSessionManager) -> None:
+    created = await manager.create(protocol_version="2025-11-25")
+    # Pre-init allowed method (notifications/initialized) with uninitialized session should succeed
+    session = await manager.validate_session(created.id, "notifications/initialized")
+    assert session is not None
+    assert session.id == created.id
+    assert session.initialized is False
+
+
+@pytest.mark.asyncio
+async def test_validate_session_touches_session(manager: MCPSessionManager) -> None:
+    created = await manager.create(protocol_version="2025-11-25")
+    await manager.mark_initialized(created.id)
+    initial_activity = (await manager.get(created.id)).last_activity
+
+    # Wait a small moment to ensure timestamp moves if clock precision is high enough
+    import asyncio
+
+    await asyncio.sleep(0.01)
+
+    # Validate session should touch and update last_activity
+    validated = await manager.validate_session(created.id, "tools/list")
+    assert validated is not None
+    assert validated.last_activity > initial_activity
+
+    # Verify state in store is also updated
+    stored = await manager.get(created.id)
+    assert stored.last_activity > initial_activity

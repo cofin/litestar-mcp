@@ -216,7 +216,7 @@ class TestInputValidation:
         """
         from litestar.params import Dependency
 
-        from litestar_mcp.routes import _validate_tool_arguments
+        from litestar_mcp.services.handler import _validate_tool_arguments
 
         async def provide_pagination(limit: int = 20, offset: int = 0) -> dict[str, int]:
             return {"limit": limit, "offset": offset}

@@ -149,7 +149,7 @@ class TestJSONRPCRouter:
     def test_register_and_dispatch(self) -> None:
         router = JSONRPCRouter()
 
-        async def handler(params: dict[str, Any]) -> dict[str, Any]:
+        async def handler(params: dict[str, Any], request_context: Any) -> dict[str, Any]:
             return {"ok": True}
 
         router.register("test/method", handler)

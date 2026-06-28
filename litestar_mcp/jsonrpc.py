@@ -4,7 +4,10 @@
 import logging
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from litestar_mcp.services.handler import RequestContext
 
 _logger = logging.getLogger(__name__)
 
@@ -61,7 +64,7 @@ class JSONRPCRequest:
 
 
 # Type alias for method handlers
-MethodHandler = Callable[[dict[str, Any]], Coroutine[Any, Any, dict[str, Any]]]
+MethodHandler = Callable[[dict[str, Any], "RequestContext"], Coroutine[Any, Any, dict[str, Any]]]
 
 
 class JSONRPCRouter:
@@ -87,11 +90,12 @@ class JSONRPCRouter:
         """
         self._methods[method] = handler
 
-    async def dispatch(self, request: JSONRPCRequest) -> dict[str, Any] | None:
+    async def dispatch(self, request: JSONRPCRequest, request_context: "RequestContext") -> dict[str, Any] | None:
         """Dispatch a JSON-RPC request to the appropriate handler.
 
         Args:
             request: The parsed JSON-RPC request.
+            request_context: Context of the current request.
 
         Returns:
             A JSON-RPC response dict, or None for notifications.
@@ -106,7 +110,7 @@ class JSONRPCRouter:
             )
 
         try:
-            result = await handler(request.params)
+            result = await handler(request.params, request_context)
         except JSONRPCErrorException as exc:
             if request.is_notification:
                 return None

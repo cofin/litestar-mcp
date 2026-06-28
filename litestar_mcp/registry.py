@@ -304,6 +304,33 @@ class Registry:
         self._templates: dict[str, ResourceTemplate] = {}
         self._prompts: dict[str, PromptRegistration] = {}
         self._sse_manager: SSEManager | None = None
+        self._change_callbacks: list[Callable[[], None]] = []
+
+    def register_change_callback(self, callback: Callable[[], None]) -> None:
+        """Register a callback to be invoked when the registry changes.
+
+        Args:
+            callback: The callback function.
+        """
+        self._change_callbacks.append(callback)
+
+    def unregister_change_callback(self, callback: Callable[[], None]) -> None:
+        """Unregister a change callback.
+
+        Args:
+            callback: The callback function to remove.
+        """
+        if callback in self._change_callbacks:
+            self._change_callbacks.remove(callback)
+
+    def _trigger_change(self) -> None:
+        """Invoke all registered change callbacks."""
+        _logger.warning("Triggering change callbacks, count: %d", len(self._change_callbacks))
+        for callback in self._change_callbacks:
+            _logger.warning(
+                "Invoking callback: %s", callback.__name__ if hasattr(callback, "__name__") else str(callback)
+            )
+            callback()
 
     def set_sse_manager(self, manager: SSEManager) -> None:
         """Set the SSE manager for notifications."""
@@ -337,6 +364,7 @@ class Registry:
         if name in self._tools:
             _logger.warning("Overwriting existing tool registration: %s", name)
         self._tools[name] = handler
+        self._trigger_change()
 
     def register_resource(self, name: str, handler: BaseRouteHandler) -> None:
         """Register a resource.
@@ -348,6 +376,7 @@ class Registry:
         if name in self._resources:
             _logger.warning("Overwriting existing resource registration: %s", name)
         self._resources[name] = handler
+        self._trigger_change()
 
     @property
     def templates(self) -> dict[str, ResourceTemplate]:
@@ -367,6 +396,7 @@ class Registry:
         if name in self._templates:
             _logger.warning("Overwriting existing resource template registration: %s", name)
         self._templates[name] = ResourceTemplate(name=name, template=template, handler=handler)
+        self._trigger_change()
 
     @property
     def prompts(self) -> dict[str, PromptRegistration]:
@@ -409,6 +439,7 @@ class Registry:
             arguments=arguments,
             icons=icons,
         )
+        self._trigger_change()
 
     def register_prompt_handler(
         self,
@@ -453,6 +484,7 @@ class Registry:
             arguments=arguments if arguments is not None else metadata.get("arguments"),
             icons=icons if icons is not None else metadata.get("icons"),
         )
+        self._trigger_change()
 
     async def publish_notification(
         self,

@@ -19,7 +19,31 @@ import msgspec
 from litestar.serialization import decode_json, encode_json
 from litestar.stores.base import Store
 
-__all__ = ("MCPSession", "MCPSessionManager", "SessionTerminated")
+__all__ = (
+    "MCPSession",
+    "MCPSessionManager",
+    "SessionMissingError",
+    "SessionNotInitializedError",
+    "SessionTerminated",
+)
+
+
+_SESSION_EXEMPT_METHODS = frozenset({"initialize", "ping"})
+_PRE_INIT_ALLOWED_METHODS = frozenset({"initialize", "ping", "notifications/initialized"})
+
+
+class SessionMissingError(ValueError):
+    """Raised when Mcp-Session-Id is missing but required."""
+
+    def __init__(self, message: str = "Missing required header: Mcp-Session-Id") -> None:
+        super().__init__(message)
+
+
+class SessionNotInitializedError(RuntimeError):
+    """Raised when a method is called on a session that has not been initialized."""
+
+    def __init__(self, message: str = "Session not initialized") -> None:
+        super().__init__(message)
 
 
 class MCPSession(msgspec.Struct, kw_only=True):
@@ -164,3 +188,34 @@ class MCPSessionManager:
 
     def _ttl(self) -> int:
         return int(self._max_idle_seconds)
+
+    async def validate_session(self, session_id: str | None, method: str) -> MCPSession | None:
+        """Validate the session ID for a given RPC method.
+
+        Args:
+            session_id: The session ID from request headers.
+            method: The JSON-RPC method name.
+
+        Returns:
+            The validated MCPSession, or None if exempt and no session ID was given.
+
+        Raises:
+            SessionMissing: If the session ID is missing but required.
+            SessionTerminated: If the session ID is unknown or expired.
+            SessionNotInitialized: If the session is uninitialized and the method
+                is not allowed pre-initialization.
+        """
+        if method in _SESSION_EXEMPT_METHODS:
+            if not session_id:
+                return None
+            return await self.touch(session_id)
+
+        if not session_id:
+            raise SessionMissingError
+
+        session = await self.touch(session_id)
+
+        if not session.initialized and method not in _PRE_INIT_ALLOWED_METHODS:
+            raise SessionNotInitializedError
+
+        return session

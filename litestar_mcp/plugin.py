@@ -1,5 +1,6 @@
 """Litestar MCP Plugin implementation."""
 
+import logging
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -20,6 +21,8 @@ from litestar_mcp.sessions import MCPSessionManager
 from litestar_mcp.sse import SSEManager
 from litestar_mcp.tasks import InMemoryTaskStore, TaskRecord
 from litestar_mcp.utils import get_handler_function, get_mcp_metadata
+
+_logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from click import Group
@@ -154,6 +157,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         mcp_router = Router(**router_kwargs)
         app_config.route_handlers.append(mcp_router)
         app_config.on_startup.append(self.on_startup)
+        app_config.on_shutdown.append(self.on_shutdown)
 
         @litestar_get("/.well-known/oauth-protected-resource", sync_to_thread=False, opt={"exclude_from_auth": True})
         def oauth_protected_resource(request: Request[Any, Any, Any]) -> dict[str, Any]:
@@ -188,7 +192,27 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         for route in app.routes:
             if hasattr(route, "route_handlers"):
                 all_handlers.extend(route.route_handlers)  # pyright: ignore[reportAttributeAccessIssue]
+        _logger.warning("Plugin on_startup executing...")
         self._discover_mcp_routes(all_handlers)
+
+        def invalidate_router() -> None:
+            _logger.warning("invalidate_router callback triggered!")
+            if hasattr(app.state, "mcp_router"):
+                _logger.warning("Deleting mcp_router from app state")
+                delattr(app.state, "mcp_router")
+
+        self._registry.register_change_callback(invalidate_router)
+        app.state.mcp_router_invalidation_callback = invalidate_router
+        _logger.warning("Registered invalidate_router callback on registry: %s", id(self._registry))
+
+    def on_shutdown(self, app: Litestar) -> None:
+        """Clean up resources on application shutdown."""
+        _logger.warning("Plugin on_shutdown executing...")
+        callback = getattr(app.state, "mcp_router_invalidation_callback", None)
+        if callback is not None:
+            self._registry.unregister_change_callback(callback)
+            delattr(app.state, "mcp_router_invalidation_callback")
+            _logger.warning("Unregistered invalidate_router callback from registry")
 
     def _discover_mcp_routes(self, route_handlers: Sequence[Any]) -> None:
         """Discover routes marked for MCP exposure via opt attribute or decorators."""
