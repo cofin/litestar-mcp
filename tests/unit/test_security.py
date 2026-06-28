@@ -100,7 +100,7 @@ class TestSecurity:
     @pytest.mark.skipif(not JWT_AVAILABLE, reason="JWT auth not available")
     def test_mcp_endpoints_with_jwt_and_guards(self) -> "None":
         jwt_auth: JWTAuth[dict[str, Any], Token] = JWTAuth[dict[str, Any], Token](
-            token_secret="super-secret-key-for-testing",
+            token_secret="super-secret-key-for-testing-32-bytes",
             retrieve_user_handler=lambda token, _: token.extras,
         )
 
@@ -158,7 +158,7 @@ class TestSecurity:
     @pytest.mark.skipif(not JWT_AVAILABLE, reason="JWT auth not available")
     def test_multiple_guards(self) -> "None":
         jwt_auth: JWTAuth[dict[str, Any], Token] = JWTAuth[dict[str, Any], Token](
-            token_secret="super-secret-key-for-testing",
+            token_secret="super-secret-key-for-testing-32-bytes",
             retrieve_user_handler=lambda token, _: token.extras,
         )
 
@@ -211,7 +211,7 @@ class TestSecurity:
     @pytest.mark.skipif(not JWT_AVAILABLE, reason="JWT auth not available")
     def test_guard_only_affects_mcp_endpoints(self) -> "None":
         jwt_auth = JWTAuth[dict[str, Any], Token](
-            token_secret="super-secret-key-for-testing",
+            token_secret="super-secret-key-for-testing-32-bytes",
             retrieve_user_handler=lambda token, _: token.extras,
             exclude=["/public", "/protected"],
         )
@@ -256,7 +256,7 @@ class TestSecurity:
     @pytest.mark.skipif(not JWT_AVAILABLE, reason="JWT auth not available")
     def test_custom_error_handling_in_guards(self) -> "None":
         jwt_auth: JWTAuth[dict[str, Any], Token] = JWTAuth[dict[str, Any], Token](
-            token_secret="super-secret-key-for-testing",
+            token_secret="super-secret-key-for-testing-32-bytes",
             retrieve_user_handler=lambda token, _: token.extras,
         )
 

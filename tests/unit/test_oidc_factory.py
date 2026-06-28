@@ -29,6 +29,9 @@ def anyio_backend() -> "str":
 ISSUER = "https://issuer.example.com"
 AUDIENCE = "my-mcp-audience"
 KID = "test-key"
+VALID_SECRET = b"test-oidc-secret-key-32-bytes-long"
+ALT_SECRET = b"alternate-oidc-secret-key-32-bytes"
+ROGUE_SECRET = b"rogue-oidc-secret-key-32-bytes-long"
 
 
 def _hs256_jwk(secret: "bytes", kid: "str" = KID) -> "dict[str, Any]":
@@ -56,7 +59,7 @@ def _clear_cache() -> "Any":
 
 async def test_factory_returns_claims_for_valid_token() -> "None":
     pytest.importorskip("jwt")
-    secret = b"super-secret-key"
+    secret = VALID_SECRET
     jwks = {"keys": [_hs256_jwk(secret)]}
 
     validator: TokenValidator = create_oidc_validator(
@@ -80,8 +83,8 @@ async def test_factory_returns_claims_for_valid_token() -> "None":
 
 async def test_factory_rejects_wrong_signature() -> "None":
     pytest.importorskip("jwt")
-    real_secret = b"real-secret"
-    rogue_secret = b"rogue-secret"
+    real_secret = VALID_SECRET
+    rogue_secret = ROGUE_SECRET
     jwks = {"keys": [_hs256_jwk(real_secret)]}
 
     validator = create_oidc_validator(
@@ -100,7 +103,7 @@ async def test_factory_rejects_wrong_signature() -> "None":
 
 async def test_factory_rejects_wrong_issuer() -> "None":
     pytest.importorskip("jwt")
-    secret = b"secret"
+    secret = ALT_SECRET
     jwks = {"keys": [_hs256_jwk(secret)]}
 
     validator = create_oidc_validator(
@@ -119,7 +122,7 @@ async def test_factory_rejects_wrong_issuer() -> "None":
 
 async def test_factory_rejects_wrong_audience() -> "None":
     pytest.importorskip("jwt")
-    secret = b"secret"
+    secret = ALT_SECRET
     jwks = {"keys": [_hs256_jwk(secret)]}
 
     validator = create_oidc_validator(
@@ -138,7 +141,7 @@ async def test_factory_rejects_wrong_audience() -> "None":
 
 async def test_factory_clock_skew_accepts_recently_expired() -> "None":
     pytest.importorskip("jwt")
-    secret = b"secret"
+    secret = ALT_SECRET
     jwks = {"keys": [_hs256_jwk(secret)]}
 
     validator = create_oidc_validator(
@@ -167,7 +170,7 @@ async def test_factory_clock_skew_accepts_recently_expired() -> "None":
 
 async def test_factory_clock_skew_rejects_far_expired() -> "None":
     pytest.importorskip("jwt")
-    secret = b"secret"
+    secret = ALT_SECRET
     jwks = {"keys": [_hs256_jwk(secret)]}
 
     validator = create_oidc_validator(
@@ -195,7 +198,7 @@ async def test_factory_clock_skew_rejects_far_expired() -> "None":
 
 async def test_factory_jwks_cache_ttl_respected(monkeypatch: "pytest.MonkeyPatch") -> "None":
     pytest.importorskip("jwt")
-    secret = b"secret"
+    secret = ALT_SECRET
     jwks = {"keys": [_hs256_jwk(secret)]}
 
     fetch_count = 0
@@ -239,7 +242,7 @@ async def test_factory_jwks_cache_ttl_respected(monkeypatch: "pytest.MonkeyPatch
 
 async def test_factory_auto_discovery_when_no_jwks_uri() -> "None":
     pytest.importorskip("jwt")
-    secret = b"secret"
+    secret = ALT_SECRET
     jwks = {"keys": [_hs256_jwk(secret)]}
 
     async def fake_fetch(url: "str") -> "dict[str, Any]":

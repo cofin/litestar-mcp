@@ -124,7 +124,7 @@ async def test_injected_cache_consulted_before_fetch(monkeypatch: "pytest.Monkey
 
     from litestar_mcp.auth.oidc import _validate_oidc_bearer
 
-    secret = b"secret"
+    secret = b"shared-secret-key-for-jwks-cache-32b"
     kid = "test-key"
     jwks = {
         "keys": [

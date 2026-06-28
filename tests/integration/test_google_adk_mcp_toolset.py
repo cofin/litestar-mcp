@@ -28,7 +28,19 @@ if TYPE_CHECKING:
 
 google_adk = pytest.importorskip("google.adk")
 
-pytestmark = [pytest.mark.integration, pytest.mark.adk]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.adk,
+    pytest.mark.filterwarnings(
+        r"ignore:\[EXPERIMENTAL\] feature (PLUGGABLE_AUTH|BASE_AUTHENTICATED_TOOL) is enabled\.:UserWarning:google\.adk\.features\._feature_decorator"
+    ),
+    pytest.mark.filterwarnings(
+        r"ignore:\[EXPERIMENTAL\] feature MCP_GRACEFUL_ERROR_HANDLING is enabled\.:UserWarning:google\.adk\.tools\.mcp_tool\.mcp_toolset"
+    ),
+    pytest.mark.filterwarnings(
+        r"ignore:Your application has authenticated using end user credentials from Google Cloud SDK without a quota project\..*:UserWarning:google\.auth\._default"
+    ),
+]
 
 
 def _free_port() -> "int":

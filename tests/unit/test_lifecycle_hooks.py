@@ -23,6 +23,7 @@ from tests.unit.conftest import get_handler_from_app
 
 if TYPE_CHECKING:
     from litestar.response import Response
+    from litestar.types import Message, Scope
 
 pytestmark = pytest.mark.unit
 
@@ -248,6 +249,31 @@ def test_after_request_mutates_tool_result_content() -> "None":
 
     assert resp["result"]["isError"] is False
     assert "after_request" in resp["result"]["content"][0]["text"]
+
+
+# ---------------------------------------------------------------------------
+# before_send
+# ---------------------------------------------------------------------------
+
+
+def test_before_send_fires_for_synthesized_tool_dispatch() -> "None":
+    seen: list[tuple[str, str]] = []
+
+    async def before_send(message: "Message", scope: "Scope") -> "None":
+        if scope.get("litestar_mcp.internal_dispatch"):
+            seen.append((str(scope["path"]), str(message["type"])))
+
+    @post("/x", mcp_tool="x", sync_to_thread=False)
+    def tool() -> "dict[str, str]":
+        return {"ok": "yes"}
+
+    app = Litestar(route_handlers=[tool], plugins=[LitestarMCP()], before_send=[before_send])
+    with TestClient(app=app) as client:
+        resp = _call_tool(client, "x")
+
+    assert resp["result"]["isError"] is False
+    assert ("/x", "http.response.start") in seen
+    assert ("/x", "http.response.body") in seen
 
 
 # ---------------------------------------------------------------------------

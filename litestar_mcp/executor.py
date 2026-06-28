@@ -29,18 +29,20 @@ from urllib.parse import urlencode
 import msgspec
 from litestar import Litestar, Request
 from litestar._asgi.routing_trie.traversal import parse_path_params
-from litestar.exceptions import ImproperlyConfiguredException
+from litestar.exceptions import ImproperlyConfiguredException, SerializationException
 from litestar.response import Response
+from litestar.serialization import decode_json
 from litestar.types.empty import Empty
 from litestar.utils.sync import ensure_async_callable
 
 from litestar_mcp.utils.handler_signature import get_advertised_handler_parameters
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Sequence
 
     from litestar.handlers.base import BaseRouteHandler
     from litestar.handlers.http_handlers.base import HTTPRouteHandler
+    from litestar.types import Message, Receive, Scope, Send
     from litestar.types.internal_types import PathParameterDefinition
 
     from litestar_mcp.config import MCPConfig
@@ -432,19 +434,24 @@ async def _capture_asgi_response(
     media_type = ""
     body_chunks: list[bytes] = []
 
-    async def _sink_send(message: "dict[str, Any]") -> "None":
+    async def _sink_send(message: "Message") -> "None":
         nonlocal status_code, media_type
         msg_type = message.get("type")
         if msg_type == "http.response.start":
-            status_code = int(message.get("status", 0))
-            for key, value in message.get("headers", []) or []:
+            status_code = cast("int", message.get("status", 0))
+            headers = cast("Sequence[tuple[bytes, bytes]]", message.get("headers", ()) or ())
+            for key, value in headers:
                 if key.lower() == b"content-type":
                     media_type = value.decode("latin-1").split(";")[0].strip()
                     break
         elif msg_type == "http.response.body":
-            body_chunks.append(bytes(message.get("body", b"") or b""))
+            body = cast("bytes", message.get("body", b"") or b"")
+            body_chunks.append(bytes(body))
 
-    await asgi_app(cast("Any", request.scope), cast("Any", request.receive), _sink_send)
+    scope = cast("Scope", request.scope)
+    receive: Receive = request.receive
+    send: Send = request.app._wrap_send(_sink_send, scope)  # noqa: SLF001
+    await asgi_app(scope, receive, send)
 
     if status_code == 0:
         # ASGI app exited without sending http.response.start. Treat as a
@@ -460,8 +467,8 @@ async def _capture_asgi_response(
     if not body:
         return None, status_code
     try:
-        content = msgspec.json.decode(body)
-    except msgspec.DecodeError:
+        content = decode_json(body)
+    except SerializationException:
         return (
             {"error": "non-JSON response from MCP handler", "media_type": media_type or "unknown"},
             _NON_JSON_STATUS,
