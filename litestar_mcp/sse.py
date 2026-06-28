@@ -32,6 +32,8 @@ from litestar.serialization import encode_json
 
 __all__ = ("SSEManager", "SSEMessage", "StreamLimitExceeded")
 
+_PRUNE_THROTTLE_SECONDS = 30.0
+
 
 class StreamLimitExceeded(Exception):  # noqa: N818
     """Raised by :meth:`SSEManager.open_stream` when ``max_streams`` is hit."""
@@ -74,6 +76,7 @@ class SSEManager:
         self._lock = asyncio.Lock()
         self._max_streams = max_streams
         self._max_idle_seconds = max_idle_seconds
+        self._last_prune_time: float | None = None
 
     async def open_stream(
         self,
@@ -95,7 +98,8 @@ class SSEManager:
             A ``(stream_id, async_generator)`` pair.
         """
         async with self._lock:
-            self._prune_idle_locked()
+            force_prune = len(self._streams) >= self._max_streams
+            self._prune_idle_locked(force=force_prune)
             state, replay_messages = self._get_or_create_stream_locked(session_id, last_event_id)
 
         async def stream() -> AsyncGenerator[SSEMessage, None]:
@@ -126,7 +130,7 @@ class SSEManager:
             sse_message = SSEMessage(data=payload, id=f"{stream_id}:{len(state.history)}")
             state.history.append(sse_message)
             state.last_activity = time.monotonic()
-            await state.queue.put(sse_message)
+            state.queue.put_nowait(sse_message)
 
     async def publish(self, message: dict[str, Any], session_id: str | None = None) -> None:
         """Publish a JSON payload to one or all sessions.
@@ -148,7 +152,7 @@ class SSEManager:
                 sse_message = SSEMessage(data=payload, id=f"{stream_id}:{len(state.history)}")
                 state.history.append(sse_message)
                 state.last_activity = time.monotonic()
-                await state.queue.put(sse_message)
+                state.queue.put_nowait(sse_message)
 
     async def replay_from(self, stream_id: str, last_event_id: str) -> list[SSEMessage]:
         """Return buffered messages after ``last_event_id`` for a stream."""
@@ -168,10 +172,14 @@ class SSEManager:
         self._session_streams.pop(session_id, None)
         return stream_ids
 
-    def _prune_idle_locked(self) -> None:
+    def _prune_idle_locked(self, force: bool = False) -> None:
         if self._max_idle_seconds <= 0:
             return
-        cutoff = time.monotonic() - self._max_idle_seconds
+        now = time.monotonic()
+        if not force and self._last_prune_time is not None and now - self._last_prune_time < _PRUNE_THROTTLE_SECONDS:
+            return
+        self._last_prune_time = now
+        cutoff = now - self._max_idle_seconds
         to_remove = [sid for sid, state in self._streams.items() if state.last_activity < cutoff]
         for stream_id in to_remove:
             self._close_stream_locked(stream_id)

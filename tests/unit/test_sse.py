@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import time
 
 import pytest
 
@@ -87,3 +88,30 @@ async def test_sse_manager_enqueue_direct() -> None:
 
     manager.disconnect(s1_id)
     manager.disconnect(s2_id)
+
+
+@pytest.mark.asyncio
+async def test_sse_manager_prune_throttle(monkeypatch: pytest.MonkeyPatch) -> None:
+    manager = SSEManager(max_idle_seconds=10.0)
+
+    current_time = 100.0
+    monkeypatch.setattr(time, "monotonic", lambda: current_time)
+
+    # First stream open triggers pruning unconditionally, setting _last_prune_time
+    s1_id, _ = await manager.open_stream(session_id="sess-1")
+    assert manager._last_prune_time == 100.0
+
+    # Opening another stream within the 30-second throttle window (e.g. 15s later) skips pruning
+    current_time = 115.0
+    s2_id, _ = await manager.open_stream(session_id="sess-2")
+    assert manager._last_prune_time == 100.0  # Unchanged
+
+    # Opening a stream after the 30-second window (e.g. 35s later) executes pruning
+    current_time = 135.0
+    s3_id, _ = await manager.open_stream(session_id="sess-3")
+    assert manager._last_prune_time == 135.0  # Updated
+
+    # Cleanup
+    manager.disconnect(s1_id)
+    manager.disconnect(s2_id)
+    manager.disconnect(s3_id)

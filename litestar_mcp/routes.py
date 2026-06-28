@@ -369,8 +369,7 @@ class MCPController(Controller):
                 registry=registry,
                 task_store=task_store,
             )
-        else:
-            router = app.state.mcp_router
+        router = app.state.mcp_router
 
         result = await router.dispatch(rpc_request, request_context)
 
