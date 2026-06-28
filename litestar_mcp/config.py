@@ -159,6 +159,7 @@ class MCPConfig:
     base_path: str = "/mcp"
     include_in_schema: bool = False
     name: str | None = None
+    instructions: str | None = None
     guards: list[Any] | None = None
     allowed_origins: list[str] | None = None
     include_operations: list[str] | None = None

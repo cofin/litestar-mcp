@@ -18,6 +18,13 @@ examples drawn from :mod:`docs.examples`.
         Configure :class:`~litestar_mcp.MCPConfig`, task lifecycle, and
         environment overrides.
 
+    .. grid-item-card:: Standalone Application
+        :link: standalone_app
+        :link-type: doc
+
+        A class wrapping Litestar to register tools,
+        resources, and prompts declaratively.
+
     .. grid-item-card:: Marking Routes
         :link: marking_routes
         :link-type: doc
@@ -91,6 +98,7 @@ examples drawn from :mod:`docs.examples`.
     :maxdepth: 1
 
     configuration
+    standalone_app
     marking_routes
     prompts
     resources

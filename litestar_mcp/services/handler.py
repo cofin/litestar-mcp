@@ -36,7 +36,7 @@ from litestar_mcp.registry import (
     resolve_prompt_description,
     should_include_prompt,
 )
-from litestar_mcp.schema_builder import _unwrap_annotated, generate_schema_for_handler
+from litestar_mcp.schema_builder import generate_schema_for_handler
 from litestar_mcp.tasks import InMemoryTaskStore, TaskLookupError, TaskRecord, TaskStateError
 from litestar_mcp.utils import (
     get_handler_function,
@@ -45,7 +45,7 @@ from litestar_mcp.utils import (
     render_description,
     should_include_handler,
 )
-from litestar_mcp.utils.handler_signature import get_advertised_handler_parameters
+from litestar_mcp.utils.handler_signature import _unwrap_annotated, get_advertised_handler_parameters
 
 _logger = logging.getLogger(__name__)
 

@@ -1,16 +1,14 @@
 """Unit tests for MCPHandlerService in isolation."""
 
 from typing import Any
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-
 from litestar import Litestar, get
-from litestar.handlers import BaseRouteHandler
 
-from litestar_mcp.config import MCPConfig, MCPTaskConfig
+from litestar_mcp.config import MCPConfig
+from litestar_mcp.jsonrpc import INVALID_PARAMS, JSONRPCErrorException
+from litestar_mcp.registry import PromptRegistration
 from litestar_mcp.services.handler import MCPHandlerService, RequestContext
-from litestar_mcp.jsonrpc import JSONRPCError, JSONRPCErrorException, INVALID_PARAMS
-from litestar_mcp.registry import Registry, PromptRegistration
 from litestar_mcp.tasks import InMemoryTaskStore
 
 # Using unit marker for these tests
@@ -39,7 +37,9 @@ def basic_config() -> MCPConfig:
 
 
 @pytest.mark.asyncio
-async def test_initialize_returns_capabilities(dummy_app: Litestar, request_context: RequestContext, basic_config: MCPConfig) -> None:
+async def test_initialize_returns_capabilities(
+    dummy_app: Litestar, request_context: RequestContext, basic_config: MCPConfig
+) -> None:
     service = MCPHandlerService(
         config=basic_config,
         discovered_tools={},
@@ -85,7 +85,7 @@ async def test_tools_list(dummy_app: Litestar, request_context: RequestContext, 
 
     # Extract the route handler from dummy app (need to register it first)
     app = Litestar(route_handlers=[tool_one])
-    handler = app.routes[0].route_handlers[0]  # type: ignore[attr-defined]
+    handler = app.routes[0].route_handlers[0]  # type: ignore[union-attr]
 
     service = MCPHandlerService(
         config=basic_config,
@@ -108,20 +108,26 @@ async def test_tools_list(dummy_app: Litestar, request_context: RequestContext, 
 @pytest.mark.asyncio
 async def test_tools_list_pagination(dummy_app: Litestar, request_context: RequestContext) -> None:
     @get("/t1", sync_to_thread=False)
-    def t1() -> str: return ""
+    def t1() -> str:
+        return ""
+
     @get("/t2", sync_to_thread=False)
-    def t2() -> str: return ""
+    def t2() -> str:
+        return ""
 
     app = Litestar(route_handlers=[t1, t2])
     # The routes will be separate
-    handlers = {route.route_handlers[0].opt.get("mcp_tool", f"tool_{i}"): route.route_handlers[0] for i, route in enumerate(app.routes)} # type: ignore[attr-defined]
+    {
+        route.route_handlers[0].opt.get("mcp_tool", f"tool_{i}"): route.route_handlers[0]  # type: ignore[union-attr]
+        for i, route in enumerate(app.routes)
+    }
 
     config = MCPConfig(list_page_size=1)
     service = MCPHandlerService(
         config=config,
         discovered_tools={
-            "tool_a": app.routes[0].route_handlers[0],  # type: ignore[attr-defined]
-            "tool_b": app.routes[1].route_handlers[0],  # type: ignore[attr-defined]
+            "tool_a": app.routes[0].route_handlers[0],  # type: ignore[union-attr]
+            "tool_b": app.routes[1].route_handlers[0],  # type: ignore[union-attr]
         },
         discovered_resources={},
         discovered_prompts={},
@@ -142,8 +148,10 @@ async def test_tools_list_pagination(dummy_app: Litestar, request_context: Reque
 
 
 @pytest.mark.asyncio
-async def test_tools_call_success(dummy_app: Litestar, request_context: RequestContext, basic_config: MCPConfig) -> None:
-    called_with = {}
+async def test_tools_call_success(
+    dummy_app: Litestar, request_context: RequestContext, basic_config: MCPConfig
+) -> None:
+    called_with: dict[str, Any] = {}
 
     @get("/tool", sync_to_thread=False)
     def my_tool(x: str, y: int) -> dict[str, Any]:
@@ -152,7 +160,7 @@ async def test_tools_call_success(dummy_app: Litestar, request_context: RequestC
         return {"ok": True}
 
     app = Litestar(route_handlers=[my_tool])
-    handler = app.routes[0].route_handlers[0]  # type: ignore[attr-defined]
+    handler = app.routes[0].route_handlers[0]  # type: ignore[union-attr]
 
     service = MCPHandlerService(
         config=basic_config,
@@ -172,13 +180,15 @@ async def test_tools_call_success(dummy_app: Litestar, request_context: RequestC
 
 
 @pytest.mark.asyncio
-async def test_tools_call_invalid_arguments(dummy_app: Litestar, request_context: RequestContext, basic_config: MCPConfig) -> None:
+async def test_tools_call_invalid_arguments(
+    dummy_app: Litestar, request_context: RequestContext, basic_config: MCPConfig
+) -> None:
     @get("/tool", sync_to_thread=False)
     def my_tool(x: int) -> str:
         return "ok"
 
     app = Litestar(route_handlers=[my_tool])
-    handler = app.routes[0].route_handlers[0]  # type: ignore[attr-defined]
+    handler = app.routes[0].route_handlers[0]  # type: ignore[union-attr]
 
     service = MCPHandlerService(
         config=basic_config,
@@ -198,7 +208,9 @@ async def test_tools_call_invalid_arguments(dummy_app: Litestar, request_context
 
 
 @pytest.mark.asyncio
-async def test_tools_call_missing_name(dummy_app: Litestar, request_context: RequestContext, basic_config: MCPConfig) -> None:
+async def test_tools_call_missing_name(
+    dummy_app: Litestar, request_context: RequestContext, basic_config: MCPConfig
+) -> None:
     service = MCPHandlerService(
         config=basic_config,
         discovered_tools={},
@@ -213,7 +225,9 @@ async def test_tools_call_missing_name(dummy_app: Litestar, request_context: Req
 
 
 @pytest.mark.asyncio
-async def test_tools_call_tool_not_found(dummy_app: Litestar, request_context: RequestContext, basic_config: MCPConfig) -> None:
+async def test_tools_call_tool_not_found(
+    dummy_app: Litestar, request_context: RequestContext, basic_config: MCPConfig
+) -> None:
     service = MCPHandlerService(
         config=basic_config,
         discovered_tools={},
@@ -228,7 +242,9 @@ async def test_tools_call_tool_not_found(dummy_app: Litestar, request_context: R
 
 
 @pytest.mark.asyncio
-async def test_prompts_list_and_get(dummy_app: Litestar, request_context: RequestContext, basic_config: MCPConfig) -> None:
+async def test_prompts_list_and_get(
+    dummy_app: Litestar, request_context: RequestContext, basic_config: MCPConfig
+) -> None:
     def dummy_prompt_fn(arg1: str) -> str:
         return f"Prompt: {arg1}"
 
@@ -279,7 +295,7 @@ async def test_resources_list_and_read(request_context: RequestContext, basic_co
         return {"data": "my-resource-data"}
 
     app = Litestar(route_handlers=[resource_one])
-    handler = app.routes[0].route_handlers[0]  # type: ignore[attr-defined]
+    handler = app.routes[0].route_handlers[0]  # type: ignore[union-attr]
 
     service = MCPHandlerService(
         config=basic_config,

@@ -47,6 +47,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         """
         self._config = config or MCPConfig()
         self._registry = Registry()
+        self._dynamic_handlers: list[BaseRouteHandler] = []
         if prompts:
             for fn in prompts:
                 metadata = get_mcp_metadata(fn) or {}
@@ -91,6 +92,11 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         return self._registry
 
     @property
+    def task_store(self) -> InMemoryTaskStore | None:
+        """Get the task store."""
+        return self._task_store
+
+    @property
     def discovered_tools(self) -> dict[str, BaseRouteHandler]:
         """Get discovered MCP tools."""
         return self._registry.tools
@@ -105,12 +111,21 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         """Get discovered MCP prompts."""
         return self._registry.prompts
 
+    def register_dynamic_handler(self, handler: BaseRouteHandler) -> None:
+        """Register a dynamic route handler on the plugin.
+
+        This is typically used by the wrapper class to register decorated
+        tools and resources.
+        """
+        self._dynamic_handlers.append(handler)
+
     def on_cli_init(self, cli: "Group") -> None:
         """Configure CLI commands for MCP operations."""
         cli.add_command(mcp_group)
 
     def on_app_init(self, app_config: AppConfig) -> AppConfig:
         """Initialize the MCP integration when the Litestar app starts."""
+        app_config.route_handlers.extend(self._dynamic_handlers)
         self._discover_mcp_routes(app_config.route_handlers)
         self._registry.set_sse_manager(self._sse_manager)
 
