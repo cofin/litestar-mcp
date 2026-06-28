@@ -107,3 +107,22 @@ def test_extract_advertised_handler_arguments_filters_dishka_resolved_provider_p
 
     args = extract_advertised_handler_arguments(route_handler)
     assert [arg["name"] for arg in args] == ["name"]
+
+
+def test_import_iter_dependency_input_parameters() -> None:
+    from litestar_mcp.utils.handler_signature import iter_dependency_input_parameters
+    # A simple test to verify it works
+    def handler(q: str) -> None:
+        pass
+    _, route_handler = create_app_with_handler(handler)
+    params = iter_dependency_input_parameters(route_handler)
+    assert isinstance(params, list)
+
+
+def test_import_parameter_aliases() -> None:
+    from litestar_mcp.utils.handler_signature import parameter_aliases
+    def handler(q: Annotated[str, Parameter(query="query_alias")]) -> None:
+        pass
+    _, route_handler = create_app_with_handler(handler)
+    aliases = parameter_aliases(route_handler)
+    assert aliases == {"query_alias": "q"}

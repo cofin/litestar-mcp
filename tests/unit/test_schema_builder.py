@@ -10,7 +10,6 @@ from litestar.params import Parameter, ParameterKwarg
 
 from litestar_mcp.schema_builder import (
     _merge_parameter_meta,
-    _unwrap_annotated,
     basic_type_to_json_schema,
     collection_type_to_json_schema,
     dataclass_to_json_schema,
@@ -20,6 +19,7 @@ from litestar_mcp.schema_builder import (
     type_to_json_schema,
     union_type_to_json_schema,
 )
+from litestar_mcp.utils.handler_signature import _unwrap_annotated
 from tests.unit.conftest import create_app_with_handler
 
 
@@ -1003,7 +1003,7 @@ class TestDependencyProviderParameters:
         from litestar.di import Provide
         from litestar.params import Dependency, Parameter
 
-        from litestar_mcp.schema_builder import parameter_aliases
+        from litestar_mcp.utils.handler_signature import parameter_aliases
 
         async def provide_filter(
             user_id: Annotated[str | None, Parameter(query="userId")] = None,
@@ -1105,7 +1105,7 @@ class TestDependencyProviderParameters:
         def fail_dishka_key_lookup(_annotation: Any) -> Any:
             pytest.fail("Dishka dependency-key lookup should not run without a Dishka container")
 
-        monkeypatch.setattr("litestar_mcp.schema_builder._dishka_dependency_key", fail_dishka_key_lookup)
+        monkeypatch.setattr("litestar_mcp.utils.handler_signature._dishka_dependency_key", fail_dishka_key_lookup)
 
         h = self._build_handler(handler, {"task_service": Provide(provide_task_service)})
         schema = generate_schema_for_handler(h)
@@ -1167,7 +1167,7 @@ class TestDependencyProviderParameters:
         h = self._build_handler(handler, {"ctx": Provide(provide_ctx)})
         schema = generate_schema_for_handler(h)
         # Header param falls back to python name -- not aliased to the header name.
-        from litestar_mcp.schema_builder import parameter_aliases as _pa
+        from litestar_mcp.utils.handler_signature import parameter_aliases as _pa
 
         assert "tenant" in schema["properties"]
         assert "X-Tenant" not in schema["properties"]

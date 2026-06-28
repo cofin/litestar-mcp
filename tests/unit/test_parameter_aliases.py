@@ -4,7 +4,7 @@ from typing import Annotated, Any
 
 from litestar.params import Parameter
 
-from litestar_mcp.schema_builder import parameter_aliases
+from litestar_mcp.utils.handler_signature import parameter_aliases
 from tests.unit.conftest import create_app_with_handler
 
 

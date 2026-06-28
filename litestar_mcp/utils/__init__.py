@@ -20,10 +20,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Optional, TypeVar
 
+from litestar_mcp.config import MCPOptKeys
+
 if TYPE_CHECKING:
     from litestar.handlers import BaseRouteHandler
 
-    from litestar_mcp.config import MCPConfig, MCPOptKeys
+    from litestar_mcp.config import MCPConfig
 
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -515,8 +517,6 @@ def _clean(value: Any) -> str | None:
 
 def _default_opt_keys() -> MCPOptKeys:
     """Return a default :class:`MCPOptKeys` without creating an import cycle."""
-    from litestar_mcp.config import MCPOptKeys
-
     return MCPOptKeys()
 
 

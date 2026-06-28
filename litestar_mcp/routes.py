@@ -54,7 +54,7 @@ from litestar_mcp.registry import (
     resolve_prompt_description,
     should_include_prompt,
 )
-from litestar_mcp.schema_builder import _unwrap_annotated, generate_schema_for_handler, parameter_aliases
+from litestar_mcp.schema_builder import generate_schema_for_handler
 from litestar_mcp.sessions import MCPSessionManager, SessionTerminated
 from litestar_mcp.sse import StreamLimitExceeded
 from litestar_mcp.tasks import InMemoryTaskStore, TaskLookupError, TaskRecord, TaskStateError
@@ -65,7 +65,7 @@ from litestar_mcp.utils import (
     render_description,
     should_include_handler,
 )
-from litestar_mcp.utils.handler_signature import get_advertised_handler_parameters
+from litestar_mcp.utils.handler_signature import _unwrap_annotated, get_advertised_handler_parameters
 
 _logger = logging.getLogger(__name__)
 
@@ -835,15 +835,10 @@ def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: dict[str, A
     """
     import msgspec
 
-    # Rewrite wire-name keys (``Parameter(query=...)``) to python kwarg
-    # names so they match the msgspec signature-model field names. Note
-    # this is the inverse of ``executor._split_tool_args``, which keeps
-    # wire names — the executor relies on Litestar's native extractor to
-    # do the wire→python resolution, while the signature-model used here
-    # only knows python field names. The two functions intentionally
-    # operate on different key spaces.
-    aliases = parameter_aliases(handler)
-    python_to_wire: dict[str, str] = {v: k for k, v in aliases.items()}
+    advertised_params = get_advertised_handler_parameters(handler)
+    python_to_wire = {p.python_name: p.wire_name for p in advertised_params}
+    aliases = {p.wire_name: p.python_name for p in advertised_params if p.wire_name != p.python_name}
+
     if aliases:
         tool_args = {aliases.get(k, k): v for k, v in tool_args.items()}
 

@@ -3,13 +3,15 @@
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
-from litestar import Litestar, Router
+from litestar import Litestar, Request, Router
+from litestar import get as litestar_get
 from litestar.config.app import AppConfig
 from litestar.di import Provide
 from litestar.handlers import BaseRouteHandler
 from litestar.plugins import CLIPlugin, InitPluginProtocol
 from litestar.stores.memory import MemoryStore
 
+from litestar_mcp.cli import mcp_group
 from litestar_mcp.config import MCPConfig
 from litestar_mcp.manifests import build_agent_card, build_mcp_server_manifest, build_oauth_protected_resource
 from litestar_mcp.registry import PromptRegistration, Registry
@@ -102,8 +104,6 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
 
     def on_cli_init(self, cli: "Group") -> None:
         """Configure CLI commands for MCP operations."""
-        from litestar_mcp.cli import mcp_group
-
         cli.add_command(mcp_group)
 
     def on_app_init(self, app_config: AppConfig) -> AppConfig:
@@ -154,9 +154,6 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         mcp_router = Router(**router_kwargs)
         app_config.route_handlers.append(mcp_router)
         app_config.on_startup.append(self.on_startup)
-
-        from litestar import Request
-        from litestar import get as litestar_get
 
         @litestar_get("/.well-known/oauth-protected-resource", sync_to_thread=False, opt={"exclude_from_auth": True})
         def oauth_protected_resource(request: Request[Any, Any, Any]) -> dict[str, Any]:
