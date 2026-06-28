@@ -5,8 +5,9 @@ import json
 import time
 
 import pytest
+from litestar.serialization import decode_json
 
-from litestar_mcp.sse import SSEManager
+from litestar_mcp.sse import SSEManager, StreamLimitExceeded
 
 
 @pytest.mark.asyncio
@@ -115,3 +116,94 @@ async def test_sse_manager_prune_throttle(monkeypatch: pytest.MonkeyPatch) -> No
     manager.disconnect(s1_id)
     manager.disconnect(s2_id)
     manager.disconnect(s3_id)
+
+
+@pytest.mark.asyncio
+async def test_max_streams_raises() -> None:
+    manager = SSEManager(max_streams=2, max_idle_seconds=3600.0)
+    sid1, _ = await manager.open_stream(session_id="s1")
+    sid2, _ = await manager.open_stream(session_id="s2")
+    with pytest.raises(StreamLimitExceeded):
+        await manager.open_stream(session_id="s3")
+    # Cleanup
+    manager.disconnect(sid1)
+    manager.disconnect(sid2)
+
+
+@pytest.mark.asyncio
+async def test_last_activity_bumps_on_publish(monkeypatch: pytest.MonkeyPatch) -> None:
+    manager = SSEManager(max_streams=10, max_idle_seconds=3600.0)
+    stream_id, gen = await manager.open_stream(session_id="s1")
+    await gen.__anext__()  # prime
+    state = manager._streams[stream_id]
+    before = state.last_activity
+    # Advance the clock read by publish/consumer
+    monkeypatch.setattr("litestar_mcp.sse.time.monotonic", lambda: before + 5.0)
+    await manager.publish({"ping": True}, session_id="s1")
+    await gen.__anext__()
+    assert state.last_activity > before
+    manager.disconnect(stream_id)
+
+
+@pytest.mark.asyncio
+async def test_idle_pruning_admits_new_stream(monkeypatch: pytest.MonkeyPatch) -> None:
+    manager = SSEManager(max_streams=1, max_idle_seconds=0.05)
+    sid1, gen1 = await manager.open_stream(session_id="s1")
+    await gen1.__anext__()
+
+    # Simulate time moving forward past the idle window
+    now = time.monotonic() + 10.0
+    monkeypatch.setattr("litestar_mcp.sse.time.monotonic", lambda: now)
+
+    # With only 1 slot and idle over cutoff, the old stream should be pruned
+    sid2, _ = await manager.open_stream(session_id="s2")
+    assert sid2 != sid1
+    assert sid1 not in manager._streams
+    manager.disconnect(sid2)
+
+
+@pytest.mark.asyncio
+async def test_replay_from_returns_history_slice() -> None:
+    manager = SSEManager()
+    stream_id, gen = await manager.open_stream(session_id="s1")
+    # prime
+    await gen.__anext__()
+    await manager.publish({"n": 1}, session_id="s1")
+    await manager.publish({"n": 2}, session_id="s1")
+    # drain
+    m1 = await gen.__anext__()
+    await gen.__anext__()
+    remaining = await manager.replay_from(stream_id, last_event_id=m1.id or f"{stream_id}:0")
+    assert len(remaining) >= 1
+    manager.disconnect(stream_id)
+
+
+@pytest.mark.asyncio
+async def test_close_session_streams_removes_all() -> None:
+    manager = SSEManager()
+    sid1, _ = await manager.open_stream(session_id="sA")
+    sid2, _ = await manager.open_stream(session_id="sA")
+    closed = manager.close_session_streams("sA")
+    assert set(closed) == {sid1, sid2}
+    assert sid1 not in manager._streams
+    assert sid2 not in manager._streams
+    assert "sA" not in manager._session_streams
+
+
+@pytest.mark.asyncio
+async def test_published_payload_is_valid_json_decodable_by_litestar() -> None:
+    """An enqueued message should be encoded as UTF-8 JSON that Litestar can decode."""
+    manager = SSEManager()
+    stream_id, gen = await manager.open_stream(session_id="session-a")
+    primer = await gen.__anext__()
+    assert primer.data == ""
+    assert primer.id == f"{stream_id}:0"
+
+    payload = {"jsonrpc": "2.0", "method": "ping", "params": {"n": 1, "ok": True}}
+    await manager.publish(payload, session_id="session-a")
+    message = await gen.__anext__()
+
+    assert isinstance(message.data, str)
+    decoded = decode_json(message.data.encode("utf-8"))
+    assert decoded == payload
+    manager.disconnect(stream_id)
