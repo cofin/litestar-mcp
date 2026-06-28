@@ -66,7 +66,7 @@ You can pass standard Litestar arguments (such as custom plugins, guards, or mid
 Running the Server
 ------------------
 
-The ``MCP`` class provides a ``.run()`` method to programmatically start the server. 
+The ``MCP`` class provides a ``.run()`` method to programmatically start the server.
 
 By default, the server runs using the Server-Sent Events (SSE) transport by programmatically executing the standard Litestar CLI command.
 
@@ -90,7 +90,7 @@ Any keyword arguments passed to ``mcp.run()`` when using SSE transport are mappe
 Stdio Transport
 ~~~~~~~~~~~~~~~
 
-To run the server over standard input/output (Stdio) for integration with local MCP clients (such as Claude Desktop), set the ``transport`` parameter to ``"stdio"``. 
+To run the server over standard input/output (Stdio) for integration with local MCP clients (such as Claude Desktop), set the ``transport`` parameter to ``"stdio"``.
 
 .. literalinclude:: /examples/snippets/standalone_run_stdio.py
     :language: python
