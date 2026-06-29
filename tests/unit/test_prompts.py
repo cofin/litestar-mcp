@@ -2,12 +2,13 @@
 
 import json
 from collections.abc import Callable  # noqa: TC003
-from typing import Any
+from typing import Any, cast
 
 import pytest
-from litestar import Litestar, Response, get
+from litestar import Litestar, Request, Response, get
 from litestar.status_codes import HTTP_400_BAD_REQUEST, HTTP_500_INTERNAL_SERVER_ERROR
 from litestar.testing import TestClient
+from litestar.types import HTTPRequestEvent, HTTPScope, Receive
 
 from litestar_mcp import LitestarMCP, MCPConfig, mcp_prompt
 from litestar_mcp.registry import (
@@ -231,7 +232,6 @@ class TestPromptRegistration:
 
     def test_handler_request_param_filtered_from_arguments(self) -> "None":
         """Litestar's magic-injected ``request`` must not leak into prompts/list."""
-        from litestar import Request
 
         @get("/with-request", mcp_prompt="needs_req")
         async def needs_req(text: "str", request: "Request[Any, Any, Any]") -> "str":
@@ -1170,16 +1170,34 @@ class TestCaptureAsgiResponseStatusZero:
 
     @pytest.mark.asyncio
     async def test_asgi_app_without_response_start_classified_as_500(self) -> "None":
-        from types import SimpleNamespace
-
         from litestar_mcp.executor import _NON_JSON_STATUS, _capture_asgi_response
 
         async def silent_asgi_app(scope: "Any", receive: "Any", send: "Any") -> "None":
             return  # never calls send → no http.response.start
 
-        request_stub = SimpleNamespace(scope={"type": "http"}, receive=lambda: None)
+        async def receive() -> HTTPRequestEvent:
+            return {"type": "http.request", "body": b"", "more_body": False}
 
-        content, status = await _capture_asgi_response(silent_asgi_app, request_stub)  # type: ignore[arg-type]
+        scope = cast(
+            "HTTPScope",
+            {
+                "type": "http",
+                "asgi": {"version": "3.0", "spec_version": "2.3"},
+                "http_version": "1.1",
+                "method": "GET",
+                "scheme": "http",
+                "path": "/",
+                "raw_path": b"/",
+                "query_string": b"",
+                "headers": [],
+                "path_params": {},
+                "state": {},
+                "litestar_app": Litestar(route_handlers=[]),
+            },
+        )
+        request: Request[Any, Any, Any] = Request(scope, receive=cast("Receive", receive))
+
+        content, status = await _capture_asgi_response(silent_asgi_app, request)
         assert status == _NON_JSON_STATUS
         assert isinstance(content, dict)
         assert "error" in content
