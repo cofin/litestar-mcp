@@ -1,7 +1,5 @@
 """Tests for LitestarMCP integration."""
 
-from __future__ import annotations
-
 import json
 from typing import Any
 
@@ -12,7 +10,7 @@ from litestar_mcp import LitestarMCP
 from litestar_mcp.config import MCPConfig
 
 
-def _ensure_session(client: TestClient[Any], base: str = "/mcp") -> str:
+def _ensure_session(client: "TestClient[Any]", base: "str" = "/mcp") -> "str":
     key = f"_mcp_session::{base}"
     sid = getattr(client, key, None)
     if sid is not None:
@@ -37,12 +35,12 @@ def _ensure_session(client: TestClient[Any], base: str = "/mcp") -> str:
 
 
 def _rpc(
-    client: TestClient[Any],
-    method: str,
-    params: dict[str, Any] | None = None,
-    msg_id: int = 1,
-    base: str = "/mcp",
-) -> dict[str, Any]:
+    client: "TestClient[Any]",
+    method: "str",
+    params: "dict[str, Any] | None" = None,
+    msg_id: "int" = 1,
+    base: "str" = "/mcp",
+) -> "dict[str, Any]":
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": msg_id, "method": method}
     if params is not None:
         body["params"] = params
@@ -57,26 +55,26 @@ def _rpc(
 class TestLitestarMCP:
     """Test suite for LitestarMCP."""
 
-    def test_plugin_initialization_default(self) -> None:
+    def test_plugin_initialization_default(self) -> "None":
         plugin = LitestarMCP()
         assert plugin.config.base_path == "/mcp"
 
-    def test_plugin_initialization_custom(self) -> None:
+    def test_plugin_initialization_custom(self) -> "None":
         config = MCPConfig(base_path="/api/mcp")
         plugin = LitestarMCP(config)
         assert plugin.config.base_path == "/api/mcp"
 
-    def test_plugin_discovers_mcp_routes(self) -> None:
+    def test_plugin_discovers_mcp_routes(self) -> "None":
         @get("/users", opt={"mcp_tool": "list_users"})
-        async def get_users() -> list[dict[str, Any]]:
+        async def get_users() -> "list[dict[str, Any]]":
             return [{"id": 1, "name": "Alice"}]
 
         @get("/config", opt={"mcp_resource": "app_config"})
-        async def get_config() -> dict[str, Any]:
+        async def get_config() -> "dict[str, Any]":
             return {"debug": True}
 
         @get("/regular")
-        async def regular_route() -> dict[str, Any]:
+        async def regular_route() -> "dict[str, Any]":
             return {"message": "regular"}
 
         plugin = LitestarMCP()
@@ -87,9 +85,9 @@ class TestLitestarMCP:
         assert len(plugin.discovered_tools) == 1
         assert len(plugin.discovered_resources) == 1
 
-    def test_mcp_endpoints_work(self) -> None:
+    def test_mcp_endpoints_work(self) -> "None":
         @get("/users", opt={"mcp_tool": "list_users"})
-        async def get_users() -> list[dict[str, Any]]:
+        async def get_users() -> "list[dict[str, Any]]":
             return [{"id": 1, "name": "Alice"}]
 
         app = Litestar(plugins=[LitestarMCP()], route_handlers=[get_users])
@@ -118,7 +116,7 @@ class TestLitestarMCP:
         assert len(result["result"]["resources"]) == 1
         assert result["result"]["resources"][0]["name"] == "openapi"
 
-    def test_openapi_resource_access(self) -> None:
+    def test_openapi_resource_access(self) -> "None":
         app = Litestar(plugins=[LitestarMCP()])
         client = TestClient(app=app)
 
@@ -126,9 +124,9 @@ class TestLitestarMCP:
         contents = result["result"]["contents"]
         assert contents[0]["uri"] == "litestar://openapi"
 
-    def test_tool_execution_real(self) -> None:
+    def test_tool_execution_real(self) -> "None":
         @post("/analyze", opt={"mcp_tool": "analyze_data"})
-        async def analyze(data: dict[str, Any]) -> dict[str, Any]:
+        async def analyze(data: "dict[str, Any]") -> "dict[str, Any]":
             return {"result": "analyzed", "input": data}
 
         app = Litestar(plugins=[LitestarMCP()], route_handlers=[analyze])
@@ -141,7 +139,7 @@ class TestLitestarMCP:
         assert parsed["result"] == "analyzed"
         assert parsed["input"] == test_data
 
-    def test_error_handling(self) -> None:
+    def test_error_handling(self) -> "None":
         app = Litestar(plugins=[LitestarMCP()])
         client = TestClient(app=app)
 
@@ -151,7 +149,7 @@ class TestLitestarMCP:
         result = _rpc(client, "tools/call", {"name": "nonexistent", "arguments": {}})
         assert "error" in result
 
-    def test_openapi_integration(self) -> None:
+    def test_openapi_integration(self) -> "None":
         from litestar.openapi.config import OpenAPIConfig
 
         app = Litestar(plugins=[LitestarMCP()], openapi_config=OpenAPIConfig(title="My Custom API", version="2.1.0"))
@@ -170,9 +168,9 @@ class TestLitestarMCP:
         assert server_info["name"] == "My Custom API"
         assert server_info["version"] == "2.1.0"
 
-    def test_resource_exception_handling(self) -> None:
+    def test_resource_exception_handling(self) -> "None":
         @get("/custom", opt={"mcp_resource": "custom_data"})
-        async def custom_route() -> dict[str, Any]:
+        async def custom_route() -> "dict[str, Any]":
             return {"custom": "data"}
 
         app = Litestar(plugins=[LitestarMCP()], route_handlers=[custom_route])
@@ -182,9 +180,9 @@ class TestLitestarMCP:
         contents = result["result"]["contents"]
         assert contents[0]["uri"] == "litestar://custom_data"
 
-    def test_custom_resource_access(self) -> None:
+    def test_custom_resource_access(self) -> "None":
         @get("/custom", opt={"mcp_resource": "custom_data"})
-        async def custom_route() -> dict[str, Any]:
+        async def custom_route() -> "dict[str, Any]":
             return {"custom": "data", "timestamp": "2024-01-01", "version": "1.0"}
 
         app = Litestar(plugins=[LitestarMCP()], route_handlers=[custom_route])
@@ -198,11 +196,11 @@ class TestLitestarMCP:
         assert parsed["timestamp"] == "2024-01-01"
         assert parsed["version"] == "1.0"
 
-    def test_plugin_coverage_gaps(self) -> None:
+    def test_plugin_coverage_gaps(self) -> "None":
         plugin = LitestarMCP()
 
         @get("/nested-tool", opt={"mcp_tool": "nested_tool"})
-        async def nested_tool() -> dict[str, Any]:
+        async def nested_tool() -> "dict[str, Any]":
             return {"result": "nested"}
 
         class MockContainer:
@@ -211,9 +209,9 @@ class TestLitestarMCP:
         plugin._discover_mcp_routes([MockContainer()])
         assert "nested_tool" in plugin.discovered_tools
 
-    def test_automatic_schema_generation(self) -> None:
+    def test_automatic_schema_generation(self) -> "None":
         @get("/users", opt={"mcp_tool": "list_users"})
-        async def get_users(limit: int = 10, active: bool = True) -> list[dict[str, Any]]:
+        async def get_users(limit: "int" = 10, active: "bool" = True) -> "list[dict[str, Any]]":
             """Get users with pagination and filtering."""
             return [{"id": 1, "name": "Alice", "active": active}][:limit]
 
@@ -231,18 +229,18 @@ class TestLitestarMCP:
         assert "limit" not in required
         assert "active" not in required
 
-    def test_decorator_based_discovery(self) -> None:
+    def test_decorator_based_discovery(self) -> "None":
         from litestar_mcp import mcp_resource, mcp_tool
 
         @get("/decorator-tool")
         @mcp_tool(name="decorator_tool")
-        async def decorator_tool(message: str) -> dict[str, str]:
+        async def decorator_tool(message: "str") -> "dict[str, str]":
             """A tool marked with decorator."""
             return {"message": f"Processed: {message}"}
 
         @get("/decorator-resource")
         @mcp_resource(name="decorator_resource")
-        async def decorator_resource() -> dict[str, Any]:
+        async def decorator_resource() -> "dict[str, Any]":
             """A resource marked with decorator."""
             return {"config": "value", "enabled": True}
 

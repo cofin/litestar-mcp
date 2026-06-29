@@ -17,8 +17,6 @@ carries the decoded body and maps ``status_code >= 400`` to
 transport caveat.
 """
 
-from __future__ import annotations
-
 import inspect
 import logging
 import re
@@ -31,18 +29,20 @@ from urllib.parse import urlencode
 import msgspec
 from litestar import Litestar, Request
 from litestar._asgi.routing_trie.traversal import parse_path_params
-from litestar.exceptions import ImproperlyConfiguredException
+from litestar.exceptions import ImproperlyConfiguredException, SerializationException
 from litestar.response import Response
+from litestar.serialization import decode_json
 from litestar.types.empty import Empty
 from litestar.utils.sync import ensure_async_callable
 
-from litestar_mcp.schema_builder import iter_dependency_input_parameters, parameter_aliases
+from litestar_mcp.utils.handler_signature import get_advertised_handler_parameters
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Sequence
 
     from litestar.handlers.base import BaseRouteHandler
     from litestar.handlers.http_handlers.base import HTTPRouteHandler
+    from litestar.types import Message, Receive, Scope, Send
     from litestar.types.internal_types import PathParameterDefinition
 
     from litestar_mcp.config import MCPConfig
@@ -59,12 +59,13 @@ _logger = logging.getLogger(__name__)
 
 _NON_JSON_STATUS = 500
 _ERROR_STATUS_FLOOR = 400
+_INTERNAL_DISPATCH_SCOPE_KEY = "litestar_mcp.internal_dispatch"
 
 
 class NotCallableInCLIContextError(ImproperlyConfiguredException):
     """Raised when a tool cannot be dispatched in stdio / CLI mode."""
 
-    def __init__(self, handler_name: str, reason: str) -> None:
+    def __init__(self, handler_name: "str", reason: "str") -> "None":
         """Initialize the exception.
 
         Args:
@@ -83,7 +84,7 @@ class MCPPathParamCoercionError(ValueError):
     structured error that names the offending argument.
     """
 
-    def __init__(self, name: str, raw: Any, cause: Exception) -> None:
+    def __init__(self, name: "str", raw: "Any", cause: "Exception") -> "None":
         """Initialize the error.
 
         Args:
@@ -105,7 +106,7 @@ class MCPToolErrorResult(Exception):  # noqa: N818
     the ``tools/call`` result.
     """
 
-    def __init__(self, content: Any, *, status_code: int = 500) -> None:
+    def __init__(self, content: "Any", *, status_code: "int" = 500) -> "None":
         """Initialize with the already-rendered JSON-RPC content payload.
 
         Args:
@@ -117,20 +118,20 @@ class MCPToolErrorResult(Exception):  # noqa: N818
         self.status_code = status_code
 
     @property
-    def is_client_error(self) -> bool:
+    def is_client_error(self) -> "bool":
         """``True`` when the status code is in the 4xx range."""
         return 400 <= self.status_code < 500  # noqa: PLR2004
 
 
 async def execute_tool(
-    handler: BaseRouteHandler,
-    app: Litestar,
-    tool_args: dict[str, Any],
+    handler: "BaseRouteHandler",
+    app: "Litestar",
+    tool_args: "dict[str, Any]",
     *,
-    request: Request[Any, Any, Any] | None = None,
-    config: MCPConfig | None = None,
-    tool_name: str | None = None,
-) -> Any:
+    request: "Request[Any, Any, Any] | None" = None,
+    config: "MCPConfig | None" = None,
+    tool_name: "str | None" = None,
+) -> "Any":
     """Execute an MCP tool handler through Litestar's full HTTP pipeline.
 
     Runs, in order:
@@ -182,7 +183,7 @@ async def execute_tool(
     dispatch_request: Request[Any, Any, Any] | None = None
     started_at: float | None = None
 
-    async def run_after_tool_call(*, result: Any, exception: Exception | None) -> None:
+    async def run_after_tool_call(*, result: "Any", exception: "Exception | None") -> "None":
         if dispatch_request is not None and started_at is not None:
             await _run_after_tool_call(
                 config,
@@ -235,12 +236,12 @@ async def execute_tool(
 
 
 async def _run_handler_pipeline(
-    handler: BaseRouteHandler,
-    app: Litestar,
-    path_parameters: dict[str, Any],
-    dispatch_request: Request[Any, Any, Any],
-    stack: AsyncExitStack,
-) -> tuple[Any, int]:
+    handler: "BaseRouteHandler",
+    app: "Litestar",
+    path_parameters: "dict[str, Any]",
+    dispatch_request: "Request[Any, Any, Any]",
+    stack: "AsyncExitStack",
+) -> "tuple[Any, int]":
     """Run guards, hooks, dependency resolution, handler dispatch, and response rendering."""
     content: Any = None
     status = 200
@@ -277,7 +278,7 @@ async def _run_handler_pipeline(
     return content, status
 
 
-async def _enforce_guards(handler: BaseRouteHandler, request: Request[Any, Any, Any]) -> None:
+async def _enforce_guards(handler: "BaseRouteHandler", request: "Request[Any, Any, Any]") -> "None":
     """Run each guard resolved from ``handler.ownership_layers`` against ``request``.
 
     Walks app → router → controller → handler guards, same as Litestar's own
@@ -289,7 +290,7 @@ async def _enforce_guards(handler: BaseRouteHandler, request: Request[Any, Any, 
             await result
 
 
-def _hook_is_app_level(hook: Any, app: Litestar, attr: str) -> bool:
+def _hook_is_app_level(hook: "Any", app: "Litestar", attr: "str") -> "bool":
     """True when ``hook`` is the app-level hook already fired on the outer ``/mcp`` request.
 
     Litestar runs ``before_request`` / ``after_response`` as part of the
@@ -305,9 +306,9 @@ def _hook_is_app_level(hook: Any, app: Litestar, attr: str) -> bool:
 
 
 async def _run_before_request(
-    handler: BaseRouteHandler,
-    request: Request[Any, Any, Any],
-) -> Any:
+    handler: "BaseRouteHandler",
+    request: "Request[Any, Any, Any]",
+) -> "Any":
     """Invoke the closest-wins ``before_request`` hook.
 
     Returns:
@@ -329,9 +330,9 @@ async def _run_before_request(
 
 
 async def _run_after_response(
-    handler: BaseRouteHandler,
-    request: Request[Any, Any, Any],
-) -> None:
+    handler: "BaseRouteHandler",
+    request: "Request[Any, Any, Any]",
+) -> "None":
     """Fire the closest-wins ``after_response`` hook; log and swallow failures.
 
     Skipped when the resolved hook is the app-level hook — the outer
@@ -352,10 +353,10 @@ async def _run_after_response(
 
 
 async def _run_after_exception_hooks(
-    app: Litestar,
-    request: Request[Any, Any, Any],
-    exc: Exception,
-) -> None:
+    app: "Litestar",
+    request: "Request[Any, Any, Any]",
+    exc: "Exception",
+) -> "None":
     """Fire app-level ``after_exception`` observers; log and swallow each failure.
 
     Parity with Litestar HTTP: observers fire BEFORE ``exception_handlers``
@@ -372,11 +373,11 @@ async def _run_after_exception_hooks(
 
 
 async def _run_before_tool_call(
-    config: MCPConfig | None,
-    tool_name: str | None,
-    arguments: dict[str, Any],
-    request: Request[Any, Any, Any],
-) -> None:
+    config: "MCPConfig | None",
+    tool_name: "str | None",
+    arguments: "dict[str, Any]",
+    request: "Request[Any, Any, Any]",
+) -> "None":
     """Invoke ``MCPConfig.before_tool_call`` and swallow callback failures."""
     if config is None or tool_name is None or config.before_tool_call is None:
         return
@@ -389,15 +390,15 @@ async def _run_before_tool_call(
 
 
 async def _run_after_tool_call(
-    config: MCPConfig | None,
-    tool_name: str | None,
-    arguments: dict[str, Any],
-    request: Request[Any, Any, Any],
+    config: "MCPConfig | None",
+    tool_name: "str | None",
+    arguments: "dict[str, Any]",
+    request: "Request[Any, Any, Any]",
     *,
-    result: Any,
-    exception: Exception | None,
-    duration: float,
-) -> None:
+    result: "Any",
+    exception: "Exception | None",
+    duration: "float",
+) -> "None":
     """Invoke ``MCPConfig.after_tool_call`` and swallow callback failures."""
     if config is None or tool_name is None or config.after_tool_call is None:
         return
@@ -417,9 +418,9 @@ async def _run_after_tool_call(
 
 
 async def _capture_asgi_response(
-    asgi_app: Any,
-    request: Request[Any, Any, Any],
-) -> tuple[Any, int]:
+    asgi_app: "Any",
+    request: "Request[Any, Any, Any]",
+) -> "tuple[Any, int]":
     """Drive an ASGIApp against a sink-send, returning (content, status_code).
 
     ``handler.to_response`` returns an :class:`ASGIResponse`. We invoke it
@@ -433,19 +434,24 @@ async def _capture_asgi_response(
     media_type = ""
     body_chunks: list[bytes] = []
 
-    async def _sink_send(message: dict[str, Any]) -> None:
+    async def _sink_send(message: "Message") -> "None":
         nonlocal status_code, media_type
         msg_type = message.get("type")
         if msg_type == "http.response.start":
-            status_code = int(message.get("status", 0))
-            for key, value in message.get("headers", []) or []:
+            status_code = cast("int", message.get("status", 0))
+            headers = cast("Sequence[tuple[bytes, bytes]]", message.get("headers", ()) or ())
+            for key, value in headers:
                 if key.lower() == b"content-type":
                     media_type = value.decode("latin-1").split(";")[0].strip()
                     break
         elif msg_type == "http.response.body":
-            body_chunks.append(bytes(message.get("body", b"") or b""))
+            body = cast("bytes", message.get("body", b"") or b"")
+            body_chunks.append(bytes(body))
 
-    await asgi_app(cast("Any", request.scope), cast("Any", request.receive), _sink_send)
+    scope = cast("Scope", request.scope)
+    receive: Receive = request.receive
+    send: Send = request.app._wrap_send(_sink_send, scope)  # noqa: SLF001
+    await asgi_app(scope, receive, send)
 
     if status_code == 0:
         # ASGI app exited without sending http.response.start. Treat as a
@@ -461,8 +467,8 @@ async def _capture_asgi_response(
     if not body:
         return None, status_code
     try:
-        content = msgspec.json.decode(body)
-    except msgspec.DecodeError:
+        content = decode_json(body)
+    except SerializationException:
         return (
             {"error": "non-JSON response from MCP handler", "media_type": media_type or "unknown"},
             _NON_JSON_STATUS,
@@ -471,10 +477,10 @@ async def _capture_asgi_response(
 
 
 async def _dispatch_via_exception_handlers(
-    handler: BaseRouteHandler,
-    request: Request[Any, Any, Any],
-    exc: Exception,
-) -> tuple[Any, int] | None:
+    handler: "BaseRouteHandler",
+    request: "Request[Any, Any, Any]",
+    exc: "Exception",
+) -> "tuple[Any, int] | None":
     """Walk ``handler.resolve_exception_handlers()`` MRO-style for ``exc``.
 
     Returns:
@@ -504,10 +510,10 @@ async def _dispatch_via_exception_handlers(
     return raw, 500
 
 
-_PATH_PARAMETERS_CACHE: weakref.WeakKeyDictionary[Any, dict[str, Any]] = weakref.WeakKeyDictionary()
+_PATH_PARAMETERS_CACHE: "weakref.WeakKeyDictionary[Any, dict[str, Any]]" = weakref.WeakKeyDictionary()
 
 
-def _find_route_path_parameters(app: Litestar, handler: BaseRouteHandler) -> dict[str, Any]:
+def _find_route_path_parameters(app: "Litestar", handler: "BaseRouteHandler") -> "dict[str, Any]":
     """Look up ``path_parameters`` for the route owning ``handler``.
 
     Memoized on ``handler`` via :class:`weakref.WeakKeyDictionary` so each
@@ -534,9 +540,9 @@ def _find_route_path_parameters(app: Litestar, handler: BaseRouteHandler) -> dic
 
 
 def _coerce_path_params(
-    path_parameters: dict[str, PathParameterDefinition],
-    raw_values: dict[str, Any],
-) -> dict[str, Any]:
+    path_parameters: "dict[str, PathParameterDefinition]",
+    raw_values: "dict[str, Any]",
+) -> "dict[str, Any]":
     """Coerce raw path-param strings to their declared types via Litestar.
 
     Uses :func:`litestar._asgi.routing_trie.traversal.parse_path_params`, the
@@ -575,7 +581,7 @@ def _coerce_path_params(
         raise MCPPathParamCoercionError(offending, raw_values[offending], exc) from exc
 
 
-def _parser_would_reject(defn: PathParameterDefinition, raw: Any) -> bool:
+def _parser_would_reject(defn: "PathParameterDefinition", raw: "Any") -> "bool":
     """Return True when ``defn.parser`` raises on ``raw``. ``str``-typed params never reject."""
     if defn.parser is None:
         return False
@@ -586,7 +592,7 @@ def _parser_would_reject(defn: PathParameterDefinition, raw: Any) -> bool:
     return False
 
 
-def _substitute_path(template: str, path_params: dict[str, Any]) -> str:
+def _substitute_path(template: "str", path_params: "dict[str, Any]") -> "str":
     """Replace ``{name}`` / ``{name:type}`` placeholders in ``template``.
 
     Matches the exact parameter name (with optional ``:type`` suffix) so a
@@ -600,10 +606,10 @@ def _substitute_path(template: str, path_params: dict[str, Any]) -> str:
 
 
 def _split_tool_args(
-    handler: BaseRouteHandler,
-    tool_args: dict[str, Any],
-    path_parameters: dict[str, Any],
-) -> tuple[dict[str, Any], dict[str, Any], bytes]:
+    handler: "BaseRouteHandler",
+    tool_args: "dict[str, Any]",
+    path_parameters: "dict[str, Any]",
+) -> "tuple[dict[str, Any], dict[str, Any], bytes]":
     """Partition ``tool_args`` into (path_params, query_params, body_bytes).
 
     Wire-name aliases (``Parameter(query=...)``) are kept verbatim in
@@ -611,34 +617,12 @@ def _split_tool_args(
     them against the declared ``Parameter(query=...)`` name. To decide
     whether a key represents a scalar handler kwarg, the alias map is
     consulted: a wire-name key counts as a scalar parameter when its
-    aliased python name appears in ``parsed_fn_signature.parameters``.
-
-    Precedence for each key:
-
-    1. Path parameter — if the name appears in the route's path template.
-    2. Scalar handler kwarg — if the name (or its aliased python name)
-       matches a non-``data`` signature parameter, it's bound as a query
-       parameter so the native extractor parses it via the signature
-       model.
-    3. Body — if the handler declares a ``data`` parameter, leftover keys
-       become members of the JSON body that Litestar decodes into the
-       ``data`` struct.
-    4. Dropped — if none of the above match.
+    aliased python name appears in the advertised parameter list.
     """
-    aliases = parameter_aliases(handler)
+    advertised_params = get_advertised_handler_parameters(handler, path_parameters=path_parameters)
 
-    sig_params = handler.parsed_fn_signature.parameters
-    has_data = "data" in sig_params
-    scalar_sig_names = {name for name in sig_params if name != "data"}
-    # Provider-declared query/path params bubble up to the route through
-    # Litestar's DI inheritance, so the MCP wire surface accepts them too.
-    scalar_sig_names.update(name for name, _ in iter_dependency_input_parameters(handler))
-
-    # Build a set of wire keys that resolve to scalar sig params via aliases
-    # (or directly when no alias exists).  Keeps wire names in query_payload so
-    # Litestar's native extractor can still find them by their declared
-    # ``Parameter(query=...)`` name.
-    wire_scalar_keys = {k for k in tool_args if aliases.get(k, k) in scalar_sig_names}
+    wire_scalar_keys = {p.wire_name for p in advertised_params if p.python_name != "data"}
+    has_data = "data" in handler.parsed_fn_signature.parameters
 
     path_values = {k: tool_args[k] for k in path_parameters if k in tool_args}
     remaining = {k: v for k, v in tool_args.items() if k not in path_values}
@@ -656,7 +640,7 @@ def _split_tool_args(
     return path_values, query_payload, body
 
 
-def _blank_http_scope(app: Litestar) -> dict[str, Any]:
+def _blank_http_scope(app: "Litestar") -> "dict[str, Any]":
     """Return a minimum ASGI HTTP scope for stdio-mode dispatch.
 
     Keys mirror :meth:`litestar.testing.RequestFactory._create_scope` so
@@ -687,18 +671,18 @@ def _blank_http_scope(app: Litestar) -> dict[str, Any]:
 
 
 def _build_dispatch_scope(
-    handler: BaseRouteHandler,
-    tool_args: dict[str, Any],
+    handler: "BaseRouteHandler",
+    tool_args: "dict[str, Any]",
     *,
-    base_scope: dict[str, Any] | None,
-    app: Litestar,
-    path_parameters: dict[str, Any],
-) -> tuple[dict[str, Any], Callable[[], Awaitable[dict[str, Any]]]]:
+    base_scope: "dict[str, Any] | None",
+    app: "Litestar",
+    path_parameters: "dict[str, Any]",
+) -> "tuple[dict[str, Any], Callable[[], Awaitable[dict[str, Any]]]]":
     """Shape ``tool_args`` into an ASGI scope + receive for ``handler``.
 
     HTTP mode (``base_scope`` from the inbound /mcp request) inherits
-    middleware-populated state (``scope["state"]`` — e.g. Dishka's request
-    container, Ch3's auth-middleware user) so request-scoped DI flows through.
+    middleware-populated state (``scope["state"]`` — e.g., Dishka's request
+    container, authentication user) so request-scoped DI flows through.
     Stdio mode starts from a blank scope.
     """
     path_values, query_values, body = _split_tool_args(handler, tool_args, path_parameters)
@@ -733,16 +717,17 @@ def _build_dispatch_scope(
             "path_params": coerced_path_values,
             "route_handler": handler,
             "path_template": path_template,
+            _INTERNAL_DISPATCH_SCOPE_KEY: True,
         },
     )
 
-    async def receive() -> dict[str, Any]:
+    async def receive() -> "dict[str, Any]":
         return {"type": "http.request", "body": body, "more_body": False}
 
     return scope, receive
 
 
-async def _open_stdio_dishka_container(app: Litestar, scope: dict[str, Any], stack: AsyncExitStack) -> None:
+async def _open_stdio_dishka_container(app: "Litestar", scope: "dict[str, Any]", stack: "AsyncExitStack") -> "None":
     """Open a request-scoped child Dishka container for stdio dispatch.
 
     The ``setup_dishka`` integration stores a root container factory on

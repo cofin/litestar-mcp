@@ -7,14 +7,16 @@ module; everything here is strictly for tests.
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import jwt
-from litestar.connection import ASGIConnection
 from litestar.middleware import DefineMiddleware
 from litestar.security.jwt import OAuth2PasswordBearerAuth, Token
 
 from litestar_mcp.auth import MCPAuthBackend, MCPAuthConfig
+
+if TYPE_CHECKING:
+    from litestar.connection import ASGIConnection
 
 ISSUER = "https://auth.test.invalid"
 AUDIENCE = "https://api.test.invalid"
@@ -27,23 +29,23 @@ TOKEN_URL = "/auth/token"
 class AuthenticatedUser:
     """Resolved user exposed via ``request.user`` when bearer auth succeeds."""
 
-    sub: str
-    scopes: tuple[str, ...] = ()
+    sub: "str"
+    scopes: "tuple[str, ...]" = ()
 
     @property
-    def id(self) -> str:  # pragma: no cover - trivial accessor
+    def id(self) -> "str":  # pragma: no cover - trivial accessor
         """Return the subject identifier."""
         return self.sub
 
 
 def mint_access_token(
-    subject: str = "integration-user",
-    scopes: list[str] | None = None,
+    subject: "str" = "integration-user",
+    scopes: "list[str] | None" = None,
     *,
-    expires_in: int = 3600,
-    issuer: str = ISSUER,
-    audience: str = AUDIENCE,
-) -> str:
+    expires_in: "int" = 3600,
+    issuer: "str" = ISSUER,
+    audience: "str" = AUDIENCE,
+) -> "str":
     """Mint an HS256-signed bearer token for integration tests.
 
     Args:
@@ -69,7 +71,7 @@ def mint_access_token(
     return jwt.encode(payload, SECRET, algorithm="HS256")
 
 
-async def bearer_token_validator(token: str) -> dict[str, Any] | None:
+async def bearer_token_validator(token: "str") -> "dict[str, Any] | None":
     """Validate a bearer token and return the decoded claims dict or ``None``.
 
     Used as the ``token_validator`` callback on :class:`MCPAuthConfig`.
@@ -94,12 +96,14 @@ class BearerTokenValidator:
 
     __slots__ = ()
 
-    async def __call__(self, token: str) -> dict[str, Any] | None:
+    async def __call__(self, token: "str") -> "dict[str, Any] | None":
         """Validate ``token`` and return its claims or ``None``."""
         return await bearer_token_validator(token)
 
 
-async def _retrieve_user_handler(token: Token, _connection: ASGIConnection[Any, Any, Any, Any]) -> AuthenticatedUser:
+async def _retrieve_user_handler(
+    token: "Token", _connection: "ASGIConnection[Any, Any, Any, Any]"
+) -> "AuthenticatedUser":
     """Resolve the bearer token into an :class:`AuthenticatedUser` instance."""
     extras = token.extras or {}
     scopes = extras.get("scopes") or []
@@ -108,7 +112,7 @@ async def _retrieve_user_handler(token: Token, _connection: ASGIConnection[Any, 
     return AuthenticatedUser(sub=token.sub, scopes=tuple(str(s) for s in scopes))
 
 
-def build_oauth_backend() -> OAuth2PasswordBearerAuth[AuthenticatedUser, Token]:
+def build_oauth_backend() -> "OAuth2PasswordBearerAuth[AuthenticatedUser, Token]":
     """Build the Litestar OAuth2 bearer backend used by the integration apps.
 
     The backend is configured with:
@@ -128,7 +132,7 @@ def build_oauth_backend() -> OAuth2PasswordBearerAuth[AuthenticatedUser, Token]:
     return backend
 
 
-async def _mcp_user_resolver(claims: dict[str, Any], _app: Any) -> AuthenticatedUser:
+async def _mcp_user_resolver(claims: "dict[str, Any]", _app: "Any") -> "AuthenticatedUser":
     """Resolve MCP-validated claims into the shared :class:`AuthenticatedUser`."""
     scopes = claims.get("scopes") or []
     if not isinstance(scopes, list):
@@ -136,7 +140,7 @@ async def _mcp_user_resolver(claims: dict[str, Any], _app: Any) -> Authenticated
     return AuthenticatedUser(sub=str(claims.get("sub", "")), scopes=tuple(str(s) for s in scopes))
 
 
-def build_mcp_auth_config() -> MCPAuthConfig:
+def build_mcp_auth_config() -> "MCPAuthConfig":
     """Build the metadata-only :class:`MCPAuthConfig` used when apps run in bearer mode.
 
     Post-Ch3, this is pure metadata surfaced in
@@ -146,7 +150,7 @@ def build_mcp_auth_config() -> MCPAuthConfig:
     return MCPAuthConfig(issuer=ISSUER, audience=AUDIENCE)
 
 
-def build_mcp_auth_middleware() -> DefineMiddleware:
+def build_mcp_auth_middleware() -> "DefineMiddleware":
     """Build the :class:`DefineMiddleware` wrapping MCPAuthBackend for integration apps."""
     return DefineMiddleware(
         MCPAuthBackend,

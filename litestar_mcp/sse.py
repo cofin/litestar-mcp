@@ -17,8 +17,6 @@ Resource caps:
   :meth:`SSEManager.open_stream` before admitting a new stream.
 """
 
-from __future__ import annotations
-
 import asyncio
 import time
 from dataclasses import dataclass, field
@@ -32,6 +30,8 @@ from litestar.serialization import encode_json
 
 __all__ = ("SSEManager", "SSEMessage", "StreamLimitExceeded")
 
+_PRUNE_THROTTLE_SECONDS = 30.0
+
 
 class StreamLimitExceeded(Exception):  # noqa: N818
     """Raised by :meth:`SSEManager.open_stream` when ``max_streams`` is hit."""
@@ -41,9 +41,9 @@ class StreamLimitExceeded(Exception):  # noqa: N818
 class SSEMessage:
     """Represents a single SSE message."""
 
-    data: str
-    event: str = "message"
-    id: str | None = None
+    data: "str"
+    event: "str" = "message"
+    id: "str | None" = None
 
 
 class SSEManager:
@@ -58,9 +58,9 @@ class SSEManager:
     def __init__(
         self,
         *,
-        max_streams: int = 10_000,
-        max_idle_seconds: float = 3600.0,
-    ) -> None:
+        max_streams: "int" = 10_000,
+        max_idle_seconds: "float" = 3600.0,
+    ) -> "None":
         """Initialize the SSE manager.
 
         Args:
@@ -74,12 +74,13 @@ class SSEManager:
         self._lock = asyncio.Lock()
         self._max_streams = max_streams
         self._max_idle_seconds = max_idle_seconds
+        self._last_prune_time: float | None = None
 
     async def open_stream(
         self,
-        session_id: str | None = None,
-        last_event_id: str | None = None,
-    ) -> tuple[str, AsyncGenerator[SSEMessage, None]]:
+        session_id: "str | None" = None,
+        last_event_id: "str | None" = None,
+    ) -> "tuple[str, AsyncGenerator[SSEMessage, None]]":
         """Open a new stream (or resume from ``last_event_id``).
 
         Args:
@@ -95,10 +96,11 @@ class SSEManager:
             A ``(stream_id, async_generator)`` pair.
         """
         async with self._lock:
-            self._prune_idle_locked()
+            force_prune = len(self._streams) >= self._max_streams
+            self._prune_idle_locked(force=force_prune)
             state, replay_messages = self._get_or_create_stream_locked(session_id, last_event_id)
 
-        async def stream() -> AsyncGenerator[SSEMessage, None]:
+        async def stream() -> "AsyncGenerator[SSEMessage, None]":
             try:
                 for message in replay_messages:
                     yield message
@@ -112,11 +114,11 @@ class SSEManager:
 
         return state.stream_id, stream()
 
-    def disconnect(self, stream_id: str) -> None:
+    def disconnect(self, stream_id: "str") -> "None":
         """Explicitly remove a stream and its buffered state."""
         self._close_stream_locked(stream_id)
 
-    async def enqueue(self, stream_id: str, message: dict[str, Any]) -> None:
+    async def enqueue(self, stream_id: "str", message: "dict[str, Any]") -> "None":
         """Enqueue a raw JSON payload onto a single stream."""
         payload = encode_json(message).decode("utf-8")
         async with self._lock:
@@ -126,9 +128,9 @@ class SSEManager:
             sse_message = SSEMessage(data=payload, id=f"{stream_id}:{len(state.history)}")
             state.history.append(sse_message)
             state.last_activity = time.monotonic()
-            await state.queue.put(sse_message)
+            state.queue.put_nowait(sse_message)
 
-    async def publish(self, message: dict[str, Any], session_id: str | None = None) -> None:
+    async def publish(self, message: "dict[str, Any]", session_id: "str | None" = None) -> "None":
         """Publish a JSON payload to one or all sessions.
 
         When ``session_id`` is provided the message fans out to every
@@ -148,9 +150,9 @@ class SSEManager:
                 sse_message = SSEMessage(data=payload, id=f"{stream_id}:{len(state.history)}")
                 state.history.append(sse_message)
                 state.last_activity = time.monotonic()
-                await state.queue.put(sse_message)
+                state.queue.put_nowait(sse_message)
 
-    async def replay_from(self, stream_id: str, last_event_id: str) -> list[SSEMessage]:
+    async def replay_from(self, stream_id: "str", last_event_id: "str") -> "list[SSEMessage]":
         """Return buffered messages after ``last_event_id`` for a stream."""
         async with self._lock:
             state = self._streams.get(stream_id)
@@ -160,7 +162,7 @@ class SSEManager:
             state.last_activity = time.monotonic()
             return list(state.history[event_index + 1 :])
 
-    def close_session_streams(self, session_id: str) -> list[str]:
+    def close_session_streams(self, session_id: "str") -> "list[str]":
         """Close every stream attached to ``session_id``. Returns closed ids."""
         stream_ids = list(self._session_streams.get(session_id, set()))
         for stream_id in stream_ids:
@@ -168,19 +170,23 @@ class SSEManager:
         self._session_streams.pop(session_id, None)
         return stream_ids
 
-    def _prune_idle_locked(self) -> None:
+    def _prune_idle_locked(self, force: "bool" = False) -> "None":
         if self._max_idle_seconds <= 0:
             return
-        cutoff = time.monotonic() - self._max_idle_seconds
+        now = time.monotonic()
+        if not force and self._last_prune_time is not None and now - self._last_prune_time < _PRUNE_THROTTLE_SECONDS:
+            return
+        self._last_prune_time = now
+        cutoff = now - self._max_idle_seconds
         to_remove = [sid for sid, state in self._streams.items() if state.last_activity < cutoff]
         for stream_id in to_remove:
             self._close_stream_locked(stream_id)
 
     def _get_or_create_stream_locked(
         self,
-        session_id: str | None,
-        last_event_id: str | None,
-    ) -> tuple[_StreamState, list[SSEMessage]]:
+        session_id: "str | None",
+        last_event_id: "str | None",
+    ) -> "tuple[_StreamState, list[SSEMessage]]":
         if last_event_id:
             try:
                 stream_id, event_index = self._parse_event_id(last_event_id)
@@ -210,7 +216,7 @@ class SSEManager:
             self._session_streams.setdefault(session_id, set()).add(stream_id)
         return state, []
 
-    def _close_stream_locked(self, stream_id: str) -> None:
+    def _close_stream_locked(self, stream_id: "str") -> "None":
         state = self._streams.pop(stream_id, None)
         if state is None:
             return
@@ -223,7 +229,7 @@ class SSEManager:
                     self._session_streams.pop(state.session_id, None)
 
     @staticmethod
-    def _parse_event_id(value: str) -> tuple[str, int]:
+    def _parse_event_id(value: "str") -> "tuple[str, int]":
         stream_id, _, raw_index = value.rpartition(":")
         if not stream_id:
             msg = "Invalid Last-Event-ID header"
@@ -233,9 +239,9 @@ class SSEManager:
 
 @dataclass
 class _StreamState:
-    stream_id: str
-    session_id: str | None
-    queue: asyncio.Queue[SSEMessage] = field(default_factory=asyncio.Queue)
-    history: list[SSEMessage] = field(default_factory=list)
-    active: bool = True
-    last_activity: float = field(default_factory=time.monotonic)
+    stream_id: "str"
+    session_id: "str | None"
+    queue: "asyncio.Queue[SSEMessage]" = field(default_factory=asyncio.Queue)
+    history: "list[SSEMessage]" = field(default_factory=list)
+    active: "bool" = True
+    last_activity: "float" = field(default_factory=time.monotonic)

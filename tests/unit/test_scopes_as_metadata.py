@@ -20,7 +20,7 @@ from litestar_mcp.utils import mcp_tool
 pytestmark = pytest.mark.unit
 
 
-async def _init_and_get_session(client: AsyncTestClient[Any]) -> str:
+async def _init_and_get_session(client: "AsyncTestClient[Any]") -> "str":
     init = await client.post(
         "/mcp",
         json={
@@ -40,11 +40,11 @@ async def _init_and_get_session(client: AsyncTestClient[Any]) -> str:
 
 
 async def _rpc(
-    client: AsyncTestClient[Any],
-    method: str,
-    params: dict[str, Any] | None = None,
-    sid: str | None = None,
-) -> dict[str, Any]:
+    client: "AsyncTestClient[Any]",
+    method: "str",
+    params: "dict[str, Any] | None" = None,
+    sid: "str | None" = None,
+) -> "dict[str, Any]":
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
     if params is not None:
         body["params"] = params
@@ -53,12 +53,12 @@ async def _rpc(
 
 
 @pytest.mark.anyio
-async def test_scoped_tool_not_gated_by_inline_check() -> None:
+async def test_scoped_tool_not_gated_by_inline_check() -> "None":
     """``@mcp_tool(scopes=[...])`` no longer rejects anonymous callers."""
 
     @get("/x", sync_to_thread=False)
     @mcp_tool(name="t", scopes=["read:foo"])
-    def handler() -> dict[str, str]:
+    def handler() -> "dict[str, str]":
         return {"ok": "yes"}
 
     app = Litestar(route_handlers=[handler], plugins=[LitestarMCP(MCPConfig())])
@@ -70,12 +70,12 @@ async def test_scoped_tool_not_gated_by_inline_check() -> None:
 
 
 @pytest.mark.anyio
-async def test_scoped_tool_surfaces_annotations_scopes_on_tools_list() -> None:
+async def test_scoped_tool_surfaces_annotations_scopes_on_tools_list() -> "None":
     """``scopes=[...]`` surfaces on ``tools/list`` under ``annotations.scopes``."""
 
     @get("/x", sync_to_thread=False)
     @mcp_tool(name="t", scopes=["read:foo", "write:foo"])
-    def handler() -> dict[str, str]:
+    def handler() -> "dict[str, str]":
         return {"ok": "yes"}
 
     app = Litestar(route_handlers=[handler], plugins=[LitestarMCP(MCPConfig())])
@@ -87,7 +87,7 @@ async def test_scoped_tool_surfaces_annotations_scopes_on_tools_list() -> None:
 
 
 @pytest.mark.anyio
-async def test_explicit_annotations_scopes_wins_over_decorator_scopes() -> None:
+async def test_explicit_annotations_scopes_wins_over_decorator_scopes() -> "None":
     """Explicit ``annotations.scopes`` takes precedence over decorator ``scopes``."""
 
     @get("/x", sync_to_thread=False)
@@ -96,7 +96,7 @@ async def test_explicit_annotations_scopes_wins_over_decorator_scopes() -> None:
         scopes=["read:foo"],
         annotations={"scopes": ["write:foo"], "audience": ["user"]},
     )
-    def handler() -> dict[str, str]:
+    def handler() -> "dict[str, str]":
         return {"ok": "yes"}
 
     app = Litestar(route_handlers=[handler], plugins=[LitestarMCP(MCPConfig())])

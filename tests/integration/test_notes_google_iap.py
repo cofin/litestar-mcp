@@ -8,9 +8,7 @@ No live Google metadata fetches are performed.
 """
 
 import json
-from collections.abc import Iterator
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 import jwt
@@ -27,11 +25,15 @@ from litestar.testing import TestClient
 from litestar_mcp.auth.oidc import get_default_cache
 from tests.integration.conftest import parse_tool_payload, rpc, rpc_response
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from pathlib import Path
+
 TEST_AUDIENCE = "/projects/000000000000/global/backendServices/111111111111"
 TEST_JWKS_URL = "https://test.invalid/iap/verify/public_key-jwk"
 
 
-def _make_keypair(kid: str) -> tuple[ec.EllipticCurvePrivateKey, dict[str, Any]]:
+def _make_keypair(kid: "str") -> "tuple[ec.EllipticCurvePrivateKey, dict[str, Any]]":
     private_key = ec.generate_private_key(ec.SECP256R1())
     jwk = json.loads(ECAlgorithm(ECAlgorithm.SHA256).to_jwk(private_key.public_key()))
     jwk["kid"] = kid
@@ -40,14 +42,14 @@ def _make_keypair(kid: str) -> tuple[ec.EllipticCurvePrivateKey, dict[str, Any]]
 
 
 def _mint_iap_token(
-    private_key: ec.EllipticCurvePrivateKey,
+    private_key: "ec.EllipticCurvePrivateKey",
     *,
-    kid: str,
-    sub: str,
-    email: str | None = "alice@example.com",
-    audience: str = TEST_AUDIENCE,
-    issuer: str = DEFAULT_IAP_ISSUER,
-) -> str:
+    kid: "str",
+    sub: "str",
+    email: "str | None" = "alice@example.com",
+    audience: "str" = TEST_AUDIENCE,
+    issuer: "str" = DEFAULT_IAP_ISSUER,
+) -> "str":
     claims: dict[str, Any] = {
         "sub": sub,
         "iss": issuer,
@@ -59,7 +61,7 @@ def _mint_iap_token(
 
 
 @pytest.fixture
-def iap_key() -> Iterator[tuple[ec.EllipticCurvePrivateKey, str]]:
+def iap_key() -> "Iterator[tuple[ec.EllipticCurvePrivateKey, str]]":
     """Generate an ES256 keypair and seed the shared JWKS cache."""
     kid = f"iap-test-{uuid4().hex[:8]}"
     private_key, jwk = _make_keypair(kid)
@@ -74,7 +76,7 @@ def iap_key() -> Iterator[tuple[ec.EllipticCurvePrivateKey, str]]:
     cache._store.pop(TEST_JWKS_URL, None)
 
 
-def _make_app(tmp_path: Path) -> Any:
+def _make_app(tmp_path: "Path") -> "Any":
     return create_app(
         database_path=str(tmp_path / "notes-google-iap.sqlite"),
         audience=TEST_AUDIENCE,
@@ -82,7 +84,7 @@ def _make_app(tmp_path: Path) -> Any:
     )
 
 
-def test_rejects_missing_iap_header(tmp_path: Path, iap_key: Any) -> None:
+def test_rejects_missing_iap_header(tmp_path: "Path", iap_key: "Any") -> "None":
     app = _make_app(tmp_path)
     with TestClient(app=app) as client:
         response = rpc_response(
@@ -93,7 +95,7 @@ def test_rejects_missing_iap_header(tmp_path: Path, iap_key: Any) -> None:
         assert response.status_code == 401
 
 
-def test_rejects_token_signed_by_different_key(tmp_path: Path, iap_key: Any) -> None:
+def test_rejects_token_signed_by_different_key(tmp_path: "Path", iap_key: "Any") -> "None":
     # Mint a token with a *different* key that the server does not trust.
     rogue_key, _ = _make_keypair("rogue-kid")
     token = _mint_iap_token(rogue_key, kid="rogue-kid", sub="alice")
@@ -108,7 +110,7 @@ def test_rejects_token_signed_by_different_key(tmp_path: Path, iap_key: Any) -> 
         assert response.status_code == 401
 
 
-def test_rejects_wrong_audience(tmp_path: Path, iap_key: Any) -> None:
+def test_rejects_wrong_audience(tmp_path: "Path", iap_key: "Any") -> "None":
     private_key, kid = iap_key
     token = _mint_iap_token(private_key, kid=kid, sub="alice", audience="wrong-aud")
     app = _make_app(tmp_path)
@@ -122,7 +124,7 @@ def test_rejects_wrong_audience(tmp_path: Path, iap_key: Any) -> None:
         assert response.status_code == 401
 
 
-def test_valid_iap_header_scopes_notes_by_sub(tmp_path: Path, iap_key: Any) -> None:
+def test_valid_iap_header_scopes_notes_by_sub(tmp_path: "Path", iap_key: "Any") -> "None":
     private_key, kid = iap_key
     alice_token = _mint_iap_token(private_key, kid=kid, sub="alice")
     bob_token = _mint_iap_token(private_key, kid=kid, sub="bob", email="bob@example.com")
@@ -160,7 +162,7 @@ def test_valid_iap_header_scopes_notes_by_sub(tmp_path: Path, iap_key: Any) -> N
         assert not any(item["id"] == note_id for item in bob_items)
 
 
-def test_well_known_publishes_configured_issuer(tmp_path: Path, iap_key: Any) -> None:
+def test_well_known_publishes_configured_issuer(tmp_path: "Path", iap_key: "Any") -> "None":
     app = _make_app(tmp_path)
     with TestClient(app=app) as client:
         response = client.get("/.well-known/oauth-protected-resource")

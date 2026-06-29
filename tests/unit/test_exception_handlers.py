@@ -27,7 +27,7 @@ class DomainChildError(DomainError):
     """Sub-type used for MRO-matching tests."""
 
 
-def _ensure_session(client: TestClient[Any]) -> str:
+def _ensure_session(client: "TestClient[Any]") -> "str":
     sid = getattr(client, "_mcp_session", None)
     if sid is not None:
         return str(sid)
@@ -50,22 +50,22 @@ def _ensure_session(client: TestClient[Any]) -> str:
     return str(sid_val)
 
 
-def _call_tool(client: TestClient[Any], name: str) -> dict[str, Any]:
+def _call_tool(client: "TestClient[Any]", name: "str") -> "dict[str, Any]":
     body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": {}}}
     sid = _ensure_session(client)
     headers = {"Mcp-Session-Id": sid} if sid else {}
     return client.post("/mcp", json=body, headers=headers).json()  # type: ignore[no-any-return]
 
 
-def _handler_returns_4xx(_request: Request[Any, Any, Any], exc: DomainError) -> Response[Any]:
+def _handler_returns_4xx(_request: "Request[Any, Any, Any]", exc: "DomainError") -> "Response[Any]":
     return Response(content={"domain_error": str(exc)}, status_code=422)
 
 
-def _handler_returns_2xx(_request: Request[Any, Any, Any], exc: DomainError) -> Response[Any]:
+def _handler_returns_2xx(_request: "Request[Any, Any, Any]", exc: "DomainError") -> "Response[Any]":
     return Response(content={"recovered": True, "message": str(exc)}, status_code=200)
 
 
-def test_exception_handler_error_response_becomes_is_error_true() -> None:
+def test_exception_handler_error_response_becomes_is_error_true() -> "None":
     nope = "nope"
 
     @post(
@@ -74,7 +74,7 @@ def test_exception_handler_error_response_becomes_is_error_true() -> None:
         mcp_tool="x",
         sync_to_thread=False,
     )
-    def tool() -> dict[str, str]:
+    def tool() -> "dict[str, str]":
         raise DomainError(nope)
 
     app = Litestar(route_handlers=[tool], plugins=[LitestarMCP()])
@@ -86,7 +86,7 @@ def test_exception_handler_error_response_becomes_is_error_true() -> None:
     assert "nope" in resp["result"]["content"][0]["text"]
 
 
-def test_exception_handler_2xx_response_recovers_to_is_error_false() -> None:
+def test_exception_handler_2xx_response_recovers_to_is_error_false() -> "None":
     soft = "soft fail"
 
     @post(
@@ -95,7 +95,7 @@ def test_exception_handler_2xx_response_recovers_to_is_error_false() -> None:
         mcp_tool="x",
         sync_to_thread=False,
     )
-    def tool() -> dict[str, str]:
+    def tool() -> "dict[str, str]":
         raise DomainError(soft)
 
     app = Litestar(route_handlers=[tool], plugins=[LitestarMCP()])
@@ -106,7 +106,7 @@ def test_exception_handler_2xx_response_recovers_to_is_error_false() -> None:
     assert "recovered" in resp["result"]["content"][0]["text"]
 
 
-def test_exception_handler_mro_matches_subclass() -> None:
+def test_exception_handler_mro_matches_subclass() -> "None":
     """Registering a handler on ``DomainError`` must catch its subclass."""
 
     child_msg = "child raised"
@@ -117,7 +117,7 @@ def test_exception_handler_mro_matches_subclass() -> None:
         mcp_tool="x",
         sync_to_thread=False,
     )
-    def tool() -> dict[str, str]:
+    def tool() -> "dict[str, str]":
         raise DomainChildError(child_msg)
 
     app = Litestar(route_handlers=[tool], plugins=[LitestarMCP()])
@@ -130,13 +130,13 @@ def test_exception_handler_mro_matches_subclass() -> None:
     assert "child raised" in text
 
 
-def test_unhandled_exception_falls_through_to_blanket_catch() -> None:
+def test_unhandled_exception_falls_through_to_blanket_catch() -> "None":
     """An exception type without a registered handler goes to the JSON-RPC blanket catch."""
 
     generic = "generic boom"
 
     @post("/x", mcp_tool="x", sync_to_thread=False)
-    def tool() -> dict[str, str]:
+    def tool() -> "dict[str, str]":
         raise RuntimeError(generic)
 
     app = Litestar(route_handlers=[tool], plugins=[LitestarMCP()])
@@ -148,7 +148,7 @@ def test_unhandled_exception_falls_through_to_blanket_catch() -> None:
 
 
 @pytest.mark.parametrize("layer", ["app", "router", "controller", "route"])
-def test_exception_handler_resolves_from_ownership_layer(layer: str) -> None:
+def test_exception_handler_resolves_from_ownership_layer(layer: "str") -> "None":
     if layer == "route":
 
         @post(
@@ -157,7 +157,7 @@ def test_exception_handler_resolves_from_ownership_layer(layer: str) -> None:
             mcp_tool="x",
             sync_to_thread=False,
         )
-        def route_tool() -> dict[str, str]:
+        def route_tool() -> "dict[str, str]":
             raise DomainError(layer)
 
         app = Litestar(route_handlers=[route_tool], plugins=[LitestarMCP()])
@@ -169,7 +169,7 @@ def test_exception_handler_resolves_from_ownership_layer(layer: str) -> None:
             exception_handlers = {DomainError: _handler_returns_4xx}
 
             @post("/x", mcp_tool="x", sync_to_thread=False)
-            def tool(self) -> dict[str, str]:
+            def tool(self) -> "dict[str, str]":
                 raise DomainError(layer)
 
         app = Litestar(route_handlers=[Notes], plugins=[LitestarMCP()])
@@ -177,7 +177,7 @@ def test_exception_handler_resolves_from_ownership_layer(layer: str) -> None:
     elif layer == "router":
 
         @post("/x", mcp_tool="x", sync_to_thread=False)
-        def rt_tool() -> dict[str, str]:
+        def rt_tool() -> "dict[str, str]":
             raise DomainError(layer)
 
         router = Router(
@@ -190,7 +190,7 @@ def test_exception_handler_resolves_from_ownership_layer(layer: str) -> None:
     else:
 
         @post("/x", mcp_tool="x", sync_to_thread=False)
-        def app_tool() -> dict[str, str]:
+        def app_tool() -> "dict[str, str]":
             raise DomainError(layer)
 
         app = Litestar(

@@ -11,7 +11,7 @@ from litestar_mcp import LitestarMCP, MCPConfig
 pytestmark = pytest.mark.unit
 
 
-def _ensure_session(client: TestClient[Any]) -> str:
+def _ensure_session(client: "TestClient[Any]") -> "str":
     init = client.post(
         "/mcp",
         json={
@@ -30,7 +30,9 @@ def _ensure_session(client: TestClient[Any]) -> str:
     return str(sid)
 
 
-def _rpc(client: TestClient[Any], method: str, params: dict[str, Any] | None = None, *, sid: str) -> dict[str, Any]:
+def _rpc(
+    client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None, *, sid: "str"
+) -> "dict[str, Any]":
     response = client.post(
         "/mcp",
         json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}},
@@ -40,9 +42,9 @@ def _rpc(client: TestClient[Any], method: str, params: dict[str, Any] | None = N
     return data
 
 
-def test_tool_execution_error_stays_in_tool_result_envelope() -> None:
+def test_tool_execution_error_stays_in_tool_result_envelope() -> "None":
     @get("/tool-error", mcp_tool="tool_error", sync_to_thread=False)
-    def tool_error() -> Response[dict[str, str]]:
+    def tool_error() -> "Response[dict[str, str]]":
         return Response({"error": "bad input"}, status_code=400)
 
     app = Litestar(route_handlers=[tool_error], plugins=[LitestarMCP(MCPConfig())])
@@ -54,9 +56,9 @@ def test_tool_execution_error_stays_in_tool_result_envelope() -> None:
         assert "bad input" in response["result"]["content"][0]["text"]
 
 
-def test_prompt_handler_execution_error_maps_to_internal_error_with_data() -> None:
+def test_prompt_handler_execution_error_maps_to_internal_error_with_data() -> "None":
     @get("/prompt-error", mcp_prompt="prompt_error", sync_to_thread=False)
-    def prompt_error() -> Response[dict[str, str]]:
+    def prompt_error() -> "Response[dict[str, str]]":
         return Response({"error": "bad input"}, status_code=400)
 
     app = Litestar(route_handlers=[prompt_error], plugins=[LitestarMCP(MCPConfig())])
@@ -68,7 +70,7 @@ def test_prompt_handler_execution_error_maps_to_internal_error_with_data() -> No
         assert response["error"]["data"] == {"statusCode": 400, "content": {"error": "bad input"}}
 
 
-def test_resource_not_found_uses_mcp_resource_code_with_uri_data() -> None:
+def test_resource_not_found_uses_mcp_resource_code_with_uri_data() -> "None":
     app = Litestar(route_handlers=[], plugins=[LitestarMCP(MCPConfig())])
     with TestClient(app=app) as client:
         sid = _ensure_session(client)
@@ -78,9 +80,9 @@ def test_resource_not_found_uses_mcp_resource_code_with_uri_data() -> None:
         assert response["error"]["data"] == {"uri": "litestar://missing"}
 
 
-def test_resource_read_failure_maps_to_internal_error_with_data() -> None:
+def test_resource_read_failure_maps_to_internal_error_with_data() -> "None":
     @get("/resource-error", mcp_resource="resource_error", sync_to_thread=False)
-    def resource_error() -> Response[dict[str, str]]:
+    def resource_error() -> "Response[dict[str, str]]":
         return Response({"error": "failed read"}, status_code=503)
 
     app = Litestar(route_handlers=[resource_error], plugins=[LitestarMCP(MCPConfig())])
@@ -102,9 +104,9 @@ def test_resource_read_failure_maps_to_internal_error_with_data() -> None:
 
 
 @pytest.mark.parametrize("status_code", [400, 401, 403, 404, 409, 422, 429, 500, 503])
-def test_resource_read_error_maps_to_internal_error_for_all_statuses(status_code: int) -> None:
+def test_resource_read_error_maps_to_internal_error_for_all_statuses(status_code: "int") -> "None":
     @get(f"/res-{status_code}", mcp_resource=f"res_{status_code}", sync_to_thread=False)
-    def resource_error() -> Response[dict[str, str]]:
+    def resource_error() -> "Response[dict[str, str]]":
         return Response({"error": "boom"}, status_code=status_code)
 
     app = Litestar(route_handlers=[resource_error], plugins=[LitestarMCP(MCPConfig())])
@@ -115,7 +117,7 @@ def test_resource_read_error_maps_to_internal_error_for_all_statuses(status_code
         assert response["error"]["data"] == {"statusCode": status_code, "content": {"error": "boom"}}
 
 
-def test_resource_not_found_keeps_spec_code_not_internal_error() -> None:
+def test_resource_not_found_keeps_spec_code_not_internal_error() -> "None":
     """The one intentional asymmetry: resource-not-found is -32002 (spec-mandated),
     where prompt-not-found is -32602. This must not collapse to -32603.
     """

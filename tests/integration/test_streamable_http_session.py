@@ -11,28 +11,28 @@ from litestar_mcp import LitestarMCP
 pytestmark = pytest.mark.integration
 
 
-def _make_app() -> Litestar:
+def _make_app() -> "Litestar":
     @get("/users", opt={"mcp_tool": "list_users"}, sync_to_thread=False)
-    def list_users() -> list[dict[str, Any]]:
+    def list_users() -> "list[dict[str, Any]]":
         return [{"id": 1, "name": "Alice"}]
 
     return Litestar(route_handlers=[list_users], plugins=[LitestarMCP()])
 
 
 def _rpc(
-    client: TestClient[Any],
-    method: str,
-    id_: int,
+    client: "TestClient[Any]",
+    method: "str",
+    id_: "int",
     params: "dict[str, Any] | None" = None,
     headers: "dict[str, str] | None" = None,
-) -> Any:
+) -> "Any":
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": id_, "method": method}
     if params is not None:
         body["params"] = params
     return client.post("/mcp", json=body, headers=headers or {})
 
 
-def test_end_to_end_post_only_session() -> None:
+def test_end_to_end_post_only_session() -> "None":
     app = _make_app()
     with TestClient(app=app) as client:
         # 1. initialize

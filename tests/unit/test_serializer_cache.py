@@ -19,18 +19,18 @@ pytestmark = pytest.mark.unit
 
 
 class _CamelItem(Struct, rename="camel"):
-    field_a: int = 0
-    field_b: str = ""
+    field_a: "int" = 0
+    field_b: "str" = ""
 
 
 class _SnakeItem(Struct):
-    field_a: int = 0
+    field_a: "int" = 0
 
 
 @dataclass
 class _DcItem:
-    x: int = 0
-    y: int = 0
+    x: "int" = 0
+    y: "int" = 0
 
 
 @pytest.fixture(autouse=True)
@@ -40,43 +40,43 @@ def _clear_cache_between_tests() -> "Any":
     reset_serializer_cache()
 
 
-def test_get_collection_serializer_returns_schema_serializer_instance() -> None:
+def test_get_collection_serializer_returns_schema_serializer_instance() -> "None":
     item = _CamelItem(field_a=1, field_b="x")
     pipeline = get_collection_serializer(item)
     assert isinstance(pipeline, SchemaSerializer)
 
 
-def test_serializer_cache_hit_on_same_type() -> None:
+def test_serializer_cache_hit_on_same_type() -> "None":
     """Two ``get_collection_serializer`` calls on the same type return the same instance."""
     first = get_collection_serializer(_CamelItem())
     second = get_collection_serializer(_CamelItem(field_a=99, field_b="y"))
     assert first is second
 
 
-def test_serializer_cache_key_distinguishes_exclude_unset() -> None:
+def test_serializer_cache_key_distinguishes_exclude_unset() -> "None":
     """``exclude_unset=True`` and ``False`` produce different cached serializers for the same type."""
     with_exclude = get_collection_serializer(_CamelItem(), exclude_unset=True)
     without_exclude = get_collection_serializer(_CamelItem(), exclude_unset=False)
     assert with_exclude is not without_exclude
 
 
-def test_serializer_cache_distinguishes_types() -> None:
+def test_serializer_cache_distinguishes_types() -> "None":
     camel_pipeline = get_collection_serializer(_CamelItem())
     snake_pipeline = get_collection_serializer(_SnakeItem())
     assert camel_pipeline is not snake_pipeline
 
 
-def test_reset_serializer_cache_clears_entries() -> None:
+def test_reset_serializer_cache_clears_entries() -> "None":
     first = get_collection_serializer(_CamelItem())
     reset_serializer_cache()
     second = get_collection_serializer(_CamelItem())
     assert first is not second
 
 
-def test_serializer_cache_thread_safety() -> None:
+def test_serializer_cache_thread_safety() -> "None":
     """Stress test: concurrent dumps across mixed types must not error or corrupt output."""
 
-    def _dump_one(index: int) -> dict[str, Any]:
+    def _dump_one(index: "int") -> "dict[str, Any]":
         if index % 3 == 0:
             return cast("dict[str, Any]", schema_dump(_CamelItem(field_a=index, field_b="x")))
         if index % 3 == 1:
@@ -96,7 +96,7 @@ def test_serializer_cache_thread_safety() -> None:
             assert result == {"field_a": index}
 
 
-def test_serialize_collection_mixed_types_preserves_per_item_rendering() -> None:
+def test_serialize_collection_mixed_types_preserves_per_item_rendering() -> "None":
     """Iterable with dict, Struct, dataclass, primitive — each handled correctly."""
     items = [
         {"raw": "dict"},
@@ -117,7 +117,7 @@ def test_serialize_collection_mixed_types_preserves_per_item_rendering() -> None
     ]
 
 
-def test_serialize_collection_reuses_cache_within_iteration() -> None:
+def test_serialize_collection_reuses_cache_within_iteration() -> "None":
     """Local cache inside ``serialize_collection`` should reuse pipelines across items."""
     items = [_CamelItem(field_a=i, field_b="x") for i in range(5)]
     serialized = serialize_collection(items)
@@ -126,7 +126,7 @@ def test_serialize_collection_reuses_cache_within_iteration() -> None:
     assert get_collection_serializer(items[0]) is get_collection_serializer(items[-1])
 
 
-def test_dump_many_respects_rename() -> None:
+def test_dump_many_respects_rename() -> "None":
     pipeline = get_collection_serializer(_CamelItem())
     dumped = pipeline.dump_many([_CamelItem(field_a=1), _CamelItem(field_a=2)])
     assert dumped == [
@@ -135,13 +135,13 @@ def test_dump_many_respects_rename() -> None:
     ]
 
 
-def test_schema_serializer_key_property_reports_cache_key() -> None:
+def test_schema_serializer_key_property_reports_cache_key() -> "None":
     pipeline = get_collection_serializer(_CamelItem(), exclude_unset=True)
     # Cache key shape: (type, exclude_unset, encoder_map_id) — None map → trailing None.
     assert pipeline.key == (_CamelItem, True, None)
 
 
-def test_schema_dump_for_attrs_instance_falls_through_pipeline() -> None:
+def test_schema_dump_for_attrs_instance_falls_through_pipeline() -> "None":
     """Attrs path round-trips via Litestar's native encoder (no ``__dict__`` fallback needed)."""
     try:
         import attrs
@@ -150,14 +150,14 @@ def test_schema_dump_for_attrs_instance_falls_through_pipeline() -> None:
 
     @attrs.define
     class AttrsPoint:
-        x: int = 0
-        y: int = 0
+        x: "int" = 0
+        y: "int" = 0
 
     dumped = schema_dump(AttrsPoint(x=3, y=4))
     assert dumped == {"x": 3, "y": 4}
 
 
-def test_schema_dump_plain_object_requires_type_encoder() -> None:
+def test_schema_dump_plain_object_requires_type_encoder() -> "None":
     """Plain classes (no dataclass/msgspec/attrs/pydantic identity) raise TypeError.
 
     Matches Litestar's own HTTP wire behavior: an unknown type must be
@@ -167,7 +167,7 @@ def test_schema_dump_plain_object_requires_type_encoder() -> None:
     """
 
     class Plain:
-        def __init__(self) -> None:
+        def __init__(self) -> "None":
             self.alpha = 1
             self.beta = "two"
 
@@ -179,7 +179,7 @@ def test_schema_dump_plain_object_requires_type_encoder() -> None:
     assert dumped == {"alpha": 1, "beta": "two"}
 
 
-def test_serialize_collection_routes_bare_dict_through_primitive_shortcut() -> None:
+def test_serialize_collection_routes_bare_dict_through_primitive_shortcut() -> "None":
     """Dicts bypass ``get_collection_serializer`` and return as-is."""
     original = {"a": 1}
     serialized = serialize_collection([original])
@@ -188,7 +188,7 @@ def test_serialize_collection_routes_bare_dict_through_primitive_shortcut() -> N
     assert serialized[0] is original
 
 
-def test_get_collection_serializer_for_dict_produces_identity_pipeline() -> None:
+def test_get_collection_serializer_for_dict_produces_identity_pipeline() -> "None":
     """Dispatching on a dict sample caches the identity dumper."""
     pipeline = get_collection_serializer({"a": 1})
     # (type=None for dict/None samples, exclude_unset=True default, no encoder map).

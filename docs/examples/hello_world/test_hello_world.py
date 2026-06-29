@@ -11,7 +11,7 @@ from litestar.testing import TestClient
 from docs.examples.hello_world.main import build_app
 
 
-def _ensure_session(client: TestClient[Any]) -> str:
+def _ensure_session(client: "TestClient[Any]") -> "str":
     """Initialize the session and return the session ID."""
     key = "_mcp_session"
     sid = getattr(client, key, None)
@@ -37,10 +37,10 @@ def _ensure_session(client: TestClient[Any]) -> str:
 
 
 def _rpc(
-    client: TestClient[Any],
-    method: str,
+    client: "TestClient[Any]",
+    method: "str",
     params: "dict[str, Any] | None" = None,
-) -> dict[str, Any]:
+) -> "dict[str, Any]":
     """Execute JSON-RPC call after ensuring session is initialized."""
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
     if params is not None:
@@ -53,21 +53,21 @@ def _rpc(
     return client.post("/mcp", json=body, headers=headers).json()  # type: ignore[no-any-return]
 
 
-def test_hello_endpoint_returns_200() -> None:
+def test_hello_endpoint_returns_200() -> "None":
     with TestClient(app=build_app()) as client:
         resp = client.get("/")
         assert resp.status_code == 200
         assert resp.json() == {"message": "Hello from Litestar!"}
 
 
-def test_status_endpoint_returns_200() -> None:
+def test_status_endpoint_returns_200() -> "None":
     with TestClient(app=build_app()) as client:
         resp = client.get("/status")
         assert resp.status_code == 200
         assert resp.json()["status"] == "healthy"
 
 
-def test_initialize_returns_configured_server_name() -> None:
+def test_initialize_returns_configured_server_name() -> "None":
     with TestClient(app=build_app()) as client:
         result = _rpc(
             client,
@@ -81,7 +81,7 @@ def test_initialize_returns_configured_server_name() -> None:
         assert result["result"]["serverInfo"]["name"] == "Hello World API"
 
 
-def test_tools_list_is_empty_when_no_marked_tools() -> None:
+def test_tools_list_is_empty_when_no_marked_tools() -> "None":
     with TestClient(app=build_app()) as client:
         result = _rpc(client, "tools/list", {})
         assert result["result"]["tools"] == []

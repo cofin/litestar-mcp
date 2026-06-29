@@ -16,8 +16,6 @@ The script exits non-zero on any failure so it can be wired into CI and the
 ``validate-pep723`` Makefile target.
 """
 
-from __future__ import annotations
-
 import re
 import sys
 from pathlib import Path
@@ -29,7 +27,7 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
 
 ROOT = Path(__file__).resolve().parents[2]
 
-EXAMPLES: tuple[Path, ...] = (
+EXAMPLES: "tuple[Path, ...]" = (
     ROOT / "docs/examples/hello_world/main.py",
     ROOT / "docs/examples/task_manager/main.py",
     ROOT / "docs/examples/notes/advanced_alchemy/no_auth.py",
@@ -49,7 +47,7 @@ _BLOCK_RE = re.compile(
 )
 
 
-def extract_block(source: str) -> str | None:
+def extract_block(source: "str") -> "str | None":
     """Return the TOML body of the first ``# /// script`` block, if any."""
     match = _BLOCK_RE.search(source)
     if match is None:
@@ -66,7 +64,7 @@ def extract_block(source: str) -> str | None:
     return "\n".join(lines) + "\n"
 
 
-def validate_file(path: Path) -> list[str]:
+def validate_file(path: "Path") -> "list[str]":
     """Return a list of validation errors for ``path`` (empty == ok)."""
     errors: list[str] = []
     if not path.is_file():
@@ -97,7 +95,7 @@ def validate_file(path: Path) -> list[str]:
     return errors
 
 
-def main() -> int:
+def main() -> "int":
     all_errors: list[str] = []
     for path in EXAMPLES:
         all_errors.extend(validate_file(path))

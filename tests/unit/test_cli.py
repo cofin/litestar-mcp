@@ -19,7 +19,7 @@ class TestCLI:
     command works, demonstrating that the plugin registration is functional.
     """
 
-    def test_mcp_group_help_command(self) -> None:
+    def test_mcp_group_help_command(self) -> "None":
         """Test that MCP CLI shows help information."""
         runner = CliRunner()
 

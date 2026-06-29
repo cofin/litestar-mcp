@@ -64,6 +64,32 @@ app = Litestar(
 )
 ```
 
+### Standalone Application (Alternative)
+
+If you are building a standalone MCP server, you can use the ``MCP`` class which provides a simplified declarative API and programmatically boots the server using the standard Litestar CLI:
+
+```python
+from litestar_mcp import MCP
+
+# 1. Initialize the application
+mcp = MCP("my-mcp-server", instructions="Exposes utility tools.")
+
+# 2. Register tools, resources, or prompts using decorators
+@mcp.tool()
+def add(a: int, b: int) -> int:
+    """Calculate the sum of two integers."""
+    return a + b
+
+# 3. Expose the app globally so that the CLI can discover it
+app = mcp.app
+
+if __name__ == "__main__":
+    # 4. Boot the server using Server-Sent Events (SSE)
+    mcp.run(port=8000)
+```
+
+The standalone decorators accept Litestar route-handler keyword arguments such as `dependencies`, `guards`, `response_headers`, `responses`, `summary`, `tags`, DTO options, hooks, and arbitrary extra kwargs stored in `handler.opt`. The `name` keyword names the MCP primitive; use `route_name` to set Litestar's route-handler name separately.
+
 ### With Configuration
 
 ```python

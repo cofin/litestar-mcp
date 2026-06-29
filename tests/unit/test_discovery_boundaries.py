@@ -12,17 +12,17 @@ from litestar_mcp.utils import mcp_tool
 from tests.integration._auth import AUDIENCE, ISSUER, bearer_token_validator
 
 
-async def _user_resolver(claims: dict[str, Any], _app: Any) -> Any:
+async def _user_resolver(claims: "dict[str, Any]", _app: "Any") -> "Any":
     """User resolver mock for testing."""
     return None
 
 
-def _make_app(with_auth: bool = False) -> Litestar:
+def _make_app(with_auth: "bool" = False) -> "Litestar":
     """Create a test Litestar app with the MCP plugin."""
 
     @get("/check", sync_to_thread=False)
     @mcp_tool(name="check_health")
-    def check_health() -> dict[str, str]:
+    def check_health() -> "dict[str, str]":
         """Check service health."""
         return {"status": "ok"}
 
@@ -45,7 +45,7 @@ def _make_app(with_auth: bool = False) -> Litestar:
     )
 
 
-def test_agent_card_does_not_claim_a2a() -> None:
+def test_agent_card_does_not_claim_a2a() -> "None":
     """Verify that agent-card.json does not contain A2A protocolVersion or other A2A specific fields."""
     app = _make_app()
     with TestClient(app=app) as client:
@@ -59,7 +59,7 @@ def test_agent_card_does_not_claim_a2a() -> None:
         assert payload["url"].endswith("/mcp")
 
 
-def test_mcp_server_manifest_links_as_metadata() -> None:
+def test_mcp_server_manifest_links_as_metadata() -> "None":
     """Verify that mcp-server.json links the agent card as metadata, not as an A2A endpoint."""
     app = _make_app()
     with TestClient(app=app) as client:
@@ -73,7 +73,7 @@ def test_mcp_server_manifest_links_as_metadata() -> None:
         assert endpoints["agentMetadata"].endswith("/.well-known/agent-card.json")
 
 
-def test_agent_card_remains_public_with_auth() -> None:
+def test_agent_card_remains_public_with_auth() -> "None":
     """Verify that agent-card.json remains public even when auth middleware is enabled."""
     app = _make_app(with_auth=True)
     with TestClient(app=app) as client:

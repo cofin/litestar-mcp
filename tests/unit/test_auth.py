@@ -8,8 +8,6 @@ Backend behavior: ``tests/unit/test_auth_backend.py``.
 Middleware wiring + well-known exemption: ``tests/integration/test_mcp_auth_middleware.py``.
 """
 
-from __future__ import annotations
-
 from dataclasses import fields
 from typing import Any
 
@@ -21,10 +19,10 @@ from litestar_mcp.auth import MCPAuthConfig, OIDCProviderConfig
 from litestar_mcp.utils import mcp_tool
 
 
-def _make_app(auth_config: MCPAuthConfig | None = None) -> Litestar:
+def _make_app(auth_config: "MCPAuthConfig | None" = None) -> "Litestar":
     @get("/users", sync_to_thread=False)
     @mcp_tool(name="list_users")
-    def list_users() -> list[dict[str, Any]]:
+    def list_users() -> "list[dict[str, Any]]":
         """List users."""
         return [{"id": 1, "name": "Alice"}]
 
@@ -35,18 +33,18 @@ def _make_app(auth_config: MCPAuthConfig | None = None) -> Litestar:
 class TestMCPAuthConfigShape:
     """Ch3 collapses MCPAuthConfig to metadata: only issuer/audience/scopes survive."""
 
-    def test_defaults_all_none(self) -> None:
+    def test_defaults_all_none(self) -> "None":
         config = MCPAuthConfig()
         assert config.issuer is None
         assert config.audience is None
         assert config.scopes is None
 
-    def test_field_set_matches_spec(self) -> None:
+    def test_field_set_matches_spec(self) -> "None":
         """Guard against regression — the collapsed shape has exactly 3 fields."""
         names = {f.name for f in fields(MCPAuthConfig)}
         assert names == {"issuer", "audience", "scopes"}, names
 
-    def test_populated_metadata(self) -> None:
+    def test_populated_metadata(self) -> "None":
         config = MCPAuthConfig(
             issuer="https://idp.example.com",
             audience="my-mcp-server",
@@ -60,13 +58,13 @@ class TestMCPAuthConfigShape:
 class TestOIDCProviderConfig:
     """OIDCProviderConfig surface survives the collapse unchanged."""
 
-    def test_minimal_construction(self) -> None:
+    def test_minimal_construction(self) -> "None":
         provider = OIDCProviderConfig(issuer="https://issuer.example.com")
         assert provider.issuer == "https://issuer.example.com"
         assert provider.audience is None
         assert provider.algorithms == ["RS256"]
 
-    def test_full_construction(self) -> None:
+    def test_full_construction(self) -> "None":
         provider = OIDCProviderConfig(
             issuer="https://issuer.example.com",
             audience=["api-1", "api-2"],
@@ -85,7 +83,7 @@ class TestOIDCProviderConfig:
 class TestProtectedResourceMetadata:
     """The collapsed config still drives /.well-known/oauth-protected-resource correctly."""
 
-    def test_well_known_with_explicit_auth_config(self) -> None:
+    def test_well_known_with_explicit_auth_config(self) -> "None":
         auth = MCPAuthConfig(issuer="https://auth.example.com", audience="my-mcp-server")
         with TestClient(app=_make_app(auth_config=auth)) as client:
             resp = client.get("/.well-known/oauth-protected-resource")
@@ -94,7 +92,7 @@ class TestProtectedResourceMetadata:
             assert data["resource"] == "my-mcp-server"
             assert data["authorization_servers"] == ["https://auth.example.com"]
 
-    def test_well_known_with_scopes(self) -> None:
+    def test_well_known_with_scopes(self) -> "None":
         auth = MCPAuthConfig(
             issuer="https://auth.example.com",
             audience="mcp",
@@ -106,7 +104,7 @@ class TestProtectedResourceMetadata:
             data = resp.json()
             assert set(data["scopes_supported"]) == {"mcp:read", "mcp:write"}
 
-    def test_well_known_no_auth_returns_empty_authorization_servers(self) -> None:
+    def test_well_known_no_auth_returns_empty_authorization_servers(self) -> "None":
         with TestClient(app=_make_app()) as client:
             resp = client.get("/.well-known/oauth-protected-resource")
             assert resp.status_code == 200

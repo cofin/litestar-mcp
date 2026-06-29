@@ -8,11 +8,11 @@ import base64
 import binascii
 
 
-def encode_cursor(offset: int) -> str:
+def encode_cursor(offset: "int") -> "str":
     return base64.urlsafe_b64encode(str(offset).encode("utf-8")).decode("ascii")
 
 
-def decode_cursor(cursor: str) -> int:
+def decode_cursor(cursor: "str") -> "int":
     try:
         raw = base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
         offset = int(raw)

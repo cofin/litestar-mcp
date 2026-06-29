@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import argparse
 import importlib.metadata
 import json
@@ -35,12 +33,12 @@ parser.add_argument("output")
 
 
 class VersionSpec(TypedDict):
-    versions: list[str]
-    latest: str
+    versions: "list[str]"
+    latest: "str"
 
 
 @contextmanager
-def checkout(branch: str, skip: bool = False) -> Generator[None]:
+def checkout(branch: "str", skip: "bool" = False) -> "Generator[None]":
     if not skip:
         subprocess.run(["git", "checkout", branch], check=True)  # noqa: S607
     yield
@@ -48,14 +46,14 @@ def checkout(branch: str, skip: bool = False) -> Generator[None]:
         subprocess.run(["git", "checkout", "-"], check=True)  # noqa: S607
 
 
-def load_version_spec() -> VersionSpec:
+def load_version_spec() -> "VersionSpec":
     versions_file = Path("docs/_static/versions.json")
     if versions_file.exists():
         return cast("VersionSpec", json.loads(versions_file.read_text()))
     return {"versions": [], "latest": ""}
 
 
-def build(output_dir: str, version: str | None) -> None:
+def build(output_dir: "str", version: "str | None") -> "None":
     if version is None:
         version = importlib.metadata.version("litestar-mcp").rsplit(".")[0]
     else:
@@ -86,7 +84,7 @@ def build(output_dir: str, version: str | None) -> None:
                 shutil.copytree(other_version_path, other_version_target_path)
 
 
-def main() -> None:
+def main() -> "None":
     args = parser.parse_args()
     build(output_dir=args.output, version=args.version)
 

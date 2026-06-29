@@ -9,8 +9,6 @@ These tests will fail until Phase 2 (module reorg) + Phase 3 (backend impl)
 + Phase 4 (routes.py cleanup) land.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 from litestar import Litestar, get
@@ -30,19 +28,19 @@ from tests.integration._auth import (
 )
 
 
-async def _user_resolver(claims: dict[str, Any], _app: Any) -> AuthenticatedUser:
+async def _user_resolver(claims: "dict[str, Any]", _app: "Any") -> "AuthenticatedUser":
     scopes = claims.get("scopes") or []
     if not isinstance(scopes, list):
         scopes = []
     return AuthenticatedUser(sub=str(claims.get("sub", "")), scopes=tuple(str(s) for s in scopes))
 
 
-def _build_app_with_backend() -> Litestar:
+def _build_app_with_backend() -> "Litestar":
     """App with the built-in MCPAuthBackend installed as middleware."""
 
     @get("/echo-user", sync_to_thread=False)
     @mcp_tool(name="echo_user")
-    def echo_user(request: Any) -> dict[str, Any]:
+    def echo_user(request: "Any") -> "dict[str, Any]":
         """Return the authenticated user's sub claim."""
         user = request.user
         return {"sub": getattr(user, "sub", None)}
@@ -61,7 +59,7 @@ def _build_app_with_backend() -> Litestar:
     )
 
 
-def _initialize(client: TestClient[Any], headers: dict[str, str] | None = None) -> Any:
+def _initialize(client: "TestClient[Any]", headers: "dict[str, str] | None" = None) -> "Any":
     return client.post(
         "/mcp",
         json={
@@ -77,7 +75,7 @@ def _initialize(client: TestClient[Any], headers: dict[str, str] | None = None) 
 class TestMCPAuthBackendMiddleware:
     """Integration tests for MCPAuthBackend installed as middleware on /mcp."""
 
-    def test_well_known_paths_unauthenticated(self) -> None:
+    def test_well_known_paths_unauthenticated(self) -> "None":
         """.well-known routes are exempt via opt={'exclude_from_auth': True}."""
         with TestClient(app=_build_app_with_backend()) as client:
             for path in (
@@ -88,7 +86,7 @@ class TestMCPAuthBackendMiddleware:
                 resp = client.get(path)
                 assert resp.status_code == 200, f"{path} should be unauthenticated; got {resp.status_code}"
 
-    def test_initialize_requires_token(self) -> None:
+    def test_initialize_requires_token(self) -> "None":
         """Ch3 removes the initialize/ping auth exemption. Clients MUST present a token."""
         with TestClient(app=_build_app_with_backend()) as client:
             # Without a token → 401
@@ -99,14 +97,14 @@ class TestMCPAuthBackendMiddleware:
             resp = _initialize(client, headers={"Authorization": f"Bearer {VALID_TOKEN}"})
             assert resp.status_code == 200
 
-    def test_invalid_token_rejected(self) -> None:
+    def test_invalid_token_rejected(self) -> "None":
         """Invalid bearer tokens return 401 with WWW-Authenticate: Bearer."""
         with TestClient(app=_build_app_with_backend()) as client:
             resp = _initialize(client, headers={"Authorization": f"Bearer {FORGED_TOKEN}"})
             assert resp.status_code == 401
             assert "bearer" in resp.headers.get("www-authenticate", "").lower()
 
-    def test_tool_call_uses_request_user(self) -> None:
+    def test_tool_call_uses_request_user(self) -> "None":
         """Tool handlers see ``request.user`` populated by the middleware."""
         headers = {"Authorization": f"Bearer {VALID_TOKEN}"}
         with TestClient(app=_build_app_with_backend()) as client:
@@ -143,7 +141,7 @@ class TestMCPAuthBackendMiddleware:
 class TestBYOAuthMiddlewareCompatibility:
     """DMA pattern: app uses its own AbstractAuthenticationMiddleware; no MCPAuthBackend."""
 
-    def test_custom_middleware_populates_request_user(self) -> None:
+    def test_custom_middleware_populates_request_user(self) -> "None":
         """Apps with their own auth middleware inherit user into MCP tool calls — no MCPAuthBackend needed."""
         from litestar.exceptions import NotAuthorizedException
         from litestar.middleware.authentication import (
@@ -155,7 +153,7 @@ class TestBYOAuthMiddlewareCompatibility:
         invalid_msg = "invalid bearer"
 
         class CustomAuth(AbstractAuthenticationMiddleware):
-            async def authenticate_request(self, connection: Any) -> AuthenticationResult:
+            async def authenticate_request(self, connection: "Any") -> "AuthenticationResult":
                 header = connection.headers.get("authorization", "")
                 if not header.startswith("Bearer "):
                     raise NotAuthorizedException(missing_msg)
@@ -167,7 +165,7 @@ class TestBYOAuthMiddlewareCompatibility:
 
         @get("/whoami", sync_to_thread=False)
         @mcp_tool(name="whoami")
-        def whoami(request: Any) -> dict[str, Any]:
+        def whoami(request: "Any") -> "dict[str, Any]":
             return {"sub": request.user.sub}
 
         app = Litestar(
@@ -208,10 +206,10 @@ class TestBYOAuthMiddlewareCompatibility:
 class TestCollapsedAuthConfigMetadata:
     """MCPAuthConfig with NO middleware installed: pure metadata for the well-known manifest."""
 
-    def test_metadata_only_app_serves_well_known(self) -> None:
+    def test_metadata_only_app_serves_well_known(self) -> "None":
         @get("/public-tool", sync_to_thread=False)
         @mcp_tool(name="public_tool")
-        def public_tool() -> dict[str, Any]:
+        def public_tool() -> "dict[str, Any]":
             return {"ok": True}
 
         metadata = MCPAuthConfig(

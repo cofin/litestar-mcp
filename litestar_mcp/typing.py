@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
 
 from litestar_mcp._typing import (
     ATTRS_INSTALLED,
+    DISHKA_INSTALLED,
     MSGSPEC_INSTALLED,
     PYDANTIC_INSTALLED,
     AttrsInstance,
@@ -27,6 +28,7 @@ from litestar_mcp._typing import (
     BaseModel,
     BaseModelStub,
     DataclassProtocol,
+    DishkaDependencyKey,
     Struct,
     StructStub,
     attrs_fields,
@@ -49,12 +51,12 @@ if TYPE_CHECKING:
 class DictLike(Protocol):
     """A protocol for objects that behave like a dictionary for reading."""
 
-    def __getitem__(self, key: str) -> Any: ...
+    def __getitem__(self, key: "str") -> "Any": ...
     def __iter__(self) -> "Iterator[str]": ...
-    def __len__(self) -> int: ...
+    def __len__(self) -> "int": ...
 
 
-SupportedSchemaModel: TypeAlias = DictLike | StructStub | BaseModelStub | DataclassProtocol | AttrsInstanceStub
+SupportedSchemaModel: "TypeAlias" = DictLike | StructStub | BaseModelStub | DataclassProtocol | AttrsInstanceStub
 """Type alias for supported schema models.
 
 :class:`msgspec.Struct` | :class:`pydantic.BaseModel` | :class:`DataclassProtocol` | :class:`AttrsInstance`
@@ -63,12 +65,14 @@ SupportedSchemaModel: TypeAlias = DictLike | StructStub | BaseModelStub | Datacl
 
 __all__ = (
     "ATTRS_INSTALLED",
+    "DISHKA_INSTALLED",
     "MSGSPEC_INSTALLED",
     "PYDANTIC_INSTALLED",
     "AttrsInstance",
     "BaseModel",
     "DataclassProtocol",
     "DictLike",
+    "DishkaDependencyKey",
     "Struct",
     "SupportedSchemaModel",
     "attrs_fields",

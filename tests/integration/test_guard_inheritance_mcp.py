@@ -6,8 +6,6 @@ both an authenticated-user guard and a custom claim-based guard reject MCP
 tool calls identically to HTTP.
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -28,15 +26,15 @@ _INVALID_AUTH = "Invalid auth payload"
 _DOMAIN_DENIED = "Domain not allowed"
 
 
-def _targets_mcp_tool(handler: BaseRouteHandler) -> bool:
+def _targets_mcp_tool(handler: "BaseRouteHandler") -> "bool":
     opt = getattr(handler, "opt", {}) or {}
     return "mcp_tool" in opt
 
 
 def requires_authenticated_user(
-    connection: ASGIConnection[Any, Any, Any, Any],
-    handler: BaseRouteHandler,
-) -> None:
+    connection: "ASGIConnection[Any, Any, Any, Any]",
+    handler: "BaseRouteHandler",
+) -> "None":
     if not _targets_mcp_tool(handler):
         return
     if connection.scope.get("auth") is None:
@@ -44,9 +42,9 @@ def requires_authenticated_user(
 
 
 def require_email_domain(
-    connection: ASGIConnection[Any, Any, Any, Any],
-    handler: BaseRouteHandler,
-) -> None:
+    connection: "ASGIConnection[Any, Any, Any, Any]",
+    handler: "BaseRouteHandler",
+) -> "None":
     if not _targets_mcp_tool(handler):
         return
     auth = connection.scope.get("auth") or {}
@@ -57,7 +55,7 @@ def require_email_domain(
         raise PermissionDeniedException(_DOMAIN_DENIED)
 
 
-def _ensure_session(client: TestClient[Any]) -> str:
+def _ensure_session(client: "TestClient[Any]") -> "str":
     init = client.post(
         "/mcp",
         json={
@@ -77,11 +75,11 @@ def _ensure_session(client: TestClient[Any]) -> str:
 
 
 def _rpc(
-    client: TestClient[Any],
-    method: str,
-    params: dict[str, Any] | None = None,
-    sid: str | None = None,
-) -> dict[str, Any]:
+    client: "TestClient[Any]",
+    method: "str",
+    params: "dict[str, Any] | None" = None,
+    sid: "str | None" = None,
+) -> "dict[str, Any]":
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
     if params is not None:
         body["params"] = params
@@ -91,7 +89,7 @@ def _rpc(
     return client.post("/mcp", json=body, headers=headers).json()  # type: ignore[no-any-return]
 
 
-def test_mcp_tool_rejects_unauthenticated_via_guard() -> None:
+def test_mcp_tool_rejects_unauthenticated_via_guard() -> "None":
     """Controller with ``requires_authenticated_user`` guard blocks anonymous MCP tool calls."""
 
     class GuardedController(Controller):
@@ -99,7 +97,7 @@ def test_mcp_tool_rejects_unauthenticated_via_guard() -> None:
         guards = [requires_authenticated_user]
 
         @get("/x", opt={"mcp_tool": "guarded_tool"}, sync_to_thread=False)
-        def x(self) -> dict[str, str]:
+        def x(self) -> "dict[str, str]":
             return {"ok": "yes"}
 
     app = Litestar(route_handlers=[GuardedController], plugins=[LitestarMCP(MCPConfig())])
@@ -113,7 +111,7 @@ def test_mcp_tool_rejects_unauthenticated_via_guard() -> None:
     assert "Insufficient scope" not in payload
 
 
-def test_mcp_tool_custom_claim_guard_rejects_wrong_domain() -> None:
+def test_mcp_tool_custom_claim_guard_rejects_wrong_domain() -> "None":
     """Custom claim-based guard rejects disallowed caller on MCP identically to HTTP."""
 
     class DomainGatedController(Controller):
@@ -121,7 +119,7 @@ def test_mcp_tool_custom_claim_guard_rejects_wrong_domain() -> None:
         guards = [require_email_domain]
 
         @get("/x", opt={"mcp_tool": "domain_tool"}, sync_to_thread=False)
-        def x(self) -> dict[str, str]:
+        def x(self) -> "dict[str, str]":
             return {"ok": "yes"}
 
     # Build an inline auth middleware that stamps a disallowed caller onto the scope.
@@ -134,8 +132,8 @@ def test_mcp_tool_custom_claim_guard_rejects_wrong_domain() -> None:
     class _StubAuth(AbstractAuthenticationMiddleware):
         async def authenticate_request(
             self,
-            connection: ASGIConnection[Any, Any, Any, Any],
-        ) -> AuthenticationResult:
+            connection: "ASGIConnection[Any, Any, Any, Any]",
+        ) -> "AuthenticationResult":
             return AuthenticationResult(user="bob", auth={"email": "bob@blocked.test"})
 
     app = Litestar(
@@ -155,7 +153,7 @@ def test_mcp_tool_custom_claim_guard_rejects_wrong_domain() -> None:
     assert "Domain not allowed" in payload or "Invalid auth payload" in payload or "auth" in payload.lower()
 
 
-def test_mcp_tool_custom_claim_guard_accepts_allowed_domain() -> None:
+def test_mcp_tool_custom_claim_guard_accepts_allowed_domain() -> "None":
     """Custom claim-based guard allows an allowed-domain caller through on MCP."""
 
     class DomainGatedController(Controller):
@@ -163,7 +161,7 @@ def test_mcp_tool_custom_claim_guard_accepts_allowed_domain() -> None:
         guards = [require_email_domain]
 
         @get("/x", opt={"mcp_tool": "domain_tool"}, sync_to_thread=False)
-        def x(self) -> dict[str, str]:
+        def x(self) -> "dict[str, str]":
             return {"ok": "yes"}
 
     from litestar.middleware import (
@@ -175,8 +173,8 @@ def test_mcp_tool_custom_claim_guard_accepts_allowed_domain() -> None:
     class _StubAuth(AbstractAuthenticationMiddleware):
         async def authenticate_request(
             self,
-            connection: ASGIConnection[Any, Any, Any, Any],
-        ) -> AuthenticationResult:
+            connection: "ASGIConnection[Any, Any, Any, Any]",
+        ) -> "AuthenticationResult":
             return AuthenticationResult(user="alice", auth={"email": "alice@allowed.test"})
 
     app = Litestar(

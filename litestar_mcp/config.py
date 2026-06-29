@@ -1,13 +1,16 @@
 """Configuration for Litestar MCP Plugin."""
 
-from collections.abc import Awaitable
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
-from litestar import Request
-from litestar.stores.base import Store
+from litestar.stores.base import Store  # noqa: TC002
 
 from litestar_mcp.auth import MCPAuthConfig  # noqa: TC001
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable
+
+    from litestar import Request
 
 
 class BeforeToolCallHook(Protocol):
@@ -15,11 +18,11 @@ class BeforeToolCallHook(Protocol):
 
     def __call__(
         self,
-        tool_name: str,
-        arguments: dict[str, Any],
-        request: Request[Any, Any, Any],
+        tool_name: "str",
+        arguments: "dict[str, Any]",
+        request: "Request[Any, Any, Any]",
         /,
-    ) -> Awaitable[None] | None:
+    ) -> "Awaitable[None] | None":
         """Observe a tool call before guards and handler execution."""
 
 
@@ -28,15 +31,15 @@ class AfterToolCallHook(Protocol):
 
     def __call__(
         self,
-        tool_name: str,
-        arguments: dict[str, Any],
-        request: Request[Any, Any, Any],
+        tool_name: "str",
+        arguments: "dict[str, Any]",
+        request: "Request[Any, Any, Any]",
         /,
         *,
-        result: Any,
-        exception: Exception | None,
-        duration: float,
-    ) -> Awaitable[None] | None:
+        result: "Any",
+        exception: "Exception | None",
+        duration: "float",
+    ) -> "Awaitable[None] | None":
         """Observe a completed, failed, or rejected tool call."""
 
 
@@ -73,21 +76,21 @@ class MCPOptKeys:
         returns: Opt key for the ``## Returns`` section.
     """
 
-    tool: str = "mcp_tool"
-    resource: str = "mcp_resource"
-    resource_template: str = "mcp_resource_template"
-    prompt: str = "mcp_prompt"
-    description: str = "mcp_description"
-    resource_description: str = "mcp_resource_description"
-    prompt_description: str = "mcp_prompt_description"
-    prompt_title: str = "mcp_prompt_title"
-    prompt_arguments: str = "mcp_prompt_arguments"
-    prompt_icons: str = "mcp_prompt_icons"
-    agent_instructions: str = "mcp_agent_instructions"
-    when_to_use: str = "mcp_when_to_use"
-    returns: str = "mcp_returns"
+    tool: "str" = "mcp_tool"
+    resource: "str" = "mcp_resource"
+    resource_template: "str" = "mcp_resource_template"
+    prompt: "str" = "mcp_prompt"
+    description: "str" = "mcp_description"
+    resource_description: "str" = "mcp_resource_description"
+    prompt_description: "str" = "mcp_prompt_description"
+    prompt_title: "str" = "mcp_prompt_title"
+    prompt_arguments: "str" = "mcp_prompt_arguments"
+    prompt_icons: "str" = "mcp_prompt_icons"
+    agent_instructions: "str" = "mcp_agent_instructions"
+    when_to_use: "str" = "mcp_when_to_use"
+    returns: "str" = "mcp_returns"
 
-    def for_field(self, field_name: str, kind: Literal["tool", "resource", "prompt"]) -> str:
+    def for_field(self, field_name: "str", kind: "Literal['tool', 'resource', 'prompt']") -> "str":
         """Return the opt key for ``(field_name, kind)``.
 
         The ``description`` field has kind-specific keys (``description`` for
@@ -108,12 +111,12 @@ class MCPOptKeys:
 class MCPTaskConfig:
     """Configuration for experimental MCP task support."""
 
-    enabled: bool = True
-    list_enabled: bool = True
-    cancel_enabled: bool = True
-    default_ttl: int = 300_000
-    max_ttl: int = 3_600_000
-    poll_interval: int = 1_000
+    enabled: "bool" = True
+    list_enabled: "bool" = True
+    cancel_enabled: "bool" = True
+    default_ttl: "int" = 300_000
+    max_ttl: "int" = 3_600_000
+    poll_interval: "int" = 1_000
 
 
 def normalize_task_config(value: "bool | MCPTaskConfig") -> "MCPTaskConfig | None":
@@ -156,28 +159,29 @@ class MCPConfig:
             elapsed dispatch duration in seconds.
     """
 
-    base_path: str = "/mcp"
-    include_in_schema: bool = False
-    name: str | None = None
-    guards: list[Any] | None = None
-    allowed_origins: list[str] | None = None
-    include_operations: list[str] | None = None
-    exclude_operations: list[str] | None = None
-    include_tags: list[str] | None = None
-    exclude_tags: list[str] | None = None
+    base_path: "str" = "/mcp"
+    include_in_schema: "bool" = False
+    name: "str | None" = None
+    instructions: "str | None" = None
+    guards: "list[Any] | None" = None
+    allowed_origins: "list[str] | None" = None
+    include_operations: "list[str] | None" = None
+    exclude_operations: "list[str] | None" = None
+    include_tags: "list[str] | None" = None
+    exclude_tags: "list[str] | None" = None
     auth: "MCPAuthConfig | None" = None
     tasks: "bool | MCPTaskConfig" = False
-    opt_keys: MCPOptKeys = field(default_factory=MCPOptKeys)
-    session_store: Store | None = None
-    session_max_idle_seconds: float = 3600.0
-    sse_max_streams: int = 10_000
-    sse_max_idle_seconds: float = 3600.0
-    list_page_size: int = 100
-    before_tool_call: BeforeToolCallHook | None = None
-    after_tool_call: AfterToolCallHook | None = None
-    _session_manager: Any = field(default=None, repr=False, compare=False)
+    opt_keys: "MCPOptKeys" = field(default_factory=MCPOptKeys)
+    session_store: "Store | None" = None
+    session_max_idle_seconds: "float" = 3600.0
+    sse_max_streams: "int" = 10_000
+    sse_max_idle_seconds: "float" = 3600.0
+    list_page_size: "int" = 100
+    before_tool_call: "BeforeToolCallHook | None" = None
+    after_tool_call: "AfterToolCallHook | None" = None
+    _session_manager: "Any" = field(default=None, repr=False, compare=False)
 
-    def __post_init__(self) -> None:
+    def __post_init__(self) -> "None":
         if self.list_page_size <= 0:
             msg = f"list_page_size must be a positive integer, got {self.list_page_size}"
             raise ValueError(msg)

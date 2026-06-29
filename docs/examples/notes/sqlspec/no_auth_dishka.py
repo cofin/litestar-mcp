@@ -62,22 +62,22 @@ class NotesDishkaProvider(Provider):
     the ``flow:dishka`` boundary rules.
     """
 
-    def __init__(self, sqlspec: SQLSpec, config: AiosqliteConfig) -> None:
+    def __init__(self, sqlspec: "SQLSpec", config: "AiosqliteConfig") -> "None":
         super().__init__()
         self.sqlspec = sqlspec
         self.config = config
 
     @provide(scope=Scope.REQUEST)
-    async def provide_db_session(self) -> AsyncIterator[Any]:
+    async def provide_db_session(self) -> "AsyncIterator[Any]":
         async with self.sqlspec.provide_session(self.config) as db_session:
             yield db_session
 
     @provide(scope=Scope.REQUEST)
-    def provide_note_service(self, db_session: Any) -> SQLSpecNoteService:
+    def provide_note_service(self, db_session: "Any") -> "SQLSpecNoteService":
         return SQLSpecNoteService(db_session)
 
 
-def create_app(database_path: str | None = None) -> Litestar:
+def create_app(database_path: "str | None" = None) -> "Litestar":
     """Create the Dishka-backed SQLSpec reference notes app (no auth)."""
     sqlite_path = Path(database_path or Path.cwd() / ".reference-notes-sqlspec-dishka.sqlite")
     sqlspec, config = build_sqlspec(str(sqlite_path))
@@ -85,35 +85,35 @@ def create_app(database_path: str | None = None) -> Litestar:
 
     @get("/notes", mcp_tool=LIST_NOTES_TOOL_NAME)
     @inject
-    async def list_notes(note_service: FromDishka[SQLSpecNoteService]) -> list[Note]:
+    async def list_notes(note_service: "FromDishka[SQLSpecNoteService]") -> "list[Note]":
         rows = await note_service.list_public()
         return [msgspec.convert(note_row_to_public(row), Note) for row in rows]
 
     @post("/notes", mcp_tool=CREATE_NOTE_TOOL_NAME)
     @inject
-    async def create_note(data: dict[str, Any], note_service: FromDishka[SQLSpecNoteService]) -> Note:
+    async def create_note(data: "dict[str, Any]", note_service: "FromDishka[SQLSpecNoteService]") -> "Note":
         payload = msgspec.convert(data, CreateNoteInput)
         row = await note_service.create(title=payload.title, body=payload.body)
         return msgspec.convert(note_row_to_public(row), Note)
 
     @delete("/notes/{note_id:str}", status_code=HTTP_200_OK, mcp_tool=DELETE_NOTE_TOOL_NAME)
     @inject
-    async def delete_note(note_id: str, note_service: FromDishka[SQLSpecNoteService]) -> DeleteNoteResult:
+    async def delete_note(note_id: "str", note_service: "FromDishka[SQLSpecNoteService]") -> "DeleteNoteResult":
         await note_service.delete(note_id)
         return DeleteNoteResult(deleted=True, note_id=note_id)
 
     @get("/notes/schema", mcp_resource=NOTES_SCHEMA_RESOURCE_NAME, sync_to_thread=False)
-    def notes_schema() -> NotesSchema:
+    def notes_schema() -> "NotesSchema":
         return NotesSchema()
 
     @get("/app/info", mcp_resource=APP_INFO_RESOURCE_NAME, sync_to_thread=False)
-    def get_api_info() -> AppInfo:
+    def get_api_info() -> "AppInfo":
         return build_app_info(backend="sqlspec", auth_mode="none", supports_dishka=True)
 
-    async def on_startup() -> None:
+    async def on_startup() -> "None":
         await bootstrap_schema(sqlspec, config)
 
-    async def close_container() -> None:
+    async def close_container() -> "None":
         await container.close()
 
     app = Litestar(

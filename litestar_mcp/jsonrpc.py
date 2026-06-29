@@ -4,7 +4,10 @@
 import logging
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from litestar_mcp.services.handler import RequestContext
 
 _logger = logging.getLogger(__name__)
 
@@ -26,11 +29,11 @@ class JSONRPCError:
         data: Optional additional error data.
     """
 
-    code: int
-    message: str
-    data: Any | None = None
+    code: "int"
+    message: "str"
+    data: "Any | None" = None
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> "dict[str, Any]":
         """Convert to a JSON-serializable dict."""
         d: dict[str, Any] = {"code": self.code, "message": self.message}
         if self.data is not None:
@@ -49,19 +52,19 @@ class JSONRPCRequest:
         params: Method parameters.
     """
 
-    jsonrpc: str
-    method: str
-    id: Any | None = None
-    params: dict[str, Any] = field(default_factory=dict)
+    jsonrpc: "str"
+    method: "str"
+    id: "Any | None" = None
+    params: "dict[str, Any]" = field(default_factory=dict)
 
     @property
-    def is_notification(self) -> bool:
+    def is_notification(self) -> "bool":
         """Whether this is a notification (no id field)."""
         return self.id is None
 
 
 # Type alias for method handlers
-MethodHandler = Callable[[dict[str, Any]], Coroutine[Any, Any, dict[str, Any]]]
+MethodHandler = Callable[[dict[str, Any], "RequestContext"], Coroutine[Any, Any, dict[str, Any]]]
 
 
 class JSONRPCRouter:
@@ -70,15 +73,15 @@ class JSONRPCRouter:
     Handlers are async callables that accept a params dict and return a result dict.
     """
 
-    def __init__(self) -> None:
+    def __init__(self) -> "None":
         self._methods: dict[str, MethodHandler] = {}
 
     @property
-    def methods(self) -> dict[str, MethodHandler]:
+    def methods(self) -> "dict[str, MethodHandler]":
         """Get registered methods."""
         return self._methods
 
-    def register(self, method: str, handler: MethodHandler) -> None:
+    def register(self, method: "str", handler: "MethodHandler") -> "None":
         """Register a handler for a JSON-RPC method.
 
         Args:
@@ -87,11 +90,12 @@ class JSONRPCRouter:
         """
         self._methods[method] = handler
 
-    async def dispatch(self, request: JSONRPCRequest) -> dict[str, Any] | None:
+    async def dispatch(self, request: "JSONRPCRequest", request_context: "RequestContext") -> "dict[str, Any] | None":
         """Dispatch a JSON-RPC request to the appropriate handler.
 
         Args:
             request: The parsed JSON-RPC request.
+            request_context: Context of the current request.
 
         Returns:
             A JSON-RPC response dict, or None for notifications.
@@ -106,7 +110,7 @@ class JSONRPCRouter:
             )
 
         try:
-            result = await handler(request.params)
+            result = await handler(request.params, request_context)
         except JSONRPCErrorException as exc:
             if request.is_notification:
                 return None
@@ -136,12 +140,12 @@ class JSONRPCRouter:
 class JSONRPCErrorException(Exception):
     """Raised by method handlers to signal a JSON-RPC error."""
 
-    def __init__(self, error: JSONRPCError) -> None:
+    def __init__(self, error: "JSONRPCError") -> "None":
         self.error = error
         super().__init__(error.message)
 
 
-def parse_request(raw: Any) -> JSONRPCRequest:
+def parse_request(raw: "Any") -> "JSONRPCRequest":
     """Parse and validate a raw JSON body into a JSONRPCRequest.
 
     Args:
@@ -173,12 +177,10 @@ def parse_request(raw: Any) -> JSONRPCRequest:
     )
 
 
-# ---------------------------------------------------------------------------
 # Response helpers
-# ---------------------------------------------------------------------------
 
 
-def error_response(msg_id: Any, error: JSONRPCError) -> dict[str, Any]:
+def error_response(msg_id: "Any", error: "JSONRPCError") -> "dict[str, Any]":
     """Build a JSON-RPC error response (public API).
 
     Args:
@@ -191,9 +193,9 @@ def error_response(msg_id: Any, error: JSONRPCError) -> dict[str, Any]:
     return _error_response(msg_id, error)
 
 
-def _success_response(msg_id: Any, result: dict[str, Any]) -> dict[str, Any]:
+def _success_response(msg_id: "Any", result: "dict[str, Any]") -> "dict[str, Any]":
     return {"jsonrpc": "2.0", "id": msg_id, "result": result}
 
 
-def _error_response(msg_id: Any, error: JSONRPCError) -> dict[str, Any]:
+def _error_response(msg_id: "Any", error: "JSONRPCError") -> "dict[str, Any]":
     return {"jsonrpc": "2.0", "id": msg_id, "error": error.to_dict()}

@@ -12,7 +12,7 @@ from litestar_mcp import LitestarMCP, MCPConfig, mcp_tool
 from litestar_mcp.executor import MCPToolErrorResult
 
 
-def _ensure_session(client: TestClient[Any]) -> str:
+def _ensure_session(client: "TestClient[Any]") -> "str":
     sid = getattr(client, "_mcp_session", None)
     if sid is not None:
         return str(sid)
@@ -35,7 +35,7 @@ def _ensure_session(client: TestClient[Any]) -> str:
     return str(sid_val)
 
 
-def _rpc(client: TestClient[Any], method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+def _rpc(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None) -> "dict[str, Any]":
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
     if params is not None:
         body["params"] = params
@@ -47,35 +47,35 @@ def _rpc(client: TestClient[Any], method: str, params: dict[str, Any] | None = N
     return client.post("/mcp", json=body, headers=headers).json()  # type: ignore[no-any-return]
 
 
-def _call_tool(client: TestClient[Any], name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+def _call_tool(client: "TestClient[Any]", name: "str", arguments: "dict[str, Any] | None" = None) -> "dict[str, Any]":
     return _rpc(client, "tools/call", {"name": name, "arguments": arguments or {}})
 
 
-def test_tool_call_callbacks_fire_once_with_result_and_synthetic_request() -> None:
+def test_tool_call_callbacks_fire_once_with_result_and_synthetic_request() -> "None":
     events: list[tuple[str, str, dict[str, Any], Any, Exception | None, float | None]] = []
 
     async def before_tool_call(
-        tool_name: str,
-        arguments: dict[str, Any],
-        request: Request[Any, Any, Any],
-    ) -> None:
+        tool_name: "str",
+        arguments: "dict[str, Any]",
+        request: "Request[Any, Any, Any]",
+    ) -> "None":
         events.append(("before", tool_name, dict(arguments), request.scope.get("route_handler"), None, None))
         arguments["count"] = 999
 
     async def after_tool_call(
-        tool_name: str,
-        arguments: dict[str, Any],
-        request: Request[Any, Any, Any],
+        tool_name: "str",
+        arguments: "dict[str, Any]",
+        request: "Request[Any, Any, Any]",
         *,
-        result: Any,
-        exception: Exception | None,
-        duration: float,
-    ) -> None:
+        result: "Any",
+        exception: "Exception | None",
+        duration: "float",
+    ) -> "None":
         events.append(("after", tool_name, dict(arguments), result, exception, duration))
         assert request.scope.get("route_handler") is not None
 
     @post("/x", mcp_tool="x", sync_to_thread=False)
-    def tool(count: int) -> dict[str, int]:
+    def tool(count: "int") -> "dict[str, int]":
         events.append(("handler", "x", {"count": count}, None, None, None))
         return {"count": count}
 
@@ -95,18 +95,18 @@ def test_tool_call_callbacks_fire_once_with_result_and_synthetic_request() -> No
     assert events[2][5] >= 0
 
 
-def test_after_tool_call_receives_handler_exception() -> None:
+def test_after_tool_call_receives_handler_exception() -> "None":
     seen: list[Exception | None] = []
 
     async def after_tool_call(
-        _tool_name: str,
-        _arguments: dict[str, Any],
-        _request: Request[Any, Any, Any],
+        _tool_name: "str",
+        _arguments: "dict[str, Any]",
+        _request: "Request[Any, Any, Any]",
         *,
-        result: Any,
-        exception: Exception | None,
-        duration: float,
-    ) -> None:
+        result: "Any",
+        exception: "Exception | None",
+        duration: "float",
+    ) -> "None":
         assert result is None
         assert duration >= 0
         seen.append(exception)
@@ -114,7 +114,7 @@ def test_after_tool_call_receives_handler_exception() -> None:
     boom_message = "boom"
 
     @post("/boom", mcp_tool="boom", sync_to_thread=False)
-    def boom() -> dict[str, str]:
+    def boom() -> "dict[str, str]":
         raise RuntimeError(boom_message)
 
     app = Litestar(route_handlers=[boom], plugins=[LitestarMCP(MCPConfig(after_tool_call=after_tool_call))])
@@ -126,28 +126,28 @@ def test_after_tool_call_receives_handler_exception() -> None:
     assert isinstance(seen[0], RuntimeError)
 
 
-def test_after_tool_call_receives_error_result_for_guard_failure() -> None:
+def test_after_tool_call_receives_error_result_for_guard_failure() -> "None":
     seen: list[Exception | None] = []
     blocked_message = "blocked"
 
-    def deny(_connection: Any, _handler: Any) -> None:
+    def deny(_connection: "Any", _handler: "Any") -> "None":
         raise NotAuthorizedException(blocked_message)
 
     async def after_tool_call(
-        _tool_name: str,
-        _arguments: dict[str, Any],
-        _request: Request[Any, Any, Any],
+        _tool_name: "str",
+        _arguments: "dict[str, Any]",
+        _request: "Request[Any, Any, Any]",
         *,
-        result: Any,
-        exception: Exception | None,
-        duration: float,
-    ) -> None:
+        result: "Any",
+        exception: "Exception | None",
+        duration: "float",
+    ) -> "None":
         assert result is None
         assert duration >= 0
         seen.append(exception)
 
     @post("/guarded", guards=[deny], mcp_tool="guarded", sync_to_thread=False)
-    def guarded() -> dict[str, str]:
+    def guarded() -> "dict[str, str]":
         return {"ok": "yes"}
 
     app = Litestar(route_handlers=[guarded], plugins=[LitestarMCP(MCPConfig(after_tool_call=after_tool_call))])
@@ -159,29 +159,29 @@ def test_after_tool_call_receives_error_result_for_guard_failure() -> None:
     assert isinstance(seen[0], (MCPToolErrorResult, NotAuthorizedException))
 
 
-def test_resource_read_does_not_fire_tool_call_callbacks() -> None:
+def test_resource_read_does_not_fire_tool_call_callbacks() -> "None":
     seen: list[str] = []
 
     async def before_tool_call(
-        tool_name: str,
-        _arguments: dict[str, Any],
-        _request: Request[Any, Any, Any],
-    ) -> None:
+        tool_name: "str",
+        _arguments: "dict[str, Any]",
+        _request: "Request[Any, Any, Any]",
+    ) -> "None":
         seen.append(tool_name)
 
     async def after_tool_call(
-        tool_name: str,
-        _arguments: dict[str, Any],
-        _request: Request[Any, Any, Any],
+        tool_name: "str",
+        _arguments: "dict[str, Any]",
+        _request: "Request[Any, Any, Any]",
         *,
-        result: Any,
-        exception: Exception | None,
-        duration: float,
-    ) -> None:
+        result: "Any",
+        exception: "Exception | None",
+        duration: "float",
+    ) -> "None":
         seen.append(tool_name)
 
     @get("/config", mcp_resource="config", sync_to_thread=False)
-    def config() -> dict[str, str]:
+    def config() -> "dict[str, str]":
         return {"ok": "yes"}
 
     app = Litestar(
@@ -195,30 +195,30 @@ def test_resource_read_does_not_fire_tool_call_callbacks() -> None:
     assert seen == []
 
 
-def test_tool_call_callback_failures_are_logged_and_swallowed(caplog: Any) -> None:
+def test_tool_call_callback_failures_are_logged_and_swallowed(caplog: "Any") -> "None":
     before_message = "before failed"
     after_message = "after failed"
 
     async def before_tool_call(
-        _tool_name: str,
-        _arguments: dict[str, Any],
-        _request: Request[Any, Any, Any],
-    ) -> None:
+        _tool_name: "str",
+        _arguments: "dict[str, Any]",
+        _request: "Request[Any, Any, Any]",
+    ) -> "None":
         raise RuntimeError(before_message)
 
     async def after_tool_call(
-        _tool_name: str,
-        _arguments: dict[str, Any],
-        _request: Request[Any, Any, Any],
+        _tool_name: "str",
+        _arguments: "dict[str, Any]",
+        _request: "Request[Any, Any, Any]",
         *,
-        result: Any,
-        exception: Exception | None,
-        duration: float,
-    ) -> None:
+        result: "Any",
+        exception: "Exception | None",
+        duration: "float",
+    ) -> "None":
         raise RuntimeError(after_message)
 
     @post("/x", mcp_tool="x", sync_to_thread=False)
-    def tool() -> dict[str, str]:
+    def tool() -> "dict[str, str]":
         return {"ok": "yes"}
 
     app = Litestar(
@@ -236,30 +236,30 @@ def test_tool_call_callback_failures_are_logged_and_swallowed(caplog: Any) -> No
     assert all(record.exc_info is not None for record in records)
 
 
-def test_task_tool_calls_run_callbacks() -> None:
+def test_task_tool_calls_run_callbacks() -> "None":
     seen: list[str] = []
 
     async def before_tool_call(
-        tool_name: str,
-        _arguments: dict[str, Any],
-        _request: Request[Any, Any, Any],
-    ) -> None:
+        tool_name: "str",
+        _arguments: "dict[str, Any]",
+        _request: "Request[Any, Any, Any]",
+    ) -> "None":
         seen.append(f"before:{tool_name}")
 
     async def after_tool_call(
-        tool_name: str,
-        _arguments: dict[str, Any],
-        _request: Request[Any, Any, Any],
+        tool_name: "str",
+        _arguments: "dict[str, Any]",
+        _request: "Request[Any, Any, Any]",
         *,
-        result: Any,
-        exception: Exception | None,
-        duration: float,
-    ) -> None:
+        result: "Any",
+        exception: "Exception | None",
+        duration: "float",
+    ) -> "None":
         seen.append(f"after:{tool_name}:{exception is None}:{duration >= 0}:{result is not None}")
 
     @get("/tasked", sync_to_thread=False)
     @mcp_tool(name="tasked", task_support="optional")
-    async def tasked(delay: float = 0.01) -> dict[str, bool]:
+    async def tasked(delay: "float" = 0.01) -> "dict[str, bool]":
         import asyncio
 
         await asyncio.sleep(delay)

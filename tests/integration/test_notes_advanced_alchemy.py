@@ -1,14 +1,17 @@
 """Integration coverage for the Advanced Alchemy notes reference example."""
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from litestar.testing import TestClient
 
 from tests.integration.conftest import parse_tool_payload, rpc
 
+if TYPE_CHECKING:
+    from pathlib import Path
 
-def test_notes_advanced_alchemy_example_round_trip(tmp_path: Path) -> None:
+
+def test_notes_advanced_alchemy_example_round_trip(tmp_path: "Path") -> "None":
     """The AA no-auth notes example exposes the shared notes contract over MCP."""
     from docs.examples.notes.advanced_alchemy.no_auth import create_app
 

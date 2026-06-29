@@ -10,22 +10,25 @@ Every test is expected to fail until Phase 3 rewrites the executor around
 
 import asyncio
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from litestar import Controller, Litestar, Request, Router, post
 from litestar.exceptions import NotAuthorizedException
-from litestar.response import Response
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP
 from litestar_mcp.executor import execute_tool
 from tests.unit.conftest import get_handler_from_app
 
+if TYPE_CHECKING:
+    from litestar.response import Response
+    from litestar.types import Message, Scope
+
 pytestmark = pytest.mark.unit
 
 
-def _ensure_session(client: TestClient[Any]) -> str:
+def _ensure_session(client: "TestClient[Any]") -> "str":
     sid = getattr(client, "_mcp_session", None)
     if sid is not None:
         return str(sid)
@@ -48,7 +51,7 @@ def _ensure_session(client: TestClient[Any]) -> str:
     return str(sid_val)
 
 
-def _rpc(client: TestClient[Any], method: str, params: "dict[str, Any] | None" = None) -> dict[str, Any]:
+def _rpc(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None) -> "dict[str, Any]":
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
     if params is not None:
         body["params"] = params
@@ -60,7 +63,7 @@ def _rpc(client: TestClient[Any], method: str, params: "dict[str, Any] | None" =
     return client.post("/mcp", json=body, headers=headers).json()  # type: ignore[no-any-return]
 
 
-def _call_tool(client: TestClient[Any], name: str, args: "dict[str, Any] | None" = None) -> dict[str, Any]:
+def _call_tool(client: "TestClient[Any]", name: "str", args: "dict[str, Any] | None" = None) -> "dict[str, Any]":
     return _rpc(client, "tools/call", {"name": name, "arguments": args or {}})
 
 
@@ -69,14 +72,14 @@ def _call_tool(client: TestClient[Any], name: str, args: "dict[str, Any] | None"
 # ---------------------------------------------------------------------------
 
 
-def test_before_request_fires_for_mcp_tool_call() -> None:
+def test_before_request_fires_for_mcp_tool_call() -> "None":
     seen: list[str] = []
 
-    async def hook(_request: Request[Any, Any, Any]) -> None:
+    async def hook(_request: "Request[Any, Any, Any]") -> "None":
         seen.append("before")
 
     @post("/x", before_request=hook, mcp_tool="x", sync_to_thread=False)
-    def tool() -> dict[str, str]:
+    def tool() -> "dict[str, str]":
         seen.append("handler")
         return {"ok": "yes"}
 
@@ -88,17 +91,17 @@ def test_before_request_fires_for_mcp_tool_call() -> None:
     assert seen == ["before", "handler"]
 
 
-def test_before_request_truthy_short_circuits_handler() -> None:
+def test_before_request_truthy_short_circuits_handler() -> "None":
     seen: list[str] = []
 
-    async def hook(_request: Request[Any, Any, Any]) -> dict[str, str]:
+    async def hook(_request: "Request[Any, Any, Any]") -> "dict[str, str]":
         seen.append("short_circuit")
         return {"short_circuited": "yes"}
 
     no_fire = "should not fire"
 
     @post("/x", before_request=hook, mcp_tool="x", sync_to_thread=False)
-    def tool() -> dict[str, str]:
+    def tool() -> "dict[str, str]":
         seen.append("handler")
         raise RuntimeError(no_fire)
 
@@ -112,15 +115,15 @@ def test_before_request_truthy_short_circuits_handler() -> None:
 
 
 @pytest.mark.parametrize("falsy_value", [None, "", 0, [], {}])
-def test_before_request_falsy_falls_through_to_handler(falsy_value: Any) -> None:
+def test_before_request_falsy_falls_through_to_handler(falsy_value: "Any") -> "None":
     seen: list[str] = []
 
-    async def hook(_request: Request[Any, Any, Any]) -> Any:
+    async def hook(_request: "Request[Any, Any, Any]") -> "Any":
         seen.append("before")
         return falsy_value
 
     @post("/x", before_request=hook, mcp_tool="x", sync_to_thread=False)
-    def tool() -> dict[str, str]:
+    def tool() -> "dict[str, str]":
         seen.append("handler")
         return {"ok": "yes"}
 
@@ -137,14 +140,14 @@ def test_before_request_falsy_falls_through_to_handler(falsy_value: Any) -> None
 # ---------------------------------------------------------------------------
 
 
-def test_after_response_fires_on_success() -> None:
+def test_after_response_fires_on_success() -> "None":
     seen: list[str] = []
 
-    async def hook(_request: Request[Any, Any, Any]) -> None:
+    async def hook(_request: "Request[Any, Any, Any]") -> "None":
         seen.append("after_response")
 
     @post("/x", after_response=hook, mcp_tool="x", sync_to_thread=False)
-    def tool() -> dict[str, str]:
+    def tool() -> "dict[str, str]":
         seen.append("handler")
         return {"ok": "yes"}
 
@@ -155,16 +158,16 @@ def test_after_response_fires_on_success() -> None:
     assert seen == ["handler", "after_response"]
 
 
-def test_after_response_fires_on_handler_exception() -> None:
+def test_after_response_fires_on_handler_exception() -> "None":
     seen: list[str] = []
 
-    async def hook(_request: Request[Any, Any, Any]) -> None:
+    async def hook(_request: "Request[Any, Any, Any]") -> "None":
         seen.append("after_response")
 
     boom = "boom"
 
     @post("/x", after_response=hook, mcp_tool="x", sync_to_thread=False)
-    def tool() -> dict[str, str]:
+    def tool() -> "dict[str, str]":
         seen.append("handler")
         raise RuntimeError(boom)
 
@@ -176,19 +179,19 @@ def test_after_response_fires_on_handler_exception() -> None:
     assert seen == ["handler", "after_response"]
 
 
-def test_after_response_fires_on_guard_failure() -> None:
+def test_after_response_fires_on_guard_failure() -> "None":
     seen: list[str] = []
     blocked = "blocked"
 
-    def deny(_c: Any, _h: Any) -> None:
+    def deny(_c: "Any", _h: "Any") -> "None":
         seen.append("guard")
         raise NotAuthorizedException(blocked)
 
-    async def hook(_request: Request[Any, Any, Any]) -> None:
+    async def hook(_request: "Request[Any, Any, Any]") -> "None":
         seen.append("after_response")
 
     @post("/x", after_response=hook, guards=[deny], mcp_tool="x", sync_to_thread=False)
-    def tool() -> dict[str, str]:
+    def tool() -> "dict[str, str]":
         seen.append("handler")
         return {"ok": "yes"}
 
@@ -201,14 +204,14 @@ def test_after_response_fires_on_guard_failure() -> None:
     assert seen[-1] == "after_response"
 
 
-def test_after_response_failure_is_logged_and_swallowed(caplog: pytest.LogCaptureFixture) -> None:
+def test_after_response_failure_is_logged_and_swallowed(caplog: "pytest.LogCaptureFixture") -> "None":
     blew_up = "after_response blew up"
 
-    async def hook(_request: Request[Any, Any, Any]) -> None:
+    async def hook(_request: "Request[Any, Any, Any]") -> "None":
         raise RuntimeError(blew_up)
 
     @post("/x", after_response=hook, mcp_tool="x", sync_to_thread=False)
-    def tool() -> dict[str, str]:
+    def tool() -> "dict[str, str]":
         return {"ok": "yes"}
 
     # ``logging_config=None`` keeps Litestar from replacing the root logger's
@@ -230,14 +233,14 @@ def test_after_response_failure_is_logged_and_swallowed(caplog: pytest.LogCaptur
 # ---------------------------------------------------------------------------
 
 
-def test_after_request_mutates_tool_result_content() -> None:
-    async def mutator(response: Response[Any]) -> Response[Any]:
+def test_after_request_mutates_tool_result_content() -> "None":
+    async def mutator(response: "Response[Any]") -> "Response[Any]":
         if isinstance(response.content, dict):
             response.content = {**response.content, "mutated_by": "after_request"}
         return response
 
     @post("/x", after_request=mutator, mcp_tool="x", sync_to_thread=False)
-    def tool() -> dict[str, str]:
+    def tool() -> "dict[str, str]":
         return {"ok": "yes"}
 
     app = Litestar(route_handlers=[tool], plugins=[LitestarMCP()])
@@ -246,6 +249,31 @@ def test_after_request_mutates_tool_result_content() -> None:
 
     assert resp["result"]["isError"] is False
     assert "after_request" in resp["result"]["content"][0]["text"]
+
+
+# ---------------------------------------------------------------------------
+# before_send
+# ---------------------------------------------------------------------------
+
+
+def test_before_send_fires_for_synthesized_tool_dispatch() -> "None":
+    seen: list[tuple[str, str]] = []
+
+    async def before_send(message: "Message", scope: "Scope") -> "None":
+        if scope.get("litestar_mcp.internal_dispatch"):
+            seen.append((str(scope["path"]), str(message["type"])))
+
+    @post("/x", mcp_tool="x", sync_to_thread=False)
+    def tool() -> "dict[str, str]":
+        return {"ok": "yes"}
+
+    app = Litestar(route_handlers=[tool], plugins=[LitestarMCP()], before_send=[before_send])
+    with TestClient(app=app) as client:
+        resp = _call_tool(client, "x")
+
+    assert resp["result"]["isError"] is False
+    assert ("/x", "http.response.start") in seen
+    assert ("/x", "http.response.body") in seen
 
 
 # ---------------------------------------------------------------------------
@@ -260,16 +288,16 @@ def test_after_request_mutates_tool_result_content() -> None:
 
 
 @pytest.mark.parametrize("layer", ["router", "controller", "route"])
-def test_before_request_resolves_from_ownership_layer(layer: str) -> None:
+def test_before_request_resolves_from_ownership_layer(layer: "str") -> "None":
     seen: list[str] = []
 
-    async def hook(_request: Request[Any, Any, Any]) -> None:
+    async def hook(_request: "Request[Any, Any, Any]") -> "None":
         seen.append(f"before:{layer}")
 
     if layer == "route":
 
         @post("/x", before_request=hook, mcp_tool="x", sync_to_thread=False)
-        def route_tool() -> dict[str, str]:
+        def route_tool() -> "dict[str, str]":
             return {"ok": "yes"}
 
         app = Litestar(route_handlers=[route_tool], plugins=[LitestarMCP()])
@@ -281,7 +309,7 @@ def test_before_request_resolves_from_ownership_layer(layer: str) -> None:
             before_request = hook  # type: ignore[assignment]
 
             @post("/x", mcp_tool="x", sync_to_thread=False)
-            def tool(self) -> dict[str, str]:
+            def tool(self) -> "dict[str, str]":
                 return {"ok": "yes"}
 
         app = Litestar(route_handlers=[Notes], plugins=[LitestarMCP()])
@@ -289,7 +317,7 @@ def test_before_request_resolves_from_ownership_layer(layer: str) -> None:
     else:  # layer == "router"
 
         @post("/x", mcp_tool="x", sync_to_thread=False)
-        def rt_tool() -> dict[str, str]:
+        def rt_tool() -> "dict[str, str]":
             return {"ok": "yes"}
 
         router = Router(path="/api", before_request=hook, route_handlers=[rt_tool])
@@ -303,16 +331,16 @@ def test_before_request_resolves_from_ownership_layer(layer: str) -> None:
 
 
 @pytest.mark.parametrize("layer", ["router", "controller", "route"])
-def test_after_response_resolves_from_ownership_layer(layer: str) -> None:
+def test_after_response_resolves_from_ownership_layer(layer: "str") -> "None":
     seen: list[str] = []
 
-    async def hook(_request: Request[Any, Any, Any]) -> None:
+    async def hook(_request: "Request[Any, Any, Any]") -> "None":
         seen.append(f"after:{layer}")
 
     if layer == "route":
 
         @post("/x", after_response=hook, mcp_tool="x", sync_to_thread=False)
-        def route_tool() -> dict[str, str]:
+        def route_tool() -> "dict[str, str]":
             return {"ok": "yes"}
 
         app = Litestar(route_handlers=[route_tool], plugins=[LitestarMCP()])
@@ -324,7 +352,7 @@ def test_after_response_resolves_from_ownership_layer(layer: str) -> None:
             after_response = hook  # type: ignore[assignment]
 
             @post("/x", mcp_tool="x", sync_to_thread=False)
-            def tool(self) -> dict[str, str]:
+            def tool(self) -> "dict[str, str]":
                 return {"ok": "yes"}
 
         app = Litestar(route_handlers=[Notes], plugins=[LitestarMCP()])
@@ -332,7 +360,7 @@ def test_after_response_resolves_from_ownership_layer(layer: str) -> None:
     else:  # layer == "router"
 
         @post("/x", mcp_tool="x", sync_to_thread=False)
-        def rt_tool() -> dict[str, str]:
+        def rt_tool() -> "dict[str, str]":
             return {"ok": "yes"}
 
         router = Router(path="/api", after_response=hook, route_handlers=[rt_tool])
@@ -344,7 +372,7 @@ def test_after_response_resolves_from_ownership_layer(layer: str) -> None:
     assert seen == [f"after:{layer}"]
 
 
-def test_app_level_before_request_fires_via_outer_mcp_request_not_tool_dispatch() -> None:
+def test_app_level_before_request_fires_via_outer_mcp_request_not_tool_dispatch() -> "None":
     """App-level ``before_request`` applies via the outer ``/mcp`` HTTP request.
 
     The executor deliberately skips the hook during tool dispatch to avoid
@@ -353,11 +381,11 @@ def test_app_level_before_request_fires_via_outer_mcp_request_not_tool_dispatch(
     """
     seen: list[str] = []
 
-    async def hook(_request: Request[Any, Any, Any]) -> None:
+    async def hook(_request: "Request[Any, Any, Any]") -> "None":
         seen.append("app")
 
     @post("/x", mcp_tool="x", sync_to_thread=False)
-    def tool() -> dict[str, str]:
+    def tool() -> "dict[str, str]":
         return {"ok": "yes"}
 
     app = Litestar(route_handlers=[tool], plugins=[LitestarMCP()], before_request=hook)
@@ -372,15 +400,15 @@ def test_app_level_before_request_fires_via_outer_mcp_request_not_tool_dispatch(
     assert len(seen) <= mcp_request_count, f"expected ≤{mcp_request_count} firings, got {len(seen)}"
 
 
-def test_app_level_after_response_fires_via_outer_mcp_request_not_tool_dispatch() -> None:
+def test_app_level_after_response_fires_via_outer_mcp_request_not_tool_dispatch() -> "None":
     """Same principle as ``before_request``: app-level hooks run via ``/mcp``, not via dispatch."""
     seen: list[str] = []
 
-    async def hook(_request: Request[Any, Any, Any]) -> None:
+    async def hook(_request: "Request[Any, Any, Any]") -> "None":
         seen.append("app")
 
     @post("/x", mcp_tool="x", sync_to_thread=False)
-    def tool() -> dict[str, str]:
+    def tool() -> "dict[str, str]":
         return {"ok": "yes"}
 
     app = Litestar(route_handlers=[tool], plugins=[LitestarMCP()], after_response=hook)
@@ -397,20 +425,20 @@ def test_app_level_after_response_fires_via_outer_mcp_request_not_tool_dispatch(
 # ---------------------------------------------------------------------------
 
 
-def test_short_circuit_skips_handler_but_runs_after_response() -> None:
+def test_short_circuit_skips_handler_but_runs_after_response() -> "None":
     seen: list[str] = []
 
-    async def before(_request: Request[Any, Any, Any]) -> dict[str, str]:
+    async def before(_request: "Request[Any, Any, Any]") -> "dict[str, str]":
         seen.append("before")
         return {"short": "yes"}
 
-    async def after(_request: Request[Any, Any, Any]) -> None:
+    async def after(_request: "Request[Any, Any, Any]") -> "None":
         seen.append("after")
 
     must_not_run = "must not run"
 
     @post("/x", before_request=before, after_response=after, mcp_tool="x", sync_to_thread=False)
-    def tool() -> dict[str, str]:
+    def tool() -> "dict[str, str]":
         seen.append("handler")
         raise RuntimeError(must_not_run)
 
@@ -427,20 +455,20 @@ def test_short_circuit_skips_handler_but_runs_after_response() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_hook_execution_order_success_path() -> None:
+def test_hook_execution_order_success_path() -> "None":
     events: list[str] = []
 
-    async def before(_r: Request[Any, Any, Any]) -> None:
+    async def before(_r: "Request[Any, Any, Any]") -> "None":
         events.append("before_request")
 
-    async def after_req(resp: Response[Any]) -> Response[Any]:
+    async def after_req(resp: "Response[Any]") -> "Response[Any]":
         events.append("after_request")
         return resp
 
-    async def after_resp(_r: Request[Any, Any, Any]) -> None:
+    async def after_resp(_r: "Request[Any, Any, Any]") -> "None":
         events.append("after_response")
 
-    def guard(_c: Any, _h: Any) -> None:
+    def guard(_c: "Any", _h: "Any") -> "None":
         events.append("guard")
 
     @post(
@@ -452,7 +480,7 @@ def test_hook_execution_order_success_path() -> None:
         mcp_tool="x",
         sync_to_thread=False,
     )
-    def tool() -> dict[str, str]:
+    def tool() -> "dict[str, str]":
         events.append("handler")
         return {"ok": "yes"}
 
@@ -463,13 +491,13 @@ def test_hook_execution_order_success_path() -> None:
     assert events == ["guard", "before_request", "handler", "after_request", "after_response"]
 
 
-def test_hook_execution_order_exception_path() -> None:
+def test_hook_execution_order_exception_path() -> "None":
     events: list[str] = []
 
-    async def before(_r: Request[Any, Any, Any]) -> None:
+    async def before(_r: "Request[Any, Any, Any]") -> "None":
         events.append("before_request")
 
-    async def after_resp(_r: Request[Any, Any, Any]) -> None:
+    async def after_resp(_r: "Request[Any, Any, Any]") -> "None":
         events.append("after_response")
 
     boom = "boom"
@@ -481,7 +509,7 @@ def test_hook_execution_order_exception_path() -> None:
         mcp_tool="x",
         sync_to_thread=False,
     )
-    def tool() -> dict[str, str]:
+    def tool() -> "dict[str, str]":
         events.append("handler")
         raise RuntimeError(boom)
 
@@ -498,17 +526,17 @@ def test_hook_execution_order_exception_path() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_hooks_run_in_stdio_mode() -> None:
+def test_hooks_run_in_stdio_mode() -> "None":
     events: list[str] = []
 
-    async def before(_r: Request[Any, Any, Any]) -> None:
+    async def before(_r: "Request[Any, Any, Any]") -> "None":
         events.append("before")
 
-    async def after(_r: Request[Any, Any, Any]) -> None:
+    async def after(_r: "Request[Any, Any, Any]") -> "None":
         events.append("after")
 
     @post("/x", before_request=before, after_response=after, mcp_tool="x", sync_to_thread=False)
-    def tool() -> dict[str, str]:
+    def tool() -> "dict[str, str]":
         events.append("handler")
         return {"ok": "yes"}
 

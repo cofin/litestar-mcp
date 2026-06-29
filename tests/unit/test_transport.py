@@ -9,26 +9,26 @@ from litestar_mcp import LitestarMCP
 
 
 def _rpc(
-    client: TestClient[Any],
-    method: str,
+    client: "TestClient[Any]",
+    method: "str",
     params: "dict[str, Any] | None" = None,
     headers: "dict[str, str] | None" = None,
-) -> Any:
+) -> "Any":
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
     if params is not None:
         body["params"] = params
     return client.post("/mcp", json=body, headers=headers or {})
 
 
-def _make_transport_app() -> Litestar:
+def _make_transport_app() -> "Litestar":
     @get("/users", opt={"mcp_tool": "list_users"}, sync_to_thread=False)
-    def list_users() -> list[dict[str, Any]]:
+    def list_users() -> "list[dict[str, Any]]":
         return [{"id": 1, "name": "Alice"}]
 
     return Litestar(route_handlers=[list_users], plugins=[LitestarMCP()])
 
 
-def test_initialize_returns_session_header() -> None:
+def test_initialize_returns_session_header() -> "None":
     app = _make_transport_app()
     with TestClient(app=app) as client:
         resp = _rpc(
@@ -44,14 +44,14 @@ def test_initialize_returns_session_header() -> None:
         assert resp.headers.get("mcp-session-id")
 
 
-def test_post_without_session_after_initialize_rejected() -> None:
+def test_post_without_session_after_initialize_rejected() -> "None":
     app = _make_transport_app()
     with TestClient(app=app) as client:
         resp = _rpc(client, "tools/list")
         assert resp.status_code == 400
 
 
-def test_post_with_unknown_session_returns_404() -> None:
+def test_post_with_unknown_session_returns_404() -> "None":
     app = _make_transport_app()
     with TestClient(app=app) as client:
         resp = _rpc(client, "tools/list", headers={"Mcp-Session-Id": "does-not-exist"})
@@ -60,7 +60,7 @@ def test_post_with_unknown_session_returns_404() -> None:
         assert body["error"]["code"] == -32000
 
 
-def test_delete_session_endpoint_registered() -> None:
+def test_delete_session_endpoint_registered() -> "None":
     app = _make_transport_app()
     methods: set[str] = set()
     for route in app.routes:
@@ -74,7 +74,7 @@ def test_delete_session_endpoint_registered() -> None:
     assert "DELETE" in methods
 
 
-def test_full_post_only_flow() -> None:
+def test_full_post_only_flow() -> "None":
     """Initialize → notifications/initialized → tools/list → DELETE round-trip."""
     app = _make_transport_app()
     with TestClient(app=app) as client:

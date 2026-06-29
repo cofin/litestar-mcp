@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 
-def _ensure_session(client: TestClient[Any]) -> str:
+def _ensure_session(client: "TestClient[Any]") -> "str":
     sid = getattr(client, "_mcp_session", None)
     if sid is not None:
         return str(sid)
@@ -56,7 +56,7 @@ def _ensure_session(client: TestClient[Any]) -> str:
     return str(sid_val)
 
 
-def _call_tool(client: TestClient[Any], name: str, args: "dict[str, Any] | None" = None) -> dict[str, Any]:
+def _call_tool(client: "TestClient[Any]", name: "str", args: "dict[str, Any] | None" = None) -> "dict[str, Any]":
     body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": args or {}}}
     sid = _ensure_session(client)
     headers = {"Mcp-Session-Id": sid} if sid else {}
@@ -68,12 +68,12 @@ def _call_tool(client: TestClient[Any], name: str, args: "dict[str, Any] | None"
 # ---------------------------------------------------------------------------
 
 
-def test_uuid_path_param_coerced_from_tool_args() -> None:
+def test_uuid_path_param_coerced_from_tool_args() -> "None":
     """``{wid:uuid}`` + MCP ``tools/call arguments={"wid": "6bc9..."}`` ⇒ handler sees a real UUID."""
     captured: dict[str, Any] = {}
 
     @get("/items/{wid:uuid}", mcp_tool="get_item", sync_to_thread=False)
-    def tool(wid: UUID) -> dict[str, Any]:
+    def tool(wid: "UUID") -> "dict[str, Any]":
         captured["wid"] = wid
         captured["wid_type"] = type(wid).__name__
         return {"ok": True}
@@ -87,11 +87,11 @@ def test_uuid_path_param_coerced_from_tool_args() -> None:
     assert captured["wid"] == UUID("6bc9e12e-0000-0000-0000-000000000000")
 
 
-def test_int_path_param_coerced() -> None:
+def test_int_path_param_coerced() -> "None":
     captured: dict[str, Any] = {}
 
     @get("/items/{item_id:int}", mcp_tool="get_item", sync_to_thread=False)
-    def tool(item_id: int) -> dict[str, Any]:
+    def tool(item_id: "int") -> "dict[str, Any]":
         captured["item_id"] = item_id
         return {"ok": True}
 
@@ -104,11 +104,11 @@ def test_int_path_param_coerced() -> None:
     assert isinstance(captured["item_id"], int)
 
 
-def test_datetime_path_param_coerced() -> None:
+def test_datetime_path_param_coerced() -> "None":
     captured: dict[str, Any] = {}
 
     @get("/events/{when:datetime}", mcp_tool="get_event", sync_to_thread=False)
-    def tool(when: datetime) -> dict[str, Any]:
+    def tool(when: "datetime") -> "dict[str, Any]":
         captured["when"] = when
         return {"ok": True}
 
@@ -121,12 +121,12 @@ def test_datetime_path_param_coerced() -> None:
     assert captured["when"].year == 2026
 
 
-def test_str_path_param_unchanged() -> None:
+def test_str_path_param_unchanged() -> "None":
     """Regression pin: ``{name:str}`` (no coercion needed) still works unchanged."""
     captured: dict[str, Any] = {}
 
     @get("/users/{name:str}", mcp_tool="get_user", sync_to_thread=False)
-    def tool(name: str) -> dict[str, Any]:
+    def tool(name: "str") -> "dict[str, Any]":
         captured["name"] = name
         return {"ok": True}
 
@@ -138,12 +138,12 @@ def test_str_path_param_unchanged() -> None:
     assert captured["name"] == "alice"
 
 
-def test_mixed_typed_and_untyped_path_params() -> None:
+def test_mixed_typed_and_untyped_path_params() -> "None":
     """Mixed UUID + str in the same path coerce independently."""
     captured: dict[str, Any] = {}
 
     @get("/orgs/{org_id:uuid}/projects/{project:str}", mcp_tool="get_project", sync_to_thread=False)
-    def tool(org_id: UUID, project: str) -> dict[str, Any]:
+    def tool(org_id: "UUID", project: "str") -> "dict[str, Any]":
         captured["org_id"] = org_id
         captured["project"] = project
         return {"ok": True}
@@ -166,12 +166,12 @@ def test_mixed_typed_and_untyped_path_params() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_bad_uuid_path_param_surfaces_invalid_params_error() -> None:
+def test_bad_uuid_path_param_surfaces_invalid_params_error() -> "None":
     """A bogus UUID must NOT invoke the handler; JSON-RPC returns a structured error."""
     called = False
 
     @get("/items/{wid:uuid}", mcp_tool="get_item", sync_to_thread=False)
-    def tool(wid: UUID) -> dict[str, Any]:
+    def tool(wid: "UUID") -> "dict[str, Any]":
         nonlocal called
         called = True
         return {"wid": str(wid)}
@@ -199,7 +199,7 @@ def test_bad_uuid_path_param_surfaces_invalid_params_error() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_guard_sees_coerced_uuid_path_param() -> None:
+def test_guard_sees_coerced_uuid_path_param() -> "None":
     """Reproducer from GH #43.
 
     Guards run BEFORE ``signature_model.parse_values_from_connection_kwargs``,
@@ -220,7 +220,7 @@ def test_guard_sees_coerced_uuid_path_param() -> None:
     def requires_uuid(
         connection: "ASGIConnection[Any, Any, Any, Any]",
         _handler: "BaseRouteHandler",
-    ) -> None:
+    ) -> "None":
         observed["type"] = type(connection.path_params["workspace_id"]).__name__
         if not isinstance(connection.path_params["workspace_id"], UUID):
             message = f"guard saw raw {observed['type']}, expected UUID"
@@ -232,7 +232,7 @@ def test_guard_sees_coerced_uuid_path_param() -> None:
         guards=[requires_uuid],
         sync_to_thread=False,
     )
-    def list_files(workspace_id: UUID) -> dict[str, Any]:
+    def list_files(workspace_id: "UUID") -> "dict[str, Any]":
         return {"workspace_id": str(workspace_id), "files": []}
 
     app = Litestar(route_handlers=[list_files], plugins=[LitestarMCP()])

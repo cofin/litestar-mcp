@@ -90,8 +90,8 @@ PY_ATTR = "py:attr"
 PY_OBJ = "py:obj"
 PY_FUNC = "py:func"
 nitpicky = False
-nitpick_ignore: list[str] = []
-nitpick_ignore_regex: list[str] = []
+nitpick_ignore: "list[str]" = []
+nitpick_ignore_regex: "list[str]" = []
 
 auto_pytabs_min_version = (3, 9)
 auto_pytabs_max_version = (3, 13)
@@ -271,10 +271,10 @@ html_theme_options = {
 }
 
 
-def update_html_context(app: Any, pagename: Any, templatename: Any, context: Any, doctree: Any) -> None:  # type: ignore[misc]
+def update_html_context(app: "Any", pagename: "Any", templatename: "Any", context: "Any", doctree: "Any") -> "None":  # type: ignore[misc]
     context["READTHEDOCS"] = False
 
 
-def setup(app: "Sphinx") -> dict[str, Any]:
+def setup(app: "Sphinx") -> "dict[str, Any]":
     app.connect("html-page-context", update_html_context)
     return {"parallel_read_safe": True, "parallel_write_safe": True}

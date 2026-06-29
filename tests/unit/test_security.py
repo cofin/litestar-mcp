@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from litestar import Litestar, get
 from litestar.exceptions import PermissionDeniedException
-from litestar.handlers.base import BaseRouteHandler
 from litestar.openapi.config import OpenAPIConfig
 from litestar.testing import TestClient
 
@@ -13,6 +12,7 @@ from litestar_mcp import LitestarMCP, MCPConfig
 
 if TYPE_CHECKING:
     from litestar.connection import ASGIConnection
+    from litestar.handlers.base import BaseRouteHandler
     from litestar.security.jwt import JWTAuth, Token
 
 try:
@@ -26,10 +26,10 @@ JWT_AVAILABLE = _JWT_AVAILABLE
 
 
 def _ensure_session(
-    client: TestClient[Any],
-    base: str = "/mcp",
+    client: "TestClient[Any]",
+    base: "str" = "/mcp",
     auth_headers: "dict[str, str] | None" = None,
-) -> str:
+) -> "str":
     auth_token = (auth_headers or {}).get("Authorization", "") or (auth_headers or {}).get("authorization", "")
     key = f"_mcp_session::{base}::{auth_token}"
     sid = getattr(client, key, None)
@@ -58,12 +58,12 @@ def _ensure_session(
 
 
 def _rpc(
-    client: TestClient[Any],
-    method: str,
+    client: "TestClient[Any]",
+    method: "str",
     params: "dict[str, Any] | None" = None,
     headers: "dict[str, str] | None" = None,
-    base: str = "/mcp",
-) -> Any:
+    base: "str" = "/mcp",
+) -> "Any":
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
     if params is not None:
         body["params"] = params
@@ -78,9 +78,9 @@ def _rpc(
 class TestSecurity:
     """Test suite for MCP security features."""
 
-    def test_mcp_endpoints_without_guards(self) -> None:
+    def test_mcp_endpoints_without_guards(self) -> "None":
         @get("/users", opt={"mcp_tool": "list_users"})
-        async def get_users() -> list[dict[str, Any]]:
+        async def get_users() -> "list[dict[str, Any]]":
             return [{"id": 1, "name": "Alice"}]
 
         plugin = LitestarMCP()
@@ -98,15 +98,15 @@ class TestSecurity:
         assert "result" in resp.json()
 
     @pytest.mark.skipif(not JWT_AVAILABLE, reason="JWT auth not available")
-    def test_mcp_endpoints_with_jwt_and_guards(self) -> None:
+    def test_mcp_endpoints_with_jwt_and_guards(self) -> "None":
         jwt_auth: JWTAuth[dict[str, Any], Token] = JWTAuth[dict[str, Any], Token](
-            token_secret="super-secret-key-for-testing",
+            token_secret="super-secret-key-for-testing-32-bytes",
             retrieve_user_handler=lambda token, _: token.extras,
         )
 
         async def admin_guard(
-            connection: "ASGIConnection[Any, Any, Any, Any]", route_handler: BaseRouteHandler
-        ) -> None:
+            connection: "ASGIConnection[Any, Any, Any, Any]", route_handler: "BaseRouteHandler"
+        ) -> "None":
             user = connection.user
             if not user or "admin" not in user.get("roles", []):
                 msg = "Admin privileges required"
@@ -116,7 +116,7 @@ class TestSecurity:
         plugin = LitestarMCP(config=mcp_config)
 
         @get("/users", opt={"mcp_tool": "list_users"})
-        async def get_users() -> list[dict[str, Any]]:
+        async def get_users() -> "list[dict[str, Any]]":
             return [{"id": 1, "name": "Alice"}]
 
         app = Litestar(
@@ -156,21 +156,23 @@ class TestSecurity:
         assert resp.status_code == 200
 
     @pytest.mark.skipif(not JWT_AVAILABLE, reason="JWT auth not available")
-    def test_multiple_guards(self) -> None:
+    def test_multiple_guards(self) -> "None":
         jwt_auth: JWTAuth[dict[str, Any], Token] = JWTAuth[dict[str, Any], Token](
-            token_secret="super-secret-key-for-testing",
+            token_secret="super-secret-key-for-testing-32-bytes",
             retrieve_user_handler=lambda token, _: token.extras,
         )
 
-        async def role_guard(connection: "ASGIConnection[Any, Any, Any, Any]", route_handler: BaseRouteHandler) -> None:
+        async def role_guard(
+            connection: "ASGIConnection[Any, Any, Any, Any]", route_handler: "BaseRouteHandler"
+        ) -> "None":
             user = connection.user
             if not user or "mcp_user" not in user.get("roles", []):
                 msg = "MCP access role required"
                 raise PermissionDeniedException(msg)
 
         async def scope_guard(
-            connection: "ASGIConnection[Any, Any, Any, Any]", route_handler: BaseRouteHandler
-        ) -> None:
+            connection: "ASGIConnection[Any, Any, Any, Any]", route_handler: "BaseRouteHandler"
+        ) -> "None":
             user = connection.user
             if not user or "mcp:read" not in user.get("scopes", []):
                 msg = "MCP read scope required"
@@ -180,7 +182,7 @@ class TestSecurity:
         plugin = LitestarMCP(config=mcp_config)
 
         @get("/data", opt={"mcp_tool": "get_data"})
-        async def get_data() -> dict[str, str]:
+        async def get_data() -> "dict[str, str]":
             return {"data": "sensitive"}
 
         app = Litestar(
@@ -207,16 +209,16 @@ class TestSecurity:
         assert resp.status_code == 200
 
     @pytest.mark.skipif(not JWT_AVAILABLE, reason="JWT auth not available")
-    def test_guard_only_affects_mcp_endpoints(self) -> None:
+    def test_guard_only_affects_mcp_endpoints(self) -> "None":
         jwt_auth = JWTAuth[dict[str, Any], Token](
-            token_secret="super-secret-key-for-testing",
+            token_secret="super-secret-key-for-testing-32-bytes",
             retrieve_user_handler=lambda token, _: token.extras,
             exclude=["/public", "/protected"],
         )
 
         async def strict_guard(
-            connection: "ASGIConnection[Any, Any, Any, Any]", route_handler: BaseRouteHandler
-        ) -> None:
+            connection: "ASGIConnection[Any, Any, Any, Any]", route_handler: "BaseRouteHandler"
+        ) -> "None":
             msg = "Access denied"
             raise PermissionDeniedException(msg)
 
@@ -224,11 +226,11 @@ class TestSecurity:
         plugin = LitestarMCP(config=mcp_config)
 
         @get("/public")
-        async def public_route() -> dict[str, str]:
+        async def public_route() -> "dict[str, str]":
             return {"message": "public"}
 
         @get("/protected", opt={"mcp_tool": "protected_tool"})
-        async def protected_route() -> dict[str, str]:
+        async def protected_route() -> "dict[str, str]":
             return {"message": "protected"}
 
         app = Litestar(
@@ -252,15 +254,15 @@ class TestSecurity:
         assert resp.status_code == 403
 
     @pytest.mark.skipif(not JWT_AVAILABLE, reason="JWT auth not available")
-    def test_custom_error_handling_in_guards(self) -> None:
+    def test_custom_error_handling_in_guards(self) -> "None":
         jwt_auth: JWTAuth[dict[str, Any], Token] = JWTAuth[dict[str, Any], Token](
-            token_secret="super-secret-key-for-testing",
+            token_secret="super-secret-key-for-testing-32-bytes",
             retrieve_user_handler=lambda token, _: token.extras,
         )
 
         async def custom_message_guard(
-            connection: "ASGIConnection[Any, Any, Any, Any]", route_handler: BaseRouteHandler
-        ) -> None:
+            connection: "ASGIConnection[Any, Any, Any, Any]", route_handler: "BaseRouteHandler"
+        ) -> "None":
             user = connection.user
             if not user or user.get("department") != "AI":
                 msg = "Only AI department personnel can access MCP tools"
@@ -270,7 +272,7 @@ class TestSecurity:
         plugin = LitestarMCP(config=mcp_config)
 
         @get("/ai-tool", opt={"mcp_tool": "ai_processor"})
-        async def ai_tool() -> dict[str, str]:
+        async def ai_tool() -> "dict[str, str]":
             return {"status": "processing"}
 
         app = Litestar(
@@ -290,9 +292,9 @@ class TestSecurity:
         resp = _rpc(client, "tools/list", headers={"Authorization": f"Bearer {ai_dept_token}"})
         assert resp.status_code == 200
 
-    def test_guard_configuration_backward_compatibility(self) -> None:
+    def test_guard_configuration_backward_compatibility(self) -> "None":
         @get("/tool", opt={"mcp_tool": "simple_tool"})
-        async def simple_tool() -> dict[str, str]:
+        async def simple_tool() -> "dict[str, str]":
             return {"result": "success"}
 
         config_without_guards = MCPConfig(base_path="/api/mcp")
@@ -310,7 +312,7 @@ class TestSecurity:
         assert resp.status_code == 200
 
     @pytest.mark.skipif(not JWT_AVAILABLE, reason="JWT auth not available")
-    def test_oauth2_password_bearer_auth_with_guards(self) -> None:
+    def test_oauth2_password_bearer_auth_with_guards(self) -> "None":
         """Test MCP endpoints with OAuth2PasswordBearerAuth — the auth backend
         commonly used by production Litestar apps.
 
@@ -330,8 +332,8 @@ class TestSecurity:
         )
 
         async def requires_workspace_membership(
-            connection: "ASGIConnection[Any, Any, Any, Any]", route_handler: BaseRouteHandler
-        ) -> None:
+            connection: "ASGIConnection[Any, Any, Any, Any]", route_handler: "BaseRouteHandler"
+        ) -> "None":
             """Simulates a real guard like requires_workspace_membership."""
             user = connection.user
             if not user or "workspace_member" not in user.get("roles", []):
@@ -343,7 +345,7 @@ class TestSecurity:
         plugin = LitestarMCP(config=mcp_config)
 
         @get("/workspaces/{workspace_id:str}/databases", opt={"mcp_tool": "list_databases"})
-        async def list_databases(workspace_id: str) -> list[dict[str, Any]]:
+        async def list_databases(workspace_id: "str") -> "list[dict[str, Any]]":
             """List databases in a workspace."""
             return [{"id": "db1", "name": "Production", "workspace_id": workspace_id}]
 

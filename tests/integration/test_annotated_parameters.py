@@ -1,6 +1,6 @@
 """Integration coverage for Annotated[T, Parameter(...)] query params (#52)."""
 
-from datetime import datetime
+from datetime import datetime  # noqa: TC003
 from typing import Annotated, Any
 
 import pytest
@@ -14,15 +14,9 @@ from tests.integration.conftest import parse_tool_payload, rpc
 
 @get("/annotated", mcp_tool="annotated_list")
 async def annotated_list(
-    is_paid: Annotated[
-        bool | None,
-        Parameter(query="isPaid", description="Whether the order is paid"),
-    ] = None,
-    prepared_after: Annotated[
-        datetime | None,
-        Parameter(query="preparedAfter", description="Filter: prepared_at >= this"),
-    ] = None,
-) -> dict[str, Any]:
+    is_paid: "Annotated[bool | None, Parameter(query='isPaid', description='Whether the order is paid')]" = None,
+    prepared_after: "Annotated[datetime | None, Parameter(query='preparedAfter', description='Filter: prepared_at >= this')]" = None,
+) -> "dict[str, Any]":
     return {
         "is_paid": is_paid,
         "prepared_after": prepared_after.isoformat() if prepared_after else None,
@@ -30,11 +24,11 @@ async def annotated_list(
 
 
 @pytest.fixture
-def annotated_app() -> Litestar:
+def annotated_app() -> "Litestar":
     return Litestar(route_handlers=[annotated_list], plugins=[LitestarMCP()])
 
 
-def test_annotated_query_params_yield_typed_schema(annotated_app: Litestar) -> None:
+def test_annotated_query_params_yield_typed_schema(annotated_app: "Litestar") -> "None":
     with TestClient(app=annotated_app) as client:
         tools = rpc(client, "tools/list")["result"]["tools"]
         tool = next(t for t in tools if t["name"] == "annotated_list")
@@ -52,7 +46,7 @@ def test_annotated_query_params_yield_typed_schema(annotated_app: Litestar) -> N
         assert "Runtime representation of an annotated type" not in is_paid.get("description", "")
 
 
-def test_annotated_tool_call_dispatches_with_wire_keys(annotated_app: Litestar) -> None:
+def test_annotated_tool_call_dispatches_with_wire_keys(annotated_app: "Litestar") -> "None":
     with TestClient(app=annotated_app) as client:
         rpc_result = rpc(
             client,

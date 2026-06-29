@@ -4,15 +4,15 @@ import asyncio
 import contextlib
 import inspect
 import json
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from litestar.cli._utils import LitestarGroup
 from rich.console import Console
 from rich.json import JSON
 
 from litestar_mcp.executor import NotCallableInCLIContextError, execute_tool
-from litestar_mcp.schema_builder import iter_dependency_input_parameters
 from litestar_mcp.utils import get_handler_function, render_description
+from litestar_mcp.utils.handler_signature import iter_dependency_input_parameters
 
 try:
     import rich_click as click
@@ -27,10 +27,10 @@ if TYPE_CHECKING:
 
 def _append_cli_option(
     params: "list[click.Option]",
-    seen: set[str],
-    name: str,
-    param: inspect.Parameter,
-) -> None:
+    seen: "set[str]",
+    name: "str",
+    param: "inspect.Parameter",
+) -> "None":
     """Append a ``click.Option`` derived from a handler/provider parameter.
 
     Deduplicates on ``name`` so handler-sig and provider-walk passes can both
@@ -62,6 +62,9 @@ def _append_cli_option(
 def get_mcp_plugin(app: "Litestar") -> "LitestarMCP":
     """Retrieve the MCP plugin from the Litestar application's plugins.
 
+    This function imports ``LitestarMCP`` locally to break circular dependency
+    with ``litestar_mcp.plugin`` during CLI/command setup.
+
     Args:
         app: The Litestar application
 
@@ -84,12 +87,12 @@ def get_mcp_plugin(app: "Litestar") -> "LitestarMCP":
 class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-ignore]  # pragma: no cover
     """A dynamic click MultiCommand to run discovered MCP tools."""
 
-    def __init__(self, **attrs: Any) -> None:  # pragma: no cover
+    def __init__(self, **attrs: "Any") -> "None":  # pragma: no cover
         """Initialize the tool executor."""
         super().__init__(**attrs)
         self._console = Console()
 
-    def list_commands(self, ctx: click.Context) -> list[str]:  # pragma: no cover
+    def list_commands(self, ctx: "click.Context") -> "list[str]":  # pragma: no cover
         """List the names of all discovered tools and resources."""
         app: Litestar = ctx.obj.app
         try:
@@ -100,7 +103,7 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
         except RuntimeError:
             return []
 
-    def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:  # pragma: no cover
+    def get_command(self, ctx: "click.Context", cmd_name: "str") -> "click.Command | None":  # pragma: no cover
         """Create a click.Command for a specific tool or resource by its name."""
         app: Litestar = ctx.obj.app
         try:
@@ -132,7 +135,7 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
             _append_cli_option(params, seen, name, param)
 
         @click.pass_context
-        def callback(ctx: click.Context, /, **kwargs: Any) -> None:
+        def callback(ctx: "click.Context", /, **kwargs: "Any") -> "None":
             """The actual command callback that executes the tool."""
             app: Litestar = ctx.obj.app
 
@@ -162,8 +165,6 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
             opt_keys=plugin.config.opt_keys,
         )
 
-        from typing import cast
-
         return click.Command(
             cmd_name,
             params=cast("list[click.Parameter]", params),
@@ -174,15 +175,18 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
 
 
 @click.group(cls=LitestarGroup, name="mcp")
-def mcp_group(ctx: "click.Context") -> None:
+def mcp_group(ctx: "click.Context") -> "None":
     """Manage MCP tools and resources."""
     plugin = get_mcp_plugin(ctx.obj.app)
     ctx.obj = {"app": ctx.obj, "plugin": plugin}
 
 
 @mcp_group.command(name="list-tools")  # type: ignore[untyped-decorator]
-def list_tools(ctx: click.Context) -> None:
-    """List all available MCP tools."""
+def list_tools(ctx: "click.Context") -> "None":
+    """List all available MCP tools.
+
+    Uses plain description so terminal output never shows ``##`` headers.
+    """
     plugin = ctx.obj["plugin"]  # pragma: no cover
     console = Console()  # pragma: no cover
 
@@ -194,7 +198,7 @@ def list_tools(ctx: click.Context) -> None:
     for name in sorted(plugin.discovered_tools.keys()):  # pragma: no cover
         handler = plugin.discovered_tools[name]  # pragma: no cover
         fn = get_handler_function(handler)  # pragma: no cover
-        # Plain description so terminal output never shows ``##`` headers.  # pragma: no cover
+        # pragma: no cover
         description = render_description(
             handler,
             fn,
@@ -208,8 +212,11 @@ def list_tools(ctx: click.Context) -> None:
 
 
 @mcp_group.command(name="list-resources")  # type: ignore[untyped-decorator]
-def list_resources(ctx: click.Context) -> None:
-    """List all available MCP resources."""
+def list_resources(ctx: "click.Context") -> "None":
+    """List all available MCP resources.
+
+    Uses plain description so terminal output never shows ``##`` headers.
+    """
     plugin = ctx.obj["plugin"]  # pragma: no cover
     console = Console()  # pragma: no cover
 
@@ -223,7 +230,7 @@ def list_resources(ctx: click.Context) -> None:
     for name in sorted(plugin.discovered_resources.keys()):  # pragma: no cover
         handler = plugin.discovered_resources[name]  # pragma: no cover
         fn = get_handler_function(handler)  # pragma: no cover
-        # Plain description so terminal output never shows ``##`` headers.  # pragma: no cover
+        # pragma: no cover
         description = render_description(  # pragma: no cover
             handler,
             fn,
@@ -236,8 +243,11 @@ def list_resources(ctx: click.Context) -> None:
         console.print(f"- [bold]{name}[/bold]: {first_line}")  # pragma: no cover
 
 
-def _parse_cli_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:  # pragma: no cover
-    """Parse CLI kwargs, converting JSON strings to objects."""
+def _parse_cli_kwargs(kwargs: "dict[str, Any]") -> "dict[str, Any]":  # pragma: no cover
+    """Parse CLI kwargs, converting JSON strings to objects.
+
+    Attempts to parse a value if it looks like JSON.
+    """
     parsed_kwargs: dict[str, Any] = {}
     for key, value in kwargs.items():
         if value is None:
@@ -245,7 +255,6 @@ def _parse_cli_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:  # pragma: no c
             continue
 
         try:
-            # Attempt to parse if it looks like JSON
             if isinstance(value, str) and value.startswith(("{", "[")):
                 parsed_kwargs[key] = json.loads(value)
             else:
@@ -255,7 +264,7 @@ def _parse_cli_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:  # pragma: no c
     return parsed_kwargs
 
 
-def _display_result(console: Console, result: Any) -> None:  # pragma: no cover
+def _display_result(console: "Console", result: "Any") -> "None":  # pragma: no cover
     """Display the result of tool execution."""
     if isinstance(result, str):
         console.print(result)
@@ -263,5 +272,4 @@ def _display_result(console: Console, result: Any) -> None:  # pragma: no cover
         console.print(JSON.from_data(result))
 
 
-# Add the dynamic 'run' command group to mcp_group
 mcp_group.add_command(ToolExecutor(name="run", help="Run a discovered MCP tool by name."))  # pragma: no cover

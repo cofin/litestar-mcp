@@ -6,8 +6,6 @@ or restructures any of the calls below, this test fails first with a clear
 signal rather than producing confusing runtime errors deeper in the executor.
 """
 
-from __future__ import annotations
-
 import asyncio
 from typing import Any
 
@@ -20,15 +18,15 @@ pytestmark = pytest.mark.unit
 
 
 class _Payload(msgspec.Struct):
-    title: str
+    title: "str"
 
 
 @post("/x", sync_to_thread=False)
-def _handler(data: _Payload) -> dict[str, str]:
+def _handler(data: "_Payload") -> "dict[str, str]":
     return {"title": data.title}
 
 
-def test_litestar_dispatch_api_shape() -> None:
+def test_litestar_dispatch_api_shape() -> "None":
     """Smoke-check the full handler dispatch pipeline we plan to call.
 
     ``handler.create_kwargs_model(path_parameters=dict)`` must return a
@@ -59,7 +57,7 @@ def test_litestar_dispatch_api_shape() -> None:
     sig_model = handler.signature_model
     assert hasattr(sig_model, "parse_values_from_connection_kwargs")
 
-    async def exercise() -> Any:
+    async def exercise() -> "Any":
         request = RequestFactory(app=app).post("/x", data={"title": "hi"})
         kwargs = await kwargs_model.to_kwargs(connection=request)
         cleanup = await kwargs_model.resolve_dependencies(request, kwargs)

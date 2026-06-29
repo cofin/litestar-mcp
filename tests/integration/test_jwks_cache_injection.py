@@ -6,8 +6,7 @@ isolate their fetches.
 """
 
 import base64
-from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import jwt
@@ -15,6 +14,9 @@ import pytest
 
 from litestar_mcp.auth import DefaultJWKSCache, create_oidc_validator
 from litestar_mcp.auth.oidc import reset_default_cache
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 pytestmark = pytest.mark.integration
 
@@ -27,11 +29,11 @@ KID = "test-key"
 
 
 @pytest.fixture
-def anyio_backend() -> str:
+def anyio_backend() -> "str":
     return "asyncio"
 
 
-def _jwks() -> dict[str, Any]:
+def _jwks() -> "dict[str, Any]":
     return {
         "keys": [
             {
@@ -44,7 +46,7 @@ def _jwks() -> dict[str, Any]:
     }
 
 
-def _token(audience: str) -> str:
+def _token(audience: "str") -> "str":
     return jwt.encode(
         {"sub": "alice", "iss": ISSUER, "aud": audience},
         SECRET,
@@ -54,7 +56,7 @@ def _token(audience: str) -> str:
 
 
 @pytest.fixture(autouse=True)
-def _reset_default_cache_fixture() -> Iterator[None]:
+def _reset_default_cache_fixture() -> "Iterator[None]":
     reset_default_cache()
     from litestar_mcp.auth import oidc as oidc_internals
 
@@ -65,12 +67,12 @@ def _reset_default_cache_fixture() -> Iterator[None]:
 
 
 @pytest.mark.anyio
-async def test_shared_cache_deduplicates_jwks_fetches() -> None:
+async def test_shared_cache_deduplicates_jwks_fetches() -> "None":
     """One shared :class:`JWKSCache` → exactly one fetch for two validators."""
     shared = DefaultJWKSCache()
     fetch_count = 0
 
-    async def fake_fetch(url: str) -> dict[str, Any]:
+    async def fake_fetch(url: "str") -> "dict[str, Any]":
         nonlocal fetch_count
         assert url == JWKS_URL
         fetch_count += 1
@@ -93,11 +95,11 @@ async def test_shared_cache_deduplicates_jwks_fetches() -> None:
 
 
 @pytest.mark.anyio
-async def test_default_cache_deduplicates_jwks_fetches() -> None:
+async def test_default_cache_deduplicates_jwks_fetches() -> "None":
     """No explicit cache → process-wide default still dedupes across validators."""
     fetch_count = 0
 
-    async def fake_fetch(url: str) -> dict[str, Any]:
+    async def fake_fetch(url: "str") -> "dict[str, Any]":
         nonlocal fetch_count
         fetch_count += 1
         return _jwks()
@@ -114,13 +116,13 @@ async def test_default_cache_deduplicates_jwks_fetches() -> None:
 
 
 @pytest.mark.anyio
-async def test_separate_caches_isolate_fetches() -> None:
+async def test_separate_caches_isolate_fetches() -> "None":
     """Two separate :class:`DefaultJWKSCache` instances → two independent fetches."""
     cache_a = DefaultJWKSCache()
     cache_b = DefaultJWKSCache()
     fetch_count = 0
 
-    async def fake_fetch(url: str) -> dict[str, Any]:
+    async def fake_fetch(url: "str") -> "dict[str, Any]":
         nonlocal fetch_count
         fetch_count += 1
         return _jwks()

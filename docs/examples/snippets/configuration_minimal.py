@@ -5,7 +5,7 @@ from litestar import Litestar
 from litestar_mcp import LitestarMCP
 
 
-def build() -> Litestar:
+def build() -> "Litestar":
     # start-example
     app = Litestar(route_handlers=[], plugins=[LitestarMCP()])
     # end-example

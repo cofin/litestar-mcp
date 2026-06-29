@@ -8,7 +8,7 @@ from litestar.testing import TestClient
 from litestar_mcp import LitestarMCP
 
 
-def _rpc_resp(client: TestClient[Any], method: str, params: "dict[str, Any] | None" = None) -> Any:
+def _rpc_resp(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None) -> "Any":
     """Return raw response (not just json) for header inspection."""
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
     if params is not None:
@@ -16,7 +16,7 @@ def _rpc_resp(client: TestClient[Any], method: str, params: "dict[str, Any] | No
     return client.post("/mcp", json=body)
 
 
-def test_protocol_version_in_initialize() -> None:
+def test_protocol_version_in_initialize() -> "None":
     app = Litestar(plugins=[LitestarMCP()])
     with TestClient(app=app) as client:
         resp = _rpc_resp(
@@ -31,14 +31,14 @@ def test_protocol_version_in_initialize() -> None:
         assert resp.json()["result"]["protocolVersion"] == "2025-11-25"
 
 
-def test_protocol_version_header_on_responses() -> None:
+def test_protocol_version_header_on_responses() -> "None":
     app = Litestar(plugins=[LitestarMCP()])
     with TestClient(app=app) as client:
         resp = _rpc_resp(client, "ping")
         assert resp.headers.get("mcp-protocol-version") == "2025-11-25"
 
 
-def test_capabilities_tools_list_changed() -> None:
+def test_capabilities_tools_list_changed() -> "None":
     app = Litestar(plugins=[LitestarMCP()])
     with TestClient(app=app) as client:
         resp = _rpc_resp(
@@ -54,7 +54,7 @@ def test_capabilities_tools_list_changed() -> None:
         assert caps["tools"]["listChanged"] is True
 
 
-def test_capabilities_resources() -> None:
+def test_capabilities_resources() -> "None":
     app = Litestar(plugins=[LitestarMCP()])
     with TestClient(app=app) as client:
         resp = _rpc_resp(
@@ -71,7 +71,7 @@ def test_capabilities_resources() -> None:
         assert caps["resources"]["listChanged"] is True
 
 
-def test_all_legacy_rest_endpoints_removed() -> None:
+def test_all_legacy_rest_endpoints_removed() -> "None":
     """Confirm clean break — no REST endpoints exist."""
     app = Litestar(plugins=[LitestarMCP()])
     with TestClient(app=app) as client:

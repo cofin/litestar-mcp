@@ -4,8 +4,7 @@ import contextlib
 import socket
 import threading
 import time
-from collections.abc import Iterator
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 import pytest
@@ -24,12 +23,27 @@ from tests.integration._auth import (
     bearer_token_validator,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
 google_adk = pytest.importorskip("google.adk")
 
-pytestmark = [pytest.mark.integration, pytest.mark.adk]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.adk,
+    pytest.mark.filterwarnings(
+        r"ignore:\[EXPERIMENTAL\] feature (PLUGGABLE_AUTH|BASE_AUTHENTICATED_TOOL) is enabled\.:UserWarning:google\.adk\.features\._feature_decorator"
+    ),
+    pytest.mark.filterwarnings(
+        r"ignore:\[EXPERIMENTAL\] feature MCP_GRACEFUL_ERROR_HANDLING is enabled\.:UserWarning:google\.adk\.tools\.mcp_tool\.mcp_toolset"
+    ),
+    pytest.mark.filterwarnings(
+        r"ignore:Your application has authenticated using end user credentials from Google Cloud SDK without a quota project\..*:UserWarning:google\.auth\._default"
+    ),
+]
 
 
-def _free_port() -> int:
+def _free_port() -> "int":
     """Find a free port on 127.0.0.1."""
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -37,7 +51,7 @@ def _free_port() -> int:
 
 
 @contextlib.contextmanager
-def _run_app(app: Litestar) -> Iterator[str]:
+def _run_app(app: "Litestar") -> "Iterator[str]":
     """Start the Litestar application in a daemon thread using uvicorn."""
     port = _free_port()
     server = uvicorn.Server(
@@ -68,23 +82,23 @@ def _run_app(app: Litestar) -> Iterator[str]:
     thread.join(timeout=5)
 
 
-def _build_simple_app() -> Litestar:
+def _build_simple_app() -> "Litestar":
     """Build a minimal Litestar app for testing the harness."""
     return Litestar(route_handlers=[], plugins=[LitestarMCP()])
 
 
-def _build_public_app() -> Litestar:
+def _build_public_app() -> "Litestar":
     """Build a public Litestar app with an MCP tool handler."""
 
     @get("/hello/{name:str}", mcp_tool="hello", sync_to_thread=False)
-    def hello(name: str) -> dict[str, str]:
+    def hello(name: "str") -> "dict[str, str]":
         """Say hello to the given name."""
         return {"message": f"hello {name}"}
 
     return Litestar(route_handlers=[hello], plugins=[LitestarMCP()])
 
 
-async def _user_resolver(claims: dict[str, Any], _app: Any) -> AuthenticatedUser:
+async def _user_resolver(claims: "dict[str, Any]", _app: "Any") -> "AuthenticatedUser":
     """Resolve the authenticated user from JWT claims."""
     scopes = claims.get("scopes") or []
     if not isinstance(scopes, list):
@@ -92,12 +106,12 @@ async def _user_resolver(claims: dict[str, Any], _app: Any) -> AuthenticatedUser
     return AuthenticatedUser(sub=str(claims.get("sub", "")), scopes=tuple(str(s) for s in scopes))
 
 
-def _build_auth_app() -> Litestar:
+def _build_auth_app() -> "Litestar":
     """Build an authenticated Litestar app with an MCP tool handler."""
 
     @get("/echo-user", sync_to_thread=False)
     @mcp_tool(name="echo_user")
-    def echo_user(request: Any) -> dict[str, Any]:
+    def echo_user(request: "Any") -> "dict[str, Any]":
         """Return the authenticated user's sub claim."""
         user = request.user
         return {"sub": getattr(user, "sub", None)}
@@ -116,18 +130,18 @@ def _build_auth_app() -> Litestar:
     )
 
 
-def _build_resource_app() -> Litestar:
+def _build_resource_app() -> "Litestar":
     """Build a Litestar application exposing an MCP resource."""
 
     @get("/config", opt={"mcp_resource": "app_config"}, sync_to_thread=False)
-    def config() -> dict[str, bool]:
+    def config() -> "dict[str, bool]":
         """Return application configuration."""
         return {"debug": True}
 
     return Litestar(route_handlers=[config], plugins=[LitestarMCP()])
 
 
-def test_harness_starts_and_stops_cleanly() -> None:
+def test_harness_starts_and_stops_cleanly() -> "None":
     """Verify that the test harness can launch and terminate the server successfully."""
     app = _build_simple_app()
     with _run_app(app) as base_url:
@@ -137,7 +151,7 @@ def test_harness_starts_and_stops_cleanly() -> None:
 
 
 @pytest.mark.asyncio
-async def test_adk_mcp_toolset_discovers_and_calls_litestar_tool() -> None:
+async def test_adk_mcp_toolset_discovers_and_calls_litestar_tool() -> "None":
     """Verify that ADK McpToolset can discover and invoke a tool exposed by Litestar."""
     from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
     from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
@@ -160,7 +174,7 @@ async def test_adk_mcp_toolset_discovers_and_calls_litestar_tool() -> None:
 
 
 @pytest.mark.asyncio
-async def test_adk_mcp_toolset_auth_success() -> None:
+async def test_adk_mcp_toolset_auth_success() -> "None":
     """Verify that ADK McpToolset succeeds when a valid bearer token is supplied."""
     from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
     from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
@@ -186,7 +200,7 @@ async def test_adk_mcp_toolset_auth_success() -> None:
 
 
 @pytest.mark.asyncio
-async def test_adk_mcp_toolset_auth_failure() -> None:
+async def test_adk_mcp_toolset_auth_failure() -> "None":
     """Verify that ADK McpToolset fails when no bearer token is supplied."""
     from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
     from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
@@ -209,7 +223,7 @@ async def test_adk_mcp_toolset_auth_failure() -> None:
 
 
 @pytest.mark.asyncio
-async def test_adk_mcp_toolset_resources() -> None:
+async def test_adk_mcp_toolset_resources() -> "None":
     """Verify that ADK McpToolset can list and read resources exposed by Litestar."""
     from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
     from google.adk.tools.mcp_tool.mcp_toolset import McpToolset

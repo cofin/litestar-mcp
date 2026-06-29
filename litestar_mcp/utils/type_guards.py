@@ -36,7 +36,7 @@ __all__ = (
 )
 
 
-def is_pydantic_model(obj: Any) -> "TypeGuard[BaseModelStub]":
+def is_pydantic_model(obj: "Any") -> "TypeGuard[BaseModelStub]":
     """Check if a value is a pydantic model class or instance.
 
     Args:
@@ -55,7 +55,7 @@ def is_pydantic_model(obj: Any) -> "TypeGuard[BaseModelStub]":
     return isinstance(obj, BaseModel)
 
 
-def is_msgspec_struct(obj: Any) -> "TypeGuard[StructStub]":
+def is_msgspec_struct(obj: "Any") -> "TypeGuard[StructStub]":
     """Check if a value is a msgspec struct class or instance.
 
     Args:
@@ -74,7 +74,7 @@ def is_msgspec_struct(obj: Any) -> "TypeGuard[StructStub]":
     return isinstance(obj, Struct)
 
 
-def is_dataclass(obj: Any) -> "TypeGuard[DataclassProtocol]":
+def is_dataclass(obj: "Any") -> "TypeGuard[DataclassProtocol]":
     """Check if an object is a dataclass (class or instance).
 
     Args:
@@ -96,7 +96,7 @@ def is_dataclass(obj: Any) -> "TypeGuard[DataclassProtocol]":
     return True
 
 
-def is_attrs_instance(obj: Any) -> "TypeGuard[AttrsInstanceStub]":
+def is_attrs_instance(obj: "Any") -> "TypeGuard[AttrsInstanceStub]":
     """Check if a value is an attrs class instance.
 
     Args:
@@ -108,7 +108,7 @@ def is_attrs_instance(obj: Any) -> "TypeGuard[AttrsInstanceStub]":
     return ATTRS_INSTALLED and attrs_has(obj.__class__)
 
 
-def is_attrs_schema(cls: Any) -> "TypeGuard[type[AttrsInstanceStub]]":
+def is_attrs_schema(cls: "Any") -> "TypeGuard[type[AttrsInstanceStub]]":
     """Check if a class type is an attrs schema.
 
     Args:
@@ -120,7 +120,7 @@ def is_attrs_schema(cls: Any) -> "TypeGuard[type[AttrsInstanceStub]]":
     return ATTRS_INSTALLED and attrs_has(cls)
 
 
-def is_schema_model(obj: Any) -> "TypeGuard[Any]":
+def is_schema_model(obj: "Any") -> "TypeGuard[Any]":
     """Check if a value is a supported schema model (msgspec/pydantic/attrs/dataclass).
 
     Args:
@@ -138,7 +138,7 @@ def is_schema_model(obj: Any) -> "TypeGuard[Any]":
     )
 
 
-def is_dict(obj: Any) -> "TypeGuard[dict[str, Any]]":
+def is_dict(obj: "Any") -> "TypeGuard[dict[str, Any]]":
     """Check if a value is a dictionary.
 
     Args:

@@ -6,14 +6,16 @@ calls and scope notes by the validated JWT ``sub`` claim.
 """
 
 import importlib
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from docs.examples.notes.shared.auth import mint_hs256_token
 from litestar.testing import TestClient
 
 from tests.integration.conftest import parse_tool_payload, rpc, rpc_response
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 JWT_TEST_SECRET = "jwt-notes-example-integration-secret-32bytes!"
 
@@ -24,7 +26,7 @@ VARIANTS = [
 ]
 
 
-def _load_create_app(*, dishka: bool) -> Any:
+def _load_create_app(*, dishka: "bool") -> "Any":
     module_name = (
         "docs.examples.notes.advanced_alchemy.jwt_auth_dishka"
         if dishka
@@ -35,7 +37,7 @@ def _load_create_app(*, dishka: bool) -> Any:
 
 
 @pytest.mark.parametrize("dishka", VARIANTS)
-def test_notes_jwt_rejects_unauthenticated(tmp_path: Path, dishka: bool) -> None:
+def test_notes_jwt_rejects_unauthenticated(tmp_path: "Path", dishka: "bool") -> "None":
     """Unauthenticated MCP calls should be rejected with 401."""
     create_app = _load_create_app(dishka=dishka)
     app = create_app(
@@ -53,7 +55,7 @@ def test_notes_jwt_rejects_unauthenticated(tmp_path: Path, dishka: bool) -> None
 
 
 @pytest.mark.parametrize("dishka", VARIANTS)
-def test_notes_jwt_scopes_notes_by_sub(tmp_path: Path, dishka: bool) -> None:
+def test_notes_jwt_scopes_notes_by_sub(tmp_path: "Path", dishka: "bool") -> "None":
     """A valid token with a ``sub`` should be able to create and list its own notes."""
     create_app = _load_create_app(dishka=dishka)
     app = create_app(
@@ -85,7 +87,7 @@ def test_notes_jwt_scopes_notes_by_sub(tmp_path: Path, dishka: bool) -> None:
 
 
 @pytest.mark.parametrize("dishka", VARIANTS)
-def test_notes_jwt_isolates_notes_across_subs(tmp_path: Path, dishka: bool) -> None:
+def test_notes_jwt_isolates_notes_across_subs(tmp_path: "Path", dishka: "bool") -> "None":
     """A different principal must not see or delete another principal's notes."""
     create_app = _load_create_app(dishka=dishka)
     app = create_app(

@@ -11,18 +11,18 @@ from litestar_mcp.config import MCPConfig
 
 
 def _rpc(
-    client: TestClient[Any],
-    method: str,
+    client: "TestClient[Any]",
+    method: "str",
     params: "dict[str, Any] | None" = None,
     headers: "dict[str, str] | None" = None,
-) -> Any:
+) -> "Any":
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
     if params is not None:
         body["params"] = params
     return client.post("/mcp", json=body, headers=headers or {})
 
 
-def _init_session(client: TestClient[Any]) -> str:
+def _init_session(client: "TestClient[Any]") -> "str":
     init = _rpc(
         client,
         "initialize",
@@ -37,19 +37,19 @@ def _init_session(client: TestClient[Any]) -> str:
     return sid
 
 
-def _make_tools_app(count: int, page_size: int) -> Litestar:
+def _make_tools_app(count: "int", page_size: "int") -> "Litestar":
     handlers = []
     for i in range(count):
 
         @get(f"/t{i}", name=f"t{i}", opt={"mcp_tool": f"tool_{i:03d}"}, sync_to_thread=False)
-        def _h() -> dict[str, int]:
+        def _h() -> "dict[str, int]":
             return {"i": 0}
 
         handlers.append(_h)
     return Litestar(route_handlers=handlers, plugins=[LitestarMCP(config=MCPConfig(list_page_size=page_size))])
 
 
-def test_tools_list_paginates_with_next_cursor() -> None:
+def test_tools_list_paginates_with_next_cursor() -> "None":
     app = _make_tools_app(count=5, page_size=2)
     with TestClient(app=app) as client:
         sid = _init_session(client)
@@ -74,7 +74,7 @@ def test_tools_list_paginates_with_next_cursor() -> None:
         assert all_names == [f"tool_{i:03d}" for i in range(5)]
 
 
-def test_tools_list_single_page_omits_next_cursor() -> None:
+def test_tools_list_single_page_omits_next_cursor() -> "None":
     app = _make_tools_app(count=2, page_size=100)
     with TestClient(app=app) as client:
         sid = _init_session(client)
@@ -83,7 +83,7 @@ def test_tools_list_single_page_omits_next_cursor() -> None:
         assert "nextCursor" not in result
 
 
-def test_tools_list_rejects_invalid_cursor() -> None:
+def test_tools_list_rejects_invalid_cursor() -> "None":
     app = _make_tools_app(count=3, page_size=2)
     with TestClient(app=app) as client:
         sid = _init_session(client)
@@ -91,7 +91,7 @@ def test_tools_list_rejects_invalid_cursor() -> None:
         assert resp["error"]["code"] == -32602
 
 
-def test_tools_list_rejects_non_string_cursor() -> None:
+def test_tools_list_rejects_non_string_cursor() -> "None":
     app = _make_tools_app(count=3, page_size=2)
     with TestClient(app=app) as client:
         sid = _init_session(client)
@@ -99,7 +99,7 @@ def test_tools_list_rejects_non_string_cursor() -> None:
         assert resp["error"]["code"] == -32602
 
 
-def test_tools_list_rejects_negative_offset_cursor() -> None:
+def test_tools_list_rejects_negative_offset_cursor() -> "None":
     import base64
 
     app = _make_tools_app(count=3, page_size=2)
@@ -110,7 +110,7 @@ def test_tools_list_rejects_negative_offset_cursor() -> None:
         assert resp["error"]["code"] == -32602
 
 
-def test_tools_list_cursor_past_end_returns_empty_page() -> None:
+def test_tools_list_cursor_past_end_returns_empty_page() -> "None":
     import base64
 
     app = _make_tools_app(count=3, page_size=2)
@@ -122,13 +122,13 @@ def test_tools_list_cursor_past_end_returns_empty_page() -> None:
         assert "nextCursor" not in result
 
 
-def test_resources_list_paginates() -> None:
+def test_resources_list_paginates() -> "None":
     handlers = []
     # The built-in litestar://openapi resource counts as one entry.
     for i in range(4):
 
         @get(f"/r{i}", name=f"r{i}", opt={"mcp_resource": f"res_{i:03d}"}, sync_to_thread=False)
-        def _h() -> dict[str, int]:
+        def _h() -> "dict[str, int]":
             return {"i": 0}
 
         handlers.append(_h)
@@ -147,7 +147,7 @@ def test_resources_list_paginates() -> None:
         assert "nextCursor" not in r3
 
 
-def test_resources_templates_list_paginates() -> None:
+def test_resources_templates_list_paginates() -> "None":
     handlers = []
     for i in range(3):
 
@@ -157,7 +157,7 @@ def test_resources_templates_list_paginates() -> None:
             opt={"mcp_resource": f"tpl_{i:03d}", "mcp_resource_template": f"app://tpl/{i}/{{item_id}}"},
             sync_to_thread=False,
         )
-        def _h(item_id: str) -> dict[str, str]:
+        def _h(item_id: "str") -> "dict[str, str]":
             return {"item_id": item_id}
 
         handlers.append(_h)
@@ -173,17 +173,17 @@ def test_resources_templates_list_paginates() -> None:
         assert "nextCursor" not in r2
 
 
-def test_prompts_list_paginates() -> None:
+def test_prompts_list_paginates() -> "None":
     @mcp_prompt(name="p_a")
-    def p_a() -> str:
+    def p_a() -> "str":
         return "a"
 
     @mcp_prompt(name="p_b")
-    def p_b() -> str:
+    def p_b() -> "str":
         return "b"
 
     @mcp_prompt(name="p_c")
-    def p_c() -> str:
+    def p_c() -> "str":
         return "c"
 
     app = Litestar(plugins=[LitestarMCP(prompts=[p_a, p_b, p_c], config=MCPConfig(list_page_size=2))])
@@ -198,7 +198,7 @@ def test_prompts_list_paginates() -> None:
         assert "nextCursor" not in r2
 
 
-def test_tools_list_empty_registry_returns_empty_page() -> None:
+def test_tools_list_empty_registry_returns_empty_page() -> "None":
     app = Litestar(plugins=[LitestarMCP(config=MCPConfig(list_page_size=10))])
     with TestClient(app=app) as client:
         sid = _init_session(client)
@@ -207,7 +207,7 @@ def test_tools_list_empty_registry_returns_empty_page() -> None:
         assert "nextCursor" not in result
 
 
-def test_prompts_list_empty_registry_returns_empty_page() -> None:
+def test_prompts_list_empty_registry_returns_empty_page() -> "None":
     app = Litestar(plugins=[LitestarMCP(config=MCPConfig(list_page_size=10))])
     with TestClient(app=app) as client:
         sid = _init_session(client)
@@ -217,6 +217,6 @@ def test_prompts_list_empty_registry_returns_empty_page() -> None:
 
 
 @pytest.mark.parametrize("bad_size", [0, -1, -100])
-def test_mcp_config_rejects_non_positive_list_page_size(bad_size: int) -> None:
+def test_mcp_config_rejects_non_positive_list_page_size(bad_size: "int") -> "None":
     with pytest.raises(ValueError, match="list_page_size must be a positive integer"):
         MCPConfig(list_page_size=bad_size)

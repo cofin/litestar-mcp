@@ -191,3 +191,6 @@ GEMINI.md
 .gemini
 .claude/settings.json
 .antigravitycli/
+
+# Local uv configuration
+uv.toml

@@ -20,7 +20,7 @@ from litestar_mcp import LitestarMCP
 pytestmark = pytest.mark.unit
 
 
-def _ensure_session(client: TestClient[Any]) -> str:
+def _ensure_session(client: "TestClient[Any]") -> "str":
     sid = getattr(client, "_mcp_session", None)
     if sid is not None:
         return str(sid)
@@ -43,7 +43,7 @@ def _ensure_session(client: TestClient[Any]) -> str:
     return str(sid_val)
 
 
-def _call_tool(client: TestClient[Any], name: str) -> dict[str, Any]:
+def _call_tool(client: "TestClient[Any]", name: "str") -> "dict[str, Any]":
     body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": {}}}
     sid = _ensure_session(client)
     headers = {"Mcp-Session-Id": sid} if sid else {}
@@ -54,16 +54,16 @@ class _ObservedError(Exception):
     """Domain exception used for observer tests."""
 
 
-def test_after_exception_fires_on_uncaught_exception() -> None:
+def test_after_exception_fires_on_uncaught_exception() -> "None":
     seen: list[str] = []
 
-    async def observer(exc: Exception, scope: Any) -> None:
+    async def observer(exc: "Exception", scope: "Any") -> "None":
         seen.append(type(exc).__name__)
 
     boom = "boom"
 
     @post("/x", mcp_tool="x", sync_to_thread=False)
-    def tool() -> dict[str, str]:
+    def tool() -> "dict[str, str]":
         raise _ObservedError(boom)
 
     app = Litestar(route_handlers=[tool], plugins=[LitestarMCP()], after_exception=[observer])
@@ -74,14 +74,14 @@ def test_after_exception_fires_on_uncaught_exception() -> None:
     assert seen == ["_ObservedError"]
 
 
-def test_after_exception_fires_even_when_handler_recovers() -> None:
+def test_after_exception_fires_even_when_handler_recovers() -> "None":
     """Parity with Litestar HTTP — observer fires before exception_handlers dispatch."""
     seen: list[str] = []
 
-    async def observer(exc: Exception, _scope: Any) -> None:
+    async def observer(exc: "Exception", _scope: "Any") -> "None":
         seen.append(f"observed:{type(exc).__name__}")
 
-    def recovery(_request: Request[Any, Any, Any], exc: _ObservedError) -> Response[Any]:
+    def recovery(_request: "Request[Any, Any, Any]", exc: "_ObservedError") -> "Response[Any]":
         seen.append(f"handler:{type(exc).__name__}")
         return Response(content={"recovered": True}, status_code=200)
 
@@ -93,7 +93,7 @@ def test_after_exception_fires_even_when_handler_recovers() -> None:
         mcp_tool="x",
         sync_to_thread=False,
     )
-    def tool() -> dict[str, str]:
+    def tool() -> "dict[str, str]":
         raise _ObservedError(soft)
 
     app = Litestar(route_handlers=[tool], plugins=[LitestarMCP()], after_exception=[observer])
@@ -104,17 +104,17 @@ def test_after_exception_fires_even_when_handler_recovers() -> None:
     assert seen == ["observed:_ObservedError", "handler:_ObservedError"]
 
 
-def test_after_exception_failure_is_logged_and_swallowed(caplog: pytest.LogCaptureFixture) -> None:
+def test_after_exception_failure_is_logged_and_swallowed(caplog: "pytest.LogCaptureFixture") -> "None":
     """A broken observer must not mask the original exception or crash the executor."""
 
     exploded = "observer exploded"
     original = "original"
 
-    async def broken(_exc: Exception, _scope: Any) -> None:
+    async def broken(_exc: "Exception", _scope: "Any") -> "None":
         raise RuntimeError(exploded)
 
     @post("/x", mcp_tool="x", sync_to_thread=False)
-    def tool() -> dict[str, str]:
+    def tool() -> "dict[str, str]":
         raise _ObservedError(original)
 
     app = Litestar(

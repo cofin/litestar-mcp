@@ -6,7 +6,7 @@ from litestar_mcp import LitestarMCP, MCPConfig
 from litestar_mcp.config import MCPTaskConfig
 
 
-def build() -> Litestar:
+def build() -> "Litestar":
     # start-example
     config = MCPConfig(
         tasks=MCPTaskConfig(enabled=True, default_ttl=300_000),

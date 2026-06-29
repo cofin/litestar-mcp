@@ -19,9 +19,9 @@ import msgspec
 from sqlspec import SQLSpec
 from sqlspec.adapters.aiosqlite import AiosqliteConfig
 
-TABLE_NAME: Final = "reference_notes_sqlspec"
+TABLE_NAME: "Final" = "reference_notes_sqlspec"
 
-CREATE_TABLE_SQL: Final = f"""
+CREATE_TABLE_SQL: "Final" = f"""
 CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
@@ -30,23 +30,25 @@ CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
 )
 """
 
-INSERT_SQL: Final = f"INSERT INTO {TABLE_NAME} (id, title, body, owner_sub) VALUES (?, ?, ?, ?)"
-SELECT_ALL_SQL: Final = f"SELECT id, title, body, owner_sub FROM {TABLE_NAME} ORDER BY id"
-SELECT_BY_OWNER_SQL: Final = f"SELECT id, title, body, owner_sub FROM {TABLE_NAME} WHERE owner_sub = ? ORDER BY id"
-SELECT_PUBLIC_SQL: Final = f"SELECT id, title, body, owner_sub FROM {TABLE_NAME} WHERE owner_sub IS NULL ORDER BY id"
-SELECT_ONE_SQL: Final = f"SELECT id, title, body, owner_sub FROM {TABLE_NAME} WHERE id = ?"
-SELECT_ONE_FOR_OWNER_SQL: Final = f"SELECT id, title, body, owner_sub FROM {TABLE_NAME} WHERE id = ? AND owner_sub = ?"
-DELETE_SQL: Final = f"DELETE FROM {TABLE_NAME} WHERE id = ?"
-DELETE_FOR_OWNER_SQL: Final = f"DELETE FROM {TABLE_NAME} WHERE id = ? AND owner_sub = ?"
+INSERT_SQL: "Final" = f"INSERT INTO {TABLE_NAME} (id, title, body, owner_sub) VALUES (?, ?, ?, ?)"
+SELECT_ALL_SQL: "Final" = f"SELECT id, title, body, owner_sub FROM {TABLE_NAME} ORDER BY id"
+SELECT_BY_OWNER_SQL: "Final" = f"SELECT id, title, body, owner_sub FROM {TABLE_NAME} WHERE owner_sub = ? ORDER BY id"
+SELECT_PUBLIC_SQL: "Final" = f"SELECT id, title, body, owner_sub FROM {TABLE_NAME} WHERE owner_sub IS NULL ORDER BY id"
+SELECT_ONE_SQL: "Final" = f"SELECT id, title, body, owner_sub FROM {TABLE_NAME} WHERE id = ?"
+SELECT_ONE_FOR_OWNER_SQL: "Final" = (
+    f"SELECT id, title, body, owner_sub FROM {TABLE_NAME} WHERE id = ? AND owner_sub = ?"
+)
+DELETE_SQL: "Final" = f"DELETE FROM {TABLE_NAME} WHERE id = ?"
+DELETE_FOR_OWNER_SQL: "Final" = f"DELETE FROM {TABLE_NAME} WHERE id = ? AND owner_sub = ?"
 
 
 class NoteRow(msgspec.Struct, kw_only=True):
     """Typed SQLSpec row shape for the reference notes table."""
 
-    id: str
-    title: str
-    body: str
-    owner_sub: str | None = None
+    id: "str"
+    title: "str"
+    body: "str"
+    owner_sub: "str | None" = None
 
 
 class SQLSpecNoteService:
@@ -60,27 +62,27 @@ class SQLSpecNoteService:
 
     __slots__ = ("driver",)
 
-    def __init__(self, driver: object) -> None:
+    def __init__(self, driver: "object") -> "None":
         self.driver = driver
 
-    async def create(self, *, title: str, body: str, owner_sub: str | None = None) -> NoteRow:
+    async def create(self, *, title: "str", body: "str", owner_sub: "str | None" = None) -> "NoteRow":
         """Insert a note and return the typed row."""
         note_id = str(uuid4())
         await self.driver.execute(INSERT_SQL, note_id, title, body, owner_sub)  # type: ignore[attr-defined]
         await self.driver.commit()  # type: ignore[attr-defined]
         return await self.driver.select_one(SELECT_ONE_SQL, note_id, schema_type=NoteRow)  # type: ignore[attr-defined]
 
-    async def list_public(self) -> list[NoteRow]:
+    async def list_public(self) -> "list[NoteRow]":
         """List all notes without an owner (public demo dataset)."""
         return list(await self.driver.select(SELECT_PUBLIC_SQL, schema_type=NoteRow))  # type: ignore[attr-defined]
 
-    async def list_for_owner(self, owner_sub: str) -> list[NoteRow]:
+    async def list_for_owner(self, owner_sub: "str") -> "list[NoteRow]":
         """List notes owned by ``owner_sub``."""
         return list(
             await self.driver.select(SELECT_BY_OWNER_SQL, owner_sub, schema_type=NoteRow)  # type: ignore[attr-defined]
         )
 
-    async def get_for_owner(self, note_id: str, owner_sub: str) -> NoteRow | None:
+    async def get_for_owner(self, note_id: "str", owner_sub: "str") -> "NoteRow | None":
         """Return a single owned note or ``None`` when it does not exist."""
         rows = list(
             await self.driver.select(  # type: ignore[attr-defined]
@@ -89,12 +91,12 @@ class SQLSpecNoteService:
         )
         return rows[0] if rows else None
 
-    async def delete(self, note_id: str) -> None:
+    async def delete(self, note_id: "str") -> "None":
         """Delete a note by id."""
         await self.driver.execute(DELETE_SQL, note_id)  # type: ignore[attr-defined]
         await self.driver.commit()  # type: ignore[attr-defined]
 
-    async def delete_for_owner(self, note_id: str, owner_sub: str) -> bool:
+    async def delete_for_owner(self, note_id: "str", owner_sub: "str") -> "bool":
         """Delete a note only if the caller owns it.
 
         Returns ``True`` when a row was deleted, ``False`` otherwise. The
@@ -110,7 +112,7 @@ class SQLSpecNoteService:
         return True
 
 
-def note_row_to_public(row: NoteRow) -> dict[str, object]:
+def note_row_to_public(row: "NoteRow") -> "dict[str, object]":
     """Map a :class:`NoteRow` into the shared public ``Note`` shape.
 
     The shared contract expects ``id`` to be a :class:`~uuid.UUID`, so this
@@ -121,7 +123,7 @@ def note_row_to_public(row: NoteRow) -> dict[str, object]:
     return {"id": UUID(row.id), "title": row.title, "body": row.body}
 
 
-def build_sqlspec(database_path: str) -> tuple[SQLSpec, AiosqliteConfig]:
+def build_sqlspec(database_path: "str") -> "tuple[SQLSpec, AiosqliteConfig]":
     """Build a configured :class:`SQLSpec` instance for the notes family.
 
     Args:
@@ -143,13 +145,13 @@ def build_sqlspec(database_path: str) -> tuple[SQLSpec, AiosqliteConfig]:
 
 
 @asynccontextmanager
-async def provide_note_service(sqlspec: SQLSpec, config: AiosqliteConfig) -> AsyncIterator[SQLSpecNoteService]:
+async def provide_note_service(sqlspec: "SQLSpec", config: "AiosqliteConfig") -> "AsyncIterator[SQLSpecNoteService]":
     """Yield a :class:`SQLSpecNoteService` bound to a request-scoped session."""
     async with sqlspec.provide_session(config) as db_session:
         yield SQLSpecNoteService(db_session)
 
 
-async def bootstrap_schema(sqlspec: SQLSpec, config: AiosqliteConfig) -> None:
+async def bootstrap_schema(sqlspec: "SQLSpec", config: "AiosqliteConfig") -> "None":
     """Create the notes table if it does not exist (idempotent)."""
     async with sqlspec.provide_session(config) as db_session:
         await db_session.execute(CREATE_TABLE_SQL)

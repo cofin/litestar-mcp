@@ -13,8 +13,7 @@ Backends x failure modes = 5 x 3 = 15 parametrized cases. A sixth
 the `test_<backend>.py` modules already cover that with a valid token.
 """
 
-from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from litestar.testing import TestClient
@@ -35,7 +34,10 @@ from tests.integration.apps import (
 )
 from tests.integration.conftest import rpc_response
 
-BACKENDS: list[tuple[str, Callable[..., Any], str]] = [
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+BACKENDS: "list[tuple[str, Callable[..., Any], str]]" = [
     ("advanced_alchemy", build_advanced_alchemy_app, "postgres_sqlalchemy_dsn"),
     ("advanced_alchemy_dishka", build_advanced_alchemy_dishka_app, "postgres_sqlalchemy_dsn"),
     ("sqlspec_asyncpg", build_sqlspec_asyncpg_app, "postgres_asyncpg_dsn"),
@@ -56,7 +58,7 @@ KNOWN_TOOL_NAMES = (
 )
 
 
-def _headers_for_failure(mode: str) -> "dict[str, str]":
+def _headers_for_failure(mode: "str") -> "dict[str, str]":
     if mode == "missing_token":
         return {}
     if mode == "forged_token":
@@ -74,12 +76,12 @@ def _headers_for_failure(mode: str) -> "dict[str, str]":
 )
 @pytest.mark.parametrize("failure_mode", FAILURE_MODES)
 def test_auth_failure_rejects_request(
-    request: pytest.FixtureRequest,
-    backend_name: str,
-    factory: Callable[..., Any],
-    dsn_fixture: str,
-    failure_mode: str,
-) -> None:
+    request: "pytest.FixtureRequest",
+    backend_name: "str",
+    factory: "Callable[..., Any]",
+    dsn_fixture: "str",
+    failure_mode: "str",
+) -> "None":
     """Every backend x failure mode must produce a 401 with no tool leakage."""
     dsn = request.getfixturevalue(dsn_fixture)
     app = factory(dsn, auth_mode="bearer")
@@ -104,11 +106,11 @@ def test_auth_failure_rejects_request(
     ids=[name for name, _, _ in BACKENDS],
 )
 def test_well_known_protected_resource_available_without_auth(
-    request: pytest.FixtureRequest,
-    backend_name: str,
-    factory: Callable[..., Any],
-    dsn_fixture: str,
-) -> None:
+    request: "pytest.FixtureRequest",
+    backend_name: "str",
+    factory: "Callable[..., Any]",
+    dsn_fixture: "str",
+) -> "None":
     """``.well-known/oauth-protected-resource`` must always expose the issuer."""
     dsn = request.getfixturevalue(dsn_fixture)
     app = factory(dsn, auth_mode="bearer")
@@ -128,11 +130,11 @@ def test_well_known_protected_resource_available_without_auth(
     ids=[name for name, _, _ in BACKENDS],
 )
 def test_valid_token_is_accepted(
-    request: pytest.FixtureRequest,
-    backend_name: str,
-    factory: Callable[..., Any],
-    dsn_fixture: str,
-) -> None:
+    request: "pytest.FixtureRequest",
+    backend_name: "str",
+    factory: "Callable[..., Any]",
+    dsn_fixture: "str",
+) -> "None":
     """A valid bearer token must be accepted by every bearer-mode app."""
     dsn = request.getfixturevalue(dsn_fixture)
     app = factory(dsn, auth_mode="bearer")

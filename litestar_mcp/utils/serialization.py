@@ -25,10 +25,8 @@ no-op for ``Struct`` types — the wire bytes never carry ``UNSET``. Pydantic's
 ``model_dump(exclude_unset=...)`` semantics ARE honored before encoding.
 """
 
-from __future__ import annotations
-
 from threading import RLock
-from typing import TYPE_CHECKING, Any, Final, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import msgspec
 from litestar.serialization import get_serializer
@@ -46,17 +44,17 @@ __all__ = (
     "serialize_collection",
 )
 
-_PRIMITIVE_TYPES: Final[tuple[type[Any], ...]] = (str, bytes, int, float, bool)
-_SERIALIZER_LOCK: RLock = RLock()
-_SCHEMA_SERIALIZERS: dict[tuple[type[Any] | None, bool, int | None], SchemaSerializer] = {}
+_PRIMITIVE_TYPES: "tuple[type[Any], ...]" = (str, bytes, int, float, bool)
+_SERIALIZER_LOCK: "RLock" = RLock()
+_SCHEMA_SERIALIZERS: "dict[tuple[type[Any] | None, bool, int | None], SchemaSerializer]" = {}
 
 
 def schema_dump(
-    data: Any,
+    data: "Any",
     *,
-    exclude_unset: bool = True,
-    type_encoders: Mapping[Any, Callable[[Any], Any]] | None = None,
-) -> Any:
+    exclude_unset: "bool" = True,
+    type_encoders: "Mapping[Any, Callable[[Any], Any]] | None" = None,
+) -> "Any":
     """Dump ``data`` to a JSON-friendly form via the cached native-encoder pipeline.
 
     - Primitives and ``None`` pass through unchanged.
@@ -90,11 +88,11 @@ def schema_dump(
 
 
 def serialize_collection(
-    items: Iterable[Any],
+    items: "Iterable[Any]",
     *,
-    exclude_unset: bool = True,
-    type_encoders: Mapping[Any, Callable[[Any], Any]] | None = None,
-) -> list[Any]:
+    exclude_unset: "bool" = True,
+    type_encoders: "Mapping[Any, Callable[[Any], Any]] | None" = None,
+) -> "list[Any]":
     """Serialize an iterable of heterogeneous items.
 
     Primitives and ``None`` pass through unchanged. Other items dispatch via
@@ -125,11 +123,11 @@ def serialize_collection(
 
 
 def get_collection_serializer(
-    sample: Any,
+    sample: "Any",
     *,
-    exclude_unset: bool = True,
-    type_encoders: Mapping[Any, Callable[[Any], Any]] | None = None,
-) -> SchemaSerializer:
+    exclude_unset: "bool" = True,
+    type_encoders: "Mapping[Any, Callable[[Any], Any]] | None" = None,
+) -> "SchemaSerializer":
     """Return (and cache) a :class:`SchemaSerializer` for ``sample``'s type.
 
     The cache key is ``(type(sample), exclude_unset, id(type_encoders))`` —
@@ -166,9 +164,9 @@ class SchemaSerializer:
 
     def __init__(
         self,
-        key: tuple[type[Any] | None, bool, int | None],
-        dump: Callable[[Any], Any],
-    ) -> None:
+        key: "tuple[type[Any] | None, bool, int | None]",
+        dump: "Callable[[Any], Any]",
+    ) -> "None":
         """Initialize the wrapper.
 
         Args:
@@ -179,20 +177,20 @@ class SchemaSerializer:
         self._dump = dump
 
     @property
-    def key(self) -> tuple[type[Any] | None, bool, int | None]:
+    def key(self) -> "tuple[type[Any] | None, bool, int | None]":
         """The cache key this pipeline was built for."""
         return self._key
 
-    def dump_one(self, item: Any) -> Any:
+    def dump_one(self, item: "Any") -> "Any":
         """Serialize a single item using the cached dispatcher."""
         return self._dump(item)
 
-    def dump_many(self, items: Iterable[Any]) -> list[Any]:
+    def dump_many(self, items: "Iterable[Any]") -> "list[Any]":
         """Serialize each item in ``items`` using the cached dispatcher."""
         return [self._dump(item) for item in items]
 
 
-def reset_serializer_cache() -> None:
+def reset_serializer_cache() -> "None":
     """Clear the global serializer cache.
 
     Useful in tests that mutate type metadata or long-running processes
@@ -202,17 +200,15 @@ def reset_serializer_cache() -> None:
         _SCHEMA_SERIALIZERS.clear()
 
 
-# ---------------------------------------------------------------------------
 # Private helper functions
-# ---------------------------------------------------------------------------
 
 
-def _dump_identity_dict(value: Any) -> dict[str, Any]:
+def _dump_identity_dict(value: "Any") -> "dict[str, Any]":
     """Pass-through for ``dict``/``None`` inputs."""
     return cast("dict[str, Any]", value)
 
 
-def _encoder_map_id(type_encoders: Mapping[Any, Callable[[Any], Any]] | None) -> int | None:
+def _encoder_map_id(type_encoders: "Mapping[Any, Callable[[Any], Any]] | None") -> "int | None":
     """Return a stable-for-the-map-lifetime key for the encoder map, or None."""
     if not type_encoders:
         return None
@@ -220,20 +216,20 @@ def _encoder_map_id(type_encoders: Mapping[Any, Callable[[Any], Any]] | None) ->
 
 
 def _make_serializer_key(
-    sample: Any,
-    exclude_unset: bool,
-    type_encoders: Mapping[Any, Callable[[Any], Any]] | None,
-) -> tuple[type[Any] | None, bool, int | None]:
+    sample: "Any",
+    exclude_unset: "bool",
+    type_encoders: "Mapping[Any, Callable[[Any], Any]] | None",
+) -> "tuple[type[Any] | None, bool, int | None]":
     if sample is None or isinstance(sample, dict):
         return (None, exclude_unset, _encoder_map_id(type_encoders))
     return (type(sample), exclude_unset, _encoder_map_id(type_encoders))
 
 
 def _build_dump_function(
-    sample: Any,
-    exclude_unset: bool,
-    type_encoders: Mapping[Any, Callable[[Any], Any]] | None,
-) -> Callable[[Any], Any]:
+    sample: "Any",
+    exclude_unset: "bool",
+    type_encoders: "Mapping[Any, Callable[[Any], Any]] | None",
+) -> "Callable[[Any], Any]":
     """Pick the dumper for ``sample``'s type, frozen at cache time."""
     if sample is None or isinstance(sample, dict):
         return _dump_identity_dict
@@ -244,7 +240,7 @@ def _build_dump_function(
 
     if PYDANTIC_INSTALLED and isinstance(sample, BaseModel):
 
-        def _dump_pydantic(value: Any) -> Any:
+        def _dump_pydantic(value: "Any") -> "Any":
             """Dump Pydantic model with exclude_unset semantics preserved.
 
             Pydantic's exclude_unset semantics are user-facing and worth
@@ -255,7 +251,7 @@ def _build_dump_function(
 
         return _dump_pydantic
 
-    def _dump_native(value: Any) -> Any:
+    def _dump_native(value: "Any") -> "Any":
         return msgspec.json.decode(encoder.encode(value))
 
     return _dump_native

@@ -9,14 +9,14 @@ from litestar_mcp import LitestarMCP, MCPAuthBackend, MCPConfig
 from litestar_mcp.auth import MCPAuthConfig
 
 
-async def validate_token(token: str) -> "dict[str, Any] | None":
+async def validate_token(token: "str") -> "dict[str, Any] | None":
     """Return claims when ``token`` is valid, otherwise ``None``."""
     if token == "let-me-in":
         return {"sub": "demo-user", "scope": "mcp:read"}
     return None
 
 
-def build() -> Litestar:
+def build() -> "Litestar":
     # start-example
     app = Litestar(
         route_handlers=[],

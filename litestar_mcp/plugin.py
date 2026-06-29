@@ -1,15 +1,16 @@
 """Litestar MCP Plugin implementation."""
 
-from collections.abc import Callable, Sequence
+import logging
 from typing import TYPE_CHECKING, Any
 
-from litestar import Litestar, Router
-from litestar.config.app import AppConfig
+from litestar import Litestar, Request, Router
+from litestar import get as litestar_get
 from litestar.di import Provide
 from litestar.handlers import BaseRouteHandler
 from litestar.plugins import CLIPlugin, InitPluginProtocol
 from litestar.stores.memory import MemoryStore
 
+from litestar_mcp.cli import mcp_group
 from litestar_mcp.config import MCPConfig
 from litestar_mcp.manifests import build_agent_card, build_mcp_server_manifest, build_oauth_protected_resource
 from litestar_mcp.registry import PromptRegistration, Registry
@@ -19,8 +20,13 @@ from litestar_mcp.sse import SSEManager
 from litestar_mcp.tasks import InMemoryTaskStore, TaskRecord
 from litestar_mcp.utils import get_handler_function, get_mcp_metadata
 
+_logger = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
     from click import Group
+    from litestar.config.app import AppConfig
 
 
 class LitestarMCP(InitPluginProtocol, CLIPlugin):
@@ -28,9 +34,9 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
 
     def __init__(
         self,
-        config: MCPConfig | None = None,
-        prompts: Sequence[Callable[..., Any]] | None = None,
-    ) -> None:
+        config: "MCPConfig | None" = None,
+        prompts: "Sequence[Callable[..., Any]] | None" = None,
+    ) -> "None":
         """Initialize the MCP plugin.
 
         Args:
@@ -42,6 +48,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         """
         self._config = config or MCPConfig()
         self._registry = Registry()
+        self._dynamic_handlers: list[BaseRouteHandler] = []
         if prompts:
             for fn in prompts:
                 metadata = get_mcp_metadata(fn) or {}
@@ -76,44 +83,56 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
             )
 
     @property
-    def config(self) -> MCPConfig:
+    def config(self) -> "MCPConfig":
         """Get the plugin configuration."""
         return self._config
 
     @property
-    def registry(self) -> Registry:
+    def registry(self) -> "Registry":
         """Get the central registry."""
         return self._registry
 
     @property
-    def discovered_tools(self) -> dict[str, BaseRouteHandler]:
+    def task_store(self) -> "InMemoryTaskStore | None":
+        """Get the task store."""
+        return self._task_store
+
+    @property
+    def discovered_tools(self) -> "dict[str, BaseRouteHandler]":
         """Get discovered MCP tools."""
         return self._registry.tools
 
     @property
-    def discovered_resources(self) -> dict[str, BaseRouteHandler]:
+    def discovered_resources(self) -> "dict[str, BaseRouteHandler]":
         """Get discovered MCP resources."""
         return self._registry.resources
 
     @property
-    def discovered_prompts(self) -> dict[str, PromptRegistration]:
+    def discovered_prompts(self) -> "dict[str, PromptRegistration]":
         """Get discovered MCP prompts."""
         return self._registry.prompts
 
-    def on_cli_init(self, cli: "Group") -> None:
-        """Configure CLI commands for MCP operations."""
-        from litestar_mcp.cli import mcp_group
+    def register_dynamic_handler(self, handler: "BaseRouteHandler") -> "None":
+        """Register a dynamic route handler on the plugin.
 
+        This is typically used by the wrapper class to register decorated
+        tools and resources.
+        """
+        self._dynamic_handlers.append(handler)
+
+    def on_cli_init(self, cli: "Group") -> "None":
+        """Configure CLI commands for MCP operations."""
         cli.add_command(mcp_group)
 
-    def on_app_init(self, app_config: AppConfig) -> AppConfig:
+    def on_app_init(self, app_config: "AppConfig") -> "AppConfig":
         """Initialize the MCP integration when the Litestar app starts."""
+        app_config.route_handlers.extend(self._dynamic_handlers)
         self._discover_mcp_routes(app_config.route_handlers)
         self._registry.set_sse_manager(self._sse_manager)
 
         if self._task_store is not None:
 
-            async def publish_task_status(record: TaskRecord) -> None:
+            async def publish_task_status(record: "TaskRecord") -> "None":
                 await self._registry.publish_notification(
                     "notifications/tasks/status",
                     record.to_dict(),
@@ -121,16 +140,16 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
 
             self._task_store.set_status_callback(publish_task_status)
 
-        def provide_mcp_config() -> MCPConfig:
+        def provide_mcp_config() -> "MCPConfig":
             return self._config
 
-        def provide_registry() -> Registry:
+        def provide_registry() -> "Registry":
             return self._registry
 
-        def provide_task_store() -> InMemoryTaskStore | None:
+        def provide_task_store() -> "InMemoryTaskStore | None":
             return self._task_store
 
-        def provide_session_manager() -> MCPSessionManager:
+        def provide_session_manager() -> "MCPSessionManager":
             return self._session_manager
 
         router_kwargs: dict[str, Any] = {
@@ -154,16 +173,14 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         mcp_router = Router(**router_kwargs)
         app_config.route_handlers.append(mcp_router)
         app_config.on_startup.append(self.on_startup)
-
-        from litestar import Request
-        from litestar import get as litestar_get
+        app_config.on_shutdown.append(self.on_shutdown)
 
         @litestar_get("/.well-known/oauth-protected-resource", sync_to_thread=False, opt={"exclude_from_auth": True})
-        def oauth_protected_resource(request: Request[Any, Any, Any]) -> dict[str, Any]:
+        def oauth_protected_resource(request: "Request[Any, Any, Any]") -> "dict[str, Any]":
             return build_oauth_protected_resource(self._config.auth, request.app)
 
         @litestar_get("/.well-known/agent-card.json", sync_to_thread=False, opt={"exclude_from_auth": True})
-        def agent_card(request: Request[Any, Any, Any]) -> dict[str, Any]:
+        def agent_card(request: "Request[Any, Any, Any]") -> "dict[str, Any]":
             return build_agent_card(
                 base_url=str(request.base_url),
                 config=self._config,
@@ -172,7 +189,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
             )
 
         @litestar_get("/.well-known/mcp-server.json", sync_to_thread=False, opt={"exclude_from_auth": True})
-        def mcp_server_manifest(request: Request[Any, Any, Any]) -> dict[str, Any]:
+        def mcp_server_manifest(request: "Request[Any, Any, Any]") -> "dict[str, Any]":
             return build_mcp_server_manifest(
                 base_url=str(request.base_url),
                 config=self._config,
@@ -185,15 +202,35 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         app_config.route_handlers.extend([oauth_protected_resource, agent_card, mcp_server_manifest])
         return app_config
 
-    def on_startup(self, app: Litestar) -> None:
+    def on_startup(self, app: "Litestar") -> "None":
         """Perform discovery after app is fully initialized and routes are built."""
         all_handlers: list[BaseRouteHandler] = []
         for route in app.routes:
             if hasattr(route, "route_handlers"):
                 all_handlers.extend(route.route_handlers)  # pyright: ignore[reportAttributeAccessIssue]
+        _logger.warning("Plugin on_startup executing...")
         self._discover_mcp_routes(all_handlers)
 
-    def _discover_mcp_routes(self, route_handlers: Sequence[Any]) -> None:
+        def invalidate_router() -> "None":
+            _logger.warning("invalidate_router callback triggered!")
+            if hasattr(app.state, "mcp_router"):
+                _logger.warning("Deleting mcp_router from app state")
+                delattr(app.state, "mcp_router")
+
+        self._registry.register_change_callback(invalidate_router)
+        app.state.mcp_router_invalidation_callback = invalidate_router
+        _logger.warning("Registered invalidate_router callback on registry: %s", id(self._registry))
+
+    def on_shutdown(self, app: "Litestar") -> "None":
+        """Clean up resources on application shutdown."""
+        _logger.warning("Plugin on_shutdown executing...")
+        callback = getattr(app.state, "mcp_router_invalidation_callback", None)
+        if callback is not None:
+            self._registry.unregister_change_callback(callback)
+            delattr(app.state, "mcp_router_invalidation_callback")
+            _logger.warning("Unregistered invalidate_router callback from registry")
+
+    def _discover_mcp_routes(self, route_handlers: "Sequence[Any]") -> "None":
         """Discover routes marked for MCP exposure via opt attribute or decorators."""
         for handler in route_handlers:
             if isinstance(handler, BaseRouteHandler):

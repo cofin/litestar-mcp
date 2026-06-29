@@ -4,7 +4,7 @@ from google.adk.tools.mcp_tool import McpToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
 
 
-def connect_simple() -> McpToolset:
+def connect_simple() -> "McpToolset":
     """Connect to the Litestar MCP server without authentication."""
     toolset = McpToolset(
         connection_params=StreamableHTTPConnectionParams(
@@ -15,7 +15,7 @@ def connect_simple() -> McpToolset:
     return toolset
 
 
-def connect_with_auth() -> McpToolset:
+def connect_with_auth() -> "McpToolset":
     """Connect to the Litestar MCP server with bearer token authentication."""
     toolset = McpToolset(
         connection_params=StreamableHTTPConnectionParams(
@@ -29,6 +29,6 @@ def connect_with_auth() -> McpToolset:
     return toolset
 
 
-async def run_and_cleanup(toolset: McpToolset) -> None:
+async def run_and_cleanup(toolset: "McpToolset") -> "None":
     """Clean up and close the toolset connection."""
     await toolset.close()

@@ -20,19 +20,19 @@ pytestmark = pytest.mark.integration
 
 
 class _CamelOut(Struct, rename="camel"):
-    first_name: str = ""
-    last_login_count: int = 0
+    first_name: "str" = ""
+    last_login_count: "int" = 0
 
 
-def _build_app() -> Litestar:
+def _build_app() -> "Litestar":
     @post("/greet", mcp_tool="greet", sync_to_thread=False)
-    def greet() -> _CamelOut:
+    def greet() -> "_CamelOut":
         return _CamelOut(first_name="Alice", last_login_count=3)
 
     return Litestar(route_handlers=[greet], plugins=[LitestarMCP()])
 
 
-def test_mcp_tool_emits_camel_case_for_renamed_struct() -> None:
+def test_mcp_tool_emits_camel_case_for_renamed_struct() -> "None":
     """``tools/call`` must emit camelCase JSON-RPC body for renamed Structs."""
     app = _build_app()
     with TestClient(app=app) as client:

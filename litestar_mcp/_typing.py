@@ -24,10 +24,10 @@ T_co = TypeVar("T_co", covariant=True)
 class BaseModelStub:
     """Placeholder implementation for Pydantic BaseModel."""
 
-    model_fields: ClassVar[dict[str, Any]] = {}
+    model_fields: "ClassVar[dict[str, Any]]" = {}
     __slots__ = ("__dict__", "__pydantic_extra__", "__pydantic_fields_set__", "__pydantic_private__")
 
-    def __init__(self, **data: Any) -> None:
+    def __init__(self, **data: "Any") -> "None":
         self.__dict__.update(data)
 
     def model_dump(  # noqa: PLR0913
@@ -37,23 +37,23 @@ class BaseModelStub:
         include: "Any | None" = None,  # noqa: ARG002
         exclude: "Any | None" = None,  # noqa: ARG002
         context: "Any | None" = None,  # noqa: ARG002
-        by_alias: bool = False,  # noqa: ARG002
-        exclude_unset: bool = False,  # noqa: ARG002
-        exclude_defaults: bool = False,  # noqa: ARG002
-        exclude_none: bool = False,  # noqa: ARG002
-        round_trip: bool = False,  # noqa: ARG002
+        by_alias: "bool" = False,  # noqa: ARG002
+        exclude_unset: "bool" = False,  # noqa: ARG002
+        exclude_defaults: "bool" = False,  # noqa: ARG002
+        exclude_none: "bool" = False,  # noqa: ARG002
+        round_trip: "bool" = False,  # noqa: ARG002
         warnings: "bool | Literal['none', 'warn', 'error']" = True,  # noqa: ARG002
-        serialize_as_any: bool = False,  # noqa: ARG002
+        serialize_as_any: "bool" = False,  # noqa: ARG002
     ) -> "dict[str, Any]":
         """Placeholder implementation."""
         return {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
 
     def model_json_schema(  # noqa: PLR0913
         self,
-        by_alias: bool = True,  # noqa: ARG002
-        ref_template: str = "#/$defs/{model}",  # noqa: ARG002
+        by_alias: "bool" = True,  # noqa: ARG002
+        ref_template: "str" = "#/$defs/{model}",  # noqa: ARG002
         schema_generator: "Any | None" = None,  # noqa: ARG002
-        mode: str = "validation",  # noqa: ARG002
+        mode: "str" = "validation",  # noqa: ARG002
     ) -> "dict[str, Any]":
         """Placeholder implementation for JSON schema generation."""
         return {"type": "object", "properties": {}, "description": "Pydantic model not available"}
@@ -76,23 +76,23 @@ except ImportError:
 class StructStub:
     """Placeholder implementation for msgspec Struct."""
 
-    __struct_fields__: ClassVar[tuple[str, ...]] = ()
+    __struct_fields__: "ClassVar[tuple[str, ...]]" = ()
     __slots__ = ()
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, **kwargs: "Any") -> "None":
         self.__dict__.update(kwargs)
 
 
 def convert_stub(  # noqa: PLR0913
-    obj: Any,  # noqa: ARG001
-    type: Any,  # noqa: A002,ARG001
+    obj: "Any",  # noqa: ARG001
+    type: "Any",  # noqa: A002,ARG001
     *,
-    strict: bool = True,  # noqa: ARG001
-    from_attributes: bool = False,  # noqa: ARG001
+    strict: "bool" = True,  # noqa: ARG001
+    from_attributes: "bool" = False,  # noqa: ARG001
     dec_hook: "Any | None" = None,  # noqa: ARG001
     builtin_types: "Any | None" = None,  # noqa: ARG001
-    str_keys: bool = False,  # noqa: ARG001
-) -> Any:
+    str_keys: "bool" = False,  # noqa: ARG001
+) -> "Any":
     """Placeholder implementation."""
     return {}
 
@@ -128,37 +128,37 @@ except ImportError:
 class AttrsInstanceStub:
     """Placeholder Implementation for attrs classes"""
 
-    __attrs_attrs__: ClassVar[tuple[Any, ...]] = ()
+    __attrs_attrs__: "ClassVar[tuple[Any, ...]]" = ()
     __slots__ = ()
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, **kwargs: "Any") -> "None":
         self.__dict__.update(kwargs)
 
-    def __repr__(self) -> str:
+    def __repr__(self) -> "str":
         return f"{self.__class__.__name__}()"
 
 
-def attrs_asdict_stub(*args: Any, **kwargs: Any) -> "dict[str, Any]":  # noqa: ARG001
+def attrs_asdict_stub(*args: "Any", **kwargs: "Any") -> "dict[str, Any]":  # noqa: ARG001
     """Placeholder implementation"""
     return {}
 
 
-def attrs_define_stub(*args: Any, **kwargs: Any) -> Any:  # noqa: ARG001
+def attrs_define_stub(*args: "Any", **kwargs: "Any") -> "Any":  # noqa: ARG001
     """Placeholder implementation"""
     return lambda cls: cls  # pyright: ignore[reportUnknownVariableType,reportUnknownLambdaType]
 
 
-def attrs_field_stub(*args: Any, **kwargs: Any) -> Any:  # noqa: ARG001
+def attrs_field_stub(*args: "Any", **kwargs: "Any") -> "Any":  # noqa: ARG001
     """Placeholder implementation"""
     return None
 
 
-def attrs_fields_stub(*args: Any, **kwargs: Any) -> "tuple[Any, ...]":  # noqa: ARG001
+def attrs_fields_stub(*args: "Any", **kwargs: "Any") -> "tuple[Any, ...]":  # noqa: ARG001
     """Placeholder implementation"""
     return ()
 
 
-def attrs_has_stub(*args: Any, **kwargs: Any) -> bool:  # noqa: ARG001
+def attrs_has_stub(*args: "Any", **kwargs: "Any") -> "bool":  # noqa: ARG001
     """Placeholder implementation"""
     return False
 
@@ -189,6 +189,23 @@ except ImportError:
     ATTRS_INSTALLED = False  # pyright: ignore[reportConstantRedefinition]
 
 
+# Always define stub types for dishka
+class DishkaDependencyKeyStub:
+    """Placeholder implementation for Dishka DependencyKey."""
+
+    def __init__(self, *args: "Any", **kwargs: "Any") -> "None":
+        pass
+
+
+try:
+    from dishka.entities.key import DependencyKey as DishkaDependencyKey
+
+    DISHKA_INSTALLED = True
+except ImportError:
+    DishkaDependencyKey = DishkaDependencyKeyStub  # type: ignore[assignment,misc]
+    DISHKA_INSTALLED = False
+
+
 class EmptyEnum(Enum):
     """A sentinel enum used as placeholder."""
 
@@ -201,6 +218,7 @@ Empty = EmptyEnum.EMPTY
 
 __all__ = (
     "ATTRS_INSTALLED",
+    "DISHKA_INSTALLED",
     "MSGSPEC_INSTALLED",
     "PYDANTIC_INSTALLED",
     "UNSET",
@@ -210,6 +228,8 @@ __all__ = (
     "BaseModel",
     "BaseModelStub",
     "DataclassProtocol",
+    "DishkaDependencyKey",
+    "DishkaDependencyKeyStub",
     "Empty",
     "EmptyEnum",
     "EmptyType",

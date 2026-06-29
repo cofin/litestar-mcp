@@ -8,27 +8,27 @@ from litestar.testing import TestClient
 from litestar_mcp import LitestarMCP
 
 
-def _make_app() -> Litestar:
+def _make_app() -> "Litestar":
     @get("/items", opt={"mcp_tool": "list_items"}, sync_to_thread=False)
-    def list_items() -> list[dict[str, Any]]:
+    def list_items() -> "list[dict[str, Any]]":
         return [{"id": 1}]
 
     return Litestar(route_handlers=[list_items], plugins=[LitestarMCP()])
 
 
 def _rpc(
-    client: TestClient[Any],
-    method: str,
+    client: "TestClient[Any]",
+    method: "str",
     params: "dict[str, Any] | None" = None,
     headers: "dict[str, str] | None" = None,
-) -> Any:
+) -> "Any":
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
     if params is not None:
         body["params"] = params
     return client.post("/mcp", json=body, headers=headers or {})
 
 
-def test_initialize_emits_session_header() -> None:
+def test_initialize_emits_session_header() -> "None":
     with TestClient(app=_make_app()) as client:
         resp = _rpc(
             client,
@@ -39,13 +39,13 @@ def test_initialize_emits_session_header() -> None:
         assert resp.headers.get("mcp-session-id")
 
 
-def test_post_without_header_returns_400() -> None:
+def test_post_without_header_returns_400() -> "None":
     with TestClient(app=_make_app()) as client:
         resp = _rpc(client, "tools/list")
         assert resp.status_code == 400
 
 
-def test_post_with_unknown_header_returns_404_with_rpc_error() -> None:
+def test_post_with_unknown_header_returns_404_with_rpc_error() -> "None":
     with TestClient(app=_make_app()) as client:
         resp = _rpc(client, "tools/list", headers={"Mcp-Session-Id": "unknown"})
         assert resp.status_code == 404
@@ -53,13 +53,13 @@ def test_post_with_unknown_header_returns_404_with_rpc_error() -> None:
         assert payload["error"]["code"] == -32000
 
 
-def test_delete_without_header_returns_400() -> None:
+def test_delete_without_header_returns_400() -> "None":
     with TestClient(app=_make_app()) as client:
         resp = client.delete("/mcp")
         assert resp.status_code == 400
 
 
-def test_delete_removes_session_and_404_afterwards() -> None:
+def test_delete_removes_session_and_404_afterwards() -> "None":
     with TestClient(app=_make_app()) as client:
         init = _rpc(
             client,
@@ -72,7 +72,7 @@ def test_delete_removes_session_and_404_afterwards() -> None:
         assert after.status_code == 404
 
 
-def test_post_only_flow_across_multiple_calls() -> None:
+def test_post_only_flow_across_multiple_calls() -> "None":
     with TestClient(app=_make_app()) as client:
         init = _rpc(
             client,
@@ -95,7 +95,7 @@ def test_post_only_flow_across_multiple_calls() -> None:
             assert r.headers.get("mcp-session-id") == session_id
 
 
-def test_ping_with_no_session_is_allowed() -> None:
+def test_ping_with_no_session_is_allowed() -> "None":
     with TestClient(app=_make_app()) as client:
         resp = _rpc(client, "ping")
         assert resp.status_code == 200

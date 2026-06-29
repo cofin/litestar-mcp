@@ -1,7 +1,6 @@
 """Sphinx extension for changelog and change directives."""
 
 # ruff: noqa: PLR0911
-from __future__ import annotations
 
 import ast
 from pathlib import Path
@@ -16,11 +15,11 @@ if TYPE_CHECKING:
     from sphinx.environment import BuildEnvironment
 
 
-def _get_module_ast(source_file: str) -> ast.AST | ast.Module:
+def _get_module_ast(source_file: "str") -> "ast.AST | ast.Module":
     return ast.parse(Path(source_file).read_text(encoding="utf-8"))
 
 
-def _get_import_nodes(nodes: list[ast.stmt]) -> Generator[ast.Import | ast.ImportFrom, None, None]:
+def _get_import_nodes(nodes: "list[ast.stmt]") -> "Generator[ast.Import | ast.ImportFrom, None, None]":
     for node in nodes:
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             yield node
@@ -28,7 +27,7 @@ def _get_import_nodes(nodes: list[ast.stmt]) -> Generator[ast.Import | ast.Impor
             yield from _get_import_nodes(node.body)
 
 
-def _resolve_litestar_reference(target: str) -> bool:
+def _resolve_litestar_reference(target: "str") -> "bool":
     """Attempt to resolve Litestar references.
 
     Args:
@@ -100,7 +99,7 @@ def _resolve_litestar_reference(target: str) -> bool:
         return False
 
 
-def _resolve_serialization_reference(target: str) -> bool:
+def _resolve_serialization_reference(target: "str") -> "bool":
     """Attempt to resolve serialization-related references.
 
     Args:
@@ -113,7 +112,7 @@ def _resolve_serialization_reference(target: str) -> bool:
     return target in serialization_attrs
 
 
-def _resolve_click_reference(target: str) -> bool:
+def _resolve_click_reference(target: "str") -> "bool":
     """Attempt to resolve Click references.
 
     Args:
@@ -132,7 +131,7 @@ def _resolve_click_reference(target: str) -> bool:
         return False
 
 
-def on_warn_missing_reference(app: Sphinx, domain: str, node: Node) -> bool | None:
+def on_warn_missing_reference(app: "Sphinx", domain: "str", node: "Node") -> "bool | None":
     if node.tagname != "pending_xref":  # type: ignore[attr-defined]
         return None
 
@@ -205,7 +204,9 @@ def on_warn_missing_reference(app: Sphinx, domain: str, node: Node) -> bool | No
     return None
 
 
-def on_missing_reference(app: Sphinx, env: BuildEnvironment, node: pending_xref, contnode: Element) -> Element | None:
+def on_missing_reference(
+    app: "Sphinx", env: "BuildEnvironment", node: "pending_xref", contnode: "Element"
+) -> "Element | None":
     """Handle missing references by attempting to resolve them through different methods.
 
     Args:
@@ -239,13 +240,13 @@ def on_missing_reference(app: Sphinx, env: BuildEnvironment, node: pending_xref,
     return new_node
 
 
-def on_env_before_read_docs(app: Sphinx, env: BuildEnvironment, docnames: set[str]) -> None:
+def on_env_before_read_docs(app: "Sphinx", env: "BuildEnvironment", docnames: "set[str]") -> "None":
     tmp_examples_path = Path.cwd() / "docs/_build/_tmp_examples"
     tmp_examples_path.mkdir(exist_ok=True, parents=True)
     env.tmp_examples_path = tmp_examples_path  # type: ignore[attr-defined] # pyright: ignore[reportAttributeAccessIssue]
 
 
-def setup(app: Sphinx) -> dict[str, bool]:
+def setup(app: "Sphinx") -> "dict[str, bool]":
     app.connect("env-before-read-docs", on_env_before_read_docs)
     app.connect("missing-reference", on_missing_reference)
     app.connect("warn-missing-reference", on_warn_missing_reference)

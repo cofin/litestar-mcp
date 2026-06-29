@@ -7,7 +7,7 @@ from litestar_mcp import LitestarMCP, MCPAuthBackend, MCPConfig, OIDCProviderCon
 from litestar_mcp.auth import MCPAuthConfig
 
 
-def build() -> Litestar:
+def build() -> "Litestar":
     # start-example
     app = Litestar(
         route_handlers=[],

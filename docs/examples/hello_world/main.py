@@ -22,18 +22,18 @@ from litestar_mcp import LitestarMCP, MCPConfig
 
 
 @get("/")
-async def hello() -> dict[str, str]:
+async def hello() -> "dict[str, str]":
     """A simple greeting endpoint."""
     return {"message": "Hello from Litestar!"}
 
 
 @get("/status")
-async def status() -> dict[str, str]:
+async def status() -> "dict[str, str]":
     """API status endpoint."""
     return {"status": "healthy", "version": "1.0.0"}
 
 
-def build_app() -> Litestar:
+def build_app() -> "Litestar":
     """Construct the Litestar app with the MCP plugin wired in.
 
     The body between the markers is what gets rendered via

@@ -14,21 +14,21 @@ from litestar_mcp.utils import should_include_handler
 
 
 class TestShouldIncludeHandler:
-    def test_no_filters_includes_all(self) -> None:
+    def test_no_filters_includes_all(self) -> "None":
         config = MCPConfig()
         assert should_include_handler("any_name", set(), config) is True
 
-    def test_include_operations(self) -> None:
+    def test_include_operations(self) -> "None":
         config = MCPConfig(include_operations=["list_users", "get_user"])
         assert should_include_handler("list_users", set(), config) is True
         assert should_include_handler("delete_user", set(), config) is False
 
-    def test_exclude_operations(self) -> None:
+    def test_exclude_operations(self) -> "None":
         config = MCPConfig(exclude_operations=["delete_user"])
         assert should_include_handler("list_users", set(), config) is True
         assert should_include_handler("delete_user", set(), config) is False
 
-    def test_exclude_takes_precedence_over_include(self) -> None:
+    def test_exclude_takes_precedence_over_include(self) -> "None":
         config = MCPConfig(
             include_operations=["list_users", "delete_user"],
             exclude_operations=["delete_user"],
@@ -36,18 +36,18 @@ class TestShouldIncludeHandler:
         assert should_include_handler("list_users", set(), config) is True
         assert should_include_handler("delete_user", set(), config) is False
 
-    def test_include_tags(self) -> None:
+    def test_include_tags(self) -> "None":
         config = MCPConfig(include_tags=["public"])
         assert should_include_handler("foo", {"public"}, config) is True
         assert should_include_handler("bar", {"internal"}, config) is False
         assert should_include_handler("baz", set(), config) is False
 
-    def test_exclude_tags(self) -> None:
+    def test_exclude_tags(self) -> "None":
         config = MCPConfig(exclude_tags=["internal"])
         assert should_include_handler("foo", {"public"}, config) is True
         assert should_include_handler("bar", {"internal"}, config) is False
 
-    def test_tags_take_precedence_over_operations(self) -> None:
+    def test_tags_take_precedence_over_operations(self) -> "None":
         config = MCPConfig(
             include_operations=["admin_tool"],
             exclude_tags=["internal"],
@@ -55,7 +55,7 @@ class TestShouldIncludeHandler:
         # admin_tool matches include_operations, but "internal" tag should exclude
         assert should_include_handler("admin_tool", {"internal"}, config) is False
 
-    def test_include_tags_and_include_operations(self) -> None:
+    def test_include_tags_and_include_operations(self) -> "None":
         config = MCPConfig(
             include_operations=["list_users"],
             include_tags=["public"],
@@ -70,7 +70,7 @@ class TestShouldIncludeHandler:
 # ---------------------------------------------------------------------------
 
 
-def _ensure_session(client: TestClient[Any]) -> str:
+def _ensure_session(client: "TestClient[Any]") -> "str":
     sid = getattr(client, "_mcp_session", None)
     if sid is not None:
         return sid  # type: ignore[no-any-return]
@@ -93,7 +93,7 @@ def _ensure_session(client: TestClient[Any]) -> str:
     return str(sid)
 
 
-def _rpc(client: TestClient[Any], method: str, params: "dict[str, Any] | None" = None) -> dict[str, Any]:
+def _rpc(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None) -> "dict[str, Any]":
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
     if params is not None:
         body["params"] = params
@@ -106,14 +106,14 @@ def _rpc(client: TestClient[Any], method: str, params: "dict[str, Any] | None" =
 
 
 class TestFilteringIntegration:
-    def test_include_operations_filters_tools(self) -> None:
+    def test_include_operations_filters_tools(self) -> "None":
         @get("/a", opt={"mcp_tool": "tool_a"}, sync_to_thread=False)
-        def tool_a() -> str:
+        def tool_a() -> "str":
             """Tool A."""
             return "a"
 
         @get("/b", opt={"mcp_tool": "tool_b"}, sync_to_thread=False)
-        def tool_b() -> str:
+        def tool_b() -> "str":
             """Tool B."""
             return "b"
 
@@ -126,14 +126,14 @@ class TestFilteringIntegration:
         assert "tool_a" in tool_names
         assert "tool_b" not in tool_names
 
-    def test_exclude_operations_filters_tools(self) -> None:
+    def test_exclude_operations_filters_tools(self) -> "None":
         @get("/a", opt={"mcp_tool": "tool_a"}, sync_to_thread=False)
-        def tool_a() -> str:
+        def tool_a() -> "str":
             """Tool A."""
             return "a"
 
         @get("/b", opt={"mcp_tool": "tool_b"}, sync_to_thread=False)
-        def tool_b() -> str:
+        def tool_b() -> "str":
             """Tool B."""
             return "b"
 
@@ -146,14 +146,14 @@ class TestFilteringIntegration:
         assert "tool_a" in tool_names
         assert "tool_b" not in tool_names
 
-    def test_include_operations_filters_tools_call(self) -> None:
+    def test_include_operations_filters_tools_call(self) -> "None":
         @get("/public", mcp_tool="public_tool", sync_to_thread=False)
-        def public_tool() -> str:
+        def public_tool() -> "str":
             """Public tool."""
             return "public"
 
         @get("/secret", mcp_tool="secret_tool", sync_to_thread=False)
-        def secret_tool() -> str:
+        def secret_tool() -> "str":
             """Secret tool."""
             return "secret"
 
@@ -170,13 +170,13 @@ class TestFilteringIntegration:
         assert call_result["error"]["code"] == -32602
         assert call_result["error"]["message"] == "Tool not found: secret_tool"
 
-    def test_exclude_tags_filters_resource_read(self) -> None:
+    def test_exclude_tags_filters_resource_read(self) -> "None":
         @get("/public-resource", mcp_resource="public_resource", tags=["public"], sync_to_thread=False)
-        def public_resource() -> dict[str, str]:
+        def public_resource() -> "dict[str, str]":
             return {"scope": "public"}
 
         @get("/secret-resource", mcp_resource="secret_resource", tags=["internal"], sync_to_thread=False)
-        def secret_resource() -> dict[str, str]:
+        def secret_resource() -> "dict[str, str]":
             return {"scope": "secret"}
 
         config = MCPConfig(exclude_tags=["internal"])
@@ -193,7 +193,7 @@ class TestFilteringIntegration:
         assert read_result["error"]["message"] == "Resource not found"
         assert read_result["error"]["data"] == {"uri": "litestar://secret_resource"}
 
-    def test_exclude_tags_filters_resource_template_read(self) -> None:
+    def test_exclude_tags_filters_resource_template_read(self) -> "None":
         @get(
             "/public-template/{item_id:int}",
             mcp_resource="public_template",
@@ -201,7 +201,7 @@ class TestFilteringIntegration:
             tags=["public"],
             sync_to_thread=False,
         )
-        def public_template(item_id: int) -> dict[str, int]:
+        def public_template(item_id: "int") -> "dict[str, int]":
             return {"item_id": item_id}
 
         @get(
@@ -211,7 +211,7 @@ class TestFilteringIntegration:
             tags=["internal"],
             sync_to_thread=False,
         )
-        def secret_template(item_id: int) -> dict[str, int]:
+        def secret_template(item_id: "int") -> "dict[str, int]":
             return {"item_id": item_id}
 
         config = MCPConfig(exclude_tags=["internal"])

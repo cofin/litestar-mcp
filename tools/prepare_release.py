@@ -8,70 +8,77 @@ import shutil
 import subprocess
 import sys
 from collections import defaultdict
-from collections.abc import Generator
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import click
 import httpx
 import msgspec
 
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
 _polar = "[Polar.sh](https://polar.sh/litestar-org)"
 _open_collective = "[OpenCollective](https://opencollective.com/litestar)"
 _github_sponsors = "[GitHub Sponsors](https://github.com/sponsors/litestar-org/)"
+_repository_owner = "cofin"
+_repository_name = "litestar-mcp"
+_repository = f"{_repository_owner}/{_repository_name}"
+_repository_url = f"https://github.com/{_repository}"
 
 
 class PullRequest(msgspec.Struct, kw_only=True):
-    title: str
-    number: int
-    body: str
-    created_at: str
+    title: "str"
+    number: "int"
+    body: "str"
+    created_at: "str"
     user: "RepoUser"
-    merge_commit_sha: str | None = None
+    merge_commit_sha: "str | None" = None
 
 
 class Comp(msgspec.Struct):
-    sha: str
+    sha: "str"
 
     class _Commit(msgspec.Struct):
-        message: str
-        url: str
+        message: "str"
+        url: "str"
 
-    commit: _Commit
+    commit: "_Commit"
 
 
 class RepoUser(msgspec.Struct):
-    login: str
-    id: int
-    type: str
+    login: "str"
+    id: "int"
+    type: "str"
 
 
 @dataclass
 class PRInfo:
-    url: str
-    title: str
-    clean_title: str
-    cc_type: str
-    number: int
-    closes: list[int]
-    created_at: datetime.datetime
-    description: str
-    user: RepoUser
+    url: "str"
+    title: "str"
+    clean_title: "str"
+    cc_type: "str"
+    number: "int"
+    closes: "list[int]"
+    created_at: "datetime.datetime"
+    description: "str"
+    user: "RepoUser"
 
 
 @dataclass
 class ReleaseInfo:
-    base: str
-    release_tag: str
-    version: str
-    pull_requests: dict[str, list[PRInfo]]
-    first_time_prs: list[PRInfo]
+    base: "str"
+    release_tag: "str"
+    version: "str"
+    pull_requests: "dict[str, list[PRInfo]]"
+    first_time_prs: "list[PRInfo]"
 
     @property
-    def compare_url(self) -> str:
-        return f"https://github.com/litestar-org/advanced-alchemy/compare/{self.base}...{self.release_tag}"
+    def compare_url(self) -> "str":
+        return f"{_repository_url}/compare/{self.base}...{self.release_tag}"
 
 
-def _pr_number_from_commit(comp: Comp) -> int | None:
+def _pr_number_from_commit(comp: "Comp") -> "int | None":
     # this is an ugly hack, but it appears to actually be the most reliably way to
     # extract the most "reliable" way to extract the info we want from GH ¯\_(ツ)_/¯
     message_head = comp.commit.message.split("\n\n")[0]
@@ -82,7 +89,7 @@ def _pr_number_from_commit(comp: Comp) -> int | None:
 
 
 class _Thing:
-    def __init__(self, *, gh_token: str, base: str, release_branch: str, tag: str, version: str) -> None:
+    def __init__(self, *, gh_token: "str", base: "str", release_branch: "str", tag: "str", version: "str") -> "None":
         self._gh_token = gh_token
         self._base = base
         self._new_release_tag = tag
@@ -99,12 +106,12 @@ class _Thing:
                 "X-GitHub-Api-Version": "2022-11-28",
                 "Accept": "application/vnd.github+json",
             },
-            base_url="https://api.github.com/repos/litestar-org/advanced-alchemy/",
+            base_url=f"https://api.github.com/repos/{_repository}/",
         )
 
-    async def get_closing_issues_references(self, pr_number: int) -> list[int]:
+    async def get_closing_issues_references(self, pr_number: "int") -> "list[int]":
         graphql_query = """{
-        repository(owner: "litestar-org", name: "advanced-alchemy") {
+        repository(owner: "%s", name: "%s") {
             pullRequest(number: %d) {
                 id
                 closingIssuesReferences (first: 10) {
@@ -117,7 +124,7 @@ class _Thing:
             }
         }
     }"""
-        query = graphql_query % (pr_number,)
+        query = graphql_query % (_repository_owner, _repository_name, pr_number)
         res = await self._base_client.post("https://api.github.com/graphql", json={"query": query})
         if res.is_client_error:
             return []
@@ -127,7 +134,7 @@ class _Thing:
             for edge in data["data"]["repository"]["pullRequest"]["closingIssuesReferences"]["edges"]
         ]
 
-    async def _get_pr_info_for_pr(self, number: int) -> PRInfo | None:
+    async def _get_pr_info_for_pr(self, number: "int") -> "PRInfo | None":
         res = await self._api_client.get(f"/pulls/{number}")
         if res.is_client_error:
             click.secho(
@@ -151,7 +158,7 @@ class _Thing:
             number=pr.number,
             cc_type=cc_type,
             clean_title=clean_title.strip(),
-            url=f"https://github.com/litestar-org/advanced-alchemy/pull/{pr.number}",
+            url=f"{_repository_url}/pull/{pr.number}",
             closes=closes_issues,
             title=pr.title,
             created_at=datetime.datetime.strptime(pr.created_at, "%Y-%m-%dT%H:%M:%S%z"),
@@ -159,7 +166,7 @@ class _Thing:
             user=pr.user,
         )
 
-    async def get_prs(self) -> dict[str, list[PRInfo]]:
+    async def get_prs(self) -> "dict[str, list[PRInfo]]":
         res = await self._api_client.get(f"/compare/{self._base}...{self._release_branch}")
         res.raise_for_status()
         compares = msgspec.convert(res.json()["commits"], list[Comp])
@@ -174,7 +181,7 @@ class _Thing:
                 prs[pr.cc_type].append(pr)
         return prs
 
-    async def _get_first_time_contributions(self, prs: dict[str, list[PRInfo]]) -> list[PRInfo]:
+    async def _get_first_time_contributions(self, prs: "dict[str, list[PRInfo]]") -> "list[PRInfo]":
         # there's probably a way to peel this information out of the GraphQL API but
         # this was easier to implement, and it works well enough ¯\_(ツ)_/¯
         # the logic is: if we don't find a commit to the main branch, dated before the
@@ -185,7 +192,7 @@ class _Thing:
 
         first_prs: list[PRInfo] = []
 
-        async def is_user_first_commit(user_login: str) -> None:
+        async def is_user_first_commit(user_login: "str") -> "None":
             first_pr = sorted(prs_by_user_login[user_login], key=lambda p: p.created_at)[0]
             res = await self._api_client.get(
                 "/commits",
@@ -205,7 +212,7 @@ class _Thing:
 
         return first_prs
 
-    async def get_release_info(self) -> ReleaseInfo:
+    async def get_release_info(self) -> "ReleaseInfo":
         prs = await self.get_prs()
         first_time_contributors = await self._get_first_time_contributions(prs)
         return ReleaseInfo(
@@ -216,7 +223,7 @@ class _Thing:
             version=self._new_release_version,
         )
 
-    async def create_draft_release(self, body: str, release_branch: str) -> str:
+    async def create_draft_release(self, body: "str", release_branch: "str") -> "str":
         res = await self._api_client.post(
             "/releases",
             json={
@@ -232,28 +239,28 @@ class _Thing:
 
 
 class GHReleaseWriter:
-    def __init__(self) -> None:
+    def __init__(self) -> "None":
         self.text = ""
 
-    def add_line(self, line: str) -> None:
+    def add_line(self, line: "str") -> "None":
         self.text += line + "\n"
 
-    def add_pr_descriptions(self, infos: list[PRInfo]) -> None:
+    def add_pr_descriptions(self, infos: "list[PRInfo]") -> "None":
         for info in infos:
             self.add_line(f"* {info.title} by @{info.user.login} in {info.url}")
 
 
 class ChangelogEntryWriter:
-    def __init__(self) -> None:
+    def __init__(self) -> "None":
         self.text = ""
         self._level = 0
         self._indent = "    "
         self._cc_type_map = {"fix": "bugfix", "feat": "feature"}
 
-    def add_line(self, line: str) -> None:
+    def add_line(self, line: "str") -> "None":
         self.text += (self._indent * self._level) + line + "\n"
 
-    def add_change(self, pr: PRInfo) -> None:
+    def add_change(self, pr: "PRInfo") -> "None":
         with self.directive(
             "change",
             arg=pr.clean_title,
@@ -266,7 +273,7 @@ class ChangelogEntryWriter:
                 self.add_line(line)
 
     @contextlib.contextmanager
-    def directive(self, name: str, arg: str | None = None, **options: str) -> Generator[None, None, None]:
+    def directive(self, name: "str", arg: "str | None" = None, **options: "str") -> "Generator[None, None, None]":
         self.add_line(f".. {name}:: {arg or ''}")
         self._level += 1
         for key, value in options.items():
@@ -277,7 +284,7 @@ class ChangelogEntryWriter:
         self.add_line("")
 
 
-def build_gh_release_notes(release_info: ReleaseInfo) -> str:
+def build_gh_release_notes(release_info: "ReleaseInfo") -> "str":
     # this is for the most part just recreating GitHub's autogenerated release notes
     # but with three important differences:
     # 1. PRs are sorted into categories
@@ -314,7 +321,7 @@ def build_gh_release_notes(release_info: ReleaseInfo) -> str:
     return doc.text
 
 
-def build_changelog_entry(release_info: ReleaseInfo, interactive: bool = False) -> str:
+def build_changelog_entry(release_info: "ReleaseInfo", interactive: "bool" = False) -> "str":
     doc = ChangelogEntryWriter()
     with doc.directive("changelog", release_info.version):
         doc.add_line(f":date: {datetime.datetime.now(tz=datetime.timezone.utc).date().isoformat()}")
@@ -331,7 +338,7 @@ def build_changelog_entry(release_info: ReleaseInfo, interactive: bool = False) 
     return doc.text
 
 
-def _get_gh_token() -> str:
+def _get_gh_token() -> "str":
     if gh_token := os.getenv("GH_TOKEN"):
         click.secho("Using GitHub token from env", fg="blue")
         return gh_token
@@ -349,7 +356,7 @@ def _get_gh_token() -> str:
     sys.exit(1)
 
 
-def _get_latest_tag() -> str:
+def _get_latest_tag() -> "str":
     click.secho("Using latest tag", fg="blue")
     return subprocess.run(  # noqa: S602
         "git tag --sort=taggerdate | tail -1",  # noqa: S607
@@ -360,7 +367,7 @@ def _get_latest_tag() -> str:
     ).stdout.strip()
 
 
-def _write_changelog_entry(changelog_entry: str) -> None:
+def _write_changelog_entry(changelog_entry: "str") -> "None":
     changelog_path = pathlib.Path("docs/changelog.rst")
     changelog_lines = changelog_path.read_text().splitlines()
     line_no = next(
@@ -393,13 +400,13 @@ def _write_changelog_entry(changelog_entry: str) -> None:
 )
 @click.option("-c", "--create-draft-release", is_flag=True, help="Create draft release on GitHub")
 def cli(
-    base: str | None,
-    branch: str,
-    version: str,
-    gh_token: str | None,
-    interactive: bool,
-    create_draft_release: bool,
-) -> None:
+    base: "str | None",
+    branch: "str",
+    version: "str",
+    gh_token: "str | None",
+    interactive: "bool",
+    create_draft_release: "bool",
+) -> "None":
     if gh_token is None:
         gh_token = _get_gh_token()
     if base is None:

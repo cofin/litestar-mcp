@@ -1,55 +1,57 @@
 """Unit-test configuration and shared fixtures."""
 
 import inspect
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from litestar import Litestar, get
-from litestar.handlers import BaseRouteHandler
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP
+
+if TYPE_CHECKING:
+    from litestar.handlers import BaseRouteHandler
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def minimal_app() -> Litestar:
+def minimal_app() -> "Litestar":
     """Minimal Litestar app without MCP plugin."""
 
     @get("/test", sync_to_thread=False)
-    def test_route() -> dict[str, str]:
+    def test_route() -> "dict[str, str]":
         return {"message": "test"}
 
     return Litestar(route_handlers=[test_route])
 
 
 @pytest.fixture
-def mcp_app() -> Litestar:
+def mcp_app() -> "Litestar":
     """Litestar app with MCP plugin using opt pattern."""
 
     @get("/test", sync_to_thread=False)
-    def test_route() -> dict[str, str]:
+    def test_route() -> "dict[str, str]":
         return {"message": "test"}
 
     @get("/users", opt={"mcp_tool": "list_users"}, sync_to_thread=False)
-    def list_users() -> list[dict[str, Any]]:
+    def list_users() -> "list[dict[str, Any]]":
         return [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]
 
     @get("/config", opt={"mcp_resource": "app_config"}, sync_to_thread=False)
-    def get_config() -> dict[str, Any]:
+    def get_config() -> "dict[str, Any]":
         return {"debug": True, "version": "1.0.0"}
 
     return Litestar(route_handlers=[test_route, list_users, get_config], plugins=[LitestarMCP()])
 
 
 @pytest.fixture
-def client(mcp_app: Litestar) -> TestClient[Any]:
+def client(mcp_app: "Litestar") -> "TestClient[Any]":
     """Test client for MCP-enabled app."""
     return TestClient(app=mcp_app)
 
 
-def get_handler_from_app(app: Litestar, path: str, method: str = "GET") -> BaseRouteHandler:
+def get_handler_from_app(app: "Litestar", path: "str", method: "str" = "GET") -> "BaseRouteHandler":
     """Extract a handler from an initialized Litestar app.
 
     Args:
@@ -79,8 +81,8 @@ def get_handler_from_app(app: Litestar, path: str, method: str = "GET") -> BaseR
 
 
 def create_app_with_handler(
-    handler_func: Any, route_path: str = "/test", method: str = "GET", **handler_kwargs: Any
-) -> tuple[Litestar, BaseRouteHandler]:
+    handler_func: "Any", route_path: "str" = "/test", method: "str" = "GET", **handler_kwargs: "Any"
+) -> "tuple[Litestar, BaseRouteHandler]":
     """Create a Litestar app with a single handler and return both app and handler.
 
     Args:

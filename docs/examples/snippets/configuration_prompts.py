@@ -6,7 +6,7 @@ from litestar_mcp import LitestarMCP, MCPConfig, mcp_prompt
 
 
 @mcp_prompt(name="greet", description="Greet a user by name.")
-async def greet(name: str) -> str:
+async def greet(name: "str") -> "str":
     """Build a greeting prompt.
 
     Args:
@@ -15,7 +15,7 @@ async def greet(name: str) -> str:
     return f"Please greet {name} warmly."
 
 
-def build() -> Litestar:
+def build() -> "Litestar":
     # start-example
     app = Litestar(
         route_handlers=[],

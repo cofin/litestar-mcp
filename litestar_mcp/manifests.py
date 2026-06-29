@@ -1,19 +1,21 @@
 """Generated discovery manifests for Litestar MCP."""
 
-from typing import Any
-
-from litestar import Litestar
+from typing import TYPE_CHECKING, Any
 
 from litestar_mcp.auth import MCPAuthConfig  # noqa: TC001
-from litestar_mcp.config import MCPConfig
 from litestar_mcp.registry import render_prompt_entry, should_include_prompt
 from litestar_mcp.schema_builder import generate_schema_for_handler
 from litestar_mcp.utils import get_handler_function, get_mcp_metadata, render_description
 
+if TYPE_CHECKING:
+    from litestar import Litestar
+
+    from litestar_mcp.config import MCPConfig
+
 MCP_PROTOCOL_VERSION = "2025-11-25"
 
 
-def build_oauth_protected_resource(auth_config: "MCPAuthConfig | None", app: Litestar) -> dict[str, Any]:
+def build_oauth_protected_resource(auth_config: "MCPAuthConfig | None", app: "Litestar") -> "dict[str, Any]":
     """Build RFC 9728 protected resource metadata."""
     if auth_config and auth_config.issuer:
         return {
@@ -56,11 +58,11 @@ def build_oauth_protected_resource(auth_config: "MCPAuthConfig | None", app: Lit
 
 def build_agent_card(
     *,
-    base_url: str,
-    config: MCPConfig,
-    app: Litestar,
-    discovered_tools: dict[str, Any],
-) -> dict[str, Any]:
+    base_url: "str",
+    config: "MCPConfig",
+    app: "Litestar",
+    discovered_tools: "dict[str, Any]",
+) -> "dict[str, Any]":
     """Build an agent metadata card for MCP discovery."""
     skills = []
     for name, handler in discovered_tools.items():
@@ -96,13 +98,13 @@ def build_agent_card(
 
 def build_mcp_server_manifest(
     *,
-    base_url: str,
-    config: MCPConfig,
-    app: Litestar,
-    discovered_tools: dict[str, Any],
-    discovered_resources: dict[str, Any],
-    discovered_prompts: dict[str, Any],
-) -> dict[str, Any]:
+    base_url: "str",
+    config: "MCPConfig",
+    app: "Litestar",
+    discovered_tools: "dict[str, Any]",
+    discovered_resources: "dict[str, Any]",
+    discovered_prompts: "dict[str, Any]",
+) -> "dict[str, Any]":
     """Build an experimental MCP server manifest."""
     tools = []
     for name, handler in discovered_tools.items():
@@ -152,7 +154,7 @@ def build_mcp_server_manifest(
     }
 
 
-def _server_name(config: MCPConfig, app: Litestar) -> str:
+def _server_name(config: "MCPConfig", app: "Litestar") -> "str":
     if config.name:
         return config.name
     if app.openapi_config and app.openapi_config.title:
@@ -160,7 +162,7 @@ def _server_name(config: MCPConfig, app: Litestar) -> str:
     return "Litestar MCP Server"
 
 
-def _server_version(app: Litestar) -> str:
+def _server_version(app: "Litestar") -> "str":
     if app.openapi_config and app.openapi_config.version:
         return app.openapi_config.version
     return "1.0.0"
