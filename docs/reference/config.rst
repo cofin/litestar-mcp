@@ -25,3 +25,23 @@ override the dataclass to remap a project to non-default opt keys.
 .. autoclass:: MCPOptKeys
    :members:
    :show-inheritance:
+
+BeforeToolCallHook
+------------------
+
+Structural :class:`~typing.Protocol` for the ``MCPConfig.before_tool_call``
+observability callback.
+
+.. autoclass:: BeforeToolCallHook
+   :members:
+   :show-inheritance:
+
+AfterToolCallHook
+-----------------
+
+Structural :class:`~typing.Protocol` for the ``MCPConfig.after_tool_call``
+observability callback.
+
+.. autoclass:: AfterToolCallHook
+   :members:
+   :show-inheritance:

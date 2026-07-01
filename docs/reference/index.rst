@@ -9,5 +9,6 @@ API Reference
     plugin
     handlers
     types
+    auth
 
 This section provides detailed API documentation for all public interfaces.
