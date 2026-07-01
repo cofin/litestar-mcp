@@ -20,6 +20,21 @@ LitestarMCP
    decorated with :func:`~litestar_mcp.mcp_prompt` can be passed via the
    ``prompts`` constructor argument.
 
+.. currentmodule:: litestar_mcp.app
+
+MCP
+---
+
+.. autoclass:: MCP
+   :members:
+   :show-inheritance:
+
+   The standalone application wrapper. Builds a Litestar app pre-configured
+   with :class:`~litestar_mcp.LitestarMCP`, exposes ``@tool`` / ``@resource``
+   / ``@prompt`` decorators, and can serve over Streamable HTTP or stdio via
+   :meth:`MCP.run`. Pass a :class:`~litestar_mcp.MCPStdioContext` to
+   ``run(transport="stdio", stdio_context=...)`` to seed the caller identity.
+
 .. currentmodule:: litestar_mcp.registry
 
 Registry

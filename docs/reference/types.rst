@@ -20,6 +20,20 @@ MCPTaskConfig
    :members:
    :show-inheritance:
 
+.. currentmodule:: litestar_mcp.app
+
+MCPStdioContext
+---------------
+
+Runtime identity for standalone stdio transports. Its fields seed the
+synthesized dispatch scope so handlers, guards, and task execution read the
+usual ``request.user`` / ``request.scope["auth"]`` / session / state. See
+:doc:`/usage/standalone_app` for the stdio walkthrough.
+
+.. autoclass:: MCPStdioContext
+   :members:
+   :show-inheritance:
+
 .. currentmodule:: litestar_mcp.registry
 
 PromptRegistration
