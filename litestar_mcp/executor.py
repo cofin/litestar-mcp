@@ -21,6 +21,7 @@ import inspect
 import logging
 import re
 import weakref
+from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, cast
@@ -689,7 +690,9 @@ def _build_dispatch_scope(
     HTTP mode (``base_scope`` from the inbound /mcp request) inherits
     middleware-populated state (``scope["state"]`` — e.g., Dishka's request
     container, authentication user) so request-scoped DI flows through.
-    Stdio mode starts from a blank scope.
+    Stdio mode starts from a blank scope, optionally seeded with the
+    ``scope_overrides`` identity (``user`` / ``auth`` / ``session`` /
+    ``state``) supplied through :class:`~litestar_mcp.MCPStdioContext`.
     """
     path_values, query_values, body = _split_tool_args(handler, tool_args, path_parameters)
     coerced_path_values = _coerce_path_params(path_parameters, path_values)
@@ -715,7 +718,11 @@ def _build_dispatch_scope(
             scope["session"] = dict(scope_overrides.get("session") or {})
         for passthrough in ("user", "auth"):
             if passthrough in scope_overrides:
-                scope[passthrough] = scope_overrides[passthrough]
+                value = scope_overrides[passthrough]
+                # Copy Mapping-style identity per dispatch so a handler that
+                # mutates scope["auth"] / scope["user"] can't leak into later
+                # stdio tool calls that share the same MCPStdioContext.
+                scope[passthrough] = dict(value) if isinstance(value, Mapping) else value
 
     http_methods = getattr(handler, "http_methods", None) or ("POST",)
     method = next(iter(http_methods))

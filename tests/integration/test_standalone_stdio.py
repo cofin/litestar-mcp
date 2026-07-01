@@ -238,6 +238,39 @@ async def test_standalone_stdio_context_propagates_identity_to_tool() -> "None":
 
 
 @pytest.mark.anyio
+async def test_standalone_stdio_context_isolates_auth_mutations_between_calls() -> "None":
+    auth = {"sub": "auth-subject"}
+
+    @get("/probe", mcp_tool="probe", sync_to_thread=False)
+    def probe(request: "Request[Any, Any, Any]") -> "dict[str, Any]":
+        auth_scope = cast("dict[str, Any]", request.scope["auth"])
+        seen_mutation = auth_scope.get("mutation")
+        auth_scope["mutation"] = "leaked"
+        return {"seen_mutation": seen_mutation}
+
+    mcp = MCP(name="stdio-auth-isolation-test", route_handlers=[probe])
+
+    responses = await _run_stdio_exchange(
+        mcp,
+        [
+            _initialize_request(),
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "probe", "arguments": {}}},
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "probe", "arguments": {}}},
+        ],
+        stdio_context=_stdio_context(auth=auth),
+    )
+
+    first = json.loads(responses[1]["result"]["content"][0]["text"])
+    second = json.loads(responses[2]["result"]["content"][0]["text"])
+    assert first["seen_mutation"] is None
+    # A per-call copy means the first call's write must not leak into the second.
+    assert second["seen_mutation"] is None
+    # The caller's original auth dict is likewise untouched.
+    assert auth == {"sub": "auth-subject"}
+
+
+@pytest.mark.anyio
 async def test_standalone_stdio_context_authorizes_guards_from_scope() -> "None":
     def require_admin(connection: "Any", _handler: "Any") -> "None":
         auth = connection.scope.get("auth") or {}
