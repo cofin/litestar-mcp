@@ -186,3 +186,82 @@ class TestMCPAuthBackend:
         result = await backend.authenticate_request(_connection({"authorization": "Bearer tok"}))
         assert result.user is None
         assert result.auth == {"sub": "alice"}
+
+
+class TestMCPAuthBackendCustomHeader:
+    """Configurable header name / token prefix (GCP IAP, AWS ALB OIDC, etc.)."""
+
+    @pytest.mark.asyncio
+    async def test_custom_header_and_empty_prefix(self) -> "None":
+        """IAP-style: read the raw JWT from X-Goog-IAP-JWT-Assertion with no prefix."""
+        seen: dict[str, str] = {}
+
+        async def _validator(token: "str") -> "dict[str, Any] | None":
+            seen["token"] = token
+            return {"sub": "iap-user"}
+
+        backend = _make_backend(
+            token_validator=_validator,
+            header_name="X-Goog-IAP-JWT-Assertion",
+            token_prefix="",
+        )
+
+        result = await backend.authenticate_request(_connection({"X-Goog-IAP-JWT-Assertion": "raw.jwt.token"}))
+
+        assert seen["token"] == "raw.jwt.token"
+        assert result.auth == {"sub": "iap-user"}
+
+    @pytest.mark.asyncio
+    async def test_custom_token_prefix(self) -> "None":
+        """A non-Bearer prefix is stripped before validation."""
+        seen: dict[str, str] = {}
+
+        async def _validator(token: "str") -> "dict[str, Any] | None":
+            seen["token"] = token
+            return {"sub": "bob"}
+
+        backend = _make_backend(token_validator=_validator, token_prefix="Token ")
+
+        result = await backend.authenticate_request(_connection({"authorization": "Token abc123"}))
+
+        assert seen["token"] == "abc123"
+        assert result.auth == {"sub": "bob"}
+
+    @pytest.mark.asyncio
+    async def test_wrong_prefix_raises_missing_header(self) -> "None":
+        """A value that doesn't match the configured prefix is rejected up front."""
+        backend = _make_backend(token_validator=lambda _t: None, token_prefix="Token ")
+
+        with pytest.raises(NotAuthorizedException) as excinfo:
+            await backend.authenticate_request(_connection({"authorization": "Bearer abc123"}))
+
+        assert "authorization" in str(excinfo.value.detail).lower()
+
+    @pytest.mark.asyncio
+    async def test_empty_prefix_with_empty_header_raises_missing_header(self) -> "None":
+        """With no prefix, a missing/empty header is a missing-header error, not invalid-token."""
+
+        async def _validator(token: "str") -> "dict[str, Any] | None":  # pragma: no cover - must not run
+            msg = "validator should not be reached for an empty header"
+            raise AssertionError(msg)
+
+        backend = _make_backend(
+            token_validator=_validator,
+            header_name="X-Goog-IAP-JWT-Assertion",
+            token_prefix="",
+        )
+
+        with pytest.raises(NotAuthorizedException) as excinfo:
+            await backend.authenticate_request(_connection({}))
+
+        assert "X-Goog-IAP-JWT-Assertion" in str(excinfo.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_missing_header_message_names_configured_header(self) -> "None":
+        """The missing-header error references the configured header name."""
+        backend = _make_backend(header_name="X-Custom-Auth", token_prefix="Bearer ")
+
+        with pytest.raises(NotAuthorizedException) as excinfo:
+            await backend.authenticate_request(_connection({}))
+
+        assert "X-Custom-Auth" in str(excinfo.value.detail)
