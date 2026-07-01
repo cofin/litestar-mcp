@@ -106,3 +106,20 @@ To run the server over standard input/output (Stdio) for integration with local 
     :end-before: # [end-run-stdio]
 
 When running over Stdio, the server manually drives the ASGI application's lifespan, ensuring that all dynamic startup and shutdown hooks registered by other plugins execute correctly.
+
+Stdio does not have an HTTP header layer, so do not tunnel bearer headers through stdin. Resolve credentials from the host environment, operating-system profile, or another local mechanism, then pass the resulting identity with :class:`~litestar_mcp.MCPStdioContext`::
+
+    from types import SimpleNamespace
+
+    from litestar_mcp import MCPStdioContext
+
+    stdio_context = MCPStdioContext(
+        user=SimpleNamespace(id="local-user"),
+        auth={"sub": "local-user"},
+        session={"tenant": "local"},
+        state={"profile": "developer"},
+    )
+
+    mcp.run(transport="stdio", stdio_context=stdio_context)
+
+Tools, resources, prompts, guards, and task execution receive these values through the synthetic Litestar request scope, so existing handler code can continue reading ``request.user``, ``request.scope["auth"]``, ``request.scope["session"]``, and ``request.scope["state"]``. Task ownership uses ``owner_id`` when set, then ``auth["sub"]``, then ``user.id`` / ``user.sub``, and otherwise falls back to ``"stdio"``.

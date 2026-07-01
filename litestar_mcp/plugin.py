@@ -208,27 +208,27 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         for route in app.routes:
             if hasattr(route, "route_handlers"):
                 all_handlers.extend(route.route_handlers)  # pyright: ignore[reportAttributeAccessIssue]
-        _logger.warning("Plugin on_startup executing...")
+        _logger.debug("Plugin on_startup executing...")
         self._discover_mcp_routes(all_handlers)
 
         def invalidate_router() -> "None":
-            _logger.warning("invalidate_router callback triggered!")
+            _logger.debug("invalidate_router callback triggered")
             if hasattr(app.state, "mcp_router"):
-                _logger.warning("Deleting mcp_router from app state")
+                _logger.debug("Deleting mcp_router from app state")
                 delattr(app.state, "mcp_router")
 
         self._registry.register_change_callback(invalidate_router)
         app.state.mcp_router_invalidation_callback = invalidate_router
-        _logger.warning("Registered invalidate_router callback on registry: %s", id(self._registry))
+        _logger.debug("Registered invalidate_router callback on registry: %s", id(self._registry))
 
     def on_shutdown(self, app: "Litestar") -> "None":
         """Clean up resources on application shutdown."""
-        _logger.warning("Plugin on_shutdown executing...")
+        _logger.debug("Plugin on_shutdown executing...")
         callback = getattr(app.state, "mcp_router_invalidation_callback", None)
         if callback is not None:
             self._registry.unregister_change_callback(callback)
             delattr(app.state, "mcp_router_invalidation_callback")
-            _logger.warning("Unregistered invalidate_router callback from registry")
+            _logger.debug("Unregistered invalidate_router callback from registry")
 
     def _discover_mcp_routes(self, route_handlers: "Sequence[Any]") -> "None":
         """Discover routes marked for MCP exposure via opt attribute or decorators."""

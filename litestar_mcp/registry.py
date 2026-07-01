@@ -318,9 +318,9 @@ class Registry:
 
     def _trigger_change(self) -> "None":
         """Invoke all registered change callbacks."""
-        _logger.warning("Triggering change callbacks, count: %d", len(self._change_callbacks))
+        _logger.debug("Triggering change callbacks, count: %d", len(self._change_callbacks))
         for callback in self._change_callbacks:
-            _logger.warning(
+            _logger.debug(
                 "Invoking callback: %s", callback.__name__ if hasattr(callback, "__name__") else str(callback)
             )
             callback()
