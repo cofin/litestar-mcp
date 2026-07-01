@@ -81,8 +81,9 @@ discovery document), so set ``jwks_uri`` and ``algorithms`` explicitly::
 ``header_name`` lookup is case-insensitive. When ``token_prefix`` is empty,
 the entire header value is the token, and an absent header is reported as a
 missing-header error (``401`` with ``WWW-Authenticate``) rather than an
-invalid-token error. The defaults (``Authorization`` / ``Bearer ``) preserve
-standard bearer behaviour, so existing deployments need no changes.
+invalid-token error. The defaults (``Authorization`` header with the
+``Bearer`` prefix) preserve standard bearer behaviour, so existing deployments
+need no changes.
 
 The same ``header_name`` / ``token_prefix`` extraction applies to any proxy
 that forwards a token in a custom header (e.g. AWS ALB's ``X-Amzn-Oidc-Data``).
