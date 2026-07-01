@@ -5,7 +5,8 @@ import logging
 import os
 import sys
 import urllib.parse
-from collections.abc import Callable  # noqa: TC003
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -30,7 +31,7 @@ from litestar_mcp.routes import _build_cached_router
 from litestar_mcp.services.handler import RequestContext
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
 
     from litestar.background_tasks import BackgroundTask, BackgroundTasks
     from litestar.config.response_cache import CACHE_FOREVER
@@ -99,6 +100,47 @@ _ROUTE_HANDLER_KWARG_NAMES = (
     "type_decoders",
     "type_encoders",
 )
+
+
+@dataclass(frozen=True, slots=True)
+class MCPStdioContext:
+    """Runtime identity context for standalone MCP stdio transports.
+
+    Stdio has no HTTP header layer. Resolve credentials out-of-band in the
+    host process, then pass the resulting identity values here so Litestar
+    handlers and guards can read the usual ``scope["user"]`` /
+    ``scope["auth"]`` / session / state fields.
+    """
+
+    client_id: "str" = "stdio"
+    owner_id: "str | None" = None
+    user: "Any" = None
+    auth: "Any" = None
+    session: "Mapping[str, Any] | None" = None
+    state: "Mapping[str, Any] | None" = None
+
+
+def _resolve_stdio_owner_id(context: "MCPStdioContext") -> "str":
+    if context.owner_id is not None:
+        return str(context.owner_id)
+    if isinstance(context.auth, Mapping):
+        auth_sub = context.auth.get("sub")
+        if auth_sub is not None:
+            return str(auth_sub)
+    for attr in ("id", "sub"):
+        value = getattr(context.user, attr, None)
+        if value is not None:
+            return str(value)
+    return "stdio"
+
+
+def _build_stdio_scope_overrides(context: "MCPStdioContext") -> "dict[str, Any]":
+    return {
+        "user": context.user,
+        "auth": context.auth,
+        "session": dict(context.session or {}),
+        "state": dict(context.state or {}),
+    }
 
 
 def _require_internal_dispatch(connection: "Any", _route_handler: "Any") -> "None":
@@ -596,12 +638,17 @@ class MCP:
         env = LitestarEnv.from_env(app_path)
         litestar_group.main(args=args, obj=env)
 
-    def _run_stdio(self, **kwargs: "Any") -> "None":
+    def _run_stdio(
+        self,
+        *,
+        stdio_context: "MCPStdioContext | None" = None,
+        **_kwargs: "Any",
+    ) -> "None":
         """Run the server using Stdio transport."""
         with contextlib.suppress(KeyboardInterrupt):
-            asyncio.run(self._async_run_stdio())
+            asyncio.run(self._async_run_stdio(stdio_context=stdio_context))
 
-    async def _async_run_stdio(self) -> "None":
+    async def _async_run_stdio(self, *, stdio_context: "MCPStdioContext | None" = None) -> "None":
         """Run the server asynchronously using manual ASGI lifespan driver.
 
         This sets up queues, coordinates lifespan events, starts the app task,
@@ -655,7 +702,7 @@ class MCP:
             raise RuntimeError(msg)
 
         try:
-            await self._stdio_loop()
+            await self._stdio_loop(stdio_context=stdio_context)
         finally:
             await receive_queue.put({"type": "lifespan.shutdown"})
             try:
@@ -667,7 +714,7 @@ class MCP:
             with contextlib.suppress(asyncio.CancelledError):
                 await app_task
 
-    async def _stdio_loop(self) -> "None":
+    async def _stdio_loop(self, *, stdio_context: "MCPStdioContext | None" = None) -> "None":
         """Run the stdin/stdout read/write loop."""
         logger = logging.getLogger(__name__)
         loop = asyncio.get_running_loop()
@@ -692,7 +739,13 @@ class MCP:
             task_store=plugin.task_store,
         )
 
-        request_context = RequestContext(client_id="stdio", owner_id="stdio", request=None)
+        resolved_stdio_context = stdio_context or MCPStdioContext()
+        request_context = RequestContext(
+            client_id=resolved_stdio_context.client_id,
+            owner_id=_resolve_stdio_owner_id(resolved_stdio_context),
+            request=None,
+            scope_overrides=_build_stdio_scope_overrides(resolved_stdio_context),
+        )
 
         while True:
             line_bytes = await reader.readline()

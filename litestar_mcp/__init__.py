@@ -14,7 +14,7 @@ prompts not bound to a route handler can also be registered via
 """
 
 from litestar_mcp.__metadata__ import __version__
-from litestar_mcp.app import MCP
+from litestar_mcp.app import MCP, MCPStdioContext
 from litestar_mcp.auth import (
     DefaultJWKSCache,
     JWKSCache,
@@ -41,6 +41,7 @@ __all__ = (
     "MCPConfig",
     "MCPController",
     "MCPOptKeys",
+    "MCPStdioContext",
     "OIDCProviderConfig",
     "TokenValidator",
     "__version__",

@@ -68,6 +68,7 @@ class RequestContext:
     client_id: "str"
     owner_id: "str"
     request: "Request[Any, Any, Any] | None" = None
+    scope_overrides: "dict[str, Any] | None" = None
 
 
 _T = TypeVar("_T")
@@ -93,6 +94,10 @@ def _serialize_tool_content(value: "Any") -> "str":
     if isinstance(value, str):
         return value
     return encode_json(value).decode("utf-8")
+
+
+def _scope_overrides_for_context(context: "RequestContext") -> "dict[str, Any] | None":
+    return context.scope_overrides if context.request is None else None
 
 
 def _build_tool_result(value: "Any", *, is_error: "bool", task_id: "str | None" = None) -> "dict[str, Any]":
@@ -269,6 +274,7 @@ class MCPHandlerService:
                 self.app_ref,
                 tool_args,
                 request=context.request,
+                scope_overrides=_scope_overrides_for_context(context),
                 config=self.config,
                 tool_name=tool_name,
             )
@@ -534,6 +540,7 @@ class MCPHandlerService:
                     self.app_ref,
                     {},
                     request=context.request,
+                    scope_overrides=_scope_overrides_for_context(context),
                 )
             except MCPToolErrorResult as err:
                 raise JSONRPCErrorException(mcp_error_for_resource_read(err)) from err
@@ -564,6 +571,7 @@ class MCPHandlerService:
                     self.app_ref,
                     dict(extracted),
                     request=context.request,
+                    scope_overrides=_scope_overrides_for_context(context),
                 )
             except MCPToolErrorResult as err:
                 raise JSONRPCErrorException(mcp_error_for_resource_read(err)) from err
@@ -649,7 +657,13 @@ class MCPHandlerService:
                 )
 
             try:
-                result = await execute_handler(registration.handler, self.app_ref, prompt_args, request=context.request)
+                result = await execute_handler(
+                    registration.handler,
+                    self.app_ref,
+                    prompt_args,
+                    request=context.request,
+                    scope_overrides=_scope_overrides_for_context(context),
+                )
             except MCPToolErrorResult as err:
                 _logger.warning(
                     "Prompt handler returned error result: %s (status=%d)",

@@ -129,6 +129,7 @@ async def execute_tool(
     tool_args: "dict[str, Any]",
     *,
     request: "Request[Any, Any, Any] | None" = None,
+    scope_overrides: "dict[str, Any] | None" = None,
     config: "MCPConfig | None" = None,
     tool_name: "str | None" = None,
 ) -> "Any":
@@ -166,6 +167,9 @@ async def execute_tool(
             into path / query / body based on the handler's signature.
         request: Inbound :class:`~litestar.Request` in HTTP mode, ``None``
             for CLI / stdio invocations.
+        scope_overrides: Stdio-only values to seed on the synthesized
+            dispatch scope. Ignored when ``request`` is not ``None`` because
+            HTTP mode must inherit the live middleware-populated scope.
         config: MCP plugin configuration. When supplied with ``tool_name``,
             tool-call observability callbacks are invoked around dispatch.
         tool_name: MCP tool name for callback payloads. Omit for resources,
@@ -202,6 +206,7 @@ async def execute_tool(
                 handler,
                 tool_args,
                 base_scope=base_scope,
+                scope_overrides=scope_overrides if request is None else None,
                 app=app,
                 path_parameters=path_parameters,
             )
@@ -675,6 +680,7 @@ def _build_dispatch_scope(
     tool_args: "dict[str, Any]",
     *,
     base_scope: "dict[str, Any] | None",
+    scope_overrides: "dict[str, Any] | None",
     app: "Litestar",
     path_parameters: "dict[str, Any]",
 ) -> "tuple[dict[str, Any], Callable[[], Awaitable[dict[str, Any]]]]":
@@ -702,6 +708,14 @@ def _build_dispatch_scope(
         for passthrough in ("user", "auth", "session"):
             if passthrough in base_scope:
                 scope[passthrough] = base_scope[passthrough]
+    elif scope_overrides is not None:
+        if "state" in scope_overrides:
+            scope["state"] = dict(scope_overrides.get("state") or {})
+        if "session" in scope_overrides:
+            scope["session"] = dict(scope_overrides.get("session") or {})
+        for passthrough in ("user", "auth"):
+            if passthrough in scope_overrides:
+                scope[passthrough] = scope_overrides[passthrough]
 
     http_methods = getattr(handler, "http_methods", None) or ("POST",)
     method = next(iter(http_methods))
