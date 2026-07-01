@@ -138,7 +138,7 @@ pygments_dark_style = "litestar-mcp-dark"
 todo_include_todos = True
 
 html_static_path = ["_static"]
-html_favicon = "_static/favicon.png"
+html_favicon = "_static/favicon.svg"
 templates_path = ["_templates"]
 html_js_files = ["versioning.js"]
 html_css_files = ["custom.css", "style.css"]
@@ -175,8 +175,8 @@ html_theme_options = {
     "discord_url": "https://discord.gg/dSDXd4mKhp",
     "navigation_with_keys": True,
     "globaltoc_expand_depth": 2,
-    "light_logo": "_static/logo-default.png",
-    "dark_logo": "_static/logo-default.png",
+    "light_logo": "_static/logo-icon.svg",
+    "dark_logo": "_static/logo-icon.svg",
     "discussion_url": "https://discord.gg/dSDXd4mKhp",
     "nav_links": [
         {
@@ -212,12 +212,6 @@ html_theme_options = {
                     "summary": "Details about the Litestar organization, the team behind Litestar MCP",
                     "url": "https://litestar.dev/about/organization",
                     "icon": "org",
-                },
-                {
-                    "title": "Releases",
-                    "summary": "Explore the release process, versioning, and deprecation policy for Litestar MCP",
-                    "url": "releases",
-                    "icon": "releases",
                 },
             ],
         },

@@ -2,6 +2,44 @@
 Getting Started
 ===============
 
+The Litestar MCP plugin lets AI models interact with your Litestar application
+through the Model Context Protocol (MCP). You mark individual routes with
+kwargs, and the plugin exposes them over MCP Streamable HTTP and JSON-RPC.
+
+Core Concepts
+-------------
+
+**Model Context Protocol (MCP)**
+    An open standard that lets AI models securely access and interact with
+    external systems.
+
+**Tools (mcp_tool)**
+    Operations that AI models can execute — mark routes with
+    ``mcp_tool="name"``.
+
+**Resources (mcp_resource)**
+    Read-only data that AI models can access — mark routes with
+    ``mcp_resource="name"``.
+
+**Route Marking**
+    Pass ``mcp_tool`` / ``mcp_resource`` / ``mcp_prompt`` kwargs to your route
+    decorators; Litestar funnels them into the handler's ``opt`` dictionary,
+    where the plugin discovers them at startup.
+
+How It Works
+------------
+
+1. **Mark routes** — add ``mcp_tool`` / ``mcp_resource`` / ``mcp_prompt``
+   kwargs to your route decorators.
+2. **Litestar processing** — Litestar moves those kwargs into the route
+   handler's ``opt`` dictionary.
+3. **Plugin discovery** — at startup the plugin scans handler ``opt``
+   dictionaries for MCP markers.
+4. **MCP exposure** — marked routes become available through the MCP
+   Streamable HTTP transport surface.
+5. **AI interaction** — AI models discover and interact with your marked
+   routes.
+
 Installation
 ------------
 

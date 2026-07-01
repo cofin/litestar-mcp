@@ -1,39 +1,274 @@
-/* Litestar MCP Theme color definitions */
+/* =============================================================================
+   Litestar MCP Documentation Theme - Litestar Branded (Shibuya)
+   Mirrors the SQLSpec / litestar-queues documentation theme so the ecosystem
+   stays visually consistent.
+   ============================================================================= */
+
+/* -----------------------------------------------------------------------------
+   Litestar Brand Colors
+   ----------------------------------------------------------------------------- */
 :root {
-  --brand-font-size-xl: 6rem;
-  --brand-font-size-lg: 5rem;
-  --brand-font-size-md: 4rem;
+  /* Brand colors */
+  --litestar-navy: #202235;
+  --litestar-gold: #edb641;
+  --litestar-gold-light: #ffd480;
+  --litestar-gold-dark: #d4a438;
+  --litestar-gold-rgb: 237, 182, 65;
+  --litestar-navy-rgb: 32, 34, 53;
+
+  /* Neutral grays */
+  --litestar-gray-50: #f8fafc;
+  --litestar-gray-100: #f1f5f9;
+  --litestar-gray-200: #e2e8f0;
+  --litestar-gray-300: #cbd5e1;
+  --litestar-gray-400: #94a3b8;
+  --litestar-gray-500: #64748b;
+  --litestar-gray-600: #475569;
+  --litestar-gray-700: #334155;
+  --litestar-gray-800: #1e293b;
+  --litestar-gray-900: #0f172a;
+
+  /* Brand typography sizing (tuned for the two-word "Litestar MCP" wordmark) */
+  --brand-font-size-xl: 5rem;
+  --brand-font-size-lg: 4rem;
+  --brand-font-size-md: 3.25rem;
   --brand-font-size-sm: 2.5rem;
-  --brand-font-size-xs: 1.8rem;
-  --brand-font-size-xxs: 1.6rem;
+  --brand-font-size-xs: 2rem;
+  --brand-font-size-xxs: 1.7rem;
 
-  --brand-letter-spacing-xl: 0.25em;
-  --brand-letter-spacing-lg: 0.2em;
-  --brand-letter-spacing-md: 0.1em;
-  --brand-letter-spacing-sm: 0.05em;
-  --brand-letter-spacing-xs: 0.03em;
+  --brand-letter-spacing-xl: 0.18em;
+  --brand-letter-spacing-lg: 0.16em;
+  --brand-letter-spacing-md: 0.12em;
+  --brand-letter-spacing-sm: 0.08em;
+  --brand-letter-spacing-xs: 0.06em;
+
+  /* Code block colors - light mode defaults */
+  --mcp-code-bg: #f1f4f9;
+  --mcp-code-border: #d0d7e2;
+  --mcp-code-text: var(--litestar-navy);
 }
 
+/* -----------------------------------------------------------------------------
+   Shibuya Accent Color Overrides (Amber -> Litestar Gold)
+   ----------------------------------------------------------------------------- */
+html[data-accent-color="amber"] {
+  --accent-9: var(--litestar-gold);
+  --accent-10: var(--litestar-gold-dark);
+  --accent-11: #8b6914;
+}
+
+html.dark[data-accent-color="amber"] {
+  --accent-9: var(--litestar-gold);
+  --accent-10: var(--litestar-gold-light);
+  --accent-11: var(--litestar-gold-light);
+}
+
+/* -----------------------------------------------------------------------------
+   Light Mode Theme
+   ----------------------------------------------------------------------------- */
 html.light {
-  --sl-color-primary: #202235;
-  --sl-color-secondary: #edb641;
-  --sl-color-accent: #ffd480;
-  --sl-color-text-1: var(--sl-color-primary);
-  --sl-color-text-2: var(--sl-color-secondary);
-  --sy-c-foot-background: #f0f0f0;
-  --yue-c-text: #000;
-  --brand-text-glow: 0 0 10px rgba(32, 34, 53, 0.3),
-    0 0 20px rgba(32, 34, 53, 0.2), 0 0 30px rgba(237, 182, 65, 0.1);
+  --sl-color-primary: var(--litestar-navy);
+  --sl-color-secondary: var(--litestar-gray-600);
+  --sl-color-accent: var(--litestar-gold);
+  --sl-color-text-1: var(--litestar-navy);
+  --sl-color-text-2: var(--litestar-gray-600);
+  --sy-c-foot-background: var(--litestar-gray-50);
+  --yue-c-text: var(--litestar-navy);
+  --brand-text-glow:
+    0 0 10px rgba(var(--litestar-navy-rgb), 0.3),
+    0 0 20px rgba(var(--litestar-navy-rgb), 0.2);
 }
 
-html.dark {
-  --sl-color-text-1: var(--sl-color-secondary);
-  --sy-c-foot-background: black;
-  --yue-c-text: #fff;
-  --brand-text-glow: 0 0 10px rgba(237, 182, 65, 0.4),
-    0 0 20px rgba(237, 182, 65, 0.3), 0 0 30px rgba(237, 182, 65, 0.2);
+/* -----------------------------------------------------------------------------
+   Dark Mode Theme
+   ----------------------------------------------------------------------------- */
+html.dark,
+html[data-theme="dark"] {
+  --sl-color-text-1: var(--litestar-gray-100);
+  /* Global background - Litestar Navy */
+  --sy-c-background: var(--litestar-navy);
+  --sy-c-foot-background: var(--litestar-navy);
+  --sy-c-background-dropback: rgba(var(--litestar-navy-rgb), 0.82);
+  --sy-c-surface: #2a2d40; /* Slightly lighter navy for cards/sidebars */
+
+  --sy-c-foot-text: var(--litestar-gray-300);
+  --sy-c-foot-divider: var(--litestar-gray-700);
+
+  --yue-c-text: var(--litestar-gray-100);
+  --brand-text-glow:
+    0 0 10px rgba(var(--litestar-gold-rgb), 0.4),
+    0 0 20px rgba(var(--litestar-gold-rgb), 0.2);
+
+  /* Code block colors - dark mode */
+  --mcp-code-bg: #1a1c2e;
+  --mcp-code-border: #2d3148;
+  --mcp-code-text: var(--litestar-gray-100);
 }
 
+/* -----------------------------------------------------------------------------
+   Typography
+   ----------------------------------------------------------------------------- */
+body {
+  font-size: 1rem;
+  line-height: 1.7;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  color: var(--litestar-navy);
+  font-weight: 600;
+}
+
+html.dark h1,
+html.dark h2,
+html.dark h3,
+html.dark h4,
+html.dark h5,
+html.dark h6 {
+  color: #e6edf3;
+}
+
+/* Links - neutral base, gold hover */
+a {
+  color: var(--litestar-gray-600);
+  transition: color 0.2s ease;
+}
+
+a:hover {
+  color: var(--litestar-gold-dark);
+}
+
+html.dark a {
+  color: var(--litestar-gray-300);
+}
+
+html.dark a:hover {
+  color: var(--litestar-gold);
+}
+
+p {
+  font-size: 1.05em;
+}
+
+/* -----------------------------------------------------------------------------
+   Code Blocks
+   ----------------------------------------------------------------------------- */
+div.highlight {
+  background: var(--mcp-code-bg);
+  border: 1px solid var(--mcp-code-border);
+  border-left: 3px solid rgba(var(--litestar-gold-rgb), 0.3);
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 1rem 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+html.dark div.highlight,
+html[data-theme="dark"] div.highlight {
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+div.highlight pre {
+  background: transparent;
+  color: var(--mcp-code-text);
+  white-space: pre;
+  overflow-x: auto;
+  padding: 1rem 1.25rem;
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.7;
+  font-variant-ligatures: none;
+}
+
+div.highlight pre code {
+  white-space: inherit;
+}
+
+/* Inline code - neutral styling */
+html.light code.literal,
+html.light code:not([class]) {
+  background-color: var(--litestar-gray-100);
+  border: 1px solid var(--litestar-gray-200);
+  color: var(--litestar-navy);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  font-size: 0.875em;
+}
+
+html.dark code.literal,
+html.dark code:not([class]) {
+  background-color: var(--litestar-gray-800);
+  border: 1px solid var(--litestar-gray-700);
+  color: var(--litestar-gray-100);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  font-size: 0.875em;
+}
+
+/* -----------------------------------------------------------------------------
+   Navigation / Header
+   ----------------------------------------------------------------------------- */
+.sy-head {
+  border-bottom: 1px solid var(--litestar-gray-200);
+}
+
+html.dark .sy-head {
+  background: var(--litestar-navy);
+  border-bottom-color: var(--litestar-gray-700);
+}
+
+.sy-head-nav a:hover,
+.sy-sidebar a:hover {
+  color: var(--litestar-gold-dark) !important;
+}
+
+html.dark .sy-head-nav a:hover,
+html.dark .sy-sidebar a:hover {
+  color: var(--litestar-gold) !important;
+}
+
+/* Hide logo text in header (the logo image already carries the mark) */
+.sy-head-brand strong {
+  display: none;
+}
+
+/* -----------------------------------------------------------------------------
+   Cards (sphinx-design)
+   ----------------------------------------------------------------------------- */
+.sd-card {
+  border: 1px solid var(--litestar-gray-200);
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  transition: all 0.2s ease;
+}
+
+.sd-card:hover {
+  border-color: var(--litestar-gold);
+  box-shadow: 0 4px 12px rgba(var(--litestar-gold-rgb), 0.15);
+}
+
+html.dark .sd-card,
+html[data-theme="dark"] .sd-card {
+  background: var(--sy-c-surface);
+  border-color: var(--litestar-gray-700);
+}
+
+html.dark .sd-card:hover,
+html[data-theme="dark"] .sd-card:hover {
+  border-color: var(--litestar-gold);
+  box-shadow: 0 4px 12px rgba(var(--litestar-gold-rgb), 0.2);
+}
+
+.sd-card-title {
+  color: var(--litestar-navy);
+}
+
+html.dark .sd-card-title {
+  color: var(--litestar-gray-100);
+}
+
+/* -----------------------------------------------------------------------------
+   Hero / Title Section
+   ----------------------------------------------------------------------------- */
 .title-with-logo {
   display: flex;
   align-items: center;
@@ -48,60 +283,83 @@ html.dark {
 }
 
 html[class] .title-with-logo .brand-text {
+  font-family: var(--sl-font-sans);
+  font-weight: 300;
   font-size: var(--brand-font-size-lg);
-  font-weight: 900;
-  letter-spacing: var(--brand-letter-spacing-lg);
-  text-shadow: var(--brand-text-glow);
-  margin: 0;
-  color: var(--sl-color-text-1);
+  letter-spacing: var(--brand-letter-spacing-xl);
   text-transform: uppercase;
+  text-align: center;
+  line-height: 1.2;
+  max-width: 100%;
+  /* Two-word wordmark: allow it to wrap to two centered lines on large screens */
+  white-space: normal;
+  overflow: visible;
+  transition: color var(--sl-transition), text-shadow var(--sl-transition);
 }
 
-.title-with-logo .logo {
-  width: 5rem;
-  height: auto;
-  margin-right: 2rem;
+html.light .title-with-logo .brand-text {
+  color: var(--litestar-navy);
+  text-shadow:
+    0 0 20px rgba(var(--litestar-gold-rgb), 0.15),
+    0 0 40px rgba(var(--litestar-gold-rgb), 0.1);
 }
 
-/* Responsive design for brand text */
-@media (max-width: 1200px) {
-  html[class] .title-with-logo .brand-text {
-    font-size: var(--brand-font-size-md);
-    letter-spacing: var(--brand-letter-spacing-md);
-  }
+html.dark .title-with-logo .brand-text {
+  color: var(--litestar-gray-300);
+  text-shadow:
+    0 0 15px rgba(var(--litestar-gold-rgb), 0.3),
+    0 0 30px rgba(var(--litestar-gold-rgb), 0.2),
+    0 0 45px rgba(var(--litestar-gold-rgb), 0.1);
 }
 
-@media (max-width: 768px) {
-  html[class] .title-with-logo .brand-text {
-    font-size: var(--brand-font-size-sm);
-    letter-spacing: var(--brand-letter-spacing-sm);
-  }
-  .title-with-logo {
-    flex-direction: column;
-    text-align: center;
-  }
-  .title-with-logo .logo {
-    margin-right: 0;
-    margin-bottom: 1rem;
-    width: 4rem;
-  }
+html[class] .title-with-logo h1.brand-text {
+  margin: 0;
+  padding: 0;
+  border: none;
 }
 
-@media (max-width: 480px) {
-  html[class] .title-with-logo .brand-text {
-    font-size: var(--brand-font-size-xs);
-    letter-spacing: var(--brand-letter-spacing-xs);
+.title-with-logo + p {
+  margin-top: 2rem;
+}
+
+/* Brand text animation */
+@keyframes fadeInScale {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
   }
-  .title-with-logo .logo {
-    width: 3rem;
+  to {
+    opacity: 1;
+    transform: scale(1);
   }
 }
 
-/* MCP-specific styling */
+.title-with-logo .brand-text {
+  animation: fadeInScale 0.6s ease-out;
+}
+
+/* -----------------------------------------------------------------------------
+   Light/Dark Mode Visibility Toggles
+   ----------------------------------------------------------------------------- */
+.only-dark {
+  display: none;
+}
+
+html.dark .only-dark {
+  display: block;
+}
+
+html.dark .only-light {
+  display: none;
+}
+
+/* -----------------------------------------------------------------------------
+   MCP-Specific Components
+   ----------------------------------------------------------------------------- */
 .mcp-badge {
   display: inline-block;
-  background: linear-gradient(135deg, var(--sl-color-secondary), var(--sl-color-accent));
-  color: var(--sl-color-primary);
+  background: linear-gradient(135deg, var(--litestar-gold), var(--litestar-gold-light));
+  color: var(--litestar-navy);
   padding: 0.25rem 0.75rem;
   border-radius: 0.5rem;
   font-size: 0.875rem;
@@ -111,31 +369,7 @@ html[class] .title-with-logo .brand-text {
   margin-left: 0.5rem;
 }
 
-/* Code block styling for MCP examples */
-.highlight-python .highlight {
-  background: var(--sy-c-code-background);
-  border: 1px solid var(--sl-color-accent);
-  border-radius: 0.5rem;
-}
-
-/* Navigation enhancement */
-.sy-sidebar .toctree-l1 > a {
-  color: var(--sl-color-text-1);
-  font-weight: 500;
-}
-
-.sy-sidebar .toctree-l1 > a:hover {
-  color: var(--sl-color-secondary);
-}
-
-/* Footer styling */
-.sy-footer {
-  background: var(--sy-c-foot-background);
-  border-top: 2px solid var(--sl-color-accent);
-  color: var(--yue-c-text);
-}
-
-/* Custom admonition styling for MCP-specific content */
+/* Custom admonitions for MCP-specific content (tool = green, resource = blue) */
 .admonition.mcp-tool {
   border-left: 4px solid #28a745;
   background-color: rgba(40, 167, 69, 0.1);
@@ -153,17 +387,127 @@ html[class] .title-with-logo .brand-text {
   letter-spacing: 0.05em;
 }
 
-/* Version selector styling */
-.version-selector {
-  background: var(--sl-color-primary);
-  color: var(--sl-color-secondary);
-  border: 1px solid var(--sl-color-accent);
-  border-radius: 0.25rem;
-  padding: 0.25rem 0.5rem;
-  font-size: 0.875rem;
+/* -----------------------------------------------------------------------------
+   Badges
+   ----------------------------------------------------------------------------- */
+#badges img {
+  margin-top: 0;
+  margin-bottom: 0;
 }
 
-.version-selector:hover {
-  background: var(--sl-color-secondary);
-  color: var(--sl-color-primary);
+#badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 3em;
+}
+
+/* -----------------------------------------------------------------------------
+   Mermaid Diagrams (Dark Mode Fix)
+   ----------------------------------------------------------------------------- */
+html.dark .mermaid svg,
+html[data-theme="dark"] .mermaid svg {
+  background-color: white;
+  padding: 1em;
+  border-radius: 8px;
+}
+
+/* -----------------------------------------------------------------------------
+   Responsive Breakpoints
+   ----------------------------------------------------------------------------- */
+@media (min-width: 1400px) {
+  html[class] .title-with-logo .brand-text {
+    font-size: var(--brand-font-size-xl);
+  }
+}
+
+@media (min-width: 1200px) and (max-width: 1399px) {
+  html[class] .title-with-logo .brand-text {
+    font-size: var(--brand-font-size-lg);
+    letter-spacing: var(--brand-letter-spacing-lg);
+  }
+}
+
+@media (min-width: 992px) and (max-width: 1199px) {
+  html[class] .title-with-logo .brand-text {
+    font-size: var(--brand-font-size-md);
+    letter-spacing: var(--brand-letter-spacing-md);
+  }
+}
+
+@media (max-width: 991px) {
+  html[class] .title-with-logo .brand-text {
+    font-size: var(--brand-font-size-md);
+    letter-spacing: var(--brand-letter-spacing-lg);
+  }
+}
+
+@media (max-width: 767px) {
+  html[class] .title-with-logo .brand-text {
+    font-size: var(--brand-font-size-sm);
+    letter-spacing: var(--brand-letter-spacing-md);
+  }
+  html[class] .title-with-logo {
+    margin: 2rem auto 1.5rem;
+  }
+}
+
+@media (max-width: 480px) {
+  html[class] .title-with-logo .brand-text {
+    font-size: var(--brand-font-size-xs);
+    letter-spacing: var(--brand-letter-spacing-sm);
+    line-height: 1.2;
+  }
+  html[class] .title-with-logo {
+    margin: 1.5rem auto 1rem;
+    padding: 0 1rem;
+  }
+}
+
+@media (max-width: 360px) {
+  html[class] .title-with-logo .brand-text {
+    font-size: var(--brand-font-size-xxs);
+    letter-spacing: var(--brand-letter-spacing-xs);
+  }
+}
+
+/* -----------------------------------------------------------------------------
+   Layout Overrides (Hide Right Sidebar & Expand Content)
+   ----------------------------------------------------------------------------- */
+.sy-rside {
+  display: none !important;
+}
+
+@media (min-width: 768px) {
+  .sy-main {
+    max-width: none !important;
+  }
+}
+
+@media (min-width: 1280px) {
+  .sy-main {
+    width: calc(100% - 18rem) !important;
+    padding-right: 2rem;
+  }
+}
+
+.sy-content {
+  max-width: none !important;
+  width: 100% !important;
+  padding-bottom: 2rem;
+}
+
+/* -----------------------------------------------------------------------------
+   Navigation Bar (Next/Prev)
+   ----------------------------------------------------------------------------- */
+.navigation {
+  position: relative;
+  margin-top: 4rem !important;
+  margin-bottom: 2rem !important;
+  padding-top: 2rem;
+  border-top: 1px solid var(--sy-c-divider);
+}
+
+.sy-foot {
+  padding-bottom: 2rem;
 }
