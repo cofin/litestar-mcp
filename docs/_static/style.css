@@ -1,7 +1,29 @@
-/*
- * litestar-mcp documentation — supplemental styles.
- *
- * Loaded after ``custom.css`` via ``html_css_files`` in ``docs/conf.py``.
- * Intentionally empty for now; future chapters may add per-example or
- * reference-notes styling here.
- */
+/* Project-specific Shibuya additions live here. */
+
+/* Version warning banner (shown by versioning.js on outdated/preview builds) */
+#version-warning {
+  top: 0;
+  position: sticky;
+  z-index: 60;
+  width: 100%;
+  height: 2.5rem;
+  display: flex;
+  column-gap: 0.5rem;
+  justify-content: center;
+  justify-items: center;
+  align-items: center;
+  background-color: rgba(237, 182, 65, 0.1);
+  border-bottom: 2px solid #edb641;
+}
+
+html.dark #version-warning,
+body:not([data-theme="light"]) #version-warning {
+  background-color: rgba(237, 182, 65, 0.15);
+}
+
+/* Breaking change badge */
+.breaking-change {
+  font-variant: all-small-caps;
+  margin-left: 0.4rem;
+  color: #d4a438;
+}

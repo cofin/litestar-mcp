@@ -1,119 +1,109 @@
-// Version selector functionality for Litestar MCP documentation
-document.addEventListener('DOMContentLoaded', function() {
-    // Create version selector if it doesn't exist
-    function createVersionSelector() {
-        const versionData = {
-            versions: ['latest'],
-            current: 'latest'
-        };
-
-        // Try to load version data from versions.json
-        fetch('/_static/versions.json')
-            .then(response => response.ok ? response.json() : versionData)
-            .then(data => {
-                if (data.versions && data.versions.length > 1) {
-                    insertVersionSelector(data);
-                }
-            })
-            .catch(() => {
-                // Fallback to default if versions.json is not available
-                console.log('No versions.json found, using default version data');
-            });
-    }
-
-    function insertVersionSelector(versionData) {
-        const selector = document.createElement('select');
-        selector.className = 'version-selector';
-        selector.setAttribute('aria-label', 'Version selector');
-
-        versionData.versions.forEach(version => {
-            const option = document.createElement('option');
-            option.value = version;
-            option.textContent = version === 'latest' ? 'Latest' : `v${version}`;
-            if (version === versionData.current) {
-                option.selected = true;
-            }
-            selector.appendChild(option);
-        });
-
-        selector.addEventListener('change', function(event) {
-            const selectedVersion = event.target.value;
-            const currentPath = window.location.pathname;
-            const pathParts = currentPath.split('/').filter(part => part);
-
-            // Remove current version from path if present
-            if (pathParts.length > 0 && (pathParts[0] === 'latest' || versionData.versions.includes(pathParts[0]))) {
-                pathParts.shift();
-            }
-
-            // Construct new URL
-            const newPath = selectedVersion === 'latest'
-                ? `/latest/${pathParts.join('/')}`
-                : `/${selectedVersion}/${pathParts.join('/')}`;
-
-            window.location.href = newPath;
-        });
-
-        // Insert the version selector into the navigation
-        const nav = document.querySelector('.sy-nav');
-        if (nav) {
-            const versionContainer = document.createElement('div');
-            versionContainer.className = 'version-selector-container';
-            versionContainer.style.padding = '0.5rem';
-            versionContainer.appendChild(selector);
-            nav.appendChild(versionContainer);
-        }
-    }
-
-    // Initialize version selector
-    createVersionSelector();
-
-    // Add some utility functions for documentation navigation
-    function enhanceNavigation() {
-        // Add keyboard shortcuts for navigation
-        document.addEventListener('keydown', function(event) {
-            if (event.altKey) {
-                switch(event.key) {
-                    case 'h':
-                        event.preventDefault();
-                        window.location.href = '/';
-                        break;
-                    case 'g':
-                        event.preventDefault();
-                        const searchInput = document.querySelector('input[type="search"]');
-                        if (searchInput) {
-                            searchInput.focus();
-                        }
-                        break;
-                }
-            }
-        });
-
-        // Add smooth scrolling to anchor links
-        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
-            anchor.addEventListener('click', function (e) {
-                e.preventDefault();
-                const target = document.querySelector(this.getAttribute('href'));
-                if (target) {
-                    target.scrollIntoView({
-                        behavior: 'smooth',
-                        block: 'start'
-                    });
-                }
-            });
-        });
-    }
-
-    // Initialize navigation enhancements
-    enhanceNavigation();
-});
-
-// Export for use in other scripts if needed
-window.LitestarMCPDocs = {
-    version: '1.0.0',
-    features: {
-        versionSelector: true,
-        keyboardShortcuts: true,
-        smoothScrolling: true
-    }
+// Version selector + "outdated docs" warning banner.
+// Mirrors the SQLSpec / litestar-queues docs setup. Dormant until the docs are
+// hosted as multiple versions (i.e. once _static/versions.json lists more than
+// the current build); loadVersions() returns null on a 404 and setupVersioning()
+// then no-ops.
+const loadVersions = async () => {
+  const res = await fetch(
+    DOCUMENTATION_OPTIONS.URL_ROOT + "_static/versions.json",
+  );
+  if (res.status !== 200) {
+    return null;
+  }
+  return await res.json();
 };
+
+const addVersionWarning = (currentVersion, latestVersion) => {
+  if (currentVersion === latestVersion) {
+    return;
+  }
+
+  const header = document.querySelector(".bd-header__inner")?.parentElement;
+  if (!header) {
+    return;
+  }
+
+  const container = document.createElement("div");
+  container.id = "version-warning";
+
+  const warningText = document.createElement("span");
+  warningText.textContent = `You are viewing the documentation for ${
+    currentVersion === "dev" ||
+    parseInt(currentVersion) > parseInt(latestVersion)
+      ? "a preview"
+      : "an outdated"
+  } version of Litestar MCP.`;
+  container.appendChild(warningText);
+
+  const latestLink = document.createElement("a");
+  latestLink.textContent = "Click here to go to the latest version";
+  latestLink.href = DOCUMENTATION_OPTIONS.URL_ROOT + "../latest";
+  container.appendChild(latestLink);
+
+  header.before(container);
+};
+
+const formatVersionName = (version, isLatest) =>
+  version + (isLatest ? " (latest)" : "");
+
+const addVersionSelect = (currentVersion, versionSpec) => {
+  const navEnd = document.querySelector(".navbar-header-items__end");
+
+  if (!navEnd) {
+    return;
+  }
+
+  const container = document.createElement("div");
+  container.classList.add("navbar-nav");
+
+  const dropdown = document.createElement("div");
+  dropdown.classList.add("dropdown");
+  container.appendChild(dropdown);
+
+  const dropdownToggle = document.createElement("button");
+  dropdownToggle.classList.add("btn", "dropdown-toggle", "nav-item");
+  dropdownToggle.setAttribute("data-bs-toggle", "dropdown");
+  dropdownToggle.setAttribute("type", "button");
+  dropdownToggle.textContent = `Version: ${formatVersionName(
+    currentVersion,
+    currentVersion === versionSpec.latest,
+  )}`;
+  dropdown.appendChild(dropdownToggle);
+
+  const dropdownContent = document.createElement("div");
+  dropdownContent.classList.add("dropdown-menu");
+  dropdown.appendChild(dropdownContent);
+
+  for (const version of versionSpec.versions) {
+    const navItem = document.createElement("li");
+    navItem.classList.add("nav-item");
+
+    const navLink = document.createElement("a");
+    navLink.classList.add("nav-link", "nav-internal");
+    navLink.href = DOCUMENTATION_OPTIONS.URL_ROOT + `../${version}`;
+    navLink.textContent = formatVersionName(
+      version,
+      version === versionSpec.latest,
+    );
+    navItem.appendChild(navLink);
+
+    dropdownContent.appendChild(navItem);
+  }
+
+  navEnd.prepend(container);
+};
+
+const setupVersioning = (versions) => {
+  if (versions === null) {
+    return;
+  }
+
+  const currentVersion = DOCUMENTATION_OPTIONS.VERSION;
+
+  addVersionWarning(currentVersion, versions.latest);
+  addVersionSelect(currentVersion, versions);
+};
+
+window.addEventListener("DOMContentLoaded", () => {
+  loadVersions().then(setupVersioning);
+});

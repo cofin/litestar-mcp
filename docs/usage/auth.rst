@@ -50,6 +50,47 @@ handles JWKS discovery, caching, and signature verification.
     :end-before: # end-example
     :dedent:
 
+Identity Proxies (custom header / prefix)
+=========================================
+
+Cloud identity proxies verify the caller and inject a signed JWT into a
+non-standard header. Google Cloud IAP uses ``X-Goog-IAP-JWT-Assertion``
+with the raw token (no ``Bearer`` prefix). Point the built-in validation
+engine at that header with ``header_name`` / ``token_prefix`` instead of
+writing a bespoke middleware — caching and ``user_resolver`` are unchanged.
+IAP signs with ``ES256`` and publishes a fixed JWK set (there is no OIDC
+discovery document), so set ``jwks_uri`` and ``algorithms`` explicitly::
+
+    from litestar.middleware import DefineMiddleware
+    from litestar_mcp import MCPAuthBackend, OIDCProviderConfig
+
+    DefineMiddleware(
+        MCPAuthBackend,
+        providers=[
+            OIDCProviderConfig(
+                issuer="https://cloud.google.com/iap",
+                audience="/projects/PROJECT_NUMBER/apps/PROJECT_ID",
+                jwks_uri="https://www.gstatic.com/iap/verify/public_key-jwk",
+                algorithms=["ES256"],
+            ),
+        ],
+        header_name="X-Goog-IAP-JWT-Assertion",
+        token_prefix="",
+    )
+
+``header_name`` lookup is case-insensitive. When ``token_prefix`` is empty,
+the entire header value is the token, and an absent header is reported as a
+missing-header error (``401`` with ``WWW-Authenticate``) rather than an
+invalid-token error. The defaults (``Authorization`` header with the
+``Bearer`` prefix) preserve standard bearer behaviour, so existing deployments
+need no changes.
+
+The same ``header_name`` / ``token_prefix`` extraction applies to any proxy
+that forwards a token in a custom header (e.g. AWS ALB's ``X-Amzn-Oidc-Data``).
+Providers whose keys are not published as a JWK set — ALB signs with
+per-region PEM keys rather than a JWKS document — need a custom
+``token_validator`` for the validation step rather than ``OIDCProviderConfig``.
+
 Composable OIDC Factory
 ========================
 

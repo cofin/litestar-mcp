@@ -1,172 +1,73 @@
-===============
-Litestar MCP
-===============
+.. title:: Litestar MCP
+
+.. meta::
+   :description: Expose Litestar routes as Model Context Protocol tools, resources, and prompts over Streamable HTTP for AI models.
+   :keywords: Litestar, MCP, Model Context Protocol, AI, tools, resources, prompts, JSON-RPC, Streamable HTTP, OpenAPI
+
+.. container:: title-with-logo
+
+   .. raw:: html
+
+      <h1 class="brand-text" aria-label="Litestar MCP">Litestar MCP</h1>
+
+Litestar MCP integrates Litestar web applications with the Model Context
+Protocol: mark routes with simple kwargs to expose them as MCP tools,
+resources, and prompts that AI models can discover and call over MCP
+Streamable HTTP and JSON-RPC — with automatic OpenAPI exposure and optional
+bearer-token authentication.
 
 .. toctree::
-    :titlesonly:
-    :caption: Documentation
-    :name: documentation
-    :maxdepth: 2
+   :hidden:
+   :titlesonly:
+   :caption: Documentation
 
-    getting-started
-    usage/index
-    reference/index
+   getting-started
+   usage/index
+   reference/index
 
 .. toctree::
-    :titlesonly:
-    :caption: Development
-    :name: development
-    :maxdepth: 1
+   :hidden:
+   :titlesonly:
+   :caption: Development
 
-    contribution-guide
-    changelog
+   contribution-guide
+   changelog
 
-Litestar plugin for Model Context Protocol (MCP) integration
-============================================================
+.. grid:: 1 1 2 2
+   :padding: 0
+   :gutter: 2
 
-The Litestar MCP Plugin enables integration between Litestar web applications and the Model Context Protocol (MCP),
-allowing AI models to interact with your marked application routes through MCP Streamable HTTP and JSON-RPC.
+   .. grid-item-card:: Get Started
+      :link: getting-started
+      :link-type: doc
 
-Features
---------
+      Install Litestar MCP, add the plugin, and mark your first route as an
+      MCP tool or resource in a few lines.
 
-✨ **Simple Integration**: Mark routes with kwargs to expose them via MCP
-🔧 **Lightweight**: Minimal configuration and dependencies
-🚀 **Protocol-Native**: Uses MCP Streamable HTTP, JSON-RPC, and SSE directly
-📊 **OpenAPI Integration**: Automatic OpenAPI schema exposure
-🎯 **Type Safe**: Full type hints with dataclasses
-🔐 **Auth-Ready**: Optional OAuth metadata and bearer-token validation hooks
+   .. grid-item-card:: Usage Guides
+      :link: usage/index
+      :link-type: doc
 
-Installation
-------------
+      Configure the plugin, mark routes, expose prompts, wire authentication,
+      and deploy across replicas.
 
-.. code-block:: bash
+   .. grid-item-card:: Marking Routes
+      :link: usage/marking_routes
+      :link-type: doc
 
-    pip install litestar-mcp
+      Expose handlers as tools, resources, and prompts with ``mcp_tool`` /
+      ``mcp_resource`` / ``mcp_prompt`` kwargs or the dedicated decorators.
 
-Quick Start
------------
+   .. grid-item-card:: API Reference
+      :link: reference/index
+      :link-type: doc
 
-Add MCP capabilities to your Litestar application by marking routes:
+      Browse the generated API reference for the plugin, configuration,
+      handlers, and types.
 
-.. code-block:: python
+   .. grid-item-card:: Contributing
+      :link: contribution-guide
+      :link-type: doc
 
-    from litestar import Litestar, get, post
-    from litestar_mcp import LitestarMCP
-
-    # Mark routes for MCP exposure using kwargs
-    @get("/users", mcp_tool="list_users")
-    async def get_users() -> list[dict]:
-        """List all users - exposed as MCP tool."""
-        return [{"id": 1, "name": "Alice"}]
-
-    @get("/schema", mcp_resource="user_schema")
-    async def get_schema() -> dict:
-        """User schema - exposed as MCP resource."""
-        return {"type": "object", "properties": {"id": "integer", "name": "string"}}
-
-    # Regular routes are not exposed to MCP
-    @get("/health")
-    async def health_check() -> dict:
-        return {"status": "ok"}
-
-    # Add MCP plugin
-    app = Litestar(
-        route_handlers=[get_users, get_schema, health_check],
-        plugins=[LitestarMCP()]
-    )
-
-Your application now exposes MCP endpoints at ``/mcp`` plus well-known metadata documents that AI models can use to:
-
-- 🔍 Discover marked routes via tools and resources
-- 📊 Access your application's OpenAPI schema
-- 🛠️ Execute marked tools and read marked resources
-
-Core Concepts
--------------
-
-**Model Context Protocol (MCP)**
-    An open standard that enables AI models to securely access and interact with external systems.
-
-**Tools (mcp_tool)**
-    Functions that AI models can execute - mark routes with ``mcp_tool="name"`` kwargs.
-
-**Resources (mcp_resource)**
-    Read-only data that AI models can access - mark routes with ``mcp_resource="name"`` kwargs.
-
-**Route Marking**
-    Use ``mcp_tool`` or ``mcp_resource`` kwargs in route decorators - Litestar automatically adds these to the route's opt dictionary.
-
-How It Works
-------------
-
-1. **Mark Routes**: Add ``mcp_tool`` or ``mcp_resource`` kwargs to your route decorators
-2. **Litestar Processing**: Litestar automatically moves these kwargs into the route handler's ``opt`` dictionary
-3. **Plugin Discovery**: The plugin scans route handlers' opt dictionaries for MCP markers at app startup
-4. **MCP Exposure**: Marked routes become available through the MCP Streamable HTTP transport surface
-5. **AI Interaction**: AI models can discover and interact with your marked routes
-
-Kwargs to Opt Mechanism
------------------------
-
-Litestar automatically funnels unknown kwargs in route decorators into the
-handler's ``opt`` dictionary. This is the **recommended way** to mark routes
-for MCP — pass the metadata straight through to ``@get`` / ``@post`` / etc.
-and let Litestar wire up ``handler.opt`` for you:
-
-.. code-block:: python
-
-    @get("/users", mcp_tool="list_users", mcp_description="List every user.")
-    async def get_users() -> list[dict]:
-        ...
-
-The plugin reads these MCP kwargs from ``handler.opt``:
-
-- ``mcp_tool``, ``mcp_resource`` — mark the handler as a tool / resource
-- ``mcp_resource_template`` — RFC 6570 URI template for templated resources
-- ``mcp_description``, ``mcp_resource_description`` — LLM-facing description
-- ``mcp_agent_instructions`` — rendered as ``## Instructions``
-- ``mcp_when_to_use`` — rendered as ``## When to use``
-- ``mcp_returns`` — rendered as ``## Returns``
-
-Stacking ``@mcp_tool(...)`` / ``@mcp_resource(...)`` on top of the route
-decorator is still supported (and is useful when you need ``output_schema``,
-``annotations``, ``scopes``, or ``task_support`` — fields that do not have
-opt-key equivalents), but the kwarg form is shorter and the right default
-99% of the time.
-
-Available Endpoints
--------------------
-
-Once configured, your application exposes:
-
-- ``/mcp`` - Streamable HTTP MCP endpoint for JSON-RPC and SSE
-- ``/.well-known/mcp-server.json`` - MCP server manifest
-- ``/.well-known/agent-card.json`` - Agent metadata document
-- ``/.well-known/oauth-protected-resource`` - OAuth metadata when auth is enabled
-
-What Makes This Different?
----------------------------
-
-- **Route-Centric**: Mark individual routes for MCP exposure using simple kwargs
-- **Minimal Setup**: Just add ``mcp_tool`` or ``mcp_resource`` kwargs to existing route handlers
-- **Protocol-Native**: Uses MCP Streamable HTTP and JSON-RPC directly
-- **Litestar Native**: Built specifically for Litestar applications using the opt mechanism
-
-Getting Started
----------------
-
-Check out the :doc:`getting-started` guide to learn the basics, or explore the :doc:`usage/index` for deeper topics.
-
-Community
----------
-
-- **Discord**: `Join the Litestar Discord <https://discord.gg/litestar>`_
-- **GitHub**: `litestar-org/litestar-mcp <https://github.com/litestar-org/litestar-mcp>`_
-
-Indices and tables
-==================
-
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
+      Set up the development environment, run the quality gates, and add
+      coverage for new features.

@@ -45,7 +45,7 @@ TokenValidatorFn = Callable[[str], "Awaitable[dict[str, Any] | None]"]
 """Async callable ``(token) -> claims | None``; returning ``None`` declines the token."""
 
 _BEARER_PREFIX = "Bearer "
-_MISSING_HEADER_MSG = "Missing or invalid Authorization header"
+_DEFAULT_HEADER_NAME = "Authorization"
 _INVALID_TOKEN_MSG = "Invalid token"  # noqa: S105 — auth failure message, not a credential
 
 
@@ -126,6 +126,18 @@ class MCPAuthBackend(AbstractAuthenticationMiddleware):
     (DMA's ``IAPAuthenticationMiddleware``, Litestar's JWT backends, etc.) do
     not need this — MCP route handlers read ``request.user`` / ``request.auth``
     populated by whichever middleware the app installed.
+
+    ``header_name`` / ``token_prefix`` make the built-in validation engine
+    usable behind identity proxies that inject a verified JWT in a
+    non-standard header. For Google Cloud IAP the assertion arrives raw (no
+    ``Bearer`` prefix) in ``X-Goog-IAP-JWT-Assertion``::
+
+        DefineMiddleware(
+            MCPAuthBackend,
+            providers=[OIDCProviderConfig(issuer="https://cloud.google.com/iap", audience="/projects/.../apps/...")],
+            header_name="X-Goog-IAP-JWT-Assertion",
+            token_prefix="",
+        )
     """
 
     def __init__(
@@ -134,6 +146,8 @@ class MCPAuthBackend(AbstractAuthenticationMiddleware):
         providers: "Sequence[OIDCProviderConfig]" = (),
         token_validator: "TokenValidatorFn | None" = None,
         user_resolver: "UserResolver | None" = None,
+        header_name: "str" = _DEFAULT_HEADER_NAME,
+        token_prefix: "str" = _BEARER_PREFIX,
         exclude: "str | list[str] | None" = None,
         exclude_from_auth_key: "str" = "exclude_from_auth",
         exclude_http_methods: "Sequence[Method] | None" = None,
@@ -149,25 +163,43 @@ class MCPAuthBackend(AbstractAuthenticationMiddleware):
         self.providers = tuple(providers)
         self.token_validator = token_validator
         self.user_resolver = user_resolver
+        self.header_name = header_name
+        self.token_prefix = token_prefix
+        # ``connection.headers.get`` is case-insensitive; keep the original
+        # casing for the challenge scheme and error message.
+        self._challenge = token_prefix.strip() or "Bearer"
 
     async def authenticate_request(self, connection: "ASGIConnection[Any, Any, Any, Any]") -> "AuthenticationResult":
-        auth_header = connection.headers.get("authorization", "")
-        if not auth_header.startswith(_BEARER_PREFIX):
+        header_value = connection.headers.get(self.header_name, "")
+        token = self._extract_token(header_value)
+        if token is None:
+            msg = f"Missing or invalid {self.header_name} header"
             raise NotAuthorizedException(
-                _MISSING_HEADER_MSG,
-                headers={"WWW-Authenticate": "Bearer"},
+                msg,
+                headers={"WWW-Authenticate": self._challenge},
             )
 
-        token = auth_header[len(_BEARER_PREFIX) :]
         claims = await self._validate(token)
         if claims is None:
             raise NotAuthorizedException(
                 _INVALID_TOKEN_MSG,
-                headers={"WWW-Authenticate": "Bearer"},
+                headers={"WWW-Authenticate": self._challenge},
             )
 
         user = await self._resolve_user(claims, connection.app) if self.user_resolver is not None else None
         return AuthenticationResult(user=user, auth=claims)
+
+    def _extract_token(self, header_value: "str") -> "str | None":
+        """Strip the configured prefix from ``header_value``; ``None`` if absent.
+
+        An empty ``token_prefix`` treats the whole header value as the token
+        (e.g. GCP IAP), so an empty header is reported as a missing header
+        rather than falling through to an ``Invalid token`` error.
+        """
+        if self.token_prefix and not header_value.startswith(self.token_prefix):
+            return None
+        token = header_value[len(self.token_prefix) :]
+        return token or None
 
     async def _validate(self, token: "str") -> "dict[str, Any] | None":
         if self.token_validator is not None:
