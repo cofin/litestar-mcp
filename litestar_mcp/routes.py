@@ -47,6 +47,7 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
+MCP_PROTOCOL_VERSION_HEADER = "mcp-protocol-version"
 MCP_SESSION_HEADER = "Mcp-Session-Id"
 
 SESSION_ERROR = -32000
@@ -70,7 +71,7 @@ def _validate_origin(request: "Request[Any, Any, Any]", config: "MCPConfig") -> 
 
 def _add_protocol_headers(response: "Response[Any]") -> "Response[Any]":
     """Add standard MCP protocol headers to a response."""
-    response.headers["mcp-protocol-version"] = MCP_PROTOCOL_VERSION
+    response.headers[MCP_PROTOCOL_VERSION_HEADER] = MCP_PROTOCOL_VERSION
     return response
 
 

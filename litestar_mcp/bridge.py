@@ -1,15 +1,14 @@
 """Stdio to Streamable HTTP bridge for remote MCP servers."""
 
-from __future__ import annotations
-
 import asyncio
 import inspect
 import os
 import shlex
 import subprocess
 import sys
-from collections.abc import Awaitable, Callable, Mapping
-from typing import TYPE_CHECKING, Any
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
+from types import TracebackType
+from typing import Any
 
 import anyio
 import httpx
@@ -21,18 +20,19 @@ from litestar.serialization import decode_json, encode_json
 from litestar.status_codes import HTTP_202_ACCEPTED, HTTP_401_UNAUTHORIZED
 from typing_extensions import Self
 
+from litestar_mcp.auth.backend import BEARER_TOKEN_PREFIX, DEFAULT_AUTH_HEADER_NAME
+from litestar_mcp.exceptions import MissingDependencyError
+from litestar_mcp.jsonrpc import JSONRPCError, error_response
+from litestar_mcp.routes import MCP_PROTOCOL_VERSION_HEADER, MCP_SESSION_HEADER
+
 try:
     import rich_click as click
 except ImportError:  # pragma: no cover
     import click  # type: ignore[no-redef]
 
-if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, AsyncIterator
-    from types import TracebackType
-
 TokenProvider = Callable[[], str] | Callable[[], Awaitable[str]]
-BRIDGE_ERROR = -32000
-DEFAULT_TOKEN_PREFIX = "Bearer "  # noqa: S105
+BRIDGE_ERROR = -32001
+_SSE_RECONNECT_DELAY_SECONDS = 1.0
 
 __all__ = (
     "BRIDGE_ERROR",
@@ -42,18 +42,6 @@ __all__ = (
     "run_bridge",
     "run_stdio_streamable_http_bridge",
 )
-
-
-class MissingDependencyError(ImportError):
-    """Raised when the optional bridge dependency group is not installed."""
-
-    def __init__(self) -> None:
-        message = (
-            "The stdio bridge requires the optional bridge dependency. "
-            "Install it with `pip install 'litestar-mcp[bridge]'` or "
-            "`uv add 'litestar-mcp[bridge]'`."
-        )
-        super().__init__(message)
 
 
 class _TokenProviderAuth(httpx.Auth):
@@ -73,7 +61,10 @@ class _TokenProviderAuth(httpx.Auth):
             yield request
 
     async def _header_value(self) -> str:
-        token = self._token_provider()
+        if inspect.iscoroutinefunction(self._token_provider):
+            token = await self._token_provider()
+        else:
+            token = await run_sync_in_worker_thread(self._token_provider)
         if inspect.isawaitable(token):
             token = await token
         return f"{self._token_prefix}{token}"
@@ -89,18 +80,24 @@ class _StreamableHTTPBridgeClient:
         headers: Mapping[str, str] | None,
         auth: httpx.Auth | None,
         timeout: float,
+        sse_read_timeout: float | None,
         stdout: ByteSendStream,
+        stderr: Any,
+        event_source_cls: type[Any],
     ) -> None:
         self._endpoint = endpoint
         self._stdout = stdout
+        self._stderr = stderr
+        self._event_source_cls = event_source_cls
         self._client = httpx.AsyncClient(
             headers=dict(headers or {}),
-            timeout=httpx.Timeout(timeout, read=timeout),
+            timeout=httpx.Timeout(timeout, read=sse_read_timeout),
             auth=auth,
             follow_redirects=True,
         )
         self._session_id: str | None = None
         self._protocol_version: str | None = None
+        self._get_stream_disabled = False
 
     async def __aenter__(self) -> Self:
         await self._client.__aenter__()
@@ -123,7 +120,10 @@ class _StreamableHTTPBridgeClient:
         except httpx.HTTPError:
             return
         if response.status_code not in (200, 204, 405):
-            response.raise_for_status()
+            print(
+                f"litestar-mcp bridge ignored shutdown DELETE status {response.status_code}",
+                file=self._stderr,
+            )
 
     async def post_message(self, message: dict[str, Any], *, start_get_stream: Callable[[], None]) -> None:
         async with self._client.stream(
@@ -153,15 +153,24 @@ class _StreamableHTTPBridgeClient:
                 start_get_stream()
 
     async def run_sse_stream(self) -> None:
-        if self._session_id is None:
+        if self._session_id is None or self._get_stream_disabled:
             return
-        async with self._client.stream(
-            "GET",
-            self._endpoint,
-            headers={**self._mcp_headers(), "Accept": "text/event-stream"},
-        ) as response:
-            response.raise_for_status()
-            await self._consume_sse_response(response, expected_id=None)
+        while not self._get_stream_disabled:
+            async with self._client.stream(
+                "GET",
+                self._endpoint,
+                headers={**self._mcp_headers(), "Accept": "text/event-stream"},
+            ) as response:
+                if response.status_code in (404, 405):
+                    self._get_stream_disabled = True
+                    print(
+                        "litestar-mcp bridge: server does not offer a GET SSE stream; continuing with POST responses",
+                        file=self._stderr,
+                    )
+                    return
+                response.raise_for_status()
+                await self._consume_sse_response(response, expected_id=None)
+            await anyio.sleep(_SSE_RECONNECT_DELAY_SECONDS)
 
     def _mcp_headers(self) -> dict[str, str]:
         headers = {
@@ -169,16 +178,16 @@ class _StreamableHTTPBridgeClient:
             "Content-Type": "application/json",
         }
         if self._session_id is not None:
-            headers["Mcp-Session-Id"] = self._session_id
+            headers[MCP_SESSION_HEADER] = self._session_id
         if self._protocol_version is not None:
-            headers["mcp-protocol-version"] = self._protocol_version
+            headers[MCP_PROTOCOL_VERSION_HEADER] = self._protocol_version
         return headers
 
     def _capture_headers(self, response: httpx.Response) -> None:
         session_id = response.headers.get("mcp-session-id")
         if session_id:
             self._session_id = session_id
-        protocol_version = response.headers.get("mcp-protocol-version")
+        protocol_version = response.headers.get(MCP_PROTOCOL_VERSION_HEADER)
         if protocol_version:
             self._protocol_version = protocol_version
 
@@ -190,8 +199,7 @@ class _StreamableHTTPBridgeClient:
             self._protocol_version = result["protocolVersion"]
 
     async def _consume_sse_response(self, response: httpx.Response, *, expected_id: Any | None) -> None:
-        event_source_cls = _load_event_source()
-        event_source = event_source_cls(response)
+        event_source = self._event_source_cls(response)
         async for event in event_source.aiter_sse():
             if not event.data:
                 continue
@@ -226,7 +234,7 @@ def _load_event_source() -> type[Any]:
     try:
         from httpx_sse import EventSource
     except ImportError as exc:
-        raise MissingDependencyError from exc
+        raise MissingDependencyError(package="httpx-sse", extra="bridge") from exc
     return EventSource
 
 
@@ -235,9 +243,10 @@ async def run_stdio_streamable_http_bridge(
     *,
     headers: Mapping[str, str] | None = None,
     token_provider: TokenProvider | None = None,
-    header_name: str = "Authorization",
-    token_prefix: str = DEFAULT_TOKEN_PREFIX,
+    header_name: str = DEFAULT_AUTH_HEADER_NAME,
+    token_prefix: str = BEARER_TOKEN_PREFIX,
     timeout: float = 30.0,  # noqa: ASYNC109
+    sse_read_timeout: float | None = 300.0,
     stdin: ByteReceiveStream | None = None,
     stdout: ByteSendStream | None = None,
     stderr: Any | None = None,
@@ -250,7 +259,9 @@ async def run_stdio_streamable_http_bridge(
         token_provider: Optional callable that returns a fresh token per request.
         header_name: Header used for token auth.
         token_prefix: Prefix prepended to token values.
-        timeout: HTTP operation timeout in seconds.
+        timeout: HTTP connect, write, and pool timeout in seconds.
+        sse_read_timeout: Read timeout for streaming SSE responses. ``None``
+            or ``0`` disables quiet-period timeouts for server streams.
         stdin: Optional byte receive stream for tests or embedding.
         stdout: Optional byte send stream for tests or embedding.
         stderr: Optional diagnostic text stream. Defaults to ``sys.stderr``.
@@ -259,7 +270,7 @@ async def run_stdio_streamable_http_bridge(
         Process-style exit code. ``0`` means clean EOF/shutdown; non-zero means
         a transport or pump error was surfaced to the local stdio client.
     """
-    _load_event_source()
+    event_source_cls = _load_event_source()
     stdin_stream: ByteReceiveStream = stdin if stdin is not None else _StdinByteReceiveStream()
     stdout_stream: ByteSendStream = stdout if stdout is not None else _StdoutByteSendStream()
     stderr_stream = stderr or sys.stderr
@@ -268,7 +279,7 @@ async def run_stdio_streamable_http_bridge(
         if token_provider is not None
         else None
     )
-    errors: list[BaseException] = []
+    error: BaseException | None = None
 
     try:
         async with _StreamableHTTPBridgeClient(
@@ -276,10 +287,18 @@ async def run_stdio_streamable_http_bridge(
             headers=headers,
             auth=auth,
             timeout=timeout,
+            sse_read_timeout=_normalize_sse_read_timeout(sse_read_timeout),
             stdout=stdout_stream,
+            stderr=stderr_stream,
+            event_source_cls=event_source_cls,
         ) as bridge_client:
             get_stream_started = False
             async with anyio.create_task_group() as task_group:
+
+                def record_error(exc: BaseException) -> None:
+                    nonlocal error
+                    if error is None:
+                        error = exc
 
                 def start_get_stream() -> None:
                     nonlocal get_stream_started
@@ -290,24 +309,25 @@ async def run_stdio_streamable_http_bridge(
                         _run_bridge_pump,
                         bridge_client.run_sse_stream(),
                         task_group.cancel_scope,
-                        errors,
+                        record_error,
+                        False,
                     )
 
                 task_group.start_soon(
                     _run_bridge_pump,
                     _pump_stdin_to_remote(stdin_stream, bridge_client, start_get_stream),
                     task_group.cancel_scope,
-                    errors,
+                    record_error,
+                    True,
                 )
     except MissingDependencyError:
         raise
     except Exception as exc:  # noqa: BLE001
-        errors.append(exc)
+        error = exc
 
-    if not errors:
+    if error is None:
         return 0
 
-    error = errors[0]
     await _write_bridge_error(stdout_stream, str(error))
     print(f"litestar-mcp bridge transport error: {error}", file=stderr_stream)
     return 1
@@ -318,9 +338,10 @@ def run_bridge(
     *,
     headers: Mapping[str, str] | None = None,
     token_provider: TokenProvider | None = None,
-    header_name: str = "Authorization",
-    token_prefix: str = DEFAULT_TOKEN_PREFIX,
+    header_name: str = DEFAULT_AUTH_HEADER_NAME,
+    token_prefix: str = BEARER_TOKEN_PREFIX,
     timeout: float = 30.0,
+    sse_read_timeout: float | None = 300.0,
 ) -> int:
     """Synchronously run the stdio bridge for console-script entry points."""
     try:
@@ -332,6 +353,7 @@ def run_bridge(
                 header_name=header_name,
                 token_prefix=token_prefix,
                 timeout=timeout,
+                sse_read_timeout=sse_read_timeout,
             )
         )
     except KeyboardInterrupt:
@@ -341,17 +363,19 @@ def run_bridge(
 async def _run_bridge_pump(
     awaitable: Awaitable[None],
     cancel_scope: anyio.CancelScope,
-    errors: list[BaseException],
+    record_error: Callable[[BaseException], None],
+    terminal: bool,
 ) -> None:
     try:
         await awaitable
     except get_cancelled_exc_class():
         raise
     except Exception as exc:  # noqa: BLE001
-        errors.append(exc)
+        record_error(exc)
         cancel_scope.cancel()
     else:
-        cancel_scope.cancel()
+        if terminal:
+            cancel_scope.cancel()
 
 
 async def _pump_stdin_to_remote(
@@ -387,14 +411,7 @@ async def _iter_stdin_lines(stdin: ByteReceiveStream) -> AsyncIterator[bytes]:
 
 
 async def _write_bridge_error(stdout: ByteSendStream, message: str) -> None:
-    await _write_json_line(
-        stdout,
-        {
-            "jsonrpc": "2.0",
-            "id": None,
-            "error": {"code": BRIDGE_ERROR, "message": message},
-        },
-    )
+    await _write_json_line(stdout, error_response(None, JSONRPCError(code=BRIDGE_ERROR, message=message)))
 
 
 async def _write_json_line(stdout: ByteSendStream, payload: dict[str, Any]) -> None:
@@ -438,13 +455,64 @@ def _token_provider_from_cmd(command: str) -> Callable[[], str]:
     return provide_token
 
 
-def _discover_endpoint(origin: str, *, timeout: float) -> str:
+def _normalize_sse_read_timeout(value: float | None) -> float | None:
+    return None if value is None or value <= 0 else value
+
+
+def _headers_with_token(
+    headers: Mapping[str, str],
+    token_provider: TokenProvider | None,
+    *,
+    header_name: str,
+    token_prefix: str,
+) -> dict[str, str]:
+    request_headers = dict(headers)
+    if token_provider is None:
+        return request_headers
+    token = token_provider()
+    if inspect.isawaitable(token):
+        msg = "--discover requires a synchronous bearer token provider."
+        raise click.ClickException(msg)
+    request_headers[header_name] = f"{token_prefix}{token}"
+    return request_headers
+
+
+def _discover_endpoint(
+    origin: str,
+    *,
+    headers: Mapping[str, str],
+    token_provider: TokenProvider | None,
+    header_name: str,
+    token_prefix: str,
+    timeout: float,
+) -> str:
     url = httpx.URL(origin)
     root = f"{url.scheme}://{url.netloc.decode()}"
     manifest_url = f"{root}/.well-known/mcp-server.json"
-    response = httpx.get(manifest_url, timeout=timeout, follow_redirects=True)
-    response.raise_for_status()
-    endpoint = response.json().get("endpoints", {}).get("mcp")
+    try:
+        response = httpx.get(
+            manifest_url,
+            headers=_headers_with_token(
+                headers,
+                token_provider,
+                header_name=header_name,
+                token_prefix=token_prefix,
+            ),
+            timeout=timeout,
+            follow_redirects=True,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        msg = f"Failed to fetch MCP server manifest at {manifest_url}: {exc}"
+        raise click.ClickException(msg) from exc
+
+    try:
+        manifest = decode_json(response.content)
+    except Exception as exc:
+        msg = f"Failed to decode MCP server manifest at {manifest_url}: {exc}"
+        raise click.ClickException(msg) from exc
+
+    endpoint = manifest.get("endpoints", {}).get("mcp") if isinstance(manifest, dict) else None
     if not isinstance(endpoint, str) or not endpoint:
         msg = f"{manifest_url} did not include endpoints.mcp"
         raise click.ClickException(msg)
@@ -456,11 +524,22 @@ def _discover_endpoint(origin: str, *, timeout: float) -> str:
 @click.option("--header", "header_values", multiple=True, help="Static HTTP header as 'Name: value'.")
 @click.option("--bearer-env", help="Environment variable containing the bearer token.")
 @click.option("--bearer-cmd", help="Command whose stdout returns the bearer token.")
-@click.option("--header-name", default="Authorization", show_default=True, help="Header used for bearer tokens.")
 @click.option(
-    "--token-prefix", default=DEFAULT_TOKEN_PREFIX, show_default=True, help="Prefix prepended to bearer token values."
+    "--header-name", default=DEFAULT_AUTH_HEADER_NAME, show_default=True, help="Header used for bearer tokens."
 )
-@click.option("--timeout", default=30.0, show_default=True, type=float, help="HTTP timeout in seconds.")
+@click.option(
+    "--token-prefix", default=BEARER_TOKEN_PREFIX, show_default=True, help="Prefix prepended to bearer token values."
+)
+@click.option(
+    "--timeout", default=30.0, show_default=True, type=float, help="HTTP connect/write/pool timeout in seconds."
+)
+@click.option(
+    "--sse-read-timeout",
+    default=300.0,
+    show_default=True,
+    type=float,
+    help="SSE stream read timeout in seconds. Use 0 for no quiet-period timeout.",
+)
 @click.option("--discover", is_flag=True, help="Resolve the endpoint from /.well-known/mcp-server.json.")
 def bridge_command(
     endpoint: str,
@@ -470,6 +549,7 @@ def bridge_command(
     header_name: str,
     token_prefix: str,
     timeout: float,
+    sse_read_timeout: float,
     discover: bool,
 ) -> None:
     """Proxy local stdio JSON-RPC to a remote MCP Streamable HTTP endpoint."""
@@ -484,7 +564,23 @@ def bridge_command(
     elif bearer_cmd:
         token_provider = _token_provider_from_cmd(bearer_cmd)
 
-    resolved_endpoint = _discover_endpoint(endpoint, timeout=timeout) if discover else endpoint
+    try:
+        _load_event_source()
+    except MissingDependencyError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    resolved_endpoint = (
+        _discover_endpoint(
+            endpoint,
+            headers=headers,
+            token_provider=token_provider,
+            header_name=header_name,
+            token_prefix=token_prefix,
+            timeout=timeout,
+        )
+        if discover
+        else endpoint
+    )
     exit_code = run_bridge(
         endpoint=resolved_endpoint,
         headers=headers,
@@ -492,5 +588,6 @@ def bridge_command(
         header_name=header_name,
         token_prefix=token_prefix,
         timeout=timeout,
+        sse_read_timeout=_normalize_sse_read_timeout(sse_read_timeout),
     )
     raise ClickExit(exit_code)

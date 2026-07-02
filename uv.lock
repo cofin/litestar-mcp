@@ -1481,6 +1481,7 @@ name = "litestar-mcp"
 version = "0.10.0"
 source = { editable = "." }
 dependencies = [
+    { name = "anyio" },
     { name = "httpx" },
     { name = "litestar", extra = ["jwt"] },
     { name = "typing-extensions" },
@@ -1612,6 +1613,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anyio", specifier = ">=4.1" },
     { name = "httpx", specifier = ">=0.24.1" },
     { name = "httpx-sse", marker = "extra == 'bridge'", specifier = ">=0.4.0" },
     { name = "litestar", extras = ["jwt"], specifier = ">=2.23.0" },

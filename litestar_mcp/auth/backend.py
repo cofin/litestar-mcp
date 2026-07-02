@@ -31,6 +31,8 @@ if TYPE_CHECKING:
     from litestar_mcp.auth.oidc import JWKSCache
 
 __all__ = (
+    "BEARER_TOKEN_PREFIX",
+    "DEFAULT_AUTH_HEADER_NAME",
     "MCPAuthBackend",
     "MCPAuthConfig",
     "OIDCProviderConfig",
@@ -44,8 +46,10 @@ UserResolver = Callable[["dict[str, Any]", Any], "Awaitable[Any] | Any"]
 TokenValidatorFn = Callable[[str], "Awaitable[dict[str, Any] | None]"]
 """Async callable ``(token) -> claims | None``; returning ``None`` declines the token."""
 
-_BEARER_PREFIX = "Bearer "
-_DEFAULT_HEADER_NAME = "Authorization"
+BEARER_TOKEN_PREFIX = "Bearer "  # noqa: S105 — bearer scheme prefix, not a credential
+DEFAULT_AUTH_HEADER_NAME = "Authorization"
+_BEARER_PREFIX = BEARER_TOKEN_PREFIX
+_DEFAULT_HEADER_NAME = DEFAULT_AUTH_HEADER_NAME
 _INVALID_TOKEN_MSG = "Invalid token"  # noqa: S105 — auth failure message, not a credential
 
 

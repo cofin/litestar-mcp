@@ -10,6 +10,7 @@ from litestar.cli._utils import LitestarGroup
 from rich.console import Console
 from rich.json import JSON
 
+from litestar_mcp.bridge import bridge_command
 from litestar_mcp.executor import NotCallableInCLIContextError, execute_tool
 from litestar_mcp.utils import get_handler_function, render_description
 from litestar_mcp.utils.handler_signature import iter_dependency_input_parameters
@@ -279,7 +280,5 @@ mcp_group.add_command(ToolExecutor(name="run", help="Run a discovered MCP tool b
 def litestar_mcp_group() -> "None":
     """Standalone Litestar MCP commands."""
 
-
-from litestar_mcp.bridge import bridge_command  # noqa: E402
 
 litestar_mcp_group.add_command(bridge_command)

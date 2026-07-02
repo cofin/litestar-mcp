@@ -184,7 +184,7 @@ def _build_standalone_route_kwargs(
 
 
 def _standalone_internal_path(base_path: "str", *parts: "str") -> "str":
-    return "/".join((base_path.rstrip("/") or "", "internal", *parts))
+    return "/".join((base_path.rstrip("/"), "internal", *parts))
 
 
 def _collect_route_handler_kwargs(values: "dict[str, Any]") -> "dict[str, Any]":

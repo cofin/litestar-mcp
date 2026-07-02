@@ -107,6 +107,14 @@ command strings are split with POSIX-style shell parsing. For complex
 Windows commands, wrap token lookup in a small script and pass that script
 path as ``--bearer-cmd``.
 
+Timeouts
+========
+
+``--timeout`` bounds ordinary HTTP connection setup, writes, and pool
+acquisition. Long-lived SSE streams use ``--sse-read-timeout`` instead;
+the default allows 300 seconds between server events. Set
+``--sse-read-timeout 0`` to disable quiet-period timeouts for idle streams.
+
 Identity Boundary
 =================
 
