@@ -47,10 +47,11 @@ The value you compare against requested object IDs depends on the transport:
   request scope for local process use. Resolve credentials from the host
   environment, OS profile, or another local source before creating that
   context.
-- **Stdio bridge to a remote MCP server**: the local bridge is only a
-  transport adapter. It must not invent server-side identity. The remote HTTP
-  MCP server still authenticates the caller and supplies the identity used by
-  guards and dependencies.
+- **Stdio bridge to a target Litestar MCP endpoint**:
+  ``litestar --app my_app:app mcp bridge`` forwards stdio JSON-RPC to the
+  app's HTTP MCP endpoint. Pass headers or bearer tokens through the bridge;
+  the target Litestar app authenticates the request before guards and
+  dependencies use the identity.
 
 Do not trust client-supplied user, tenant, workspace, project, or file IDs as
 proof of authorization. Treat them as selectors that must be checked against

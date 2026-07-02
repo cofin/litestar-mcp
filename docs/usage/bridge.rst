@@ -2,83 +2,140 @@
 Stdio Bridge
 ============
 
-Use the bridge when an MCP client only supports local stdio servers but
-your Litestar MCP server is available over Streamable HTTP.
+Use the bridge when an MCP client only supports local stdio servers and your
+Litestar app exposes MCP over Streamable HTTP.
+
+Run the bridge through Litestar's app-bound CLI:
+
+.. code-block:: bash
+
+    litestar --app my_app:app mcp bridge
+
+The command loads the same app object as the rest of the Litestar CLI, finds
+the installed :class:`~litestar_mcp.LitestarMCP` plugin, and proxies local
+stdio JSON-RPC to that app's MCP endpoint.
 
 The bridge is a thin transport adapter:
 
 - it reads JSON-RPC messages from local stdin;
-- forwards them to the remote ``POST /mcp`` Streamable HTTP endpoint;
-- opens the remote ``GET /mcp`` SSE stream after
-  ``notifications/initialized``;
+- forwards them to the target ``POST`` Streamable HTTP endpoint;
+- opens the target ``GET`` SSE stream after ``notifications/initialized``;
 - writes remote JSON-RPC messages back to local stdout;
-- sends ``DELETE /mcp`` during shutdown when the server issued a session id.
+- sends ``DELETE`` during shutdown when the server issued a session id.
 
 It does not depend on the official ``mcp`` Python SDK. The base package
 already depends on ``httpx``; installing the bridge extra adds only
 ``httpx-sse``.
 
 Install
-========
+=======
 
-For an installed project:
+Install the bridge extra in the same environment as your Litestar app:
 
 .. code-block:: bash
 
     pip install "litestar-mcp[bridge]"
 
-For one-off client configuration, run it through ``uvx``:
+or:
 
 .. code-block:: bash
 
-    uvx --from "litestar-mcp[bridge]" litestar-mcp bridge \
-        --endpoint https://api.example.com/mcp
+    uv add "litestar-mcp[bridge]"
 
-If the server publishes ``/.well-known/mcp-server.json``, pass any URL on
-the same origin with ``--discover`` and the bridge will read
-``endpoints.mcp`` from the manifest:
+Default Endpoint
+================
+
+By default, ``litestar --app my_app:app mcp bridge`` targets:
+
+.. code-block:: text
+
+    http://127.0.0.1:8000{MCPConfig.base_path}
+
+If ``LITESTAR_HOST`` or ``LITESTAR_PORT`` are set, the command uses those
+values for the origin. The path always comes from the loaded app's
+``LitestarMCP`` plugin configuration:
+
+.. literalinclude:: /examples/snippets/bridge_custom_base_path.py
+    :language: python
+    :caption: ``docs/examples/snippets/bridge_custom_base_path.py``
+    :start-after: # start-example
+    :end-before: # end-example
+    :dedent:
+
+With that app, the default bridge endpoint is
+``http://127.0.0.1:8000/api/mcp``.
+
+Use ``--base-url`` to change the origin while preserving the configured MCP
+base path:
 
 .. code-block:: bash
 
-    uvx --from "litestar-mcp[bridge]" litestar-mcp bridge \
-        --endpoint https://api.example.com \
-        --discover
+    litestar --app my_app:app mcp bridge \
+        --base-url https://app.example.com
+
+Use ``--endpoint`` only when you need a full URL override:
+
+.. code-block:: bash
+
+    litestar --app my_app:app mcp bridge \
+        --endpoint https://app.example.com/custom/mcp
+
+``--endpoint`` wins over ``--base-url`` and ``MCPConfig.base_path``.
 
 Client Configuration
 ====================
 
-For stdio-only clients, configure the local command as the MCP server:
+For stdio-only clients, configure the Litestar CLI command as the MCP server.
+Run it from an environment where your application package and
+``litestar-mcp[bridge]`` are installed:
 
 .. code-block:: json
 
     {
       "mcpServers": {
-        "remote-litestar": {
-          "command": "uvx",
+        "my-litestar-app": {
+          "command": "litestar",
           "args": [
-            "--from",
-            "litestar-mcp[bridge]",
-            "litestar-mcp",
+            "--app",
+            "my_app:app",
+            "mcp",
             "bridge",
-            "--endpoint",
-            "https://api.example.com/mcp"
+            "--base-url",
+            "http://127.0.0.1:8000"
           ]
         }
       }
     }
 
-If the client supports Streamable HTTP directly, prefer the remote
-``https://api.example.com/mcp`` URL instead of the bridge.
+If the client supports Streamable HTTP directly, prefer the app's HTTP MCP
+URL instead of the bridge.
+
+Discovery
+=========
+
+If the running app publishes ``/.well-known/mcp-server.json``, ``--discover``
+can resolve the final endpoint from ``endpoints.mcp``:
+
+.. code-block:: bash
+
+    litestar --app my_app:app mcp bridge \
+        --base-url https://app.example.com \
+        --discover
+
+Discovery uses the base URL or explicit endpoint origin for the manifest
+request, then bridges to the manifest's ``endpoints.mcp`` value.
 
 Headers and Bearer Tokens
 =========================
+
+The bridge does not infer credentials from application auth metadata. Pass
+headers and token sources explicitly.
 
 Static headers can be passed more than once:
 
 .. code-block:: bash
 
-    litestar-mcp bridge \
-        --endpoint https://api.example.com/mcp \
+    litestar --app my_app:app mcp bridge \
         --header "X-Tenant: acme" \
         --header "X-Trace-Source: mcp-client"
 
@@ -86,8 +143,7 @@ For bearer tokens stored in an environment variable:
 
 .. code-block:: bash
 
-    litestar-mcp bridge \
-        --endpoint https://api.example.com/mcp \
+    litestar --app my_app:app mcp bridge \
         --bearer-env MCP_TOKEN
 
 For platforms that expect the token in a non-``Authorization`` header,
@@ -95,8 +151,7 @@ override the header name and prefix:
 
 .. code-block:: bash
 
-    litestar-mcp bridge \
-        --endpoint https://api.example.com/mcp \
+    litestar --app my_app:app mcp bridge \
         --bearer-env IAP_JWT \
         --header-name X-Goog-IAP-JWT-Assertion \
         --token-prefix ""
@@ -115,10 +170,28 @@ acquisition. Long-lived SSE streams use ``--sse-read-timeout`` instead;
 the default allows 300 seconds between server events. Set
 ``--sse-read-timeout 0`` to disable quiet-period timeouts for idle streams.
 
+Memory Bounds
+=============
+
+The bridge does not retain message history. It reads stdin one
+newline-delimited JSON-RPC message at a time and streams server responses as
+JSON or SSE events.
+
+To prevent a malformed client from growing memory indefinitely by sending a
+message without a newline, the bridge caps each stdin JSON-RPC message at
+16 MiB by default:
+
+.. code-block:: bash
+
+    litestar --app my_app:app mcp bridge \
+        --max-message-size 16777216
+
+Set ``--max-message-size -1`` to disable this per-message cap.
+
 Identity Boundary
 =================
 
-The remote Litestar app remains the authorization boundary. The bridge can
+The target Litestar app remains the authorization boundary. The bridge can
 attach headers and bearer tokens, but it cannot prove domain ownership or
 enforce object-level permissions locally. Put those checks in ordinary
 Litestar guards, authentication middleware, or dependencies as described in
@@ -127,11 +200,9 @@ Litestar guards, authentication middleware, or dependencies as described in
 Windows Support
 ===============
 
-No ``pywin32`` dependency is required. The bridge uses the stdin/stdout
-pipes inherited from the MCP client and standard-library subprocess support
-only for optional token lookup. ``pywin32`` is useful for SDKs that spawn
-and manage child stdio server processes on Windows; this bridge does not do
-that.
+On Windows, the bridge uses inherited stdin/stdout pipes. For token lookup,
+prefer ``--bearer-env`` or wrap platform-specific logic in a small script and
+pass it with ``--bearer-cmd``.
 
 Troubleshooting
 ===============
@@ -141,9 +212,9 @@ Troubleshooting
 
 ``Unexpected Streamable HTTP content type``
     The server returned neither JSON nor ``text/event-stream``. Check the
-    endpoint URL and make sure the remote server is serving the MCP
-    Streamable HTTP route.
+    endpoint URL and make sure the target app is serving the MCP Streamable
+    HTTP route.
 
 ``401 Unauthorized``
     The bridge retries once with a fresh token. If the second request still
-    fails, check the bearer source and remote auth middleware.
+    fails, check the bearer source and target auth middleware.

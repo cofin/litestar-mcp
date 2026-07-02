@@ -2,7 +2,7 @@
 
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timedelta, timezone
-from typing import Any, Final
+from typing import Any, Final, cast
 
 import jwt
 import msgspec
@@ -187,16 +187,15 @@ def build_login_controller(
 
 def _load_jwks_signing_key(token: "str", jwks: "dict[str, Any]") -> "Any":
     """Pick the JWKS entry matching the token's ``kid`` and return a key object."""
-    import json as _json
-
     from jwt import algorithms as jwt_algorithms
+    from litestar.serialization import encode_json
 
     header = jwt.get_unverified_header(token)
     key_id = header.get("kid")
     for candidate in jwks.get("keys", []):
         if key_id is None or candidate.get("kid") == key_id:
             algorithm = jwt_algorithms.get_default_algorithms()[DEFAULT_IAP_ALGORITHM]
-            return algorithm.from_jwk(_json.dumps(candidate))
+            return algorithm.from_jwk(encode_json(candidate).decode("utf-8"))
     msg = "No matching IAP signing key"
     raise ValueError(msg)
 
@@ -265,7 +264,7 @@ def build_iap_header_alias_middleware(app: "ASGIApp") -> "ASGIApp":
 
         if iap_value is not None and not has_authorization:
             headers.append((b"authorization", b"Bearer " + iap_value))
-            new_scope = dict(scope)
+            new_scope = cast("Scope", dict(scope))
             new_scope["headers"] = headers
             await app(new_scope, receive, send)
             return

@@ -31,7 +31,7 @@ single file with the declared deps:
 
 .. code-block:: bash
 
-    uv run https://raw.githubusercontent.com/litestar-org/litestar-mcp/main/docs/examples/notes/sqlspec/no_auth.py
+    uv run https://raw.githubusercontent.com/cofin/litestar-mcp/main/docs/examples/notes/sqlspec/no_auth.py
 
 Each variant binds the Litestar app to ``http://127.0.0.1:8000`` by
 default. MCP clients can point at ``http://127.0.0.1:8000/mcp`` as
@@ -130,26 +130,22 @@ A bare ``curl`` probe confirms the transport is live:
         -H 'content-type: application/json' \
         -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{}}}' | jq .
 
-When to use ``uvx --from litestar-mcp``
-=======================================
+CLI Commands
+============
 
-``uvx --from litestar-mcp <command>`` still works for the installed-tool
-use case — e.g. running a packaged CLI or module that ships with the
-distribution. For the reference examples, prefer the single-file
-``uv run docs/examples/...`` form above: the PEP 723 block is the
-authoritative dependency list and removes the ``--with`` book-keeping.
+Run reference examples with ``uv run docs/examples/...`` so ``uv`` uses
+each file's PEP 723 metadata.
 
-For stdio-only MCP clients that need to reach a remote Streamable HTTP
-server, use the bridge extra instead:
+For stdio-only MCP clients, run the app-bound bridge from the application
+environment:
 
 .. code-block:: bash
 
-    uvx --from "litestar-mcp[bridge]" litestar-mcp bridge \
-        --endpoint https://api.example.com/mcp
+    uv run litestar --app my_app:app mcp bridge
 
 .. seealso::
 
     - :doc:`reference_examples` — the family chooser and variant matrix.
-    - :doc:`bridge` — stdio-to-Streamable-HTTP bridge usage.
+    - :doc:`bridge` — Litestar CLI stdio bridge usage.
     - :doc:`auth` — :class:`~litestar_mcp.auth.MCPAuthConfig` reference.
     - :doc:`deployment` — sticky routing and multi-replica notes.

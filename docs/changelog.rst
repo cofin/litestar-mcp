@@ -11,18 +11,24 @@ Recent Updates
 
 .. changelog:: 0.10.0
 
-    .. change:: add a stdio bridge for remote Streamable HTTP servers
+    .. change:: add a Litestar CLI stdio bridge for Streamable HTTP
         :type: feature
         :pr: 79
 
-        Adds ``litestar-mcp bridge`` and ``litestar-mcp[bridge]`` for
-        stdio-only MCP clients that need to reach a remote Streamable HTTP
-        server. The bridge is implemented directly on ``httpx`` and
-        optional ``httpx-sse`` and does not depend on the official ``mcp``
-        Python SDK or its server-side transport dependencies. It supports
-        explicit endpoints, discovery from ``/.well-known/mcp-server.json``,
-        static headers, token providers, remote stream errors, and session
-        cleanup.
+        Adds ``litestar --app my_app:app mcp bridge`` and the
+        ``litestar-mcp[bridge]`` extra for stdio-only MCP clients that need
+        to reach a running Litestar MCP app. The command is registered by
+        the ``LitestarMCP`` CLI plugin, defaults to the loaded app's
+        ``MCPConfig.base_path``, and supports base URL overrides, explicit
+        endpoints, discovery from ``/.well-known/mcp-server.json``, static
+        headers, token providers, stream errors, and session cleanup.
+        It shields stdio output from accidental application ``print`` calls,
+        reports unreachable endpoints with a bridge-owned error message, and
+        caps each stdin JSON-RPC message at 16 MiB by default, configurable
+        with ``--max-message-size``.
+        The bridge is implemented directly on ``httpx`` and optional
+        ``httpx-sse`` and does not depend on the official ``mcp`` Python SDK
+        or its server-side transport dependencies.
 
     .. change:: support authenticated stdio principals
         :type: feature

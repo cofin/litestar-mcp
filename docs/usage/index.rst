@@ -77,7 +77,7 @@ examples drawn from :mod:`docs.examples`.
         :link: bridge
         :link-type: doc
 
-        Connect stdio-only MCP clients to remote Streamable HTTP servers.
+        Connect stdio-only MCP clients to the loaded Litestar app's MCP endpoint.
 
     .. grid-item-card:: Framework Integration
         :link: framework_integration
@@ -90,7 +90,7 @@ examples drawn from :mod:`docs.examples`.
         :link-type: doc
 
         The ``docs/examples/notes/`` family chooser: Advanced Alchemy
-        vs SQLSpec, no-auth/JWT/Cloud Run/IAP, with ``uvx`` run-first
+        vs SQLSpec, no-auth/JWT/Cloud Run/IAP, with single-file ``uv run``
         guidance.
 
     .. grid-item-card:: Deployment

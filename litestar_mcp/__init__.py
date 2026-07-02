@@ -25,7 +25,12 @@ from litestar_mcp.auth import (
     create_oidc_validator,
 )
 from litestar_mcp.config import AfterToolCallHook, BeforeToolCallHook, MCPConfig, MCPOptKeys
-from litestar_mcp.exceptions import LitestarMCPError, MissingDependencyError
+from litestar_mcp.exceptions import (
+    BridgeConnectionError,
+    BridgeMessageTooLargeError,
+    LitestarMCPError,
+    MissingDependencyError,
+)
 from litestar_mcp.plugin import LitestarMCP
 from litestar_mcp.routes import MCPController
 from litestar_mcp.utils import mcp_prompt, mcp_resource, mcp_tool
@@ -34,6 +39,8 @@ __all__ = (
     "MCP",
     "AfterToolCallHook",
     "BeforeToolCallHook",
+    "BridgeConnectionError",
+    "BridgeMessageTooLargeError",
     "DefaultJWKSCache",
     "JWKSCache",
     "LitestarMCP",

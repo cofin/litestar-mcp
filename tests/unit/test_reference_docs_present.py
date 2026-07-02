@@ -57,7 +57,8 @@ def test_reference_examples_links_both_families() -> "None":
 def test_uvx_guide_contains_template_and_pitfalls() -> "None":
     text = (USAGE_DIR / "uvx_guide.rst").read_text(encoding="utf-8")
     assert "uvx" in text
-    assert "--from litestar-mcp" in text, "uvx_guide.rst must show the uvx --from template"
+    assert "uv run docs/examples" in text, "uvx_guide.rst must show the uv run example template"
+    assert "litestar --app my_app:app mcp bridge" in text, "uvx_guide.rst must show the app-bound bridge command"
     assert "Common pitfalls" in text or "Common Pitfalls" in text
 
 

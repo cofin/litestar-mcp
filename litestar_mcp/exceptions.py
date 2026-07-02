@@ -1,10 +1,27 @@
 """Litestar MCP exceptions."""
 
-__all__ = ("LitestarMCPError", "MissingDependencyError")
+__all__ = ("BridgeConnectionError", "BridgeMessageTooLargeError", "LitestarMCPError", "MissingDependencyError")
 
 
 class LitestarMCPError(Exception):
     """Base exception for Litestar MCP."""
+
+
+class BridgeConnectionError(LitestarMCPError):
+    """Raised when the stdio bridge cannot connect to its target endpoint."""
+
+    def __init__(self, endpoint: str) -> None:
+        super().__init__(
+            f"Could not connect to Litestar MCP endpoint at {endpoint}. "
+            "Make sure the Litestar app is running and reachable, or pass --base-url/--endpoint with the correct URL.",
+        )
+
+
+class BridgeMessageTooLargeError(LitestarMCPError, ValueError):
+    """Raised when a stdio JSON-RPC frame exceeds the bridge line limit."""
+
+    def __init__(self, max_bytes: int) -> None:
+        super().__init__(f"Stdio JSON-RPC message exceeded the bridge limit of {max_bytes} bytes.")
 
 
 class MissingDependencyError(LitestarMCPError, ImportError):

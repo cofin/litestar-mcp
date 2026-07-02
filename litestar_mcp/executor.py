@@ -27,12 +27,11 @@ from time import perf_counter
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlencode
 
-import msgspec
 from litestar import Litestar, Request
 from litestar._asgi.routing_trie.traversal import parse_path_params
 from litestar.exceptions import ImproperlyConfiguredException, SerializationException
 from litestar.response import Response
-from litestar.serialization import decode_json
+from litestar.serialization import decode_json, encode_json
 from litestar.types.empty import Empty
 from litestar.utils.sync import ensure_async_callable
 
@@ -239,6 +238,13 @@ async def execute_tool(
         raise error_result
     await run_after_tool_call(result=content, exception=None)
     return content
+
+
+# Generic alias used by non-tool MCP primitives (resources, prompts) that
+# dispatch through the same Litestar pipeline. Keeping a thin alias instead
+# of a single name avoids implying that the prompt/resource path is
+# semantically a "tool call" — the underlying machinery is the same.
+execute_handler = execute_tool
 
 
 async def _run_handler_pipeline(
@@ -642,7 +648,7 @@ def _split_tool_args(
         else:
             body_payload = {k: v for k, v in remaining.items() if k not in query_payload}
 
-    body = msgspec.json.encode(body_payload) if body_payload else b""
+    body = encode_json(body_payload, serializer=handler.default_serializer) if body_payload else b""
     return path_values, query_payload, body
 
 
@@ -761,10 +767,3 @@ async def _open_stdio_dishka_container(app: "Litestar", scope: "dict[str, Any]",
         return
     child = await stack.enter_async_context(container_factory())
     scope.setdefault("state", {})["dishka_container"] = child
-
-
-# Generic alias used by non-tool MCP primitives (resources, prompts) that
-# dispatch through the same Litestar pipeline. Keeping a thin alias instead
-# of a single name avoids implying that the prompt/resource path is
-# semantically a "tool call" — the underlying machinery is the same.
-execute_handler = execute_tool
