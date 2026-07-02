@@ -66,6 +66,19 @@ examples drawn from :mod:`docs.examples`.
         Bearer-token validation, OIDC providers, and mapping claims to
         users.
 
+    .. grid-item-card:: Security
+        :link: security
+        :link-type: doc
+
+        Domain authorization, task ownership boundaries, identity sources,
+        and file/path argument guidance.
+
+    .. grid-item-card:: Stdio Bridge
+        :link: bridge
+        :link-type: doc
+
+        Connect stdio-only MCP clients to remote Streamable HTTP servers.
+
     .. grid-item-card:: Framework Integration
         :link: framework_integration
         :link-type: doc
@@ -105,6 +118,8 @@ examples drawn from :mod:`docs.examples`.
     tools
     discovery
     auth
+    security
+    bridge
     framework_integration
     reference_examples
     uvx_guide

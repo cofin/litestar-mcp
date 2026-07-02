@@ -17,7 +17,13 @@ from litestar_mcp.config import MCPConfig
 from litestar_mcp.plugin import LitestarMCP
 
 
-def _rpc(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None) -> "dict[str, Any]":
+def _rpc(
+    client: "TestClient[Any]",
+    method: "str",
+    params: "dict[str, Any] | None" = None,
+    *,
+    base_path: "str" = "/mcp",
+) -> "dict[str, Any]":
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
     if params is not None:
         body["params"] = params
@@ -25,18 +31,18 @@ def _rpc(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | Non
     if method != "initialize":
         sid = getattr(client, "_mcp_session", "")
         if not sid:
-            init = _rpc(client, "initialize")
+            init = _rpc(client, "initialize", base_path=base_path)
             sid = init.get("_session_id", "")
             if not sid:
                 sid = getattr(client, "_mcp_session", "")
         if sid:
             headers["Mcp-Session-Id"] = str(sid)
-    response = client.post("/mcp", json=body, headers=headers)
+    response = client.post(base_path, json=body, headers=headers)
     result = response.json()
     sid = response.headers.get("mcp-session-id")
     if method == "initialize" and sid:
         client.post(
-            "/mcp",
+            base_path,
             json={"jsonrpc": "2.0", "method": "notifications/initialized"},
             headers={"Mcp-Session-Id": sid},
         )
@@ -145,6 +151,55 @@ def test_standalone_internal_tool_route_rejects_direct_http() -> "None":
     assert direct.status_code == 403
     assert via_mcp["result"]["isError"] is False
     assert via_mcp["result"]["content"][0]["text"] == "hello"
+
+
+def test_standalone_internal_routes_follow_custom_base_path() -> "None":
+    mcp = MCP(name="test-mcp", config=MCPConfig(base_path="/api/mcp"))
+
+    @mcp.tool(name="echo", sync_to_thread=False)
+    def echo(message: "str") -> "str":
+        return message
+
+    @mcp.resource(uri="file://foo/bar", name="foo", sync_to_thread=False)
+    def read_foo() -> "str":
+        return "foo-content"
+
+    @mcp.prompt(name="greet", sync_to_thread=False)
+    def greet(name: "str") -> "str":
+        return f"Hello {name}!"
+
+    with TestClient(app=mcp.app) as client:
+        tool_direct = client.post("/api/mcp/internal/tools/echo", json={"message": "hello"})
+        resource_direct = client.get("/api/mcp/internal/resources/foo/bar")
+        prompt_direct = client.get("/api/mcp/internal/prompts/greet")
+
+        old_tool_direct = client.post("/mcp/internal/tools/echo", json={"message": "hello"})
+        old_resource_direct = client.get("/mcp/internal/resources/foo/bar")
+        old_prompt_direct = client.get("/mcp/internal/prompts/greet")
+
+        tool_call = _rpc(
+            client,
+            "tools/call",
+            {"name": "echo", "arguments": {"message": "hello"}},
+            base_path="/api/mcp",
+        )
+        resource_read = _rpc(client, "resources/read", {"uri": "file://foo/bar"}, base_path="/api/mcp")
+        prompt_get = _rpc(
+            client,
+            "prompts/get",
+            {"name": "greet", "arguments": {"name": "Alice"}},
+            base_path="/api/mcp",
+        )
+
+    assert tool_direct.status_code == 403
+    assert resource_direct.status_code == 403
+    assert prompt_direct.status_code == 403
+    assert old_tool_direct.status_code in (404, 405)
+    assert old_resource_direct.status_code in (404, 405)
+    assert old_prompt_direct.status_code in (404, 405)
+    assert tool_call["result"]["content"][0]["text"] == "hello"
+    assert json.loads(resource_read["result"]["contents"][0]["text"]) == "foo-content"
+    assert prompt_get["result"]["messages"][0]["content"]["text"] == "Hello Alice!"
 
 
 def test_standalone_decorator_signatures_mirror_litestar_route_kwargs() -> "None":

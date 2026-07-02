@@ -139,8 +139,17 @@ distribution. For the reference examples, prefer the single-file
 ``uv run docs/examples/...`` form above: the PEP 723 block is the
 authoritative dependency list and removes the ``--with`` book-keeping.
 
+For stdio-only MCP clients that need to reach a remote Streamable HTTP
+server, use the bridge extra instead:
+
+.. code-block:: bash
+
+    uvx --from "litestar-mcp[bridge]" litestar-mcp bridge \
+        --endpoint https://api.example.com/mcp
+
 .. seealso::
 
     - :doc:`reference_examples` — the family chooser and variant matrix.
+    - :doc:`bridge` — stdio-to-Streamable-HTTP bridge usage.
     - :doc:`auth` — :class:`~litestar_mcp.auth.MCPAuthConfig` reference.
     - :doc:`deployment` — sticky routing and multi-replica notes.
