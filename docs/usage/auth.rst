@@ -8,6 +8,10 @@ Google IAP, custom token validators) get MCP authentication for free —
 the middleware populates ``request.user`` and ``request.auth`` before
 any route handler runs, including MCP tool handlers.
 
+Authentication only establishes caller identity. See :doc:`security` for
+object-level authorization patterns, transport identity boundaries, and safe
+file/path argument guidance.
+
 :class:`~litestar_mcp.auth.MCPAuthConfig` is metadata-only: it
 describes the auth surface advertised by
 ``/.well-known/oauth-protected-resource`` so MCP clients can discover

@@ -46,6 +46,12 @@ Homepage = "https://cofin.github.io/litestar-mcp/latest/"
 Issue = "https://github.com/cofin/litestar-mcp/issues/"
 Source = "https://github.com/cofin/litestar-mcp"
 
+[project.optional-dependencies]
+bridge = ["httpx-sse>=0.4.0"]
+
+[project.scripts]
+litestar-mcp = "litestar_mcp.cli:litestar_mcp_group"
+
 [project.entry-points."pygments.styles"]
 litestar-mcp-dark = "tools.sphinx_ext.pygments_styles:LitestarMcpDarkStyle"
 litestar-mcp-light = "tools.sphinx_ext.pygments_styles:LitestarMcpLightStyle"
@@ -92,6 +98,7 @@ lint = [
     "tomli>=2.4.1",
 ]
 test = [
+    "httpx-sse>=0.4.0",
     "litestar[standard,jwt]",
     "pytest>=7.4.1",
     "pytest-cov",

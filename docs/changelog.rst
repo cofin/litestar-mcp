@@ -9,6 +9,38 @@ notes, and important protocol fixes.
 Recent Updates
 ==============
 
+.. changelog:: 0.10.0
+    :date: 2026-07-02
+
+    .. change:: add a stdio bridge for remote Streamable HTTP servers
+        :type: feature
+
+        Adds ``litestar-mcp bridge`` and ``litestar-mcp[bridge]`` for
+        stdio-only MCP clients that need to reach a remote Streamable HTTP
+        server. The bridge is implemented directly on ``httpx`` and
+        ``httpx-sse`` and does not depend on the official ``mcp`` Python SDK
+        or its server-side transport dependencies.
+
+    .. change:: honor custom base paths in standalone internal routes
+        :type: bugfix
+
+        Standalone ``MCP.tool()``, ``MCP.resource()``, and ``MCP.prompt()``
+        internal dispatch routes now follow ``MCPConfig.base_path`` instead
+        of hard-coding ``/mcp/internal/...``.
+
+    .. change:: return the correct SSE content type for GET streams
+        :type: bugfix
+
+        ``GET /mcp`` now advertises ``text/event-stream`` so strict SSE
+        clients accept the Streamable HTTP event stream.
+
+    .. change:: document authorization boundaries for MCP tools
+        :type: misc
+
+        Adds security guidance for domain authorization, bridge identity
+        boundaries, and safe file/path arguments.
+
+
 .. changelog:: 0.7.3
     :date: 2026-06-24
 

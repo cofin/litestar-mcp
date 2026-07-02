@@ -183,6 +183,10 @@ def _build_standalone_route_kwargs(
     return route_kwargs
 
 
+def _standalone_internal_path(base_path: "str", *parts: "str") -> "str":
+    return "/".join((base_path.rstrip("/") or "", "internal", *parts))
+
+
 def _collect_route_handler_kwargs(values: "dict[str, Any]") -> "dict[str, Any]":
     """Collect Litestar route-handler kwargs from a standalone decorator frame."""
     route_kwargs = {key: values[key] for key in _ROUTE_HANDLER_KWARG_NAMES}
@@ -433,7 +437,7 @@ class MCP:
 
         def decorator(fn: "Callable[..., Any]") -> "Callable[..., Any]":
             tool_name = name or fn.__name__
-            path = f"/mcp/internal/tools/{tool_name}"
+            path = _standalone_internal_path(self.config.base_path, "tools", tool_name)
             opt_keys = self.config.opt_keys
             handler = post(
                 path=path,
@@ -507,7 +511,7 @@ class MCP:
             parsed = urllib.parse.urlparse(uri)
             clean_path = parsed.netloc + parsed.path if parsed.scheme else uri.lstrip("/")
 
-            path = f"/mcp/internal/resources/{clean_path}"
+            path = _standalone_internal_path(self.config.base_path, "resources", clean_path)
             opt_keys = self.config.opt_keys
             handler = get(
                 path=path,
@@ -580,7 +584,7 @@ class MCP:
 
         def decorator(fn: "Callable[..., Any]") -> "Callable[..., Any]":
             prompt_name = name or fn.__name__
-            path = f"/mcp/internal/prompts/{prompt_name}"
+            path = _standalone_internal_path(self.config.base_path, "prompts", prompt_name)
             opt_keys = self.config.opt_keys
             handler = get(
                 path=path,

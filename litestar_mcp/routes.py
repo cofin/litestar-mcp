@@ -163,7 +163,7 @@ def _build_cached_router(
 class MCPController(Controller):
     """MCP JSON-RPC 2.0 Streamable HTTP controller."""
 
-    @get("/", name="mcp_sse", media_type=MediaType.TEXT)
+    @get("/", name="mcp_sse", media_type="text/event-stream")
     async def handle_sse(
         self,
         request: "Request[Any, Any, Any]",

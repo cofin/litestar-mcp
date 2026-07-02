@@ -273,3 +273,13 @@ def _display_result(console: "Console", result: "Any") -> "None":  # pragma: no 
 
 
 mcp_group.add_command(ToolExecutor(name="run", help="Run a discovered MCP tool by name."))  # pragma: no cover
+
+
+@click.group(name="litestar-mcp")
+def litestar_mcp_group() -> "None":
+    """Standalone Litestar MCP commands."""
+
+
+from litestar_mcp.bridge import bridge_command  # noqa: E402
+
+litestar_mcp_group.add_command(bridge_command)
