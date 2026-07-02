@@ -9,11 +9,125 @@ notes, and important protocol fixes.
 Recent Updates
 ==============
 
-.. changelog:: 0.7.3
+.. changelog:: 0.10.0
+
+    .. change:: add a Litestar CLI stdio bridge for Streamable HTTP
+        :type: feature
+        :pr: 79
+
+        Adds ``litestar --app my_app:app mcp bridge`` and the
+        ``litestar-mcp[bridge]`` extra for stdio-only MCP clients that need
+        to reach a running Litestar MCP app. The command is registered by
+        the ``LitestarMCP`` CLI plugin, defaults to the loaded app's
+        ``MCPConfig.base_path``, and supports base URL overrides, explicit
+        endpoints, discovery from ``/.well-known/mcp-server.json``, static
+        headers, token providers, stream errors, and session cleanup.
+        It shields stdio output from accidental application ``print`` calls,
+        reports unreachable endpoints with a bridge-owned error message, and
+        caps each stdin JSON-RPC message at 16 MiB by default, configurable
+        with ``--max-message-size``.
+        The bridge is implemented directly on ``httpx`` and optional
+        ``httpx-sse`` and does not depend on the official ``mcp`` Python SDK
+        or its server-side transport dependencies.
+
+    .. change:: support authenticated stdio principals
+        :type: feature
+        :pr: 76
+        :issue: 74
+
+        Adds public ``MCPStdioContext`` support for
+        ``MCP.run(transport="stdio", stdio_context=...)``. Standalone stdio
+        dispatch now seeds synthetic Litestar scopes with ``user``, ``auth``,
+        copied ``session``, copied ``state``, and a resolved ``owner_id`` so
+        tools, resources, prompts, guards, and task execution can run on
+        behalf of a process-local principal.
+
+    .. change:: allow custom auth headers and token prefixes
+        :type: feature
+        :pr: 77
+        :issue: 75
+
+        ``MCPAuthBackend`` now accepts ``header_name`` and ``token_prefix``
+        options. Existing ``Authorization: Bearer`` deployments keep the
+        default behavior, while identity proxy deployments such as Google
+        Cloud IAP and AWS ALB OIDC can validate raw or custom-prefixed JWTs
+        from their provider-specific headers.
+
+    .. change:: honor custom base paths in standalone internal routes
+        :type: bugfix
+        :pr: 79
+
+        Standalone ``MCP.tool()``, ``MCP.resource()``, and ``MCP.prompt()``
+        internal dispatch routes now follow ``MCPConfig.base_path`` instead
+        of hard-coding ``/mcp/internal/...``.
+
+    .. change:: return the correct SSE content type for GET streams
+        :type: bugfix
+        :pr: 79
+
+        ``GET /mcp`` now advertises ``text/event-stream`` so strict SSE
+        clients accept the Streamable HTTP event stream.
+
+    .. change:: reduce routine lifecycle log noise
+        :type: bugfix
+        :pr: 76
+        :issue: 73
+
+        Routine startup, registry callback, and router-invalidation lifecycle
+        messages are now logged at debug level instead of warning level.
+
+    .. change:: align reference and security documentation
+        :type: misc
+        :pr: 78 79
+
+        Adds reference coverage for ``MCP``, ``MCPStdioContext``,
+        auth helpers, tool-call callback protocols, and the bridge API. Also
+        adds security guidance for domain authorization, bridge identity
+        boundaries, and safe file/path arguments.
+
+
+.. changelog:: 0.9.0
+    :date: 2026-06-29
+
+    .. change:: add a standalone MCP application surface
+        :type: feature
+        :pr: 70
+        :issue: 71 72
+
+        Adds ``MCP(...)`` for applications whose primary surface is an MCP
+        server. Standalone apps can register ``@mcp.tool``,
+        ``@mcp.resource``, and ``@mcp.prompt`` callables, lazily expose
+        ``mcp.app``, pass normal Litestar app and route-handler options, run
+        SSE through the Litestar CLI, and run line-delimited stdio JSON-RPC
+        while manually driving ASGI lifespan.
+
+    .. change:: tighten standalone transport internals
+        :type: misc
+        :breaking:
+        :pr: 70
+
+        Internal transport callers now pass a ``RequestContext`` to
+        ``JSONRPCRouter.dispatch()``. ``litestar_mcp.routes.build_jsonrpc_router``
+        is no longer exported, and handler-signature helpers moved to
+        ``litestar_mcp.utils.handler_signature``. Applications should prefer
+        the public ``MCP`` and ``LitestarMCP`` entry points instead of private
+        router construction.
+
+    .. change:: clean up runtime, docs, and optional dependency internals
+        :type: misc
+        :pr: 70
+
+        Refreshes examples, snippet coverage, optional Dishka dependency-key
+        handling, router caching/session plumbing, framework-native
+        serialization paths, release tooling, and Python 3.14 CI coverage.
+
+
+.. changelog:: 0.8.0
     :date: 2026-06-24
 
     .. change:: add tool-call observability callbacks
         :type: feature
+        :pr: 69
         :issue: 68
 
         Adds ``MCPConfig.before_tool_call`` and
@@ -24,6 +138,7 @@ Recent Updates
 
     .. change:: exclude Dishka-resolved provider params from tool inputs
         :type: bugfix
+        :pr: 69
         :issue: 67
 
         Litestar ``Provide(...)`` factory parameters whose annotated type can

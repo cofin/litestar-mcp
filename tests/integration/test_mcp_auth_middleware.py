@@ -12,7 +12,13 @@ These tests will fail until Phase 2 (module reorg) + Phase 3 (backend impl)
 from typing import Any
 
 from litestar import Litestar, get
+from litestar.di import Provide
+from litestar.exceptions import NotAuthorizedException, PermissionDeniedException
 from litestar.middleware import DefineMiddleware
+from litestar.middleware.authentication import (
+    AbstractAuthenticationMiddleware,
+    AuthenticationResult,
+)
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig
@@ -143,11 +149,6 @@ class TestBYOAuthMiddlewareCompatibility:
 
     def test_custom_middleware_populates_request_user(self) -> "None":
         """Apps with their own auth middleware inherit user into MCP tool calls — no MCPAuthBackend needed."""
-        from litestar.exceptions import NotAuthorizedException
-        from litestar.middleware.authentication import (
-            AbstractAuthenticationMiddleware,
-            AuthenticationResult,
-        )
 
         missing_msg = "missing bearer"
         invalid_msg = "invalid bearer"
@@ -201,6 +202,79 @@ class TestBYOAuthMiddlewareCompatibility:
             assert "result" in body, body
             text = body["result"]["content"][0]["text"]
             assert "integration-user" in text
+
+
+class TestDomainObjectAuthorization:
+    """MCP tools still rely on normal app-level domain authorization."""
+
+    def test_dependency_rejects_mismatched_object_owner_id(self) -> "None":
+        """A regular Litestar dependency can deny an MCP call for the wrong domain object."""
+
+        class CustomAuth(AbstractAuthenticationMiddleware):
+            async def authenticate_request(self, connection: "Any") -> "AuthenticationResult":
+                header = connection.headers.get("authorization", "")
+                if not header.startswith("Bearer "):
+                    msg = "missing bearer"
+                    raise NotAuthorizedException(msg)
+                claims = await bearer_token_validator(header[7:])
+                if claims is None:
+                    msg = "invalid bearer"
+                    raise NotAuthorizedException(msg)
+                user = AuthenticatedUser(sub=str(claims["sub"]), scopes=tuple(claims.get("scopes", [])))
+                return AuthenticationResult(user=user, auth=claims)
+
+        async def require_workspace_owner(workspace_owner_id: "str", request: "Any") -> "None":
+            if getattr(request.user, "sub", None) != workspace_owner_id:
+                msg = "workspace owner mismatch"
+                raise PermissionDeniedException(msg)
+
+        @get(
+            "/workspaces/{workspace_owner_id:str}/export",
+            mcp_tool="export_workspace",
+            dependencies={"_owner_check": Provide(require_workspace_owner)},
+            sync_to_thread=False,
+        )
+        def export_workspace(workspace_owner_id: "str", _owner_check: "None") -> "dict[str, str]":
+            return {"exported": workspace_owner_id}
+
+        app = Litestar(
+            route_handlers=[export_workspace],
+            middleware=[DefineMiddleware(CustomAuth)],
+            plugins=[LitestarMCP(MCPConfig())],
+        )
+
+        headers = {"Authorization": f"Bearer {VALID_TOKEN}"}
+        with TestClient(app=app) as client:
+            init = _initialize(client, headers=headers)
+            assert init.status_code == 200
+            sid = init.headers["mcp-session-id"]
+            call_headers = {**headers, "Mcp-Session-Id": sid}
+            client.post(
+                "/mcp",
+                json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+                headers=call_headers,
+            )
+
+            resp = client.post(
+                "/mcp",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "export_workspace",
+                        "arguments": {"workspace_owner_id": "other-user"},
+                    },
+                },
+                headers=call_headers,
+            )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["result"]["isError"] is True
+        text = body["result"]["content"][0]["text"]
+        assert "workspace owner mismatch" in text
+        assert "exported" not in text
 
 
 class TestCollapsedAuthConfigMetadata:

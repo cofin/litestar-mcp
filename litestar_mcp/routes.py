@@ -47,6 +47,7 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
+MCP_PROTOCOL_VERSION_HEADER = "mcp-protocol-version"
 MCP_SESSION_HEADER = "Mcp-Session-Id"
 
 SESSION_ERROR = -32000
@@ -70,7 +71,7 @@ def _validate_origin(request: "Request[Any, Any, Any]", config: "MCPConfig") -> 
 
 def _add_protocol_headers(response: "Response[Any]") -> "Response[Any]":
     """Add standard MCP protocol headers to a response."""
-    response.headers["mcp-protocol-version"] = MCP_PROTOCOL_VERSION
+    response.headers[MCP_PROTOCOL_VERSION_HEADER] = MCP_PROTOCOL_VERSION
     return response
 
 
@@ -163,7 +164,7 @@ def _build_cached_router(
 class MCPController(Controller):
     """MCP JSON-RPC 2.0 Streamable HTTP controller."""
 
-    @get("/", name="mcp_sse", media_type=MediaType.TEXT)
+    @get("/", name="mcp_sse", media_type="text/event-stream")
     async def handle_sse(
         self,
         request: "Request[Any, Any, Any]",

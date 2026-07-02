@@ -107,7 +107,14 @@ class UpdateInput(msgspec.Struct):
 # --- Data / signature-model path -------------------------------------------
 
 
-def test_data_param_parses_via_signature_model() -> "None":
+@pytest.mark.parametrize(
+    "arguments",
+    (
+        pytest.param({"title": "T", "body": "B"}, id="expanded-data"),
+        pytest.param({"data": {"title": "T", "body": "B"}}, id="wrapped-data"),
+    ),
+)
+def test_data_param_accepts_mcp_argument_shapes(arguments: "dict[str, Any]") -> "None":
     """Handler declaring ``data: StructT`` receives a parsed msgspec struct."""
 
     @post("/notes", opt={"mcp_tool": "create_note"}, sync_to_thread=False)
@@ -118,29 +125,42 @@ def test_data_param_parses_via_signature_model() -> "None":
     app = Litestar(route_handlers=[create_note], plugins=[LitestarMCP()])
 
     with TestClient(app=app) as client:
-        resp = _call_tool(client, "create_note", {"title": "T", "body": "B"})
+        resp = _call_tool(client, "create_note", arguments)
 
     assert resp["result"]["isError"] is False
     payload = resp["result"]["content"][0]
     assert '"title":"T"' in payload["text"]
 
 
-def test_data_param_accepts_wrapped_data_argument() -> "None":
-    """Handlers with ``data: StructT`` accept the explicit MCP ``data`` wrapper."""
+def test_request_body_serialization_uses_route_type_encoders() -> "None":
+    """Synthesized request bodies use Litestar's handler serializer."""
 
-    @post("/notes", opt={"mcp_tool": "create_note"}, sync_to_thread=False)
-    def create_note(data: "NoteInput") -> "dict[str, str]":
-        assert isinstance(data, NoteInput)
-        return {"title": data.title, "body": data.body}
+    class WorkspaceId:
+        def __init__(self, value: "str") -> "None":
+            self.value = value
 
-    app = Litestar(route_handlers=[create_note], plugins=[LitestarMCP()])
+    @post(
+        "/encoded",
+        opt={"mcp_tool": "encoded_body"},
+        sync_to_thread=False,
+        type_encoders={WorkspaceId: lambda value: value.value},
+    )
+    def encoded_body(data: "dict[str, Any]") -> "dict[str, Any]":
+        return data
 
-    with TestClient(app=app) as client:
-        resp = _call_tool(client, "create_note", {"data": {"title": "T", "body": "B"}})
+    app = Litestar(route_handlers=[encoded_body], plugins=[LitestarMCP()])
+    handler = get_handler_from_app(app, "/encoded", "POST")
 
-    assert resp["result"]["isError"] is False
-    payload = resp["result"]["content"][0]
-    assert '"title":"T"' in payload["text"]
+    result = asyncio.run(
+        execute_tool(
+            handler,
+            app,
+            {"data": {"workspace_id": WorkspaceId("6bc9e12e")}},
+            request=None,
+        )
+    )
+
+    assert result["workspace_id"] == "6bc9e12e"
 
 
 def test_path_param_routes_through_scope() -> "None":
@@ -439,7 +459,17 @@ def test_guards_run_in_stdio_mode() -> "None":
 # --- MCPToolErrorResult.status_code capture ---------------------------------
 
 
-def test_execute_tool_captures_handler_4xx_status_code() -> "None":
+@pytest.mark.parametrize(
+    ("status_code", "expected_is_client_error"),
+    (
+        pytest.param(HTTP_422_UNPROCESSABLE_ENTITY, True, id="4xx"),
+        pytest.param(HTTP_503_SERVICE_UNAVAILABLE, False, id="5xx"),
+    ),
+)
+def test_execute_tool_captures_handler_status_code(
+    status_code: "int",
+    expected_is_client_error: "bool",
+) -> "None":
     """Regression sentinel for the executor refactor in PR #46.
 
     ``MCPToolErrorResult.status_code`` is the load-bearing field that the
@@ -450,30 +480,15 @@ def test_execute_tool_captures_handler_4xx_status_code() -> "None":
     ``_capture_asgi_response`` status capture.
     """
 
-    @get("/bad", opt={"mcp_tool": "bad_status"}, sync_to_thread=False)
-    def bad() -> "Response[dict[str, str]]":
-        return Response(content={"error": "nope"}, status_code=HTTP_422_UNPROCESSABLE_ENTITY)
+    @get("/status", opt={"mcp_tool": "status_code"}, sync_to_thread=False)
+    def status() -> "Response[dict[str, str]]":
+        return Response(content={"error": "nope"}, status_code=status_code)
 
-    app = Litestar(route_handlers=[bad], plugins=[LitestarMCP()])
-    handler = get_handler_from_app(app, "/bad")
-
-    with pytest.raises(MCPToolErrorResult) as excinfo:
-        asyncio.run(execute_tool(handler, app, {}, request=None))
-
-    assert excinfo.value.status_code == HTTP_422_UNPROCESSABLE_ENTITY
-    assert excinfo.value.is_client_error is True
-
-
-def test_execute_tool_captures_handler_5xx_status_code() -> "None":
-    @get("/down", opt={"mcp_tool": "down_status"}, sync_to_thread=False)
-    def down() -> "Response[dict[str, str]]":
-        return Response(content={"error": "down"}, status_code=HTTP_503_SERVICE_UNAVAILABLE)
-
-    app = Litestar(route_handlers=[down], plugins=[LitestarMCP()])
-    handler = get_handler_from_app(app, "/down")
+    app = Litestar(route_handlers=[status], plugins=[LitestarMCP()])
+    handler = get_handler_from_app(app, "/status")
 
     with pytest.raises(MCPToolErrorResult) as excinfo:
         asyncio.run(execute_tool(handler, app, {}, request=None))
 
-    assert excinfo.value.status_code == HTTP_503_SERVICE_UNAVAILABLE
-    assert excinfo.value.is_client_error is False
+    assert excinfo.value.status_code == status_code
+    assert excinfo.value.is_client_error is expected_is_client_error

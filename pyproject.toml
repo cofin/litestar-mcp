@@ -24,7 +24,7 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
 ]
-dependencies = ["litestar[jwt]>=2.23.0", "typing-extensions>=4.0.0", "httpx>=0.24.1"]
+dependencies = ["litestar[jwt]>=2.23.0", "typing-extensions>=4.0.0", "httpx>=0.24.1", "anyio>=4.1"]
 description = "Litestar plugin for Model Context Protocol (MCP) integration"
 keywords = ["litestar", "mcp", "model-context-protocol", "ai", "plugin"]
 license = { text = "MIT" }
@@ -45,6 +45,9 @@ Funding = "https://github.com/sponsors/litestar-org"
 Homepage = "https://cofin.github.io/litestar-mcp/latest/"
 Issue = "https://github.com/cofin/litestar-mcp/issues/"
 Source = "https://github.com/cofin/litestar-mcp"
+
+[project.optional-dependencies]
+bridge = ["httpx-sse>=0.4.0"]
 
 [project.entry-points."pygments.styles"]
 litestar-mcp-dark = "tools.sphinx_ext.pygments_styles:LitestarMcpDarkStyle"
@@ -92,6 +95,7 @@ lint = [
     "tomli>=2.4.1",
 ]
 test = [
+    "httpx-sse>=0.4.0",
     "litestar[standard,jwt]",
     "pytest>=7.4.1",
     "pytest-cov",
