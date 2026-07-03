@@ -72,6 +72,17 @@ def test_mcp_resource_stores_description_kwargs() -> "None":
     assert metadata["returns"] == "ret"
 
 
+def test_mcp_resource_stores_mime_type() -> "None":
+    @mcp_resource("r", mime_type="application/pdf")
+    @get("/", sync_to_thread=False)
+    def handler() -> "str":
+        return ""
+
+    metadata = get_mcp_metadata(handler)
+    assert metadata is not None
+    assert metadata["mime_type"] == "application/pdf"
+
+
 def test_description_kwargs_default_to_none_and_omitted_from_metadata() -> "None":
     @mcp_tool("t")
     @get("/", sync_to_thread=False)

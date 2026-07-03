@@ -55,6 +55,26 @@ After ``initialize``, clients drive tools via ``tools/list`` and
 Successful responses carry the handler's return value inside the
 standard JSON-RPC envelope.
 
+Binary and Mixed Content Results
+================================
+
+For ordinary JSON-like return values, the plugin keeps the existing behavior:
+the value is serialized into a text content block. When a tool needs to return
+MCP content blocks directly, use the public helper types:
+
+.. literalinclude:: /examples/snippets/tool_binary_content.py
+    :language: python
+    :caption: ``docs/examples/snippets/tool_binary_content.py``
+    :start-after: # start-example
+    :end-before: # end-example
+    :dedent:
+
+Use :class:`~litestar_mcp.MCPResourceLink` when the client should fetch bytes
+later with ``resources/read``. Use :class:`~litestar_mcp.MCPBlobResource` only
+when the bytes need to be embedded immediately in the JSON-RPC response. A
+handler returning raw ``bytes`` directly is treated like an ordinary handler
+return value, not as an implicit blob.
+
 Error Contract
 ==============
 

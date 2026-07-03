@@ -2,6 +2,7 @@
 """MCP service layer handler."""
 
 import asyncio
+import base64
 import inspect
 import logging
 from dataclasses import dataclass
@@ -11,12 +12,27 @@ import msgspec
 from litestar.serialization import encode_json
 
 from litestar_mcp._cursor import decode_cursor, encode_cursor
+from litestar_mcp.content import (
+    MCPBlobResource,
+    MCPResourceLink,
+    MCPToolResult,
+    add_related_task_meta,
+    enforce_blob_size,
+    is_content_block,
+    normalize_content_blocks,
+)
 from litestar_mcp.error_mapping import (
     mcp_error_for_prompt_execution,
     mcp_error_for_resource_not_found,
     mcp_error_for_resource_read,
 )
-from litestar_mcp.executor import MCPToolErrorResult, execute_handler, execute_tool
+from litestar_mcp.executor import (
+    MCPHandlerResponse,
+    MCPToolErrorResult,
+    execute_handler,
+    execute_handler_response,
+    execute_tool,
+)
 from litestar_mcp.jsonrpc import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
@@ -100,13 +116,100 @@ def _scope_overrides_for_context(context: "RequestContext") -> "dict[str, Any] |
     return context.scope_overrides if context.request is None else None
 
 
-def _build_tool_result(value: "Any", *, is_error: "bool", task_id: "str | None" = None) -> "dict[str, Any]":
-    result: dict[str, Any] = {
-        "content": [{"type": "text", "text": _serialize_tool_content(value)}],
-        "isError": is_error,
-    }
-    if task_id is not None:
-        result["_meta"] = {"io.modelcontextprotocol/related-task": {"taskId": task_id}}
+def _is_resource_text_media_type(mime_type: "str") -> "bool":
+    """Return whether a resource body should be sent as MCP text."""
+    return (
+        mime_type.startswith("text/")
+        or mime_type == "application/json"
+        or mime_type.endswith(("+json", "+xml"))
+        or mime_type
+        in {
+            "application/javascript",
+            "application/xml",
+            "application/x-yaml",
+            "application/yaml",
+        }
+    )
+
+
+def _resource_mime_type(handler: "BaseRouteHandler", config: "MCPConfig") -> "str":
+    """Resolve resource MIME metadata from opt keys or decorator metadata."""
+    opt = getattr(handler, "opt", None) or {}
+    opt_mime_type = opt.get(config.opt_keys.resource_mime_type)
+    if isinstance(opt_mime_type, str) and opt_mime_type:
+        return opt_mime_type
+    fn = get_handler_function(handler)
+    metadata = get_mcp_metadata(handler) or get_mcp_metadata(fn) or {}
+    metadata_mime_type = metadata.get("mime_type")
+    if isinstance(metadata_mime_type, str) and metadata_mime_type:
+        return metadata_mime_type
+    return "application/json"
+
+
+def _resource_content_from_response(
+    uri: "str",
+    response: "MCPHandlerResponse",
+    *,
+    fallback_mime_type: "str",
+    max_blob_bytes: "int | None",
+) -> "dict[str, Any]":
+    """Build one MCP ResourceContents object from a captured handler response."""
+    mime_type = response.media_type or fallback_mime_type
+    content: dict[str, Any] = {"uri": uri, "mimeType": mime_type}
+    body = response.body
+    if _is_resource_text_media_type(mime_type):
+        try:
+            content["text"] = body.decode("utf-8")
+        except UnicodeDecodeError:
+            pass
+        else:
+            return content
+
+    enforce_blob_size(len(body), max_blob_bytes=max_blob_bytes)
+    content["blob"] = base64.b64encode(body).decode("ascii")
+    return content
+
+
+def _looks_like_tool_content(value: "Any") -> "bool":
+    """Return whether a plain handler result is an explicit MCP content block."""
+    if isinstance(value, (MCPBlobResource, MCPResourceLink)):
+        return True
+    if is_content_block(value):
+        return True
+    if isinstance(value, list) and value:
+        return all(isinstance(item, (MCPBlobResource, MCPResourceLink)) or is_content_block(item) for item in value)
+    return False
+
+
+def _build_tool_result(
+    value: "Any",
+    *,
+    is_error: "bool",
+    task_id: "str | None" = None,
+    max_blob_bytes: "int | None" = None,
+) -> "dict[str, Any]":
+    try:
+        if isinstance(value, MCPToolResult):
+            result = value.to_result(max_blob_bytes=max_blob_bytes, task_id=task_id)
+            result["isError"] = bool(is_error or result.get("isError", False))
+            return result
+        if _looks_like_tool_content(value):
+            result = {
+                "content": normalize_content_blocks(value, max_blob_bytes=max_blob_bytes),
+                "isError": is_error,
+            }
+            add_related_task_meta(result, task_id)
+            return result
+        result = {
+            "content": [{"type": "text", "text": _serialize_tool_content(value)}],
+            "isError": is_error,
+        }
+    except (TypeError, ValueError) as exc:
+        result = {
+            "content": [{"type": "text", "text": _serialize_tool_content({"error": str(exc)})}],
+            "isError": True,
+        }
+    add_related_task_meta(result, task_id)
     return result
 
 
@@ -266,6 +369,7 @@ class MCPHandlerService:
                 {"error": "Invalid tool arguments", "errors": validation_errors},
                 is_error=True,
                 task_id=task_id,
+                max_blob_bytes=self.config.max_blob_bytes,
             )
 
         try:
@@ -279,11 +383,21 @@ class MCPHandlerService:
                 tool_name=tool_name,
             )
         except MCPToolErrorResult as err:
-            return _build_tool_result(err.content, is_error=True, task_id=task_id)
+            return _build_tool_result(
+                err.content,
+                is_error=True,
+                task_id=task_id,
+                max_blob_bytes=self.config.max_blob_bytes,
+            )
         except Exception as exc:  # noqa: BLE001
-            return _build_tool_result({"error": str(exc)}, is_error=True, task_id=task_id)
+            return _build_tool_result(
+                {"error": str(exc)},
+                is_error=True,
+                task_id=task_id,
+                max_blob_bytes=self.config.max_blob_bytes,
+            )
 
-        return _build_tool_result(result, is_error=False, task_id=task_id)
+        return _build_tool_result(result, is_error=False, task_id=task_id, max_blob_bytes=self.config.max_blob_bytes)
 
     async def _run_task(
         self,
@@ -400,7 +514,11 @@ class MCPHandlerService:
         metadata = get_mcp_metadata(handler) or get_mcp_metadata(fn) or {}
         tool_args = params.get("arguments", {})
         if not isinstance(tool_args, dict):
-            return _build_tool_result({"error": "Tool arguments must be an object"}, is_error=True)
+            return _build_tool_result(
+                {"error": "Tool arguments must be an object"},
+                is_error=True,
+                max_blob_bytes=self.config.max_blob_bytes,
+            )
 
         task_request = params.get("task")
         task_support = metadata.get("task_support")
@@ -465,7 +583,7 @@ class MCPHandlerService:
                         fallback_name=name,
                         opt_keys=self.config.opt_keys,
                     ),
-                    "mimeType": "application/json",
+                    "mimeType": _resource_mime_type(handler, self.config),
                 }
             )
         try:
@@ -497,7 +615,7 @@ class MCPHandlerService:
                         fallback_name=entry.name,
                         opt_keys=self.config.opt_keys,
                     ),
-                    "mimeType": "application/json",
+                    "mimeType": _resource_mime_type(entry.handler, self.config),
                 }
             )
         try:
@@ -535,7 +653,7 @@ class MCPHandlerService:
                 raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
 
             try:
-                result = await execute_tool(
+                response = await execute_handler_response(
                     handler,
                     self.app_ref,
                     {},
@@ -547,15 +665,17 @@ class MCPHandlerService:
             except Exception as exc:
                 raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
 
-            return {
-                "contents": [
-                    {
-                        "uri": uri,
-                        "mimeType": "application/json",
-                        "text": encode_json(result).decode("utf-8"),
-                    }
-                ]
-            }
+            try:
+                content = _resource_content_from_response(
+                    uri,
+                    response,
+                    fallback_mime_type=_resource_mime_type(handler, self.config),
+                    max_blob_bytes=self.config.max_blob_bytes,
+                )
+            except ValueError as exc:
+                raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
+
+            return {"contents": [content]}
 
         template_entries = self.registry.templates.values() if self.registry is not None else ()
         for entry in template_entries:
@@ -566,7 +686,7 @@ class MCPHandlerService:
             if not should_include_handler(entry.name, handler_tags, self.config):
                 continue
             try:
-                result = await execute_tool(
+                response = await execute_handler_response(
                     entry.handler,
                     self.app_ref,
                     dict(extracted),
@@ -578,15 +698,17 @@ class MCPHandlerService:
             except Exception as exc:
                 raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
 
-            return {
-                "contents": [
-                    {
-                        "uri": uri,
-                        "mimeType": "application/json",
-                        "text": encode_json(result).decode("utf-8"),
-                    }
-                ]
-            }
+            try:
+                content = _resource_content_from_response(
+                    uri,
+                    response,
+                    fallback_mime_type=_resource_mime_type(entry.handler, self.config),
+                    max_blob_bytes=self.config.max_blob_bytes,
+                )
+            except ValueError as exc:
+                raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
+
+            return {"contents": [content]}
 
         raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
 

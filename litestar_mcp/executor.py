@@ -23,6 +23,7 @@ import re
 import weakref
 from collections.abc import Mapping
 from contextlib import AsyncExitStack
+from dataclasses import dataclass
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlencode
@@ -35,6 +36,7 @@ from litestar.serialization import decode_json, encode_json
 from litestar.types.empty import Empty
 from litestar.utils.sync import ensure_async_callable
 
+from litestar_mcp.content import MCPBlobResource, MCPResourceLink, MCPToolResult
 from litestar_mcp.utils.handler_signature import get_advertised_handler_parameters
 
 if TYPE_CHECKING:
@@ -48,10 +50,12 @@ if TYPE_CHECKING:
     from litestar_mcp.config import MCPConfig
 
 __all__ = (
+    "MCPHandlerResponse",
     "MCPPathParamCoercionError",
     "MCPToolErrorResult",
     "NotCallableInCLIContextError",
     "execute_handler",
+    "execute_handler_response",
     "execute_tool",
 )
 
@@ -60,6 +64,23 @@ _logger = logging.getLogger(__name__)
 _NON_JSON_STATUS = 500
 _ERROR_STATUS_FLOOR = 400
 _INTERNAL_DISPATCH_SCOPE_KEY = "litestar_mcp.internal_dispatch"
+_TEXT_MEDIA_TYPES = {
+    "application/javascript",
+    "application/json",
+    "application/xml",
+    "application/x-yaml",
+    "application/yaml",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class MCPHandlerResponse:
+    """Captured response from a Litestar handler dispatch."""
+
+    content: "Any"
+    status_code: "int"
+    body: "bytes"
+    media_type: "str"
 
 
 class NotCallableInCLIContextError(ImproperlyConfiguredException):
@@ -184,8 +205,10 @@ async def execute_tool(
             the already-rendered payload for the JSON-RPC route layer.
     """
     path_parameters = _find_route_path_parameters(app, handler)
-    dispatch_request: Request[Any, Any, Any] | None = None
     started_at: float | None = None
+    response: MCPHandlerResponse
+
+    dispatch_request: Request[Any, Any, Any] | None = None
 
     async def run_after_tool_call(*, result: "Any", exception: "Exception | None") -> "None":
         if dispatch_request is not None and started_at is not None:
@@ -221,7 +244,7 @@ async def execute_tool(
             await _run_before_tool_call(config, tool_name, tool_args, dispatch_request)
             started_at = perf_counter()
 
-            content, status = await _run_handler_pipeline(
+            response = await _run_handler_pipeline(
                 handler,
                 app,
                 path_parameters,
@@ -232,12 +255,52 @@ async def execute_tool(
         await run_after_tool_call(result=None, exception=exc)
         raise
 
-    if status >= _ERROR_STATUS_FLOOR:
-        error_result = MCPToolErrorResult(content, status_code=status)
+    if response.status_code >= _ERROR_STATUS_FLOOR:
+        error_result = MCPToolErrorResult(response.content, status_code=response.status_code)
         await run_after_tool_call(result=None, exception=error_result)
         raise error_result
-    await run_after_tool_call(result=content, exception=None)
-    return content
+    await run_after_tool_call(result=response.content, exception=None)
+    return response.content
+
+
+async def execute_handler_response(
+    handler: "BaseRouteHandler",
+    app: "Litestar",
+    tool_args: "dict[str, Any]",
+    *,
+    request: "Request[Any, Any, Any] | None" = None,
+    scope_overrides: "dict[str, Any] | None" = None,
+) -> "MCPHandlerResponse":
+    """Execute a handler and return raw response bytes plus decoded content."""
+    path_parameters = _find_route_path_parameters(app, handler)
+    async with AsyncExitStack() as stack:
+        base_scope: dict[str, Any] | None = cast("dict[str, Any]", request.scope) if request is not None else None
+        dispatch_scope, receive = _build_dispatch_scope(
+            handler,
+            tool_args,
+            base_scope=base_scope,
+            scope_overrides=scope_overrides if request is None else None,
+            app=app,
+            path_parameters=path_parameters,
+        )
+        if request is None:
+            await _open_stdio_dishka_container(app, dispatch_scope, stack)
+
+        dispatch_request: Request[Any, Any, Any] = Request(
+            cast("Any", dispatch_scope),
+            receive=cast("Any", receive),
+        )
+        response = await _run_handler_pipeline(
+            handler,
+            app,
+            path_parameters,
+            dispatch_request,
+            stack,
+        )
+
+    if response.status_code >= _ERROR_STATUS_FLOOR:
+        raise MCPToolErrorResult(response.content, status_code=response.status_code)
+    return response
 
 
 # Generic alias used by non-tool MCP primitives (resources, prompts) that
@@ -253,10 +316,8 @@ async def _run_handler_pipeline(
     path_parameters: "dict[str, Any]",
     dispatch_request: "Request[Any, Any, Any]",
     stack: "AsyncExitStack",
-) -> "tuple[Any, int]":
+) -> "MCPHandlerResponse":
     """Run guards, hooks, dependency resolution, handler dispatch, and response rendering."""
-    content: Any = None
-    status = 200
     try:
         try:
             await _enforce_guards(handler, dispatch_request)
@@ -276,18 +337,26 @@ async def _run_handler_pipeline(
                 handler_fn = ensure_async_callable(handler.fn)
                 raw_result = await handler_fn(**parsed_kwargs)
 
+            if isinstance(raw_result, (MCPBlobResource, MCPResourceLink, MCPToolResult)):
+                return MCPHandlerResponse(
+                    content=raw_result,
+                    status_code=200,
+                    body=b"",
+                    media_type="application/json",
+                )
+
             http_handler = cast("HTTPRouteHandler", handler)
             asgi_app = await http_handler.to_response(app=app, data=raw_result, request=dispatch_request)
-            content, status = await _capture_asgi_response(asgi_app, dispatch_request)
+            response = await _capture_asgi_response(asgi_app, dispatch_request)
         except Exception as exc:
             await _run_after_exception_hooks(app, dispatch_request, exc)
             handled = await _dispatch_via_exception_handlers(handler, dispatch_request, exc)
             if handled is None:
                 raise
-            content, status = handled
+            response = handled
     finally:
         await _run_after_response(handler, dispatch_request)
-    return content, status
+    return response
 
 
 async def _enforce_guards(handler: "BaseRouteHandler", request: "Request[Any, Any, Any]") -> "None":
@@ -432,7 +501,7 @@ async def _run_after_tool_call(
 async def _capture_asgi_response(
     asgi_app: "Any",
     request: "Request[Any, Any, Any]",
-) -> "tuple[Any, int]":
+) -> "MCPHandlerResponse":
     """Drive an ASGIApp against a sink-send, returning (content, status_code).
 
     ``handler.to_response`` returns an :class:`ASGIResponse`. We invoke it
@@ -470,34 +539,59 @@ async def _capture_asgi_response(
         # transport invariant violation rather than a 0-status success — the
         # downstream caller would otherwise pass the (None, 0) result through
         # the < _ERROR_STATUS_FLOOR check and surface "None" as a successful body.
-        return (
-            {"error": "MCP handler exited without sending an ASGI response"},
-            _NON_JSON_STATUS,
+        return MCPHandlerResponse(
+            content={"error": "MCP handler exited without sending an ASGI response"},
+            status_code=_NON_JSON_STATUS,
+            body=b"",
+            media_type=media_type,
         )
 
     body = b"".join(body_chunks)
     if not body:
-        return None, status_code
-    try:
-        content = decode_json(body)
-    except SerializationException:
-        return (
-            {"error": "non-JSON response from MCP handler", "media_type": media_type or "unknown"},
-            _NON_JSON_STATUS,
-        )
-    return content, status_code
+        return MCPHandlerResponse(content=None, status_code=status_code, body=b"", media_type=media_type)
+
+    if _is_json_media_type(media_type):
+        try:
+            content = decode_json(body)
+        except SerializationException:
+            return MCPHandlerResponse(
+                content={"error": "invalid JSON response from MCP handler", "media_type": media_type or "unknown"},
+                status_code=_NON_JSON_STATUS,
+                body=body,
+                media_type=media_type,
+            )
+        return MCPHandlerResponse(content=content, status_code=status_code, body=body, media_type=media_type)
+
+    if _is_text_media_type(media_type):
+        try:
+            content = body.decode("utf-8")
+        except UnicodeDecodeError:
+            content = body
+        return MCPHandlerResponse(content=content, status_code=status_code, body=body, media_type=media_type)
+
+    return MCPHandlerResponse(content=body, status_code=status_code, body=body, media_type=media_type)
+
+
+def _is_json_media_type(media_type: "str") -> "bool":
+    """Return whether ``media_type`` is JSON-compatible."""
+    return media_type == "application/json" or media_type.endswith("+json")
+
+
+def _is_text_media_type(media_type: "str") -> "bool":
+    """Return whether ``media_type`` can be safely exposed as MCP text."""
+    return media_type.startswith("text/") or media_type in _TEXT_MEDIA_TYPES or media_type.endswith("+xml")
 
 
 async def _dispatch_via_exception_handlers(
     handler: "BaseRouteHandler",
     request: "Request[Any, Any, Any]",
     exc: "Exception",
-) -> "tuple[Any, int] | None":
+) -> "MCPHandlerResponse | None":
     """Walk ``handler.resolve_exception_handlers()`` MRO-style for ``exc``.
 
     Returns:
-        ``(content, status_code)`` when a handler matches and renders a
-        response; ``None`` when no handler matches (caller must re-raise).
+        Captured response when a handler matches and renders a response;
+        ``None`` when no handler matches (caller must re-raise).
     """
     exception_handlers = handler.resolve_exception_handlers() or {}
     matched = None
@@ -515,11 +609,13 @@ async def _dispatch_via_exception_handlers(
 
     if isinstance(raw, Response):
         status = int(getattr(raw, "status_code", 200))
-        return raw.content, status
+        body = raw.content if isinstance(raw.content, bytes) else encode_json(raw.content)
+        media_type = str(getattr(raw, "media_type", "") or "application/json")
+        return MCPHandlerResponse(content=raw.content, status_code=status, body=body, media_type=media_type)
 
     # Exception handler returned raw data — treat as an error render since
     # it was triggered by a raised exception.
-    return raw, 500
+    return MCPHandlerResponse(content=raw, status_code=500, body=encode_json(raw), media_type="application/json")
 
 
 _PATH_PARAMETERS_CACHE: "weakref.WeakKeyDictionary[Any, dict[str, Any]]" = weakref.WeakKeyDictionary()

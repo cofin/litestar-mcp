@@ -17,6 +17,36 @@ Marked resources appear in ``resources/list`` and are fetched via
 ``resources/read``. The plugin always ships one synthetic resource,
 ``litestar://openapi``, that returns the application's OpenAPI document.
 
+Binary Resources
+================
+
+Resources can return text or binary content. JSON and text-compatible
+responses are returned as MCP ``text`` resource contents. Other byte
+responses are base64 encoded as MCP ``blob`` contents:
+
+.. literalinclude:: /examples/snippets/resource_binary.py
+    :language: python
+    :caption: ``docs/examples/snippets/resource_binary.py`` - route kwarg form
+    :start-after: # start-route-example
+    :end-before: # end-route-example
+    :dedent:
+
+``mcp_resource_mime_type`` is advertised in ``resources/list`` and is used as
+a fallback when the handler response does not carry a content type. The
+decorator form accepts the same metadata as ``mime_type=``:
+
+.. literalinclude:: /examples/snippets/resource_binary.py
+    :language: python
+    :caption: ``docs/examples/snippets/resource_binary.py`` - decorator form
+    :start-after: # start-decorator-example
+    :end-before: # end-decorator-example
+    :dedent:
+
+For tools that produce files, prefer returning
+:class:`~litestar_mcp.MCPResourceLink` when the bytes are available through a
+resource URI. Return :class:`~litestar_mcp.MCPBlobResource` from the tool only
+when the bytes must be embedded immediately.
+
 Resource URI Templates
 ======================
 

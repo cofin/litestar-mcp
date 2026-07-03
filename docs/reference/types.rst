@@ -34,6 +34,29 @@ usual ``request.user`` / ``request.scope["auth"]`` / session / state. See
    :members:
    :show-inheritance:
 
+.. currentmodule:: litestar_mcp.content
+
+MCPResourceLink
+---------------
+
+.. autoclass:: MCPResourceLink
+   :members:
+   :show-inheritance:
+
+MCPBlobResource
+---------------
+
+.. autoclass:: MCPBlobResource
+   :members:
+   :show-inheritance:
+
+MCPToolResult
+-------------
+
+.. autoclass:: MCPToolResult
+   :members:
+   :show-inheritance:
+
 .. currentmodule:: litestar_mcp.registry
 
 PromptRegistration

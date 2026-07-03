@@ -457,6 +457,7 @@ class MCP:
         uri: "str",
         *,
         name: "str | None" = None,
+        mime_type: "str | None" = None,
         after_request: "AfterRequestHookHandler | None" = None,
         after_response: "AfterResponseHookHandler | None" = None,
         background: "BackgroundTask | BackgroundTasks | None" = None,
@@ -521,7 +522,10 @@ class MCP:
                         opt_keys.resource: resource_name,
                         opt_keys.resource_template: uri,
                     },
-                    default_opt={opt_keys.resource_description: description or fn.__doc__ or ""},
+                    default_opt={
+                        opt_keys.resource_description: description or fn.__doc__ or "",
+                        opt_keys.resource_mime_type: mime_type,
+                    },
                 ),
             )(_json_response_wrapper(fn))
             self.plugin.register_dynamic_handler(handler)
