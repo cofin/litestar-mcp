@@ -55,6 +55,8 @@ class MCPOptKeys:
         tool: Opt key that marks a route handler as an MCP tool
             (``handler.opt[tool] = "<tool-name>"``).
         resource: Opt key that marks a route handler as an MCP resource.
+        resource_mime_type: Opt key that carries the resource MIME type for
+            list responses and binary ``resources/read`` fallbacks.
         resource_template: Opt key that carries an RFC 6570 Level 1 URI
             template for the resource (``handler.opt[resource_template] =
             "app://workspaces/{workspace_id}/files/{file_id}"``).
@@ -78,6 +80,7 @@ class MCPOptKeys:
 
     tool: "str" = "mcp_tool"
     resource: "str" = "mcp_resource"
+    resource_mime_type: "str" = "mcp_resource_mime_type"
     resource_template: "str" = "mcp_resource_template"
     prompt: "str" = "mcp_prompt"
     description: "str" = "mcp_description"
@@ -157,6 +160,8 @@ class MCPConfig:
         after_tool_call: Optional callback invoked once after each
             ``tools/call`` dispatch with either the result or exception and
             elapsed dispatch duration in seconds.
+        max_blob_bytes: Maximum raw byte length for base64-embedded MCP blobs.
+            Set to ``None`` to disable the library cap.
     """
 
     base_path: "str" = "/mcp"
@@ -179,11 +184,15 @@ class MCPConfig:
     list_page_size: "int" = 100
     before_tool_call: "BeforeToolCallHook | None" = None
     after_tool_call: "AfterToolCallHook | None" = None
+    max_blob_bytes: "int | None" = 25 * 1024 * 1024
     _session_manager: "Any" = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> "None":
         if self.list_page_size <= 0:
             msg = f"list_page_size must be a positive integer, got {self.list_page_size}"
+            raise ValueError(msg)
+        if self.max_blob_bytes is not None and self.max_blob_bytes < 0:
+            msg = f"max_blob_bytes must be non-negative or None, got {self.max_blob_bytes}"
             raise ValueError(msg)
 
     @property

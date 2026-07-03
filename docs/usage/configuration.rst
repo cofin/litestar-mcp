@@ -126,6 +126,10 @@ Configuration Options
     * - ``list_page_size``
       - ``100``
       - Server-chosen page size for the ``*/list`` methods (see below).
+    * - ``max_blob_bytes``
+      - ``25 * 1024 * 1024``
+      - Maximum raw byte size for embedded MCP blobs in tool results and
+        ``resources/read`` responses. Set ``None`` to disable the library cap.
 
 The ``LitestarMCP`` constructor also accepts a top-level ``prompts``
 argument — a sequence of ``@mcp_prompt``-decorated callables — for

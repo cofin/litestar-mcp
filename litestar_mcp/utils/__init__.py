@@ -227,6 +227,7 @@ def mcp_resource(
     name: "str",
     *,
     uri_template: "str | None" = None,
+    mime_type: "str | None" = None,
     description: "str | None" = None,
     agent_instructions: "str | None" = None,
     when_to_use: "str | None" = None,
@@ -240,6 +241,8 @@ def mcp_resource(
             (e.g. ``"app://workspaces/{workspace_id}/files/{file_id}"``).
             Concrete URIs matching the template dispatch to this handler
             with extracted variables passed as kwargs.
+        mime_type: Optional resource MIME type advertised in list responses
+            and used as a fallback for resource reads.
         description: LLM-facing description. Overrides ``fn.__doc__``.
         agent_instructions: Mandatory-context block rendered in the
             ``## Instructions`` section.
@@ -279,6 +282,8 @@ def mcp_resource(
         metadata: dict[str, Any] = {"type": "resource", "name": name}
         if uri_template is not None:
             metadata["resource_template"] = uri_template
+        if mime_type is not None:
+            metadata["mime_type"] = mime_type
         if description is not None:
             metadata["description"] = description
         if agent_instructions is not None:

@@ -255,6 +255,21 @@ def test_standalone_resource_decorator_accepts_litestar_route_dependencies() -> 
     assert json.loads(response["result"]["contents"][0]["text"]) == {"value": "enabled!"}
 
 
+def test_standalone_resource_decorator_sets_mime_type_metadata() -> "None":
+    mcp = MCP(name="test-mcp")
+
+    @mcp.resource(uri="app://report", name="report", mime_type="application/pdf", sync_to_thread=False)
+    def report() -> "dict[str, str]":
+        return {"value": "ok"}
+
+    with TestClient(app=mcp.app) as client:
+        response = _rpc(client, "resources/list")
+
+    resources = response["result"]["resources"]
+    report_entry = next(item for item in resources if item["name"] == "report")
+    assert report_entry["mimeType"] == "application/pdf"
+
+
 def test_standalone_prompt_decorator_accepts_litestar_route_dependencies() -> "None":
     def provide_suffix() -> "str":
         return "!"

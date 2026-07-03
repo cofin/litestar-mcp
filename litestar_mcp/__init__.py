@@ -25,6 +25,7 @@ from litestar_mcp.auth import (
     create_oidc_validator,
 )
 from litestar_mcp.config import AfterToolCallHook, BeforeToolCallHook, MCPConfig, MCPOptKeys
+from litestar_mcp.content import MCPBlobResource, MCPResourceLink, MCPToolResult
 from litestar_mcp.exceptions import (
     BridgeConnectionError,
     BridgeMessageTooLargeError,
@@ -47,10 +48,13 @@ __all__ = (
     "LitestarMCPError",
     "MCPAuthBackend",
     "MCPAuthConfig",
+    "MCPBlobResource",
     "MCPConfig",
     "MCPController",
     "MCPOptKeys",
+    "MCPResourceLink",
     "MCPStdioContext",
+    "MCPToolResult",
     "MissingDependencyError",
     "OIDCProviderConfig",
     "TokenValidator",

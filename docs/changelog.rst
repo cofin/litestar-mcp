@@ -9,6 +9,19 @@ notes, and important protocol fixes.
 Recent Updates
 ==============
 
+.. changelog:: 0.11.0
+
+    .. change:: support binary resources and explicit tool content blocks
+        :type: feature
+
+        Adds ``MCPResourceLink``, ``MCPBlobResource``, and ``MCPToolResult``
+        helpers for protocol-shaped tool results. Marked resources can now
+        advertise MIME metadata with ``mcp_resource_mime_type`` or
+        ``mcp_resource(..., mime_type=...)`` and ``resources/read`` returns
+        binary handler responses as base64 ``blob`` contents. Embedded blobs
+        are capped by ``MCPConfig.max_blob_bytes`` before encoding; set it to
+        ``None`` to rely on deployment or client limits instead.
+
 .. changelog:: 0.10.0
 
     .. change:: add a Litestar CLI stdio bridge for Streamable HTTP

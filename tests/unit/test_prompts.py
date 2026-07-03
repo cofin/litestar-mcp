@@ -1197,8 +1197,9 @@ class TestCaptureAsgiResponseStatusZero:
         )
         request: Request[Any, Any, Any] = Request(scope, receive=cast("Receive", receive))
 
-        content, status = await _capture_asgi_response(silent_asgi_app, request)
-        assert status == _NON_JSON_STATUS
+        response = await _capture_asgi_response(silent_asgi_app, request)
+        content = response.content
+        assert response.status_code == _NON_JSON_STATUS
         assert isinstance(content, dict)
         assert "error" in content
         assert "without sending" in content["error"].lower()
