@@ -9,6 +9,20 @@ notes, and important protocol fixes.
 Recent Updates
 ==============
 
+.. changelog:: 0.11.1
+
+    .. change:: hide MCP plugin discovery routes from OpenAPI by default
+        :type: bugfix
+
+        ``MCPConfig.include_in_schema=False`` now hides the plugin-owned
+        ``/.well-known/oauth-protected-resource``,
+        ``/.well-known/agent-card.json``, and
+        ``/.well-known/mcp-server.json`` routes from generated OpenAPI
+        schemas, matching the existing default behavior for the ``/mcp``
+        transport route. Marked application routes remain visible in OpenAPI
+        unless the application hides them separately, and
+        ``include_in_schema=True`` opts all MCP plugin routes back in.
+
 .. changelog:: 0.11.0
 
     .. change:: support binary resources and explicit tool content blocks

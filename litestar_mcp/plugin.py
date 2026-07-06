@@ -175,11 +175,21 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         app_config.on_startup.append(self.on_startup)
         app_config.on_shutdown.append(self.on_shutdown)
 
-        @litestar_get("/.well-known/oauth-protected-resource", sync_to_thread=False, opt={"exclude_from_auth": True})
+        @litestar_get(
+            "/.well-known/oauth-protected-resource",
+            sync_to_thread=False,
+            include_in_schema=self._config.include_in_schema,
+            opt={"exclude_from_auth": True},
+        )
         def oauth_protected_resource(request: "Request[Any, Any, Any]") -> "dict[str, Any]":
             return build_oauth_protected_resource(self._config.auth, request.app)
 
-        @litestar_get("/.well-known/agent-card.json", sync_to_thread=False, opt={"exclude_from_auth": True})
+        @litestar_get(
+            "/.well-known/agent-card.json",
+            sync_to_thread=False,
+            include_in_schema=self._config.include_in_schema,
+            opt={"exclude_from_auth": True},
+        )
         def agent_card(request: "Request[Any, Any, Any]") -> "dict[str, Any]":
             return build_agent_card(
                 base_url=str(request.base_url),
@@ -188,7 +198,12 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                 discovered_tools=self._registry.tools,
             )
 
-        @litestar_get("/.well-known/mcp-server.json", sync_to_thread=False, opt={"exclude_from_auth": True})
+        @litestar_get(
+            "/.well-known/mcp-server.json",
+            sync_to_thread=False,
+            include_in_schema=self._config.include_in_schema,
+            opt={"exclude_from_auth": True},
+        )
         def mcp_server_manifest(request: "Request[Any, Any, Any]") -> "dict[str, Any]":
             return build_mcp_server_manifest(
                 base_url=str(request.base_url),
