@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from litestar import Litestar, get, post
+from litestar.openapi.config import OpenAPIConfig
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP
@@ -50,6 +51,11 @@ def _rpc(
         if sid:
             headers["Mcp-Session-Id"] = sid
     return client.post(base, json=body, headers=headers).json()  # type: ignore[no-any-return]
+
+
+def _openapi_paths(app: "Litestar") -> "set[str]":
+    with TestClient(app=app) as client:
+        return set(client.get("/schema/openapi.json").json()["paths"])
 
 
 class TestLitestarMCP:
@@ -124,6 +130,44 @@ class TestLitestarMCP:
         contents = result["result"]["contents"]
         assert contents[0]["uri"] == "litestar://openapi"
 
+    def test_default_openapi_schema_hides_plugin_routes_only(self) -> "None":
+        @get("/users", mcp_tool="list_users")
+        async def list_users() -> "list[dict[str, Any]]":
+            return [{"id": 1, "name": "Alice"}]
+
+        app = Litestar(
+            route_handlers=[list_users],
+            plugins=[LitestarMCP()],
+            openapi_config=OpenAPIConfig(title="Test API", version="1.0.0"),
+        )
+
+        paths = _openapi_paths(app)
+
+        assert "/users" in paths
+        assert "/mcp" not in paths
+        assert "/.well-known/oauth-protected-resource" not in paths
+        assert "/.well-known/agent-card.json" not in paths
+        assert "/.well-known/mcp-server.json" not in paths
+
+    def test_openapi_schema_includes_plugin_routes_when_configured(self) -> "None":
+        @get("/users", mcp_tool="list_users")
+        async def list_users() -> "list[dict[str, Any]]":
+            return [{"id": 1, "name": "Alice"}]
+
+        app = Litestar(
+            route_handlers=[list_users],
+            plugins=[LitestarMCP(MCPConfig(include_in_schema=True))],
+            openapi_config=OpenAPIConfig(title="Test API", version="1.0.0"),
+        )
+
+        paths = _openapi_paths(app)
+
+        assert "/users" in paths
+        assert "/mcp" in paths
+        assert "/.well-known/oauth-protected-resource" in paths
+        assert "/.well-known/agent-card.json" in paths
+        assert "/.well-known/mcp-server.json" in paths
+
     def test_tool_execution_real(self) -> "None":
         @post("/analyze", opt={"mcp_tool": "analyze_data"})
         async def analyze(data: "dict[str, Any]") -> "dict[str, Any]":
@@ -150,8 +194,6 @@ class TestLitestarMCP:
         assert "error" in result
 
     def test_openapi_integration(self) -> "None":
-        from litestar.openapi.config import OpenAPIConfig
-
         app = Litestar(plugins=[LitestarMCP()], openapi_config=OpenAPIConfig(title="My Custom API", version="2.1.0"))
         client = TestClient(app=app)
 
