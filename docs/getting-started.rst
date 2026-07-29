@@ -78,7 +78,6 @@ The simplest way to add MCP support to your Litestar application:
 That's it! Your application now has MCP endpoints available at:
 
 - ``/mcp`` - Streamable HTTP MCP endpoint
-- ``/.well-known/mcp-server.json`` - MCP server manifest
 - ``/.well-known/agent-card.json`` - Agent metadata document
 
 Marking Routes for MCP Exposure
@@ -158,24 +157,26 @@ Start your application and test the MCP endpoints:
     # Start your app
     uvicorn myapp:app --reload
 
-    # Initialize the MCP server over Streamable HTTP / JSON-RPC
+    # Discover the MCP server
     curl -X POST http://localhost:8000/mcp \
       -H "Content-Type: application/json" \
-      -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}'
-
-    # Open the SSE stream used for server notifications
-    curl http://localhost:8000/mcp \
-      -H "Accept: text/event-stream"
+      -H "MCP-Protocol-Version: 2026-07-28" \
+      -H "Mcp-Method: server/discover" \
+      -d '{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/clientInfo":{"name":"curl","version":"1"}}}}'
 
     # List available tools
     curl -X POST http://localhost:8000/mcp \
       -H "Content-Type: application/json" \
-      -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+      -H "MCP-Protocol-Version: 2026-07-28" \
+      -H "Mcp-Method: tools/list" \
+      -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
 
     # List available resources
     curl -X POST http://localhost:8000/mcp \
       -H "Content-Type: application/json" \
-      -d '{"jsonrpc":"2.0","id":3,"method":"resources/list","params":{}}'
+      -H "MCP-Protocol-Version: 2026-07-28" \
+      -H "Mcp-Method: resources/list" \
+      -d '{"jsonrpc":"2.0","id":3,"method":"resources/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
 
 You should see JSON-RPC responses describing your application's MCP capabilities.
 

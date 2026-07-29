@@ -37,7 +37,7 @@ def basic_config() -> "MCPConfig":
 
 
 @pytest.mark.asyncio
-async def test_initialize_returns_capabilities(
+async def test_server_discover_returns_capabilities(
     dummy_app: "Litestar", request_context: "RequestContext", basic_config: "MCPConfig"
 ) -> "None":
     service = MCPHandlerService(
@@ -49,16 +49,15 @@ async def test_initialize_returns_capabilities(
         registry=None,
     )
 
-    result = await service.initialize({}, request_context)
-    assert result["protocolVersion"] == "2025-11-25"
-    assert result["serverInfo"]["name"] == "Test Server"
+    result = await service.server_discover({}, request_context)
+    assert result["supportedVersions"] == ["2026-07-28"]
     assert "tools" in result["capabilities"]
     assert "resources" in result["capabilities"]
     assert "prompts" not in result["capabilities"]  # No prompts registered
 
 
 @pytest.mark.asyncio
-async def test_initialize_returns_configured_instructions(
+async def test_server_discover_returns_configured_instructions(
     dummy_app: "Litestar", request_context: "RequestContext"
 ) -> "None":
     service = MCPHandlerService(
@@ -70,13 +69,15 @@ async def test_initialize_returns_configured_instructions(
         registry=None,
     )
 
-    result = await service.initialize({}, request_context)
+    result = await service.server_discover({}, request_context)
 
     assert result["instructions"] == "Use the audited workflow."
 
 
 @pytest.mark.asyncio
-async def test_initialize_with_prompts_and_tasks(dummy_app: "Litestar", request_context: "RequestContext") -> "None":
+async def test_server_discover_with_prompts_and_tasks(
+    dummy_app: "Litestar", request_context: "RequestContext"
+) -> "None":
     config = MCPConfig(name="Test Server", tasks=True)
     prompt_reg = PromptRegistration(name="test_prompt", fn=lambda: "hello")
     service = MCPHandlerService(
@@ -89,9 +90,9 @@ async def test_initialize_with_prompts_and_tasks(dummy_app: "Litestar", request_
         task_store=InMemoryTaskStore(),
     )
 
-    result = await service.initialize({}, request_context)
+    result = await service.server_discover({}, request_context)
     assert "prompts" in result["capabilities"]
-    assert "tasks" in result["capabilities"]
+    assert result["capabilities"]["extensions"]["io.modelcontextprotocol/tasks"] == {}
 
 
 @pytest.mark.asyncio
@@ -341,4 +342,4 @@ async def test_resources_list_and_read(request_context: "RequestContext", basic_
     # Test read not found
     with pytest.raises(JSONRPCErrorException) as exc_info:
         await service.resources_read({"uri": "litestar://unknown"}, request_context)
-    assert exc_info.value.error.code == -32002  # Resource not found
+    assert exc_info.value.error.code == -32602

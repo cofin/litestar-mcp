@@ -59,18 +59,11 @@ def test_agent_card_does_not_claim_a2a() -> "None":
         assert payload["url"].endswith("/mcp")
 
 
-def test_mcp_server_manifest_links_as_metadata() -> "None":
-    """Verify that mcp-server.json links the agent card as metadata, not as an A2A endpoint."""
+def test_mcp_server_manifest_is_removed() -> "None":
     app = _make_app()
     with TestClient(app=app) as client:
         response = client.get("/.well-known/mcp-server.json")
-        assert response.status_code == 200
-        payload = response.json()
-
-        endpoints = payload.get("endpoints", {})
-        assert "agentMetadata" in endpoints
-        assert "agentCard" not in endpoints
-        assert endpoints["agentMetadata"].endswith("/.well-known/agent-card.json")
+        assert response.status_code == 404
 
 
 def test_agent_card_remains_public_with_auth() -> "None":

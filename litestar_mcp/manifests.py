@@ -3,16 +3,12 @@
 from typing import TYPE_CHECKING, Any
 
 from litestar_mcp.auth import MCPAuthConfig  # noqa: TC001
-from litestar_mcp.registry import render_prompt_entry, should_include_prompt
-from litestar_mcp.schema_builder import generate_schema_for_handler
 from litestar_mcp.utils import get_handler_function, get_mcp_metadata, render_description
 
 if TYPE_CHECKING:
     from litestar import Litestar
 
     from litestar_mcp.config import MCPConfig
-
-MCP_PROTOCOL_VERSION = "2025-11-25"
 
 
 def build_oauth_protected_resource(auth_config: "MCPAuthConfig | None", app: "Litestar") -> "dict[str, Any]":
@@ -93,64 +89,6 @@ def build_agent_card(
         "skills": skills,
         "defaultInputModes": ["application/json"],
         "defaultOutputModes": ["application/json"],
-    }
-
-
-def build_mcp_server_manifest(
-    *,
-    base_url: "str",
-    config: "MCPConfig",
-    app: "Litestar",
-    discovered_tools: "dict[str, Any]",
-    discovered_resources: "dict[str, Any]",
-    discovered_prompts: "dict[str, Any]",
-) -> "dict[str, Any]":
-    """Build an experimental MCP server manifest."""
-    tools = []
-    for name, handler in discovered_tools.items():
-        fn = get_handler_function(handler)
-        metadata = get_mcp_metadata(handler) or get_mcp_metadata(fn) or {}
-        tool_entry: dict[str, Any] = {
-            "name": name,
-            "description": render_description(handler, fn, kind="tool", fallback_name=name, opt_keys=config.opt_keys),
-            "inputSchema": generate_schema_for_handler(handler),
-        }
-        if metadata.get("task_support") is not None:
-            tool_entry["execution"] = {"taskSupport": metadata["task_support"]}
-        if metadata.get("scopes") is not None:
-            tool_entry["security"] = {"scopes": metadata["scopes"]}
-        tools.append(tool_entry)
-
-    visible_prompts = [
-        registration for registration in discovered_prompts.values() if should_include_prompt(registration, config)
-    ]
-    prompts_list = [render_prompt_entry(registration, config) for registration in visible_prompts]
-
-    capabilities: dict[str, Any] = {
-        "tools": {"listChanged": True},
-        "resources": {"subscribe": True, "listChanged": True},
-        "tasks": config.task_config is not None,
-    }
-    # Per the MCP spec a server SHOULD only advertise capabilities for primitives
-    # it actually exposes. tools/resources stay unconditional to preserve
-    # historical manifest behavior; prompts are gated to match handle_initialize.
-    if visible_prompts:
-        capabilities["prompts"] = {"listChanged": True}
-
-    return {
-        "experimental": True,
-        "name": _server_name(config, app),
-        "version": _server_version(app),
-        "protocolVersion": MCP_PROTOCOL_VERSION,
-        "endpoints": {
-            "mcp": f"{base_url.rstrip('/')}{config.base_path}",
-            "oauthProtectedResource": f"{base_url.rstrip('/')}/.well-known/oauth-protected-resource",
-            "agentMetadata": f"{base_url.rstrip('/')}/.well-known/agent-card.json",
-        },
-        "capabilities": capabilities,
-        "tools": tools,
-        "resources": sorted(discovered_resources.keys()),
-        "prompts": prompts_list,
     }
 
 

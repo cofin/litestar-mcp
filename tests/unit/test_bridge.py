@@ -124,25 +124,17 @@ async def test_token_provider_auth_offloads_sync_provider_from_event_loop() -> N
 
 
 @pytest.mark.anyio
-async def test_bridge_get_stream_405_is_non_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_bridge_never_uses_legacy_get_or_delete(monkeypatch: pytest.MonkeyPatch) -> None:
     from litestar_mcp import bridge
 
     requests: list[tuple[str, str]] = []
 
     async def handler(request: httpx.Request) -> httpx.Response:
         requests.append((request.method, str(request.url)))
-        if request.method == "GET":
-            return httpx.Response(405, request=request)
-        if request.method == "DELETE":
-            return httpx.Response(204, request=request)
         payload = json.loads(request.content)
-        headers = {"mcp-session-id": "sid-1"} if payload.get("method") == "initialize" else {}
-        if payload.get("method") == "notifications/initialized":
-            return httpx.Response(202, headers=headers, request=request)
         return httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": payload.get("id"), "result": {"ok": True}},
-            headers=headers,
             request=request,
         )
 
@@ -153,8 +145,7 @@ async def test_bridge_get_stream_405_is_non_terminal(monkeypatch: pytest.MonkeyP
     exit_code = await bridge.run_stdio_streamable_http_bridge(
         ENDPOINT,
         stdin=BridgeQueuedBytesSource(
-            b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n',
-            b'{"jsonrpc":"2.0","method":"notifications/initialized"}\n',
+            b'{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{}}\n',
             b'{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n',
         ),
         stdout=stdout,
@@ -162,9 +153,9 @@ async def test_bridge_get_stream_405_is_non_terminal(monkeypatch: pytest.MonkeyP
     )
 
     assert exit_code == 0
-    assert ("GET", ENDPOINT) in requests
+    assert requests == [("POST", ENDPOINT), ("POST", ENDPOINT)]
     assert [json.loads(line)["id"] for line in stdout.buffer.splitlines()] == [1, 2]
-    assert "server does not offer a GET SSE stream" in stderr.getvalue()
+    assert stderr.getvalue() == ""
 
 
 @pytest.mark.anyio
@@ -175,14 +166,10 @@ async def test_bridge_uses_exact_custom_endpoint_for_all_requests(monkeypatch: p
 
     async def handler(request: httpx.Request) -> httpx.Response:
         requests.append((request.method, str(request.url)))
-        if request.method == "DELETE":
-            return httpx.Response(204, request=request)
         payload = json.loads(request.content)
-        headers = {"mcp-session-id": "sid-1"} if payload.get("method") == "initialize" else {}
         return httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": payload.get("id"), "result": {"ok": True}},
-            headers=headers,
             request=request,
         )
 
@@ -190,16 +177,93 @@ async def test_bridge_uses_exact_custom_endpoint_for_all_requests(monkeypatch: p
 
     exit_code = await bridge.run_stdio_streamable_http_bridge(
         ENDPOINT,
-        stdin=BridgeQueuedBytesSource(b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n'),
+        stdin=BridgeQueuedBytesSource(b'{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{}}\n'),
         stdout=BridgeBytesSink(),
         stderr=io.StringIO(),
     )
 
     assert exit_code == 0
-    assert requests == [
-        ("POST", ENDPOINT),
-        ("DELETE", ENDPOINT),
-    ]
+    assert requests == [("POST", ENDPOINT)]
+
+
+@pytest.mark.anyio
+async def test_bridge_adds_modern_metadata_and_lazy_custom_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    from litestar_mcp import bridge
+
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        payload = json.loads(request.content)
+        result: dict[str, Any]
+        if payload["method"] == "tools/list":
+            result = {
+                "tools": [
+                    {
+                        "name": "greet",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "tenant": {"type": "string", "x-mcp-header": "Tenant"},
+                            },
+                        },
+                    }
+                ]
+            }
+        else:
+            result = {"ok": True}
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": payload["id"], "result": result}, request=request)
+
+    _patch_async_client(monkeypatch, handler)
+    stdout = BridgeBytesSink()
+    exit_code = await bridge.run_stdio_streamable_http_bridge(
+        ENDPOINT,
+        stdin=BridgeQueuedBytesSource(
+            '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"greet","arguments":{"tenant":"租户"}}}\n'.encode()
+        ),
+        stdout=stdout,
+        stderr=io.StringIO(),
+    )
+
+    assert exit_code == 0
+    assert [json.loads(request.content)["method"] for request in requests] == ["tools/list", "tools/call"]
+    call_request = requests[-1]
+    call_payload = json.loads(call_request.content)
+    assert call_request.headers["MCP-Protocol-Version"] == "2026-07-28"
+    assert call_request.headers["Mcp-Method"] == "tools/call"
+    assert call_request.headers["Mcp-Name"] == "greet"
+    assert call_request.headers["Mcp-Param-Tenant"].startswith("=?base64?")
+    assert call_payload["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"] == "2026-07-28"
+
+
+@pytest.mark.anyio
+async def test_bridge_forwards_independent_requests_concurrently(monkeypatch: pytest.MonkeyPatch) -> None:
+    from litestar_mcp import bridge
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        if payload["id"] == 1:
+            await anyio.sleep(0.05)
+        return httpx.Response(
+            200,
+            json={"jsonrpc": "2.0", "id": payload["id"], "result": {"ok": True}},
+            request=request,
+        )
+
+    _patch_async_client(monkeypatch, handler)
+    stdout = BridgeBytesSink()
+    exit_code = await bridge.run_stdio_streamable_http_bridge(
+        ENDPOINT,
+        stdin=BridgeQueuedBytesSource(
+            b'{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n',
+            b'{"jsonrpc":"2.0","id":2,"method":"resources/list"}\n',
+        ),
+        stdout=stdout,
+        stderr=io.StringIO(),
+    )
+
+    assert exit_code == 0
+    assert [json.loads(line)["id"] for line in stdout.buffer.splitlines()] == [2, 1]
 
 
 @pytest.mark.anyio
@@ -304,10 +368,13 @@ async def test_bridge_clean_eof_exits_zero_without_error() -> None:
 
 
 @pytest.mark.anyio
-async def test_bridge_close_delete_status_is_best_effort(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_bridge_close_does_not_issue_http_request(monkeypatch: pytest.MonkeyPatch) -> None:
     from litestar_mcp import bridge
 
+    requests: list[httpx.Request] = []
+
     async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
         return httpx.Response(404, request=request)
 
     _patch_async_client(monkeypatch, handler)
@@ -321,19 +388,18 @@ async def test_bridge_close_delete_status_is_best_effort(monkeypatch: pytest.Mon
         stderr=io.StringIO(),
         event_source_cls=object,
     )
-    client._session_id = "sid-1"
-
     await client.close()
+    assert requests == []
 
 
 @pytest.mark.anyio
-async def test_bridge_reports_remote_stream_exception_and_cancels_stdin_pump(
+async def test_bridge_reports_post_exception_and_cancels_stdin_pump(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from litestar_mcp import bridge
 
     stdin = BridgeQueuedBytesSource(
-        b'{"jsonrpc":"2.0","method":"notifications/initialized"}\n',
+        b'{"jsonrpc":"2.0","id":1,"method":"server/discover"}\n',
         block_after_chunks=True,
     )
     stdout = BridgeBytesSink()
@@ -354,12 +420,9 @@ async def test_bridge_reports_remote_stream_exception_and_cancels_stdin_pump(
         ) -> None:
             return None
 
-        async def run_sse_stream(self) -> None:
+        async def post_message(self, message: dict[str, Any]) -> None:
             msg = "remote transport failed"
             raise RuntimeError(msg)
-
-        async def post_message(self, message: dict[str, Any], *, start_get_stream: Any) -> None:
-            start_get_stream()
 
         async def close(self) -> None:
             return None

@@ -128,7 +128,9 @@ A bare ``curl`` probe confirms the transport is live:
 
     curl -sX POST http://127.0.0.1:8000/mcp \
         -H 'content-type: application/json' \
-        -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{}}}' | jq .
+        -H 'MCP-Protocol-Version: 2026-07-28' \
+        -H 'Mcp-Method: server/discover' \
+        -d '{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}' | jq .
 
 CLI Commands
 ============
@@ -148,4 +150,4 @@ environment:
     - :doc:`reference_examples` — the family chooser and variant matrix.
     - :doc:`bridge` — Litestar CLI stdio bridge usage.
     - :doc:`auth` — :class:`~litestar_mcp.auth.MCPAuthConfig` reference.
-    - :doc:`deployment` — sticky routing and multi-replica notes.
+    - :doc:`deployment` — stateless scaling and multi-replica subscriptions.

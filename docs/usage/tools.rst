@@ -26,31 +26,65 @@ arguments are unwrapped and their ``Parameter`` constraints
 (``ge`` / ``le`` / ``min_length`` / ``pattern`` / …) flow through into
 the advertised ``inputSchema``.
 
+Explicit Input Schemas
+======================
+
+Use :func:`~litestar_mcp.mcp_tool` with ``input_schema=`` when the generated
+Litestar schema cannot express the exact client-facing JSON Schema 2020-12
+contract. The explicit schema replaces inference for discovery and bridge
+header generation, so keep it aligned with the handler's actual validation:
+
+.. literalinclude:: /examples/snippets/tool_explicit_input_schema.py
+    :language: python
+    :caption: ``docs/examples/snippets/tool_explicit_input_schema.py``
+    :start-after: # start-example
+    :end-before: # end-example
+    :dedent:
+
+Task Input Before Execution
+===========================
+
+For a task-capable tool that must complete an MRTR input round before task
+creation, combine ``task_support`` with ``task_input_before_start=True``:
+
+.. literalinclude:: /examples/snippets/tool_task_input_before_start.py
+    :language: python
+    :caption: ``docs/examples/snippets/tool_task_input_before_start.py``
+    :start-after: # start-example
+    :end-before: # end-example
+    :dedent:
+
+The first response is synchronous ``input_required`` and has no task ID. A
+retry carrying ``inputResponses`` may create the task. Integrity-protect
+authorization-sensitive ``requestState`` and bind it to the authenticated
+principal, original arguments, and an expiry.
+
 JSON-RPC Round-Trip
 ===================
 
-After ``initialize``, clients drive tools via ``tools/list`` and
-``tools/call``:
+Clients drive tools with independent ``tools/list`` and ``tools/call`` POST
+requests. Every request includes the 2026-07-28 metadata envelope and matching
+HTTP routing headers:
 
 .. code-block:: bash
-
-    # Initialise the server
-    curl -sS -X POST http://localhost:8000/mcp \
-      -H "Content-Type: application/json" \
-      -d '{"jsonrpc":"2.0","id":1,"method":"initialize",
-           "params":{"protocolVersion":"2025-11-25","capabilities":{},
-           "clientInfo":{"name":"curl","version":"1.0"}}}'
 
     # List every tool marked in the application
     curl -sS -X POST http://localhost:8000/mcp \
       -H "Content-Type: application/json" \
-      -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+      -H "MCP-Protocol-Version: 2026-07-28" \
+      -H "Mcp-Method: tools/list" \
+      -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
 
     # Execute a specific tool (task-manager demo)
     curl -sS -X POST http://localhost:8000/mcp \
       -H "Content-Type: application/json" \
+      -H "MCP-Protocol-Version: 2026-07-28" \
+      -H "Mcp-Method: tools/call" \
+      -H "Mcp-Name: list_tasks" \
       -d '{"jsonrpc":"2.0","id":3,"method":"tools/call",
-           "params":{"name":"list_tasks","arguments":{}}}'
+           "params":{"name":"list_tasks","arguments":{},
+           "_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28",
+           "io.modelcontextprotocol/clientCapabilities":{}}}}'
 
 Successful responses carry the handler's return value inside the
 standard JSON-RPC envelope.

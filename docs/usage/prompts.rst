@@ -49,8 +49,7 @@ form), enriched with Google-style docstring descriptions when present.
 Capability Gating
 =================
 
-The ``prompts`` capability is only advertised — both in ``initialize``'s
-capability response and in ``/.well-known/mcp-server.json`` — when at
+The ``prompts`` capability is only advertised by ``server/discover`` when at
 least one visible prompt is registered. This matches the MCP spec's
 recommendation that servers only declare capabilities for primitives
 they actually expose. The same per-tag and per-operation include/exclude
@@ -59,8 +58,8 @@ filters that gate tools and resources also gate prompt visibility.
 JSON-RPC Round-Trip
 ===================
 
-After ``initialize``, clients drive prompts via ``prompts/list`` and
-``prompts/get``:
+Clients drive prompts with independent ``prompts/list`` and ``prompts/get``
+requests; see :doc:`migration_0_12` for the mandatory metadata and headers.
 
 .. code-block:: bash
 

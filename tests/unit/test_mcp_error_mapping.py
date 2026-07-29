@@ -75,7 +75,7 @@ def test_resource_not_found_uses_mcp_resource_code_with_uri_data() -> "None":
     with TestClient(app=app) as client:
         sid = _ensure_session(client)
         response = _rpc(client, "resources/read", {"uri": "litestar://missing"}, sid=sid)
-        assert response["error"]["code"] == -32002
+        assert response["error"]["code"] == -32602
         assert response["error"]["message"] == "Resource not found"
         assert response["error"]["data"] == {"uri": "litestar://missing"}
 
@@ -118,12 +118,12 @@ def test_resource_read_error_maps_to_internal_error_for_all_statuses(status_code
 
 
 def test_resource_not_found_keeps_spec_code_not_internal_error() -> "None":
-    """The one intentional asymmetry: resource-not-found is -32002 (spec-mandated),
+    """Resource-not-found uses the core invalid-params code in 2026-07-28,
     where prompt-not-found is -32602. This must not collapse to -32603.
     """
     app = Litestar(route_handlers=[], plugins=[LitestarMCP(MCPConfig())])
     with TestClient(app=app) as client:
         sid = _ensure_session(client)
         response = _rpc(client, "resources/read", {"uri": "litestar://nope"}, sid=sid)
-        assert response["error"]["code"] == -32002
+        assert response["error"]["code"] == -32602
         assert response["error"]["data"] == {"uri": "litestar://nope"}

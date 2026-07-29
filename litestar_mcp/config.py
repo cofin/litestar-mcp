@@ -55,11 +55,16 @@ class MCPOptKeys:
         tool: Opt key that marks a route handler as an MCP tool
             (``handler.opt[tool] = "<tool-name>"``).
         resource: Opt key that marks a route handler as an MCP resource.
+        resource_uri: Opt key that carries a concrete resource URI override.
         resource_mime_type: Opt key that carries the resource MIME type for
             list responses and binary ``resources/read`` fallbacks.
         resource_template: Opt key that carries an RFC 6570 Level 1 URI
             template for the resource (``handler.opt[resource_template] =
             "app://workspaces/{workspace_id}/files/{file_id}"``).
+        required_client_capabilities: Opt key declaring standard client
+            capabilities required before a tool may be invoked.
+        task_input_before_start: Opt key selecting a synchronous MRTR input
+            round before task creation.
         prompt: Opt key that marks a route handler as an MCP prompt
             (``handler.opt[prompt] = "<prompt-name>"``).
         description: Opt key overriding the tool description
@@ -80,8 +85,11 @@ class MCPOptKeys:
 
     tool: "str" = "mcp_tool"
     resource: "str" = "mcp_resource"
+    resource_uri: "str" = "mcp_resource_uri"
     resource_mime_type: "str" = "mcp_resource_mime_type"
     resource_template: "str" = "mcp_resource_template"
+    required_client_capabilities: "str" = "mcp_required_client_capabilities"
+    task_input_before_start: "str" = "mcp_task_input_before_start"
     prompt: "str" = "mcp_prompt"
     description: "str" = "mcp_description"
     resource_description: "str" = "mcp_resource_description"
@@ -112,14 +120,23 @@ class MCPOptKeys:
 
 @dataclass
 class MCPTaskConfig:
-    """Configuration for experimental MCP task support."""
+    """Configuration for the opt-in MCP Tasks extension."""
 
-    enabled: "bool" = True
-    list_enabled: "bool" = True
-    cancel_enabled: "bool" = True
-    default_ttl: "int" = 300_000
-    max_ttl: "int" = 3_600_000
-    poll_interval: "int" = 1_000
+    store: "Store | None" = None
+    default_ttl_ms: "int" = 300_000
+    max_ttl_ms: "int" = 3_600_000
+    poll_interval_ms: "int" = 1_000
+
+    def __post_init__(self) -> "None":
+        if self.default_ttl_ms < 0:
+            msg = "default_ttl_ms must be non-negative"
+            raise ValueError(msg)
+        if self.max_ttl_ms < self.default_ttl_ms:
+            msg = "max_ttl_ms must be greater than or equal to default_ttl_ms"
+            raise ValueError(msg)
+        if self.poll_interval_ms <= 0:
+            msg = "poll_interval_ms must be positive"
+            raise ValueError(msg)
 
 
 def normalize_task_config(value: "bool | MCPTaskConfig") -> "MCPTaskConfig | None":
@@ -143,8 +160,9 @@ class MCPConfig:
         include_in_schema: Whether to include MCP routes in OpenAPI schema generation.
         name: Optional override for server name. If not set, uses OpenAPI title.
         guards: Optional list of guards to protect MCP endpoints.
-        allowed_origins: List of allowed Origin header values. If empty/None, all origins
-            are accepted. When set, requests with a non-matching Origin are rejected with 403.
+        allowed_origins: Exact additional Origin values to accept. A missing
+            Origin is valid; a present Origin must match the request origin or
+            one of these configured values.
         auth: Optional OAuth 2.1 auth configuration. When set, bearer token validation
             is enforced on MCP endpoints.
         tasks: Optional task configuration or ``True`` to enable the default
@@ -177,15 +195,15 @@ class MCPConfig:
     auth: "MCPAuthConfig | None" = None
     tasks: "bool | MCPTaskConfig" = False
     opt_keys: "MCPOptKeys" = field(default_factory=MCPOptKeys)
-    session_store: "Store | None" = None
-    session_max_idle_seconds: "float" = 3600.0
-    sse_max_streams: "int" = 10_000
-    sse_max_idle_seconds: "float" = 3600.0
+    cache_ttl_ms: "int" = 0
+    cache_scope: "Literal['private', 'public']" = "private"
+    subscription_max_streams: "int" = 10_000
+    subscription_keepalive_seconds: "float" = 15.0
+    subscription_channels: "Any | None" = None
     list_page_size: "int" = 100
     before_tool_call: "BeforeToolCallHook | None" = None
     after_tool_call: "AfterToolCallHook | None" = None
     max_blob_bytes: "int | None" = 25 * 1024 * 1024
-    _session_manager: "Any" = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> "None":
         if self.list_page_size <= 0:
@@ -193,6 +211,15 @@ class MCPConfig:
             raise ValueError(msg)
         if self.max_blob_bytes is not None and self.max_blob_bytes < 0:
             msg = f"max_blob_bytes must be non-negative or None, got {self.max_blob_bytes}"
+            raise ValueError(msg)
+        if self.cache_ttl_ms < 0:
+            msg = f"cache_ttl_ms must be non-negative, got {self.cache_ttl_ms}"
+            raise ValueError(msg)
+        if self.subscription_max_streams <= 0:
+            msg = f"subscription_max_streams must be positive, got {self.subscription_max_streams}"
+            raise ValueError(msg)
+        if self.subscription_keepalive_seconds <= 0:
+            msg = f"subscription_keepalive_seconds must be positive, got {self.subscription_keepalive_seconds}"
             raise ValueError(msg)
 
     @property

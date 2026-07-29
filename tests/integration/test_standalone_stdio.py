@@ -26,17 +26,32 @@ def _stdio_context(**kwargs: "Any") -> "Any":
     return litestar_mcp.MCPStdioContext(**kwargs)
 
 
-def _initialize_request(request_id: int = 1) -> "dict[str, Any]":
+def _request(
+    method: "str",
+    *,
+    request_id: "int" = 1,
+    params: "dict[str, Any] | None" = None,
+    tasks_capable: "bool" = False,
+) -> "dict[str, Any]":
+    request_params = dict(params or {})
+    capabilities: dict[str, Any] = {}
+    if tasks_capable:
+        capabilities["extensions"] = {"io.modelcontextprotocol/tasks": {}}
+    request_params["_meta"] = {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": capabilities,
+        "io.modelcontextprotocol/clientInfo": {"name": "test-client", "version": "1.0"},
+    }
     return {
         "jsonrpc": "2.0",
         "id": request_id,
-        "method": "initialize",
-        "params": {
-            "protocolVersion": "2025-11-25",
-            "capabilities": {},
-            "clientInfo": {"name": "test-client", "version": "1.0"},
-        },
+        "method": method,
+        "params": request_params,
     }
+
+
+def _discover_request(request_id: int = 1) -> "dict[str, Any]":
+    return _request("server/discover", request_id=request_id)
 
 
 async def _run_stdio_exchange(
@@ -83,6 +98,16 @@ async def _run_stdio_exchange(
             test_stdout_reader.close()
             app_stdin.close()
             app_stdout.close()
+
+
+async def _wait_for_terminal(store: "Any", task_id: "str", owner_id: "str | None") -> "Any":
+    for _ in range(100):
+        record = await store.get(task_id, owner_id)
+        if record.is_terminal():
+            return record
+        await asyncio.sleep(0.01)
+    msg = f"Task {task_id} did not reach a terminal state"
+    raise AssertionError(msg)
 
 
 def test_mcp_stdio_context_is_public_with_defaults() -> "None":
@@ -133,38 +158,19 @@ async def test_standalone_stdio_tool_execution() -> "None":
                     timeout=5.0,
                 )
 
-            # 1. Send initialize request
-            init_req = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2025-11-25",
-                    "capabilities": {},
-                    "clientInfo": {"name": "test-client", "version": "1.0"},
-                },
-            }
-            test_stdin_writer.write(json.dumps(init_req).encode("utf-8") + b"\n")
+            # 1. Discover the server.
+            test_stdin_writer.write(json.dumps(_discover_request()).encode("utf-8") + b"\n")
 
-            init_resp_bytes = await read_line_async()
-            init_resp = json.loads(init_resp_bytes.decode("utf-8"))
-            assert init_resp["id"] == 1
-            assert "result" in init_resp
+            discovery_resp = json.loads((await read_line_async()).decode("utf-8"))
+            assert discovery_resp["id"] == 1
+            assert "result" in discovery_resp
 
-            # 2. Send initialized notification
-            initialized_ntf = {
-                "jsonrpc": "2.0",
-                "method": "notifications/initialized",
-            }
-            test_stdin_writer.write(json.dumps(initialized_ntf).encode("utf-8") + b"\n")
-
-            # 3. Call tool
-            tool_req = {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {"name": "greet", "arguments": {"name": "World"}},
-            }
+            # 2. Call a tool with its own complete request metadata.
+            tool_req = _request(
+                "tools/call",
+                request_id=2,
+                params={"name": "greet", "arguments": {"name": "World"}},
+            )
             test_stdin_writer.write(json.dumps(tool_req).encode("utf-8") + b"\n")
 
             tool_resp_bytes = await read_line_async()
@@ -214,14 +220,8 @@ async def test_standalone_stdio_context_propagates_identity_to_tool() -> "None":
     responses = await _run_stdio_exchange(
         mcp,
         [
-            _initialize_request(),
-            {"jsonrpc": "2.0", "method": "notifications/initialized"},
-            {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {"name": "whoami", "arguments": {}},
-            },
+            _discover_request(),
+            _request("tools/call", request_id=2, params={"name": "whoami", "arguments": {}}),
         ],
         stdio_context=context,
     )
@@ -253,10 +253,9 @@ async def test_standalone_stdio_context_isolates_auth_mutations_between_calls() 
     responses = await _run_stdio_exchange(
         mcp,
         [
-            _initialize_request(),
-            {"jsonrpc": "2.0", "method": "notifications/initialized"},
-            {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "probe", "arguments": {}}},
-            {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "probe", "arguments": {}}},
+            _discover_request(),
+            _request("tools/call", request_id=2, params={"name": "probe", "arguments": {}}),
+            _request("tools/call", request_id=3, params={"name": "probe", "arguments": {}}),
         ],
         stdio_context=_stdio_context(auth=auth),
     )
@@ -287,14 +286,8 @@ async def test_standalone_stdio_context_authorizes_guards_from_scope() -> "None"
     allowed = await _run_stdio_exchange(
         mcp,
         [
-            _initialize_request(),
-            {"jsonrpc": "2.0", "method": "notifications/initialized"},
-            {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {"name": "guarded", "arguments": {}},
-            },
+            _discover_request(),
+            _request("tools/call", request_id=2, params={"name": "guarded", "arguments": {}}),
         ],
         stdio_context=_stdio_context(auth={"role": "admin"}),
     )
@@ -303,14 +296,8 @@ async def test_standalone_stdio_context_authorizes_guards_from_scope() -> "None"
     denied = await _run_stdio_exchange(
         mcp,
         [
-            _initialize_request(),
-            {"jsonrpc": "2.0", "method": "notifications/initialized"},
-            {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {"name": "guarded", "arguments": {}},
-            },
+            _discover_request(),
+            _request("tools/call", request_id=2, params={"name": "guarded", "arguments": {}}),
         ],
         stdio_context=_stdio_context(auth={"role": "viewer"}),
     )
@@ -331,14 +318,8 @@ async def test_standalone_stdio_context_propagates_identity_to_resources() -> "N
     responses = await _run_stdio_exchange(
         mcp,
         [
-            _initialize_request(),
-            {"jsonrpc": "2.0", "method": "notifications/initialized"},
-            {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "resources/read",
-                "params": {"uri": "litestar://profile"},
-            },
+            _discover_request(),
+            _request("resources/read", request_id=2, params={"uri": "litestar://profile"}),
         ],
         stdio_context=_stdio_context(user=SimpleNamespace(id="resource-user"), auth={"sub": "resource-sub"}),
     )
@@ -359,22 +340,22 @@ async def test_standalone_stdio_task_owner_defaults_to_auth_subject() -> "None":
     responses = await _run_stdio_exchange(
         mcp,
         [
-            _initialize_request(),
-            {"jsonrpc": "2.0", "method": "notifications/initialized"},
-            {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {"name": "owner_task", "arguments": {}, "task": {"ttl": 1000}},
-            },
+            _discover_request(),
+            _request(
+                "tools/call",
+                request_id=2,
+                params={"name": "owner_task", "arguments": {}},
+                tasks_capable=True,
+            ),
         ],
         stdio_context=_stdio_context(auth={"sub": "owner-from-auth"}),
     )
 
-    task_id = responses[1]["result"]["task"]["taskId"]
+    assert responses[1]["result"]["resultType"] == "task"
+    task_id = responses[1]["result"]["taskId"]
     assert mcp.plugin.task_store is not None
-    assert mcp.plugin.task_store._tasks[task_id].owner_id == "owner-from-auth"
-    record = await mcp.plugin.task_store.wait_for_terminal(task_id, "owner-from-auth")
+    record = await _wait_for_terminal(mcp.plugin.task_store, task_id, "owner-from-auth")
+    assert record.owner_id == "owner-from-auth"
     assert record.result is not None
     payload = json.loads(record.result["content"][0]["text"])
     assert payload == {"auth_sub": "owner-from-auth"}
@@ -392,21 +373,22 @@ async def test_standalone_stdio_task_owner_prefers_explicit_owner_id() -> "None"
     responses = await _run_stdio_exchange(
         mcp,
         [
-            _initialize_request(),
-            {"jsonrpc": "2.0", "method": "notifications/initialized"},
-            {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {"name": "explicit_owner_task", "arguments": {}, "task": {"ttl": 1000}},
-            },
+            _discover_request(),
+            _request(
+                "tools/call",
+                request_id=2,
+                params={"name": "explicit_owner_task", "arguments": {}},
+                tasks_capable=True,
+            ),
         ],
         stdio_context=_stdio_context(owner_id="explicit-owner", auth={"sub": "auth-owner"}),
     )
 
-    task_id = responses[1]["result"]["task"]["taskId"]
+    assert responses[1]["result"]["resultType"] == "task"
+    task_id = responses[1]["result"]["taskId"]
     assert mcp.plugin.task_store is not None
-    assert mcp.plugin.task_store._tasks[task_id].owner_id == "explicit-owner"
+    record = await mcp.plugin.task_store.get(task_id, "explicit-owner")
+    assert record.owner_id == "explicit-owner"
 
 
 @pytest.mark.anyio
@@ -447,36 +429,17 @@ async def test_standalone_stdio_litestar_dependency_resolution() -> "None":
                     timeout=5.0,
                 )
 
-            test_stdin_writer.write(
-                json.dumps(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "method": "initialize",
-                        "params": {
-                            "protocolVersion": "2025-11-25",
-                            "capabilities": {},
-                            "clientInfo": {"name": "test-client", "version": "1.0"},
-                        },
-                    }
-                ).encode("utf-8")
-                + b"\n"
-            )
-            init_resp = json.loads((await read_line_async()).decode("utf-8"))
-            assert "result" in init_resp
-
-            test_stdin_writer.write(
-                json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}).encode("utf-8") + b"\n"
-            )
+            test_stdin_writer.write(json.dumps(_discover_request()).encode("utf-8") + b"\n")
+            discovery_resp = json.loads((await read_line_async()).decode("utf-8"))
+            assert "result" in discovery_resp
 
             test_stdin_writer.write(
                 json.dumps(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": 2,
-                        "method": "tools/call",
-                        "params": {"name": "greet", "arguments": {"name": "World"}},
-                    }
+                    _request(
+                        "tools/call",
+                        request_id=2,
+                        params={"name": "greet", "arguments": {"name": "World"}},
+                    )
                 ).encode("utf-8")
                 + b"\n"
             )

@@ -71,11 +71,9 @@ full variant matrix and common pitfalls.
 
 ## Multi-replica deployments
 
-Each MCP session is bound to the replica that issued its
-`Mcp-Session-Id`. SSE streams pin to that replica because event queues
-live in process memory. For Cloud Run / GKE, configure session
-affinity on the `Mcp-Session-Id` header and pair it with a shared
-session store so stateless POST tool calls can hit any replica. See
+MCP 2026-07-28 POST requests can land on any replica. Use a persistent
+Litestar Store for durable Tasks extension records and an existing
+ChannelsPlugin for cross-worker subscription fan-out. See
 [`docs/usage/deployment.rst`](../../usage/deployment.rst) for the full
 note.
 

@@ -222,7 +222,7 @@ if __name__ == "__main__":
     logger.info("Starting Task Management API with MCP integration...")
     logger.info("API Documentation: http://127.0.0.1:8000/schema/swagger")
     logger.info("MCP Transport: http://127.0.0.1:8000/mcp")
-    logger.info("MCP Server Manifest: http://127.0.0.1:8000/.well-known/mcp-server.json")
+    logger.info("MCP Discovery: POST http://127.0.0.1:8000/mcp (server/discover)")
     logger.info("Agent Card: http://127.0.0.1:8000/.well-known/agent-card.json")
 
     uvicorn.run(app, host="127.0.0.1", port=8000, reload=True)

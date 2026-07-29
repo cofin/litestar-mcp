@@ -27,28 +27,7 @@ def _rpc(
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
     if params is not None:
         body["params"] = params
-    headers: dict[str, str] = {}
-    if method != "initialize":
-        sid = getattr(client, "_mcp_session", "")
-        if not sid:
-            init = _rpc(client, "initialize", base_path=base_path)
-            sid = init.get("_session_id", "")
-            if not sid:
-                sid = getattr(client, "_mcp_session", "")
-        if sid:
-            headers["Mcp-Session-Id"] = str(sid)
-    response = client.post(base_path, json=body, headers=headers)
-    result = response.json()
-    sid = response.headers.get("mcp-session-id")
-    if method == "initialize" and sid:
-        client.post(
-            base_path,
-            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-            headers={"Mcp-Session-Id": sid},
-        )
-        client._mcp_session = sid  # type: ignore[attr-defined]
-        result["_session_id"] = sid
-    return result  # type: ignore[no-any-return]
+    return client.post(base_path, json=body).json()  # type: ignore[no-any-return]
 
 
 def test_mcp_init_defaults() -> "None":
@@ -84,9 +63,9 @@ def test_mcp_init_synchronizes_existing_plugin_metadata() -> "None":
     assert plugin.config.instructions == "Follow these instructions"
 
     with TestClient(app=mcp.app) as client:
-        response = _rpc(client, "initialize")
+        response = _rpc(client, "server/discover")
 
-    assert response["result"]["serverInfo"]["name"] == "existing-plugin"
+    assert response["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"] == "existing-plugin"
     assert response["result"]["instructions"] == "Follow these instructions"
 
 

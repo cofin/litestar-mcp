@@ -1,4 +1,4 @@
-"""MCP 2025-11-25 resource-templates + completion/complete flows.
+"""MCP 2026-07-28 resource-templates + completion/complete flows.
 
 Ch4 of ``v0.5.0-consumer-readiness`` adds RFC 6570 Level 1 URI templates to
 ``@mcp_resource`` + ``mcp_resource_template`` opt-key, plus the
@@ -25,30 +25,11 @@ def _app(*handlers: "Any") -> "Litestar":
     return Litestar(route_handlers=list(handlers), plugins=[LitestarMCP(MCPConfig())])
 
 
-async def _init(client: "AsyncTestClient[Any]") -> "str":
-    init = await client.post(
-        "/mcp",
-        json={
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
-        },
-    )
-    sid = init.headers.get("mcp-session-id", "")
-    await client.post(
-        "/mcp",
-        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        headers={"Mcp-Session-Id": sid},
-    )
-    return str(sid)
-
-
 async def _rpc(
-    client: "AsyncTestClient[Any]", method: "str", params: "dict[str, Any] | None" = None, *, sid: "str"
+    client: "AsyncTestClient[Any]", method: "str", params: "dict[str, Any] | None" = None
 ) -> "dict[str, Any]":
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}
-    return (await client.post("/mcp", json=body, headers={"Mcp-Session-Id": sid})).json()  # type: ignore[no-any-return]
+    return (await client.post("/mcp", json=body)).json()  # type: ignore[no-any-return]
 
 
 @pytest.mark.anyio
@@ -63,8 +44,7 @@ async def test_resources_templates_list_surfaces_registered_template() -> "None"
         return {"wid": wid, "fid": fid}
 
     async with AsyncTestClient(app=_app(handler)) as client:
-        sid = await _init(client)
-        resp = await _rpc(client, "resources/templates/list", sid=sid)
+        resp = await _rpc(client, "resources/templates/list")
         templates = resp["result"]["resourceTemplates"]
         assert any(t["uriTemplate"] == "app://w/{wid}/f/{fid}" and t["name"] == "wf" for t in templates)
 
@@ -81,8 +61,7 @@ async def test_resources_read_dispatches_template_uri_with_extracted_vars() -> "
         return {"wid": wid, "fid": fid}
 
     async with AsyncTestClient(app=_app(handler)) as client:
-        sid = await _init(client)
-        resp = await _rpc(client, "resources/read", {"uri": "app://w/42/f/99"}, sid=sid)
+        resp = await _rpc(client, "resources/read", {"uri": "app://w/42/f/99"})
         content = resp["result"]["contents"][0]["text"]
         assert '"wid":"42"' in content or '"wid": "42"' in content
         assert '"fid":"99"' in content or '"fid": "99"' in content
@@ -100,8 +79,7 @@ async def test_resources_read_unknown_uri_returns_error() -> "None":
         return {"wid": wid}
 
     async with AsyncTestClient(app=_app(handler)) as client:
-        sid = await _init(client)
-        resp = await _rpc(client, "resources/read", {"uri": "unknown://x"}, sid=sid)
+        resp = await _rpc(client, "resources/read", {"uri": "unknown://x"})
         assert "error" in resp
 
 
@@ -117,12 +95,10 @@ async def test_completion_complete_returns_empty_default_for_registered_template
         return {"wid": wid}
 
     async with AsyncTestClient(app=_app(handler)) as client:
-        sid = await _init(client)
         resp = await _rpc(
             client,
             "completion/complete",
             {"ref": {"type": "ref/resource", "uri": "app://w/{wid}"}, "argument": {"name": "wid", "value": "ab"}},
-            sid=sid,
         )
         assert resp["result"]["completion"] == {"values": [], "total": 0, "hasMore": False}
 
@@ -130,12 +106,10 @@ async def test_completion_complete_returns_empty_default_for_registered_template
 @pytest.mark.anyio
 async def test_completion_complete_returns_empty_for_unknown_ref() -> "None":
     async with AsyncTestClient(app=_app()) as client:
-        sid = await _init(client)
         resp = await _rpc(
             client,
             "completion/complete",
             {"ref": {"type": "ref/resource", "uri": "app://unknown"}, "argument": {"name": "x", "value": ""}},
-            sid=sid,
         )
         assert resp["result"]["completion"] == {"values": [], "total": 0, "hasMore": False}
 
@@ -149,8 +123,7 @@ async def test_concrete_resource_still_resolves_via_litestar_scheme() -> "None":
         return {"debug": True}
 
     async with AsyncTestClient(app=_app(handler)) as client:
-        sid = await _init(client)
-        resp = await _rpc(client, "resources/read", {"uri": "litestar://app_config"}, sid=sid)
+        resp = await _rpc(client, "resources/read", {"uri": "litestar://app_config"})
         assert resp["result"]["contents"][0]["text"] in ('{"debug":true}', '{"debug": true}')
 
 
@@ -167,6 +140,5 @@ async def test_ambiguous_templates_resolve_first_registered() -> "None":
         return {"which": "second", "x": x}
 
     async with AsyncTestClient(app=_app(first, second)) as client:
-        sid = await _init(client)
-        resp = await _rpc(client, "resources/read", {"uri": "app://x/42"}, sid=sid)
+        resp = await _rpc(client, "resources/read", {"uri": "app://x/42"})
         assert '"which":"first"' in resp["result"]["contents"][0]["text"].replace(" ", "")

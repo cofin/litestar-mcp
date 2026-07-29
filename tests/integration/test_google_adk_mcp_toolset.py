@@ -27,6 +27,9 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 google_adk = pytest.importorskip("google.adk")
+_ADK_STATEFUL_SKIP = pytest.mark.skip(
+    reason="Google ADK 2.3 still sends the removed initialize-era MCP lifecycle",
+)
 
 pytestmark = [
     pytest.mark.integration,
@@ -69,10 +72,9 @@ def _run_app(app: "Litestar") -> "Iterator[str]":
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
         try:
-            resp = httpx.get(f"{base_url}/.well-known/mcp-server.json", timeout=0.2)
-            if resp.status_code == 200:
-                yield base_url
-                break
+            httpx.get(base_url, timeout=0.2)
+            yield base_url
+            break
         except httpx.HTTPError:
             time.sleep(0.05)
     else:
@@ -146,11 +148,11 @@ def test_harness_starts_and_stops_cleanly() -> "None":
     app = _build_simple_app()
     with _run_app(app) as base_url:
         response = httpx.get(f"{base_url}/.well-known/mcp-server.json")
-        assert response.status_code == 200
-        assert "endpoints" in response.json()
+        assert response.status_code == 404
 
 
 @pytest.mark.asyncio
+@_ADK_STATEFUL_SKIP
 async def test_adk_mcp_toolset_discovers_and_calls_litestar_tool() -> "None":
     """Verify that ADK McpToolset can discover and invoke a tool exposed by Litestar."""
     from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
@@ -174,6 +176,7 @@ async def test_adk_mcp_toolset_discovers_and_calls_litestar_tool() -> "None":
 
 
 @pytest.mark.asyncio
+@_ADK_STATEFUL_SKIP
 async def test_adk_mcp_toolset_auth_success() -> "None":
     """Verify that ADK McpToolset succeeds when a valid bearer token is supplied."""
     from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
@@ -200,6 +203,7 @@ async def test_adk_mcp_toolset_auth_success() -> "None":
 
 
 @pytest.mark.asyncio
+@_ADK_STATEFUL_SKIP
 async def test_adk_mcp_toolset_auth_failure() -> "None":
     """Verify that ADK McpToolset fails when no bearer token is supplied."""
     from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
@@ -223,6 +227,7 @@ async def test_adk_mcp_toolset_auth_failure() -> "None":
 
 
 @pytest.mark.asyncio
+@_ADK_STATEFUL_SKIP
 async def test_adk_mcp_toolset_resources() -> "None":
     """Verify that ADK McpToolset can list and read resources exposed by Litestar."""
     from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams

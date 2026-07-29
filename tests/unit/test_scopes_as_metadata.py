@@ -21,22 +21,7 @@ pytestmark = pytest.mark.unit
 
 
 async def _init_and_get_session(client: "AsyncTestClient[Any]") -> "str":
-    init = await client.post(
-        "/mcp",
-        json={
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
-        },
-    )
-    sid = init.headers.get("mcp-session-id", "")
-    await client.post(
-        "/mcp",
-        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        headers={"Mcp-Session-Id": sid},
-    )
-    return str(sid)
+    return ""
 
 
 async def _rpc(

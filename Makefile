@@ -10,6 +10,7 @@ SHELL := /bin/bash
 .EXPORT_ALL_VARIABLES:
 MAKEFLAGS += --no-print-directory
 UV_RUN_PY310 := uv run --python 3.10
+NODE_VERSION ?= 24.18.1
 
 # Detect Rodete and configure index URLs for Python tools
 ifneq ($(shell grep -s -q "rodete" /etc/os-release && echo "yes"),)
@@ -265,6 +266,26 @@ mcp-test:                                           ## Run MCP protocol tests sp
 	@echo "${INFO} Running MCP protocol tests... 🔌"
 	@$(UV_RUN_PY310) pytest tests -m "not slow" -k "mcp" -v
 	@echo "${OK} MCP tests complete ✨"
+
+.PHONY: conformance-install
+conformance-install:                                ## Install the pinned MCP conformance framework
+	@echo "${INFO} Installing Node $(NODE_VERSION) conformance dependencies... 🔌"
+	@if command -v nodenv >/dev/null 2>&1; then \
+		NODENV_VERSION="$(NODE_VERSION)" nodenv exec npm ci; \
+	else \
+		npm ci; \
+	fi
+	@echo "${OK} Conformance dependencies installed ✨"
+
+.PHONY: conformance
+conformance: conformance-install                    ## Run MCP 2026-07-28 conformance without baselines
+	@echo "${INFO} Running MCP 2026-07-28 conformance... 🔌"
+	@if command -v nodenv >/dev/null 2>&1; then \
+		NODENV_VERSION="$(NODE_VERSION)" nodenv exec $(UV_RUN_PY310) python tools/ci/run_mcp_conformance.py; \
+	else \
+		$(UV_RUN_PY310) python tools/ci/run_mcp_conformance.py; \
+	fi
+	@echo "${OK} MCP conformance complete ✨"
 
 .PHONY: websocket-test
 websocket-test:                                     ## Run WebSocket handler tests

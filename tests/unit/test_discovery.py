@@ -44,27 +44,20 @@ def test_agent_card_endpoint_generated() -> "None":
         assert any(skill["id"] == "check_health" for skill in payload["skills"])
 
 
-def test_experimental_mcp_server_manifest_generated() -> "None":
+def test_experimental_mcp_server_manifest_removed() -> "None":
     app = _make_discovery_app()
     with TestClient(app=app) as client:
         response = client.get("/.well-known/mcp-server.json")
-        assert response.status_code == 200
-        payload = response.json()
-
-        assert payload["experimental"] is True
-        assert payload["protocolVersion"] == "2025-11-25"
-        assert payload["endpoints"]["mcp"].endswith("/mcp")
-        assert "tools" in payload
+        assert response.status_code == 404
 
 
-def test_custom_base_path_discovery_manifest_reports_mcp_endpoint() -> "None":
+def test_custom_base_path_does_not_restore_removed_manifest() -> "None":
     app = _make_custom_base_path_discovery_app()
     with TestClient(app=app) as client:
         response = client.get("/.well-known/mcp-server.json")
         nested_response = client.get("/api/mcp/.well-known/mcp-server.json")
 
-    assert response.status_code == 200
-    assert response.json()["endpoints"]["mcp"].endswith("/api/mcp")
+    assert response.status_code == 404
     assert nested_response.status_code in (404, 405)
 
 

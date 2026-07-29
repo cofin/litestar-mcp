@@ -14,6 +14,29 @@ _CONTENT_BLOCK_REQUIRED_KEYS: "dict[str, frozenset[str]]" = {
     "resource_link": frozenset({"uri", "name"}),
     "resource": frozenset({"resource"}),
 }
+_STRUCTURED_CONTENT_UNSET = object()
+
+
+@dataclass(frozen=True, slots=True)
+class MCPInputRequiredResult:
+    """Typed MCP multi-round-trip input request result.
+
+    ``request_state`` crosses an untrusted client boundary. Applications MUST
+    authenticate and integrity-protect it (for example with AEAD or an HMAC)
+    before placing authorization-sensitive state in this field.
+    """
+
+    input_requests: "dict[str, dict[str, Any]] | None" = None
+    request_state: "str | None" = None
+
+    def to_result(self) -> "dict[str, Any]":
+        """Return the MCP wire result."""
+        result: dict[str, Any] = {"resultType": "input_required"}
+        if self.input_requests is not None:
+            result["inputRequests"] = self.input_requests
+        if self.request_state is not None:
+            result["requestState"] = self.request_state
+        return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,21 +105,20 @@ class MCPToolResult:
     """A complete MCP tool result with explicit content blocks."""
 
     content: "Any"
-    structured_content: "dict[str, Any] | None" = None
+    structured_content: "Any" = _STRUCTURED_CONTENT_UNSET
     is_error: "bool" = False
     meta: "dict[str, Any] | None" = None
 
-    def to_result(self, *, max_blob_bytes: "int | None" = None, task_id: "str | None" = None) -> "dict[str, Any]":
+    def to_result(self, *, max_blob_bytes: "int | None" = None) -> "dict[str, Any]":
         """Return the MCP ``tools/call`` result object."""
         result: dict[str, Any] = {
             "content": normalize_content_blocks(self.content, max_blob_bytes=max_blob_bytes),
             "isError": self.is_error,
         }
-        if self.structured_content is not None:
+        if self.structured_content is not _STRUCTURED_CONTENT_UNSET:
             result["structuredContent"] = self.structured_content
         if self.meta is not None:
             result["_meta"] = dict(self.meta)
-        add_related_task_meta(result, task_id)
         return result
 
 
@@ -105,14 +127,6 @@ def enforce_blob_size(size: "int", *, max_blob_bytes: "int | None") -> "None":
     if max_blob_bytes is not None and size > max_blob_bytes:
         msg = f"blob size {size} exceeds configured max_blob_bytes {max_blob_bytes}"
         raise ValueError(msg)
-
-
-def add_related_task_meta(result: "dict[str, Any]", task_id: "str | None") -> "None":
-    """Attach MCP task metadata to a result object."""
-    if task_id is None:
-        return
-    meta = result.setdefault("_meta", {})
-    meta["io.modelcontextprotocol/related-task"] = {"taskId": task_id}
 
 
 def is_content_block(value: "Any") -> "bool":
@@ -166,7 +180,6 @@ __all__ = (
     "MCPBlobResource",
     "MCPResourceLink",
     "MCPToolResult",
-    "add_related_task_meta",
     "enforce_blob_size",
     "is_content_block",
     "normalize_content_block",
