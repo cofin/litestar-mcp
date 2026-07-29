@@ -27,8 +27,8 @@ from litestar_mcp.jsonrpc import (
     parse_request,
 )
 from litestar_mcp.plugin import LitestarMCP
-from litestar_mcp.routes import _build_cached_router
-from litestar_mcp.services.handler import RequestContext
+from litestar_mcp.routes import MCP_PROTOCOL_VERSION, _build_cached_router, _finalize_result
+from litestar_mcp.services.handler import MCPRequestContext
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -722,7 +722,9 @@ class MCP:
             with contextlib.suppress(asyncio.CancelledError):
                 await app_task
 
-    async def _stdio_loop(self, *, stdio_context: "MCPStdioContext | None" = None) -> "None":
+    async def _stdio_loop(  # noqa: C901, PLR0915
+        self, *, stdio_context: "MCPStdioContext | None" = None
+    ) -> "None":
         """Run the stdin/stdout read/write loop."""
         logger = logging.getLogger(__name__)
         loop = asyncio.get_running_loop()
@@ -748,12 +750,86 @@ class MCP:
         )
 
         resolved_stdio_context = stdio_context or MCPStdioContext()
-        request_context = RequestContext(
-            client_id=resolved_stdio_context.client_id,
-            owner_id=_resolve_stdio_owner_id(resolved_stdio_context),
-            request=None,
-            scope_overrides=_build_stdio_scope_overrides(resolved_stdio_context),
-        )
+        write_lock = asyncio.Lock()
+        in_flight: dict[Any, asyncio.Task[None]] = {}
+        subscription_tasks: set[asyncio.Task[None]] = set()
+
+        async def write(payload: "dict[str, Any]") -> "None":
+            async with write_lock:
+                writer.write(encode_json(payload) + b"\n")
+                await writer.drain()
+
+        async def process(raw: "Any") -> "None":
+            try:
+                rpc_request = parse_request(raw)
+            except JSONRPCErrorException as exc:
+                await write(error_response(raw.get("id") if isinstance(raw, dict) else None, exc.error))
+                return
+
+            if rpc_request.method == "notifications/cancelled":
+                request_id = rpc_request.params.get("requestId")
+                task = in_flight.get(request_id)
+                if task is not None:
+                    task.cancel()
+                return
+
+            meta = rpc_request.params.get("_meta")
+            if not isinstance(meta, dict):
+                await write(error_response(rpc_request.id, JSONRPCError(code=-32602, message="Missing params._meta")))
+                return
+            protocol_version = meta.get("io.modelcontextprotocol/protocolVersion")
+            capabilities = meta.get("io.modelcontextprotocol/clientCapabilities")
+            if protocol_version != MCP_PROTOCOL_VERSION or not isinstance(capabilities, dict):
+                await write(
+                    error_response(
+                        rpc_request.id,
+                        JSONRPCError(
+                            code=-32022,
+                            message=f"Unsupported protocol version: {protocol_version}",
+                            data={"supportedVersions": [MCP_PROTOCOL_VERSION]},
+                        ),
+                    )
+                )
+                return
+            client_info = meta.get("io.modelcontextprotocol/clientInfo")
+            client_name = client_info.get("name") if isinstance(client_info, dict) else None
+            request_context = MCPRequestContext(
+                client_id=client_name if isinstance(client_name, str) else resolved_stdio_context.client_id,
+                owner_id=_resolve_stdio_owner_id(resolved_stdio_context),
+                request=None,
+                scope_overrides=_build_stdio_scope_overrides(resolved_stdio_context),
+                client_capabilities=capabilities,
+                client_info=client_info if isinstance(client_info, dict) else None,
+                input_responses=rpc_request.params.get("inputResponses"),
+                request_state=rpc_request.params.get("requestState"),
+            )
+
+            if rpc_request.method == "subscriptions/listen":
+                notifications = rpc_request.params.get("notifications")
+                if not isinstance(notifications, dict):
+                    await write(
+                        error_response(
+                            rpc_request.id,
+                            JSONRPCError(code=-32602, message="subscriptions/listen notifications must be an object"),
+                        )
+                    )
+                    return
+                _stream_id, stream = await plugin.registry.subscription_manager.open(rpc_request.id, notifications)
+                async for notification in stream:
+                    await write(notification)
+                return
+
+            try:
+                result = await router.dispatch(rpc_request, request_context)
+            except Exception as exc:
+                logger.exception("Unexpected error in stdio request")
+                result = error_response(
+                    rpc_request.id,
+                    JSONRPCError(code=INTERNAL_ERROR, message=f"Internal error: {exc}"),
+                )
+            if result is not None:
+                _finalize_result(result, method=rpc_request.method, app=self.app, config=plugin.config)
+                await write(result)
 
         while True:
             line_bytes = await reader.readline()
@@ -771,36 +847,28 @@ class MCP:
                     None,
                     JSONRPCError(code=PARSE_ERROR, message=f"Parse error: {exc}"),
                 )
-                writer.write(encode_json(resp) + b"\n")
-                await writer.drain()
+                await write(resp)
                 continue
 
-            try:
-                rpc_request = parse_request(raw)
-            except JSONRPCErrorException as exc:
-                resp = error_response(
-                    raw.get("id") if isinstance(raw, dict) else None,
-                    exc.error,
-                )
-                writer.write(encode_json(resp) + b"\n")
-                await writer.drain()
-                continue
+            request_id = raw.get("id") if isinstance(raw, dict) else None
+            task = asyncio.create_task(process(raw))
+            if isinstance(raw, dict) and raw.get("method") == "subscriptions/listen":
+                subscription_tasks.add(task)
+                task.add_done_callback(subscription_tasks.discard)
+            if request_id is not None:
+                in_flight[request_id] = task
 
-            try:
-                result = await router.dispatch(rpc_request, request_context)
-            except Exception as exc:
-                logger.exception("Unexpected error in stdio loop processing line")
-                resp = error_response(
-                    rpc_request.id,
-                    JSONRPCError(code=INTERNAL_ERROR, message=f"Internal error: {exc}"),
-                )
-                writer.write(encode_json(resp) + b"\n")
-                await writer.drain()
-                continue
+                def forget_request(_task: "asyncio.Task[None]", key: "Any" = request_id) -> "None":
+                    in_flight.pop(key, None)
 
-            if result is not None:
-                try:
-                    writer.write(encode_json(result) + b"\n")
-                    await writer.drain()
-                except Exception:
-                    logger.exception("Failed to write stdio response")
+                task.add_done_callback(forget_request)
+
+        tasks = set(in_flight.values())
+        regular_tasks = tasks - subscription_tasks
+        if regular_tasks:
+            await asyncio.gather(*regular_tasks, return_exceptions=True)
+        subscriptions = tuple(subscription_tasks)
+        for task in subscriptions:
+            task.cancel()
+        if subscriptions:
+            await asyncio.gather(*subscriptions, return_exceptions=True)

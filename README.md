@@ -165,11 +165,22 @@ async def search(query: str, limit: int = 10) -> dict:
 
 Once configured, your application exposes these MCP-compatible endpoints:
 
-- `GET /mcp` - Server-Sent Events stream when `Accept: text/event-stream` is provided
-- `POST /mcp` - JSON-RPC endpoint for `initialize`, `ping`, `tools/*`, `resources/*`, and optional task methods
-- `GET /.well-known/mcp-server.json` - MCP server manifest
+- `POST /mcp` - stateless MCP `2026-07-28` JSON-RPC and subscription streams
 - `GET /.well-known/agent-card.json` - Agent metadata card
 - `GET /.well-known/oauth-protected-resource` - OAuth protected resource metadata when auth is configured
+
+Use `server/discover` instead of an initialize handshake:
+
+```bash
+curl -X POST http://127.0.0.1:8000/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'MCP-Protocol-Version: 2026-07-28' \
+  -H 'Mcp-Method: server/discover' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/clientInfo":{"name":"curl","version":"1"}}}}'
+```
+
+Every request is independent. There are no protocol sessions, sticky-routing
+headers, GET/DELETE transport handlers, or SSE replay.
 
 **Built-in Resources:**
 
@@ -193,13 +204,18 @@ config = MCPConfig()
 | `include_in_schema` | `bool` | `False` | Whether to include MCP routes in OpenAPI schema |
 | `name` | `str \| None` | `None` | Override server name. If None, uses OpenAPI title |
 | `guards` | `list[Any] \| None` | `None` | Litestar guards applied to the MCP router |
-| `allowed_origins` | `list[str] \| None` | `None` | Restrict accepted `Origin` header values |
+| `allowed_origins` | `list[str] \| None` | `None` | Exact additional Origins; present Origins must be same-origin or allowlisted |
 | `include_operations` | `list[str] \| None` | `None` | Only expose matching operation names |
 | `exclude_operations` | `list[str] \| None` | `None` | Exclude matching operation names |
 | `include_tags` | `list[str] \| None` | `None` | Only expose routes with matching OpenAPI tags |
 | `exclude_tags` | `list[str] \| None` | `None` | Exclude routes with matching OpenAPI tags |
 | `auth` | `MCPAuthConfig \| None` | `None` | Metadata for `/.well-known/oauth-protected-resource` discovery |
-| `tasks` | `bool \| MCPTaskConfig` | `False` | Enable experimental in-memory MCP task support |
+| `tasks` | `bool \| MCPTaskConfig` | `False` | Enable the `io.modelcontextprotocol/tasks` extension |
+| `cache_ttl_ms` | `int` | `0` | Conservative cache lifetime for discovery/list/resource results |
+| `cache_scope` | `"private" \| "public"` | `"private"` | Cache sharing policy |
+| `subscription_max_streams` | `int` | `10000` | Maximum concurrent `subscriptions/listen` streams |
+| `subscription_keepalive_seconds` | `float` | `15.0` | Subscription keepalive interval |
+| `subscription_channels` | `ChannelsPlugin \| None` | `None` | Optional cross-worker notification fan-out |
 | `before_tool_call` | `BeforeToolCallHook \| None` | `None` | Observe each `tools/call` before dispatch |
 | `after_tool_call` | `AfterToolCallHook \| None` | `None` | Observe each `tools/call` result, exception, and duration |
 
@@ -356,14 +372,27 @@ git clone https://github.com/litestar-org/litestar-mcp.git
 cd litestar-mcp
 
 # Install with development dependencies
-uv sync --all-extras --dev
+make install
 
-# Run tests
-make test
+# Run the complete Python quality gate
+make check-all
+
+# Run the pinned MCP 2026-07-28 conformance suite
+make conformance
+
+# Build strict documentation and validate examples
+make docs
+make validate-examples validate-uvx validate-pep723
 
 # Run example
 uv run python docs/examples/hello_world/main.py
 ```
+
+The conformance target owns Node.js `24.18.1` through `NODE_VERSION` in the
+Makefile. When [nodenv](https://github.com/nodenv/nodenv) is available, the
+target selects that version with `NODENV_VERSION`; otherwise it uses the
+active `node`/`npm` installation. A local `.node-version` is ignored so
+contributors can use nodenv without changing repository state.
 
 ## License
 

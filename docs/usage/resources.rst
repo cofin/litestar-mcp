@@ -87,8 +87,9 @@ exposed through a stable API.
 JSON-RPC Round-Trip
 ===================
 
-After ``initialize``, clients drive resources via ``resources/list`` and
-``resources/read``:
+Clients drive resources with independent ``resources/list`` and
+``resources/read`` requests; see :doc:`migration_0_12` for the mandatory
+metadata and headers.
 
 .. code-block:: bash
 
@@ -109,8 +110,8 @@ standard JSON-RPC envelope.
 Error Contract
 ==============
 
-``resources/read`` for an unknown URI returns MCP's spec-mandated
-resource-not-found code ``-32002`` with ``data.uri``. When a marked
+``resources/read`` for an unknown URI returns ``INVALID_PARAMS`` (``-32602``)
+with ``data.uri``. When a marked
 handler raises or returns an error during a read, the JSON-RPC ``code``
 is ``INTERNAL_ERROR`` (``-32603``) — the ``code`` reflects the
 primitive-level error class, never the handler's HTTP status. The

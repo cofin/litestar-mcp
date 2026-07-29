@@ -99,23 +99,10 @@ self-contained.
 
 ## Multi-Replica Deployment
 
-Each MCP session (identified by the `Mcp-Session-Id` response header
-from `initialize`) is bound to the replica that issued it. SSE streams
-pin to that replica because their event queues live in process memory.
-
-For Cloud Run, GKE, or any horizontally-scaled deployment:
-
-1. Configure your load balancer for **session affinity on the
-   `Mcp-Session-Id` header** — cookie affinity is insufficient because
-   MCP clients use headers, not cookies.
-2. Use a shared session store: configure
-   `MCPConfig(session_store=...)` with Redis, or the SQL-backed store
-   from `advanced_alchemy` / `sqlspec`, so session metadata survives
-   replica restarts and any replica can resolve a session id for
-   stateless POST tool calls.
-3. Sticky routing only matters for the GET SSE stream and any POST
-   that expects a server-streamed response. Pure POST → POST tool
-   flows can land on any replica that reads the shared store.
+MCP 2026-07-28 POST requests are stateless and need no sticky routing.
+Persist Tasks extension records through ``MCPTaskConfig(store=...)`` and
+use a configured ChannelsPlugin when subscription notifications must fan
+out across workers.
 
 See [`docs/usage/deployment.rst`](../../../usage/deployment.rst) for
 the full rationale and platform-specific notes.

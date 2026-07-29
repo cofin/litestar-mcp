@@ -34,21 +34,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from litestar.connection import Request
-    from litestar.types import ASGIApp, Receive, Scope, Send
-
-
-class _ObserveSessionHeaderMiddleware:
-    def __init__(self, app: "ASGIApp", observed_sessions: "list[str]") -> None:
-        self.app = app
-        self.observed_sessions = observed_sessions
-
-    async def __call__(self, scope: "Scope", receive: "Receive", send: "Send") -> None:
-        if scope["type"] == "http" and scope.get("path") == "/mcp" and scope.get("method") == "POST":  # type: ignore[comparison-overlap]
-            headers = {name.decode().lower(): value.decode() for name, value in scope.get("headers", [])}
-            session_id = headers.get("mcp-session-id")
-            if session_id:
-                self.observed_sessions.append(session_id)
-        await self.app(scope, receive, send)
 
 
 def _free_port() -> "int":
@@ -82,10 +67,9 @@ def _run_app_server(app: "Litestar") -> "Iterator[tuple[str, uvicorn.Server]]":
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
         try:
-            response = httpx.get(f"{base_url}/.well-known/mcp-server.json", timeout=0.2)
-            if response.status_code == 200:
-                yield base_url, server
-                break
+            httpx.get(base_url, timeout=0.2)
+            yield base_url, server
+            break
         except httpx.HTTPError:
             time.sleep(0.05)
     else:
@@ -104,7 +88,7 @@ def _build_app(*, base_path: "str" = "/mcp") -> "Litestar":
     return Litestar(route_handlers=[hello], plugins=[LitestarMCP(MCPConfig(base_path=base_path))])
 
 
-def _build_auth_app(observed_sessions: "list[str] | None" = None) -> "Litestar":
+def _build_auth_app() -> "Litestar":
     async def resolve_user(claims: "dict[str, Any]", _app: "Any") -> "AuthenticatedUser":
         return AuthenticatedUser(sub=str(claims.get("sub", "")))
 
@@ -114,8 +98,6 @@ def _build_auth_app(observed_sessions: "list[str] | None" = None) -> "Litestar":
         return {"user": getattr(user, "sub", "")}
 
     middleware = [DefineMiddleware(MCPAuthBackend, token_validator=bearer_token_validator, user_resolver=resolve_user)]
-    if observed_sessions is not None:
-        middleware.insert(0, DefineMiddleware(_ObserveSessionHeaderMiddleware, observed_sessions=observed_sessions))
     return Litestar(
         route_handlers=[session_tool],
         middleware=middleware,
@@ -143,12 +125,7 @@ async def test_bridge_calls_litestar_tool_through_custom_endpoint() -> "None":
     with _run_app(app) as base_url:
         stdout = BridgeBytesSink()
         stdin = BridgeQueuedBytesSource(
-            _rpc_line(
-                "initialize",
-                {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "bridge-test"}},
-                msg_id=1,
-            ),
-            _rpc_line("notifications/initialized", msg_id=None),
+            _rpc_line("server/discover", msg_id=1),
             _rpc_line("tools/list", msg_id=2),
             _rpc_line("tools/call", {"name": "hello", "arguments": {"name": "Ada"}}, msg_id=3),
         )
@@ -161,26 +138,22 @@ async def test_bridge_calls_litestar_tool_through_custom_endpoint() -> "None":
         )
 
     messages = _parse_stdout(stdout)
+    by_id = {message.get("id"): message for message in messages}
     assert exit_code == 0
-    assert [message.get("id") for message in messages] == [1, 2, 3]
-    assert messages[0]["result"]["serverInfo"]["name"]
-    assert any(tool["name"] == "hello" for tool in messages[1]["result"]["tools"])
-    content = messages[2]["result"]["content"][0]["text"]
+    assert set(by_id) == {1, 2, 3}
+    assert by_id[1]["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"]
+    assert any(tool["name"] == "hello" for tool in by_id[2]["result"]["tools"])
+    content = by_id[3]["result"]["content"][0]["text"]
     assert json.loads(content) == {"message": "hello Ada"}
 
 
 @pytest.mark.anyio
 @pytest.mark.integration
 async def test_bridge_surfaces_auth_failure_as_stdio_error() -> "None":
-    app = _build_app()
+    app = _build_auth_app()
     with _run_app(app) as base_url:
         stdout = BridgeBytesSink()
-        stdin = BridgeQueuedBytesSource(
-            _rpc_line(
-                "tools/list",
-                msg_id=1,
-            )
-        )
+        stdin = BridgeQueuedBytesSource(_rpc_line("server/discover", msg_id=1))
 
         exit_code = await run_stdio_streamable_http_bridge(
             f"{base_url}/mcp",
@@ -192,7 +165,7 @@ async def test_bridge_surfaces_auth_failure_as_stdio_error() -> "None":
     messages = _parse_stdout(stdout)
     assert exit_code == 1
     assert messages[0]["error"]["code"] == -32001
-    assert "400 Bad Request" in messages[0]["error"]["message"]
+    assert "401 Unauthorized" in messages[0]["error"]["message"]
 
 
 @pytest.mark.anyio
@@ -210,12 +183,7 @@ async def test_bridge_stdout_contains_only_json_rpc_when_tool_logs() -> "None":
         stdout = BridgeBytesSink()
         stderr = io.StringIO()
         stdin = BridgeQueuedBytesSource(
-            _rpc_line(
-                "initialize",
-                {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "bridge-test"}},
-                msg_id=1,
-            ),
-            _rpc_line("notifications/initialized", msg_id=None),
+            _rpc_line("server/discover", msg_id=1),
             _rpc_line("tools/call", {"name": "log", "arguments": {}}, msg_id=2),
         )
 
@@ -231,7 +199,7 @@ async def test_bridge_stdout_contains_only_json_rpc_when_tool_logs() -> "None":
     assert b"sentinel bridge log message" not in stdout.buffer
     messages = _parse_stdout(stdout)
     assert [message["jsonrpc"] for message in messages] == ["2.0", "2.0"]
-    assert [message.get("id") for message in messages] == [1, 2]
+    assert {message.get("id") for message in messages} == {1, 2}
 
 
 @pytest.mark.anyio
@@ -252,12 +220,7 @@ async def test_bridge_mid_stream_server_death_exits_non_zero() -> "None":
         bridge_finished = anyio.Event()
         result: dict[str, int] = {}
         stdin = BridgeQueuedBytesSource(
-            _rpc_line(
-                "initialize",
-                {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "bridge-test"}},
-                msg_id=1,
-            ),
-            _rpc_line("notifications/initialized", msg_id=None),
+            _rpc_line("server/discover", msg_id=1),
             _rpc_line("tools/call", {"name": "slow", "arguments": {}}, msg_id=2),
             block_after_chunks=True,
         )
@@ -292,9 +255,8 @@ async def test_bridge_mid_stream_server_death_exits_non_zero() -> "None":
 
 @pytest.mark.anyio
 @pytest.mark.integration
-async def test_bridge_token_refresh_preserves_session_id_across_calls() -> "None":
-    observed_sessions: list[str] = []
-    app = _build_auth_app(observed_sessions)
+async def test_bridge_token_provider_refreshes_each_stateless_request() -> "None":
+    app = _build_auth_app()
     token_count = 0
 
     def token_provider() -> "str":
@@ -305,12 +267,6 @@ async def test_bridge_token_refresh_preserves_session_id_across_calls() -> "None
     with _run_app(app) as base_url:
         stdout = BridgeBytesSink()
         stdin = BridgeQueuedBytesSource(
-            _rpc_line(
-                "initialize",
-                {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "bridge-test"}},
-                msg_id=1,
-            ),
-            _rpc_line("notifications/initialized", msg_id=None),
             _rpc_line("tools/call", {"name": "session", "arguments": {}}, msg_id=2),
             _rpc_line("tools/call", {"name": "session", "arguments": {}}, msg_id=3),
         )
@@ -325,10 +281,10 @@ async def test_bridge_token_refresh_preserves_session_id_across_calls() -> "None
 
     messages = _parse_stdout(stdout)
     assert exit_code == 0
-    assert [message.get("id") for message in messages] == [1, 2, 3]
-    assert len(observed_sessions) >= 2
-    assert observed_sessions[0]
-    assert set(observed_sessions) == {observed_sessions[0]}
+    assert {message.get("id") for message in messages} == {2, 3}
+    users = {json.loads(message["result"]["content"][0]["text"])["user"] for message in messages}
+    assert len(users) == 2
+    assert token_count >= 3
 
 
 @pytest.mark.anyio
@@ -339,13 +295,7 @@ async def test_bridge_real_401_after_retry_exits_non_zero() -> "None":
     with _run_app(app) as base_url:
         stdout = BridgeBytesSink()
         stderr = io.StringIO()
-        stdin = BridgeQueuedBytesSource(
-            _rpc_line(
-                "initialize",
-                {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "bridge-test"}},
-                msg_id=1,
-            )
-        )
+        stdin = BridgeQueuedBytesSource(_rpc_line("server/discover", msg_id=1))
 
         exit_code = await run_stdio_streamable_http_bridge(
             f"{base_url}/mcp",

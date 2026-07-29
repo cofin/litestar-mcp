@@ -59,29 +59,34 @@ async def get_users() -> list[dict]:
 Test the MCP integration with these endpoints:
 
 ```bash
-# Initialize the MCP server
+# Discover the MCP server
 curl -X POST http://localhost:8000/mcp \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}'
+  -H "MCP-Protocol-Version: 2026-07-28" \
+  -H "Mcp-Method: server/discover" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
 
 # List available resources
 curl -X POST http://localhost:8000/mcp \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":2,"method":"resources/list","params":{}}'
-
-# Open the SSE stream for server notifications
-curl http://localhost:8000/mcp \
-  -H "Accept: text/event-stream"
+  -H "MCP-Protocol-Version: 2026-07-28" \
+  -H "Mcp-Method: resources/list" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"resources/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
 
 # List available tools
 curl -X POST http://localhost:8000/mcp \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":3,"method":"tools/list","params":{}}'
+  -H "MCP-Protocol-Version: 2026-07-28" \
+  -H "Mcp-Method: tools/list" \
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
 
 # Get the OpenAPI schema
 curl -X POST http://localhost:8000/mcp \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":4,"method":"resources/read","params":{"uri":"litestar://openapi"}}'
+  -H "MCP-Protocol-Version: 2026-07-28" \
+  -H "Mcp-Method: resources/read" \
+  -H "Mcp-Name: litestar://openapi" \
+  -d '{"jsonrpc":"2.0","id":4,"method":"resources/read","params":{"uri":"litestar://openapi","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
 ```
 
 ## Testing with Curl

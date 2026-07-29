@@ -22,12 +22,12 @@ from litestar_mcp.utils.handler_signature import (
 
 if TYPE_CHECKING:
     from litestar_mcp.config import MCPConfig
-    from litestar_mcp.sse import SSEManager
+    from litestar_mcp.sse import SubscriptionManager
 
 _logger = logging.getLogger(__name__)
 
 # MCP PromptMessage content discriminator → required structural keys.
-# Per the 2025-11-25 schema, every content block carries a ``type`` and the
+# Every MCP content block carries a ``type`` and the
 # variant-specific payload keys listed here. Used by ``_normalize_prompt_result``
 # to validate dict-shaped messages without silently coercing them to text.
 _PROMPT_CONTENT_REQUIRED_KEYS: "dict[str, frozenset[str]]" = {
@@ -37,6 +37,16 @@ _PROMPT_CONTENT_REQUIRED_KEYS: "dict[str, frozenset[str]]" = {
     "resource_link": frozenset({"uri", "name"}),
     "resource": frozenset({"resource"}),
 }
+
+
+def _same_handler(left: "BaseRouteHandler", right: "BaseRouteHandler") -> "bool":
+    """Return whether two Litestar handler objects wrap the same callable.
+
+    Litestar may copy route-handler objects while building the application
+    route tree. Discovery can therefore encounter two handler instances for
+    one declared route; that is an idempotent registration, not an overwrite.
+    """
+    return left is right or get_handler_function(left) is get_handler_function(right)
 
 
 @dataclass(frozen=True, slots=True)
@@ -296,7 +306,7 @@ class Registry:
         self._resources: dict[str, BaseRouteHandler] = {}
         self._templates: dict[str, ResourceTemplate] = {}
         self._prompts: dict[str, PromptRegistration] = {}
-        self._sse_manager: SSEManager | None = None
+        self._subscription_manager: SubscriptionManager | None = None
         self._change_callbacks: list[Callable[[], None]] = []
 
     def register_change_callback(self, callback: "Callable[[], None]") -> "None":
@@ -325,17 +335,17 @@ class Registry:
             )
             callback()
 
-    def set_sse_manager(self, manager: "SSEManager") -> "None":
-        """Set the SSE manager for notifications."""
-        self._sse_manager = manager
+    def set_subscription_manager(self, manager: "SubscriptionManager") -> "None":
+        """Set the subscription manager for notifications."""
+        self._subscription_manager = manager
 
     @property
-    def sse_manager(self) -> "SSEManager":
-        """Return the configured SSE manager."""
-        if self._sse_manager is None:
-            msg = "SSE manager has not been configured"
+    def subscription_manager(self) -> "SubscriptionManager":
+        """Return the configured subscription manager."""
+        if self._subscription_manager is None:
+            msg = "Subscription manager has not been configured"
             raise RuntimeError(msg)
-        return self._sse_manager
+        return self._subscription_manager
 
     @property
     def tools(self) -> "dict[str, BaseRouteHandler]":
@@ -354,7 +364,14 @@ class Registry:
             name: The tool name.
             handler: The route handler.
         """
-        if name in self._tools:
+        existing = self._tools.get(name)
+        if existing is not None and _same_handler(existing, handler):
+            # Preserve Litestar's last discovered copy: router/controller
+            # ownership can add guards and dependencies while retaining the
+            # same underlying callable.
+            self._tools[name] = handler
+            return
+        if existing is not None:
             _logger.warning("Overwriting existing tool registration: %s", name)
         self._tools[name] = handler
         self._trigger_change()
@@ -366,7 +383,11 @@ class Registry:
             name: The resource name.
             handler: The route handler.
         """
-        if name in self._resources:
+        existing = self._resources.get(name)
+        if existing is not None and _same_handler(existing, handler):
+            self._resources[name] = handler
+            return
+        if existing is not None:
             _logger.warning("Overwriting existing resource registration: %s", name)
         self._resources[name] = handler
         self._trigger_change()
@@ -386,6 +407,10 @@ class Registry:
                 invalid templates raise :class:`ValueError`.
         """
         parse_template(template)
+        existing = self._templates.get(name)
+        if existing is not None and _same_handler(existing.handler, handler) and existing.template == template:
+            self._templates[name] = ResourceTemplate(name=name, template=template, handler=handler)
+            return
         if name in self._templates:
             _logger.warning("Overwriting existing resource template registration: %s", name)
         self._templates[name] = ResourceTemplate(name=name, template=template, handler=handler)
@@ -483,26 +508,15 @@ class Registry:
         self,
         method: "str",
         params: "dict[str, Any]",
-        session_id: "str | None" = None,
     ) -> "None":
         """Publish a JSON-RPC 2.0 notification to connected clients.
 
         Args:
             method: The notification method (e.g., 'notifications/resources/updated').
             params: The notification parameters.
-            session_id: Optional session to target; when omitted the
-                notification fans out to every attached session.
         """
-        if self._sse_manager:
-            # Wrap in JSON-RPC 2.0 notification envelope (no id)
-            await self._sse_manager.publish(
-                {
-                    "jsonrpc": "2.0",
-                    "method": method,
-                    "params": params,
-                },
-                session_id=session_id,
-            )
+        if self._subscription_manager:
+            await self._subscription_manager.publish(method, params)
 
     async def notify_resource_updated(self, uri: "str") -> "None":
         """Notify clients that a resource has been updated.

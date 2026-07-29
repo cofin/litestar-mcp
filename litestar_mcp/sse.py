@@ -1,247 +1,169 @@
-"""In-process SSE stream bookkeeping for MCP Streamable HTTP.
-
-This module is deliberately narrow: it owns per-stream queues and a
-Last-Event-ID replay buffer for clients that reconnect to ``GET /mcp``
-after a network blip. Session identity and persistence live in
-:mod:`litestar_mcp.sessions`; session ids are used here only as
-in-process fan-out keys so a notification can be delivered to every
-stream opened under the same ``Mcp-Session-Id``.
-
-Resource caps:
-
-- ``max_streams`` caps the total number of concurrent open streams.
-  Exceeding it raises :class:`StreamLimitExceeded`, which the HTTP
-  layer maps to ``503 Service Unavailable`` + JSON-RPC ``-32000``.
-- ``max_idle_seconds`` prunes streams that have had no activity for
-  longer than the window. Pruning is lazy: it runs on
-  :meth:`SSEManager.open_stream` before admitting a new stream.
-"""
+"""In-process notification subscriptions for MCP 2026-07-28."""
 
 import asyncio
-import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from litestar.serialization import decode_json
+
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
-from litestar.serialization import encode_json
+__all__ = ("StreamLimitExceeded", "SubscriptionManager")
 
-__all__ = ("SSEManager", "SSEMessage", "StreamLimitExceeded")
-
-_PRUNE_THROTTLE_SECONDS = 30.0
+_CLOSED = object()
+_METHOD_FILTERS = {
+    "notifications/tools/list_changed": "toolsListChanged",
+    "notifications/prompts/list_changed": "promptsListChanged",
+    "notifications/resources/list_changed": "resourcesListChanged",
+}
 
 
 class StreamLimitExceeded(Exception):  # noqa: N818
-    """Raised by :meth:`SSEManager.open_stream` when ``max_streams`` is hit."""
+    """Raised when the configured subscription stream cap is reached."""
 
 
 @dataclass
-class SSEMessage:
-    """Represents a single SSE message."""
+class _Subscription:
+    stream_id: "str"
+    subscription_id: "Any"
+    notifications: "dict[str, Any]"
+    queue: "asyncio.Queue[dict[str, Any] | object]" = field(default_factory=asyncio.Queue)
 
-    data: "str"
-    event: "str" = "message"
-    id: "str | None" = None
 
+class SubscriptionManager:
+    """Manage stateless, filtered subscription response streams."""
 
-class SSEManager:
-    """Manages Streamable HTTP SSE connections and message delivery.
-
-    The manager keeps one :class:`_StreamState` per open stream and a
-    side index from ``session_id`` to the set of stream ids currently
-    attached to that session, so notifications can be fanned out to
-    every stream belonging to a given MCP session.
-    """
-
-    def __init__(
-        self,
-        *,
-        max_streams: "int" = 10_000,
-        max_idle_seconds: "float" = 3600.0,
-    ) -> "None":
-        """Initialize the SSE manager.
-
-        Args:
-            max_streams: Hard cap on concurrent open streams. Excess
-                raises :class:`StreamLimitExceeded`.
-            max_idle_seconds: Idle window (seconds) after which a stream
-                is eligible for lazy pruning on the next ``open_stream``.
-        """
-        self._streams: dict[str, _StreamState] = {}
-        self._session_streams: dict[str, set[str]] = {}
-        self._lock = asyncio.Lock()
+    def __init__(self, *, max_streams: "int" = 10_000, channels: "Any | None" = None) -> "None":
         self._max_streams = max_streams
-        self._max_idle_seconds = max_idle_seconds
-        self._last_prune_time: float | None = None
+        self._channels = channels
+        self._streams: dict[str, _Subscription] = {}
+        self._lock = asyncio.Lock()
+        self._broker_task: asyncio.Task[None] | None = None
 
-    async def open_stream(
+    def start(self) -> None:
+        """Start cross-worker fan-out when a ChannelsPlugin was supplied."""
+        if self._channels is not None and self._broker_task is None:
+            self._broker_task = asyncio.create_task(self._consume_broker())
+
+    async def open(
         self,
-        session_id: "str | None" = None,
-        last_event_id: "str | None" = None,
-    ) -> "tuple[str, AsyncGenerator[SSEMessage, None]]":
-        """Open a new stream (or resume from ``last_event_id``).
-
-        Args:
-            session_id: Optional session id to bind this stream to. When
-                provided, the manager updates the session→streams index
-                so :meth:`publish` can fan out to all streams belonging
-                to the session.
-            last_event_id: Optional ``Last-Event-ID`` value. On a match,
-                pending messages from the existing stream's history are
-                replayed before normal delivery resumes.
-
-        Returns:
-            A ``(stream_id, async_generator)`` pair.
-        """
+        subscription_id: "Any",
+        notifications: "dict[str, Any]",
+    ) -> "tuple[str, AsyncGenerator[dict[str, Any], None]]":
+        """Open a filtered stream whose first item is its acknowledgement."""
         async with self._lock:
-            force_prune = len(self._streams) >= self._max_streams
-            self._prune_idle_locked(force=force_prune)
-            state, replay_messages = self._get_or_create_stream_locked(session_id, last_event_id)
+            if len(self._streams) >= self._max_streams:
+                msg = f"Subscription stream limit exceeded (max_streams={self._max_streams})"
+                raise StreamLimitExceeded(msg)
+            stream_id = str(uuid4())
+            accepted = self._normalize_filter(notifications)
+            state = _Subscription(
+                stream_id=stream_id,
+                subscription_id=subscription_id,
+                notifications=accepted,
+            )
+            self._streams[stream_id] = state
+            state.queue.put_nowait(self._acknowledgement(state))
 
-        async def stream() -> "AsyncGenerator[SSEMessage, None]":
+        async def stream() -> "AsyncGenerator[dict[str, Any], None]":
             try:
-                for message in replay_messages:
-                    yield message
                 while True:
                     message = await state.queue.get()
-                    state.last_activity = time.monotonic()
-                    yield message
+                    if message is _CLOSED:
+                        return
+                    yield message  # type: ignore[misc]
             finally:
-                async with self._lock:
-                    self._close_stream_locked(state.stream_id)
+                await self.disconnect(stream_id)
 
-        return state.stream_id, stream()
+        return stream_id, stream()
 
-    def disconnect(self, stream_id: "str") -> "None":
-        """Explicitly remove a stream and its buffered state."""
-        self._close_stream_locked(stream_id)
-
-    async def enqueue(self, stream_id: "str", message: "dict[str, Any]") -> "None":
-        """Enqueue a raw JSON payload onto a single stream."""
-        payload = encode_json(message).decode("utf-8")
-        async with self._lock:
-            state = self._streams.get(stream_id)
-            if state is None:
-                return
-            sse_message = SSEMessage(data=payload, id=f"{stream_id}:{len(state.history)}")
-            state.history.append(sse_message)
-            state.last_activity = time.monotonic()
-            state.queue.put_nowait(sse_message)
-
-    async def publish(self, message: "dict[str, Any]", session_id: "str | None" = None) -> "None":
-        """Publish a JSON payload to one or all sessions.
-
-        When ``session_id`` is provided the message fans out to every
-        stream attached to that session; otherwise it fans out to every
-        stream attached to any session.
-        """
-        payload = encode_json(message).decode("utf-8")
-        async with self._lock:
-            if session_id is not None:
-                target_stream_ids = list(self._session_streams.get(session_id, set()))
-            else:
-                target_stream_ids = [sid for ids in self._session_streams.values() for sid in ids]
-            for stream_id in target_stream_ids:
-                state = self._streams.get(stream_id)
-                if state is None or not state.active:
-                    continue
-                sse_message = SSEMessage(data=payload, id=f"{stream_id}:{len(state.history)}")
-                state.history.append(sse_message)
-                state.last_activity = time.monotonic()
-                state.queue.put_nowait(sse_message)
-
-    async def replay_from(self, stream_id: "str", last_event_id: "str") -> "list[SSEMessage]":
-        """Return buffered messages after ``last_event_id`` for a stream."""
-        async with self._lock:
-            state = self._streams.get(stream_id)
-            if state is None:
-                return []
-            _, event_index = self._parse_event_id(last_event_id)
-            state.last_activity = time.monotonic()
-            return list(state.history[event_index + 1 :])
-
-    def close_session_streams(self, session_id: "str") -> "list[str]":
-        """Close every stream attached to ``session_id``. Returns closed ids."""
-        stream_ids = list(self._session_streams.get(session_id, set()))
-        for stream_id in stream_ids:
-            self._close_stream_locked(stream_id)
-        self._session_streams.pop(session_id, None)
-        return stream_ids
-
-    def _prune_idle_locked(self, force: "bool" = False) -> "None":
-        if self._max_idle_seconds <= 0:
+    async def publish(self, method: "str", params: "dict[str, Any]") -> "None":
+        """Publish a notification only to subscriptions whose filter matches."""
+        if self._channels is not None:
+            self._channels.publish(
+                {"method": method, "params": params},
+                channels="litestar-mcp-subscriptions",
+            )
             return
-        now = time.monotonic()
-        if not force and self._last_prune_time is not None and now - self._last_prune_time < _PRUNE_THROTTLE_SECONDS:
+        await self._publish_local(method, params)
+
+    async def _publish_local(self, method: "str", params: "dict[str, Any]") -> "None":
+        async with self._lock:
+            states = tuple(self._streams.values())
+        for state in states:
+            if not self._matches(state.notifications, method, params):
+                continue
+            tagged_params = dict(params)
+            meta = dict(tagged_params.get("_meta") or {})
+            meta["io.modelcontextprotocol/subscriptionId"] = state.subscription_id
+            tagged_params["_meta"] = meta
+            state.queue.put_nowait({"jsonrpc": "2.0", "method": method, "params": tagged_params})
+
+    async def disconnect(self, stream_id: "str") -> "None":
+        """Remove one stream and wake its consumer."""
+        async with self._lock:
+            state = self._streams.pop(stream_id, None)
+        if state is not None:
+            state.queue.put_nowait(_CLOSED)
+
+    async def close_all(self) -> "None":
+        """Gracefully close every active stream."""
+        if self._broker_task is not None:
+            self._broker_task.cancel()
+            await asyncio.gather(self._broker_task, return_exceptions=True)
+            self._broker_task = None
+        async with self._lock:
+            states = tuple(self._streams.values())
+            self._streams.clear()
+        for state in states:
+            state.queue.put_nowait(_CLOSED)
+
+    async def _consume_broker(self) -> "None":
+        channels = self._channels
+        if channels is None:
             return
-        self._last_prune_time = now
-        cutoff = now - self._max_idle_seconds
-        to_remove = [sid for sid, state in self._streams.items() if state.last_activity < cutoff]
-        for stream_id in to_remove:
-            self._close_stream_locked(stream_id)
-
-    def _get_or_create_stream_locked(
-        self,
-        session_id: "str | None",
-        last_event_id: "str | None",
-    ) -> "tuple[_StreamState, list[SSEMessage]]":
-        if last_event_id:
-            try:
-                stream_id, event_index = self._parse_event_id(last_event_id)
-            except ValueError:
-                stream_id, event_index = None, -1
-            if stream_id is not None:
-                existing = self._streams.get(stream_id)
-                if existing is not None and (session_id is None or existing.session_id == session_id):
-                    existing.active = True
-                    existing.last_activity = time.monotonic()
-                    if session_id is not None:
-                        self._session_streams.setdefault(session_id, set()).add(stream_id)
-                    replay_messages = existing.history[event_index + 1 :]
-                    return existing, replay_messages
-
-        if len(self._streams) >= self._max_streams:
-            msg = f"SSE stream limit exceeded (max_streams={self._max_streams})"
-            raise StreamLimitExceeded(msg)
-
-        stream_id = str(uuid4())
-        state = _StreamState(stream_id=stream_id, session_id=session_id)
-        prime_message = SSEMessage(data="", id=f"{stream_id}:0")
-        state.history.append(prime_message)
-        state.queue.put_nowait(prime_message)
-        self._streams[stream_id] = state
-        if session_id is not None:
-            self._session_streams.setdefault(session_id, set()).add(stream_id)
-        return state, []
-
-    def _close_stream_locked(self, stream_id: "str") -> "None":
-        state = self._streams.pop(stream_id, None)
-        if state is None:
-            return
-        state.active = False
-        if state.session_id is not None:
-            streams = self._session_streams.get(state.session_id)
-            if streams is not None:
-                streams.discard(stream_id)
-                if not streams:
-                    self._session_streams.pop(state.session_id, None)
+        async with channels.start_subscription("litestar-mcp-subscriptions") as subscriber:
+            async for event in subscriber.iter_events():
+                payload = decode_json(event)
+                if isinstance(payload, dict) and isinstance(payload.get("method"), str):
+                    params = payload.get("params")
+                    if isinstance(params, dict):
+                        await self._publish_local(payload["method"], params)
 
     @staticmethod
-    def _parse_event_id(value: "str") -> "tuple[str, int]":
-        stream_id, _, raw_index = value.rpartition(":")
-        if not stream_id:
-            msg = "Invalid Last-Event-ID header"
-            raise ValueError(msg)
-        return stream_id, int(raw_index)
+    def _normalize_filter(notifications: "dict[str, Any]") -> "dict[str, Any]":
+        accepted: dict[str, Any] = {}
+        for filter_name in ("toolsListChanged", "promptsListChanged", "resourcesListChanged"):
+            if notifications.get(filter_name) is True:
+                accepted[filter_name] = True
+        resources = notifications.get("resourceSubscriptions")
+        if isinstance(resources, list) and all(isinstance(uri, str) for uri in resources):
+            accepted["resourceSubscriptions"] = list(dict.fromkeys(resources))
+        tasks = notifications.get("taskIds")
+        if isinstance(tasks, list) and all(isinstance(task_id, str) for task_id in tasks):
+            accepted["taskIds"] = list(dict.fromkeys(tasks))
+        return accepted
 
+    @staticmethod
+    def _acknowledgement(state: "_Subscription") -> "dict[str, Any]":
+        return {
+            "jsonrpc": "2.0",
+            "method": "notifications/subscriptions/acknowledged",
+            "params": {
+                "_meta": {"io.modelcontextprotocol/subscriptionId": state.subscription_id},
+                "notifications": state.notifications,
+            },
+        }
 
-@dataclass
-class _StreamState:
-    stream_id: "str"
-    session_id: "str | None"
-    queue: "asyncio.Queue[SSEMessage]" = field(default_factory=asyncio.Queue)
-    history: "list[SSEMessage]" = field(default_factory=list)
-    active: "bool" = True
-    last_activity: "float" = field(default_factory=time.monotonic)
+    @staticmethod
+    def _matches(notifications: "dict[str, Any]", method: "str", params: "dict[str, Any]") -> "bool":
+        filter_name = _METHOD_FILTERS.get(method)
+        if filter_name is not None:
+            return notifications.get(filter_name) is True
+        if method == "notifications/resources/updated":
+            return params.get("uri") in notifications.get("resourceSubscriptions", ())
+        if method == "notifications/tasks":
+            return params.get("taskId") in notifications.get("taskIds", ())
+        return False

@@ -13,45 +13,22 @@ from litestar.testing import TestClient
 from docs.examples.task_manager.main import Task, build_app
 
 
-def _ensure_session(client: "TestClient[Any]") -> "str":
-    """Initialize the session and return the session ID."""
-    key = "_mcp_session"
-    sid = getattr(client, key, None)
-    if sid is not None:
-        return str(sid)
-    init = client.post(
-        "/mcp",
-        json={
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
-        },
-    )
-    sid = init.headers.get("mcp-session-id", "")
-    client.post(
-        "/mcp",
-        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        headers={"Mcp-Session-Id": sid},
-    )
-    setattr(client, key, sid)
-    return str(sid)
-
-
 def _rpc(
     client: "TestClient[Any]",
     method: "str",
     params: "dict[str, Any] | None" = None,
 ) -> "dict[str, Any]":
-    """Execute JSON-RPC call after ensuring session is initialized."""
-    body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
-    if params is not None:
-        body["params"] = params
-    headers: dict[str, str] = {}
-    if method != "initialize":
-        sid = _ensure_session(client)
-        if sid:
-            headers["Mcp-Session-Id"] = sid
+    """Execute one stateless MCP request."""
+    request_params = dict(params or {})
+    request_params["_meta"] = {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+    }
+    body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method, "params": request_params}
+    headers = {"MCP-Protocol-Version": "2026-07-28", "Mcp-Method": method}
+    name_field = {"tools/call": "name", "resources/read": "uri"}.get(method)
+    if name_field is not None:
+        headers["Mcp-Name"] = str(request_params[name_field])
     return client.post("/mcp", json=body, headers=headers).json()  # type: ignore[no-any-return]
 
 

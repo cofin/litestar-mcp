@@ -176,51 +176,25 @@ def test_mcp_bridge_rejects_multiple_bearer_sources(
     assert "mutually exclusive" in result.output
 
 
-def test_mcp_bridge_discover_sends_headers_and_bearer(
+def test_mcp_bridge_discover_option_is_removed(
     cli_runner: CliRunner,
     make_env: Callable[..., LitestarEnv],
-    captured_bridge: dict[str, Any],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    captured_headers: dict[str, str] = {}
-    captured_endpoint: dict[str, str] = {}
-
-    def fake_get(url: str, **kwargs: Any) -> Any:
-        import httpx
-
-        captured_endpoint["url"] = url
-        captured_headers.update(kwargs["headers"])
-        return httpx.Response(
-            200,
-            content=b'{"endpoints":{"mcp":"https://example.test/custom/mcp"}}',
-            request=httpx.Request("GET", url),
-        )
-
-    monkeypatch.setenv("MCP_TOKEN", "secret-token")
-    monkeypatch.setattr("litestar_mcp.cli.httpx.get", fake_get)
-
-    result = cli_runner.invoke(
+    invalid_result = cli_runner.invoke(
         mcp_group,
         [
             "bridge",
             "--base-url",
             "https://example.test/something",
             "--discover",
-            "--header",
-            "X-Tenant: acme",
-            "--bearer-env",
-            "MCP_TOKEN",
         ],
         obj=make_env(),
     )
+    help_result = cli_runner.invoke(mcp_group, ["bridge", "--help"], obj=make_env())
 
-    assert result.exit_code == 0
-    assert captured_endpoint == {
-        "url": "https://example.test/.well-known/mcp-server.json",
-    }
-    assert captured_bridge["endpoint"] == "https://example.test/custom/mcp"
-    assert captured_headers["X-Tenant"] == "acme"
-    assert captured_headers["Authorization"] == "Bearer secret-token"
+    assert invalid_result.exit_code == 2
+    assert help_result.exit_code == 0
+    assert "--discover" not in help_result.output
 
 
 def test_mcp_bridge_missing_bridge_extra_is_clean_click_error(
@@ -262,29 +236,3 @@ def test_mcp_bridge_redirects_runtime_stdout_pollution(
     assert result.exit_code == 0
     assert result.stdout == '{"jsonrpc":"2.0","id":1,"result":{}}\n'
     assert "accidental app output" in result.stderr
-
-
-def test_mcp_bridge_discover_connection_error_is_clean(
-    cli_runner: CliRunner,
-    make_env: Callable[..., LitestarEnv],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import httpx
-
-    def fake_get(url: str, **kwargs: Any) -> Any:
-        request = httpx.Request("GET", url)
-        message = "connection refused"
-        raise httpx.ConnectError(message, request=request)
-
-    monkeypatch.setattr("litestar_mcp.cli.httpx.get", fake_get)
-
-    result = cli_runner.invoke(
-        mcp_group,
-        ["bridge", "--base-url", "https://example.test", "--discover"],
-        obj=make_env(),
-    )
-
-    assert result.exit_code == 1
-    assert "Could not connect to Litestar MCP endpoint" in result.output
-    assert "https://example.test/.well-known/mcp-server.json" in result.output
-    assert "Traceback" not in result.output

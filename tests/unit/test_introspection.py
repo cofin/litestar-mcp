@@ -295,6 +295,31 @@ class TestStructuredRendering:
         assert "## Returns" not in result
         assert "## Instructions" not in result
 
+    def test_tool_decorator_retains_explicit_input_schema_and_task_preflight(self) -> "None":
+        input_schema = {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {"region": {"type": "string"}},
+            "required": ["region"],
+        }
+
+        @mcp_tool(
+            "regional_task",
+            input_schema=input_schema,
+            task_support="required",
+            task_input_before_start=True,
+        )
+        def handler(region: "str") -> "str":
+            return region
+
+        from litestar_mcp.utils import get_mcp_metadata
+
+        metadata = get_mcp_metadata(handler)
+        assert metadata is not None
+        assert metadata["input_schema"] == input_schema
+        assert metadata["task_support"] == "required"
+        assert metadata["task_input_before_start"] is True
+
     def test_structured_false_ignores_structured_fields(self) -> "None":
         @mcp_tool("foo", description="Do.", when_to_use="Sometimes.")
         @get("/")
@@ -472,24 +497,8 @@ class TestDescriptionRenderingEndpoints:
         return Litestar(route_handlers=list(handlers), plugins=[LitestarMCP(MCPConfig())])
 
     @staticmethod
-    def _init_and_get_session(client: "TestClient[Any]") -> "str":
-        init = client.post(
-            "/mcp",
-            json={
-                "jsonrpc": "2.0",
-                "id": 0,
-                "method": "initialize",
-                "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "it"}},
-            },
-        )
-        assert init.status_code == 200, init.text
-        sid = init.headers["mcp-session-id"]
-        client.post(
-            "/mcp",
-            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-            headers={"Mcp-Session-Id": sid},
-        )
-        return sid
+    def _init_and_get_session(_client: "TestClient[Any]") -> "str":
+        return ""
 
     @staticmethod
     def _rpc(
@@ -575,7 +584,7 @@ class TestDescriptionRenderingEndpoints:
             descr = next(r["description"] for r in resources if r["name"] == "r")
             assert descr == "opt-res-prose"
 
-    def test_agent_card_and_mcp_server_manifest_match_tools_list(self) -> "None":
+    def test_agent_card_matches_tools_list(self) -> "None":
         @mcp_tool("t", description="primary", when_to_use="wtu", returns="r")
         @get("/x", sync_to_thread=False)
         def handler() -> "dict[str, Any]":
@@ -589,10 +598,7 @@ class TestDescriptionRenderingEndpoints:
             agent_card = client.get("/.well-known/agent-card.json").json()
             ac_descr = next(s["description"] for s in agent_card["skills"] if s["id"] == "t")
 
-            mcp_manifest = client.get("/.well-known/mcp-server.json").json()
-            mm_descr = next(t["description"] for t in mcp_manifest["tools"] if t["name"] == "t")
-
-            assert tl_descr == ac_descr == mm_descr
+            assert tl_descr == ac_descr
             assert "## When to use\nwtu" in tl_descr
             assert "## Returns\nr" in tl_descr
 

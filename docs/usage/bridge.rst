@@ -18,10 +18,12 @@ stdio JSON-RPC to that app's MCP endpoint.
 The bridge is a thin transport adapter:
 
 - it reads JSON-RPC messages from local stdin;
-- forwards them to the target ``POST`` Streamable HTTP endpoint;
-- opens the target ``GET`` SSE stream after ``notifications/initialized``;
+- adds MCP 2026-07-28 request metadata and standard/custom routing headers;
+- forwards independent messages concurrently to the target ``POST`` endpoint;
+- multiplexes ``subscriptions/listen`` POST-response streams;
 - writes remote JSON-RPC messages back to local stdout;
-- sends ``DELETE`` during shutdown when the server issued a session id.
+- maps stdio cancellation to closure of the matching HTTP response stream;
+- lazily caches tool schemas used for ``Mcp-Param-*`` headers.
 
 It does not depend on the official ``mcp`` Python SDK. The base package
 already depends on ``httpx``; installing the bridge extra adds only
@@ -109,21 +111,6 @@ Run it from an environment where your application package and
 
 If the client supports Streamable HTTP directly, prefer the app's HTTP MCP
 URL instead of the bridge.
-
-Discovery
-=========
-
-If the running app publishes ``/.well-known/mcp-server.json``, ``--discover``
-can resolve the final endpoint from ``endpoints.mcp``:
-
-.. code-block:: bash
-
-    litestar --app my_app:app mcp bridge \
-        --base-url https://app.example.com \
-        --discover
-
-Discovery uses the base URL or explicit endpoint origin for the manifest
-request, then bridges to the manifest's ``endpoints.mcp`` value.
 
 Headers and Bearer Tokens
 =========================

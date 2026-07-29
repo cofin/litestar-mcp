@@ -2,73 +2,45 @@
 Deployment
 ==========
 
-This page collects operational guidance for running a Litestar-MCP app
-in production — most notably the session-affinity story that any
-horizontally-scaled deployment needs to get right.
+MCP 2026-07-28 requests are stateless and can be routed to any healthy
+replica. There is no ``Mcp-Session-Id``, sticky routing, GET event stream, or
+replay cursor.
 
-Sticky routing on ``Mcp-Session-Id``
-====================================
+Application state
+=================
 
-Each MCP session is identified by the ``Mcp-Session-Id`` header that
-the plugin returns from ``initialize`` (see the streamable-HTTP
-transport contract). Server-Sent-Event streams pin to the replica that
-opened them because their event queues live in-process; any cross-replica
-fanout requires a shared broker, which this plugin intentionally does
-not assume.
+State that must outlive one request needs an explicit handle:
 
-For Cloud Run, GKE, or any horizontally-scaled deployment:
+- use application-defined IDs in tool arguments for domain workflows;
+- use ``requestState`` for an MRTR retry, after authenticating and
+  integrity-protecting it;
+- use Tasks extension IDs for durable long-running operations;
+- use subscription request IDs only to correlate live notification streams.
 
-1. **Session affinity on the** ``Mcp-Session-Id`` **header.** Configure
-   the load balancer to hash or pin on this header rather than on a
-   cookie — MCP clients do not use cookies, so cookie affinity silently
-   fails open.
-2. **Shared session store.** Configure
-   :class:`~litestar_mcp.MCPConfig` with a shared ``session_store``
-   (Redis, or the SQL-backed store from the ``advanced_alchemy`` /
-   ``sqlspec`` reference families) so session metadata survives replica
-   restarts and any replica can resolve a session id for stateless POST
-   tool calls.
-3. **Sticky only where it matters.** The GET SSE stream and any POST
-   that expects a server-streamed response must land on the replica
-   that owns the session. Pure POST → POST tool flows can land on any
-   replica that reads the shared store.
+The default Tasks Store is process-local and intended for development. Pass a
+persistent Litestar :class:`~litestar.stores.base.Store` through
+:class:`~litestar_mcp.MCPTaskConfig` for multi-replica task retrieval.
 
-Cloud Run
----------
+Subscriptions
+=============
 
-Cloud Run supports session affinity via the load-balancer configuration
-on the backing Serverless NEG. Enable it at the backend service and
-select the ``Mcp-Session-Id`` header as the affinity key. Without
-affinity, SSE streams terminate prematurely whenever the load balancer
-round-robins a resumption request to a different revision instance.
+Each ``subscriptions/listen`` request owns its POST-response SSE stream. The
+default notification bus is process-local. For cross-worker fan-out, pass an
+already-configured Litestar ``ChannelsPlugin`` as
+``MCPConfig(subscription_channels=channels)``. Graceful shutdown closes active
+streams; clients open a new subscription because replay and
+``Last-Event-ID`` are not supported.
 
-Kubernetes / GKE
-----------------
+Security
+========
 
-For a ``Service`` in front of a ``Deployment``, ``sessionAffinity:
-ClientIP`` is a coarse fallback but is wrong for shared-NAT clients. A
-service mesh (Istio, Linkerd) or an ingress controller that supports
-header-based consistent hashing is the correct tool — point it at
-``Mcp-Session-Id``.
-
-When a session store is still required
---------------------------------------
-
-Even with perfect sticky routing, a shared session store is still
-needed whenever:
-
-- a replica restarts mid-session (rolling deploy, OOM, SIGTERM);
-- a client reconnects from a different IP (mobile roaming,
-  load-balancer source-IP rotation);
-- a stateless POST tool call is intentionally routed to any replica.
-
-The reference families in ``docs/examples/notes/`` demonstrate both the
-in-memory default (fine for demos and single-replica deployments) and
-the upgrade path to a shared store.
+A missing ``Origin`` header is accepted. A present Origin must match the
+request's own origin or an exact value in ``allowed_origins``. Terminate TLS
+at a trusted proxy, preserve the public scheme and host, and apply ordinary
+Litestar authentication and guards to the MCP router.
 
 .. seealso::
 
-    - :doc:`configuration` — :class:`~litestar_mcp.MCPConfig` reference.
-    - :doc:`uvx_guide` — single-file run reference for the shipped
-      examples.
-    - :doc:`adk` — Guide for integrating with Google's Agent Development Kit (ADK).
+    - :doc:`configuration`
+    - :doc:`migration_0_12`
+    - :doc:`security`

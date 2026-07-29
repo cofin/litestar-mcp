@@ -189,7 +189,7 @@ class TestFilteringIntegration:
         assert "secret_resource" not in resource_names
 
         read_result = _rpc(client, "resources/read", {"uri": "litestar://secret_resource"})
-        assert read_result["error"]["code"] == -32002
+        assert read_result["error"]["code"] == -32602
         assert read_result["error"]["message"] == "Resource not found"
         assert read_result["error"]["data"] == {"uri": "litestar://secret_resource"}
 
@@ -224,6 +224,6 @@ class TestFilteringIntegration:
         assert "secret_template" not in template_names
 
         read_result = _rpc(client, "resources/read", {"uri": "app://secret/1"})
-        assert read_result["error"]["code"] == -32002
+        assert read_result["error"]["code"] == -32602
         assert read_result["error"]["message"] == "Resource not found"
         assert read_result["error"]["data"] == {"uri": "app://secret/1"}

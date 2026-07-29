@@ -55,38 +55,15 @@ def require_email_domain(
         raise PermissionDeniedException(_DOMAIN_DENIED)
 
 
-def _ensure_session(client: "TestClient[Any]") -> "str":
-    init = client.post(
-        "/mcp",
-        json={
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
-        },
-    )
-    sid = init.headers.get("mcp-session-id", "")
-    client.post(
-        "/mcp",
-        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        headers={"Mcp-Session-Id": sid},
-    )
-    return str(sid)
-
-
 def _rpc(
     client: "TestClient[Any]",
     method: "str",
     params: "dict[str, Any] | None" = None,
-    sid: "str | None" = None,
 ) -> "dict[str, Any]":
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
     if params is not None:
         body["params"] = params
-    headers: dict[str, str] = {}
-    if method != "initialize" and sid:
-        headers["Mcp-Session-Id"] = sid
-    return client.post("/mcp", json=body, headers=headers).json()  # type: ignore[no-any-return]
+    return client.post("/mcp", json=body).json()  # type: ignore[no-any-return]
 
 
 def test_mcp_tool_rejects_unauthenticated_via_guard() -> "None":
@@ -102,8 +79,7 @@ def test_mcp_tool_rejects_unauthenticated_via_guard() -> "None":
 
     app = Litestar(route_handlers=[GuardedController], plugins=[LitestarMCP(MCPConfig())])
     with TestClient(app=app) as client:
-        sid = _ensure_session(client)
-        resp = _rpc(client, "tools/call", {"name": "guarded_tool", "arguments": {}}, sid=sid)
+        resp = _rpc(client, "tools/call", {"name": "guarded_tool", "arguments": {}})
 
     assert resp["result"]["isError"] is True
     payload = str(resp["result"])
@@ -141,12 +117,10 @@ def test_mcp_tool_custom_claim_guard_rejects_wrong_domain() -> "None":
         plugins=[LitestarMCP(MCPConfig())],
         middleware=[DefineMiddleware(_StubAuth, exclude=["/mcp", "/.well-known"])],
     )
-    # The stub middleware excludes /mcp (session scope-populated via the JSON-RPC handler itself),
-    # so the MCP dispatch path synthesises a request that routes to the GuardedController's
-    # /domain/x endpoint. That handler inherits the stub auth via scope propagation.
+    # The MCP dispatch path synthesises a request that routes to the
+    # GuardedController's /domain/x endpoint.
     with TestClient(app=app) as client:
-        sid = _ensure_session(client)
-        resp = _rpc(client, "tools/call", {"name": "domain_tool", "arguments": {}}, sid=sid)
+        resp = _rpc(client, "tools/call", {"name": "domain_tool", "arguments": {}})
 
     assert resp["result"]["isError"] is True
     payload = str(resp["result"])
@@ -183,8 +157,7 @@ def test_mcp_tool_custom_claim_guard_accepts_allowed_domain() -> "None":
         middleware=[DefineMiddleware(_StubAuth, exclude=["/.well-known"])],
     )
     with TestClient(app=app) as client:
-        sid = _ensure_session(client)
-        resp = _rpc(client, "tools/call", {"name": "domain_tool", "arguments": {}}, sid=sid)
+        resp = _rpc(client, "tools/call", {"name": "domain_tool", "arguments": {}})
 
     assert resp["result"].get("isError") is not True, resp
     assert "ok" in str(resp["result"])

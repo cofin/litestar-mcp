@@ -18,27 +18,27 @@ Development Setup
 
 .. code-block:: bash
 
-    uv sync --group dev
-
-3. Install pre-commit hooks:
-
-.. code-block:: bash
-
-    pre-commit install
+    make install
 
 Running Tests
 -------------
 
 .. code-block:: bash
 
-    # Run all tests
-    uv run pytest
+    # Run tests and the coverage gate
+    make test
+    make coverage
 
-    # Run with coverage
-    uv run pytest --cov
+    # Run the pinned MCP 2026-07-28 conformance framework
+    make conformance
 
     # Run specific test
-    uv run pytest tests/test_plugin.py
+    uv run --python 3.10 pytest tests/unit/test_plugin.py
+
+The Makefile pins conformance to Node.js ``24.18.1``. If ``nodenv`` is
+installed, the target selects it with ``NODENV_VERSION`` without requiring a
+tracked ``.node-version`` file. Otherwise, it uses the active Node.js runtime.
+The npm dependency itself is locked in ``package-lock.json``.
 
 Code Quality
 ------------
@@ -47,27 +47,18 @@ We use several tools to maintain code quality:
 
 .. code-block:: bash
 
-    # Linting
-    uv run ruff check src tests examples
-    uv run mypy src tests examples
-
-    # Formatting
-    uv run ruff format src tests examples
+    make lint
+    make check-all
 
 Building Documentation
 ----------------------
 
 .. code-block:: bash
 
-    # Install doc dependencies
-    uv sync --group doc
-
-    # Build docs
-    cd docs
-    uv run sphinx-build -b html . _build/html
-
-    # Live preview
-    uv run sphinx-autobuild . _build/html
+    make docs
+    make validate-examples
+    make validate-uvx
+    make validate-pep723
 
 Pull Request Guidelines
 -----------------------

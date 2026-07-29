@@ -8,16 +8,15 @@ from litestar import get as litestar_get
 from litestar.di import Provide
 from litestar.handlers import BaseRouteHandler
 from litestar.plugins import CLIPlugin, InitPluginProtocol
-from litestar.stores.memory import MemoryStore
 
 from litestar_mcp.cli import mcp_group
 from litestar_mcp.config import MCPConfig
-from litestar_mcp.manifests import build_agent_card, build_mcp_server_manifest, build_oauth_protected_resource
+from litestar_mcp.manifests import build_agent_card, build_oauth_protected_resource
 from litestar_mcp.registry import PromptRegistration, Registry
 from litestar_mcp.routes import MCPController
-from litestar_mcp.sessions import MCPSessionManager
-from litestar_mcp.sse import SSEManager
-from litestar_mcp.tasks import InMemoryTaskStore, TaskRecord
+from litestar_mcp.schema_builder import generate_schema_for_handler, validate_mcp_header_schema
+from litestar_mcp.sse import SubscriptionManager
+from litestar_mcp.tasks import MCPTaskStore, TaskRecord
 from litestar_mcp.utils import get_handler_function, get_mcp_metadata
 
 _logger = logging.getLogger(__name__)
@@ -63,23 +62,18 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                     arguments=metadata.get("arguments"),
                     icons=metadata.get("icons"),
                 )
-        self._sse_manager = SSEManager(
-            max_streams=self._config.sse_max_streams,
-            max_idle_seconds=self._config.sse_max_idle_seconds,
+        self._subscription_manager = SubscriptionManager(
+            max_streams=self._config.subscription_max_streams,
+            channels=self._config.subscription_channels,
         )
-        session_store = self._config.session_store or MemoryStore()
-        self._session_manager = MCPSessionManager(
-            session_store,
-            max_idle_seconds=self._config.session_max_idle_seconds,
-        )
-        self._config._session_manager = self._session_manager  # noqa: SLF001
-        self._task_store: InMemoryTaskStore | None = None
+        self._task_store: MCPTaskStore | None = None
         if self._config.task_config is not None:
             task_config = self._config.task_config
-            self._task_store = InMemoryTaskStore(
-                default_ttl=task_config.default_ttl,
-                max_ttl=task_config.max_ttl,
-                poll_interval=task_config.poll_interval,
+            self._task_store = MCPTaskStore(
+                store=task_config.store,
+                default_ttl_ms=task_config.default_ttl_ms,
+                max_ttl_ms=task_config.max_ttl_ms,
+                poll_interval_ms=task_config.poll_interval_ms,
             )
 
     @property
@@ -93,7 +87,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         return self._registry
 
     @property
-    def task_store(self) -> "InMemoryTaskStore | None":
+    def task_store(self) -> "MCPTaskStore | None":
         """Get the task store."""
         return self._task_store
 
@@ -128,13 +122,13 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         """Initialize the MCP integration when the Litestar app starts."""
         app_config.route_handlers.extend(self._dynamic_handlers)
         self._discover_mcp_routes(app_config.route_handlers)
-        self._registry.set_sse_manager(self._sse_manager)
+        self._registry.set_subscription_manager(self._subscription_manager)
 
         if self._task_store is not None:
 
             async def publish_task_status(record: "TaskRecord") -> "None":
                 await self._registry.publish_notification(
-                    "notifications/tasks/status",
+                    "notifications/tasks",
                     record.to_dict(),
                 )
 
@@ -146,11 +140,8 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         def provide_registry() -> "Registry":
             return self._registry
 
-        def provide_task_store() -> "InMemoryTaskStore | None":
+        def provide_task_store() -> "MCPTaskStore | None":
             return self._task_store
-
-        def provide_session_manager() -> "MCPSessionManager":
-            return self._session_manager
 
         router_kwargs: dict[str, Any] = {
             "path": self._config.base_path,
@@ -161,7 +152,6 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                 "config": Provide(provide_mcp_config, sync_to_thread=False),
                 "registry": Provide(provide_registry, sync_to_thread=False),
                 "task_store": Provide(provide_task_store, sync_to_thread=False),
-                "session_manager": Provide(provide_session_manager, sync_to_thread=False),
                 "discovered_tools": Provide(lambda: self._registry.tools, sync_to_thread=False),
                 "discovered_resources": Provide(lambda: self._registry.resources, sync_to_thread=False),
                 "discovered_prompts": Provide(lambda: self._registry.prompts, sync_to_thread=False),
@@ -198,23 +188,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                 discovered_tools=self._registry.tools,
             )
 
-        @litestar_get(
-            "/.well-known/mcp-server.json",
-            sync_to_thread=False,
-            include_in_schema=self._config.include_in_schema,
-            opt={"exclude_from_auth": True},
-        )
-        def mcp_server_manifest(request: "Request[Any, Any, Any]") -> "dict[str, Any]":
-            return build_mcp_server_manifest(
-                base_url=str(request.base_url),
-                config=self._config,
-                app=request.app,
-                discovered_tools=self._registry.tools,
-                discovered_resources=self._registry.resources,
-                discovered_prompts=self._registry.prompts,
-            )
-
-        app_config.route_handlers.extend([oauth_protected_resource, agent_card, mcp_server_manifest])
+        app_config.route_handlers.extend([oauth_protected_resource, agent_card])
         return app_config
 
     def on_startup(self, app: "Litestar") -> "None":
@@ -224,7 +198,10 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
             if hasattr(route, "route_handlers"):
                 all_handlers.extend(route.route_handlers)  # pyright: ignore[reportAttributeAccessIssue]
         _logger.debug("Plugin on_startup executing...")
+        self._subscription_manager.start()
         self._discover_mcp_routes(all_handlers)
+        for handler in self._registry.tools.values():
+            validate_mcp_header_schema(generate_schema_for_handler(handler))
 
         def invalidate_router() -> "None":
             _logger.debug("invalidate_router callback triggered")
@@ -236,7 +213,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         app.state.mcp_router_invalidation_callback = invalidate_router
         _logger.debug("Registered invalidate_router callback on registry: %s", id(self._registry))
 
-    def on_shutdown(self, app: "Litestar") -> "None":
+    async def on_shutdown(self, app: "Litestar") -> "None":
         """Clean up resources on application shutdown."""
         _logger.debug("Plugin on_shutdown executing...")
         callback = getattr(app.state, "mcp_router_invalidation_callback", None)
@@ -244,6 +221,9 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
             self._registry.unregister_change_callback(callback)
             delattr(app.state, "mcp_router_invalidation_callback")
             _logger.debug("Unregistered invalidate_router callback from registry")
+        await self._subscription_manager.close_all()
+        if self._task_store is not None:
+            await self._task_store.close()
 
     def _discover_mcp_routes(self, route_handlers: "Sequence[Any]") -> "None":
         """Discover routes marked for MCP exposure via opt attribute or decorators."""

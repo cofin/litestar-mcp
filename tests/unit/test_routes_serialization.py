@@ -20,25 +20,9 @@ def test_valid_jsonrpc_body_is_decoded_via_litestar_serializer() -> "None":
     """A well-formed JSON-RPC body should decode and dispatch correctly."""
     app = _make_app()
     with TestClient(app=app) as client:
-        init = client.post(
-            "/mcp",
-            json={
-                "jsonrpc": "2.0",
-                "id": 0,
-                "method": "initialize",
-                "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
-            },
-        )
-        sid = init.headers["mcp-session-id"]
-        client.post(
-            "/mcp",
-            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-            headers={"Mcp-Session-Id": sid},
-        )
         resp = client.post(
             "/mcp",
             json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
-            headers={"Mcp-Session-Id": sid},
         )
     assert resp.status_code == 200
     payload = resp.json()
@@ -55,7 +39,7 @@ def test_malformed_body_returns_parse_error() -> "None":
             content=b"{not valid json",
             headers={"content-type": "application/json"},
         )
-    assert resp.status_code == 200
+    assert resp.status_code == 400
     payload = resp.json()
     assert payload["error"]["code"] == -32700
     assert payload["error"]["message"] == "Parse error"

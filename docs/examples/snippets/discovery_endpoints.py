@@ -1,9 +1,9 @@
 """Snippet: well-known discovery endpoints.
 
 Referenced from docs/usage/discovery.rst.
-The plugin automatically serves ``/.well-known/agent-card.json``,
-``/.well-known/mcp-server.json``, and ``/.well-known/oauth-protected-resource``
-once registered - no extra route handlers are required.
+The plugin automatically serves the separate agent card and OAuth protected
+resource documents. MCP capability discovery uses ``server/discover`` on the
+POST transport.
 """
 
 from litestar import Litestar
@@ -15,8 +15,8 @@ def build() -> "Litestar":
     """Build a Litestar application with the LitestarMCP plugin.
 
     Discovery is served at:
+      POST /mcp (server/discover)
       GET /.well-known/agent-card.json
-      GET /.well-known/mcp-server.json
       GET /.well-known/oauth-protected-resource
     """
     return Litestar(route_handlers=[], plugins=[LitestarMCP()])

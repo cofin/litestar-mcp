@@ -97,8 +97,15 @@ examples drawn from :mod:`docs.examples`.
         :link: deployment
         :link-type: doc
 
-        Sticky routing on ``Mcp-Session-Id``, shared session stores,
-        and multi-replica notes for Cloud Run / GKE.
+        Stateless multi-replica routing, durable task stores, and
+        cross-worker subscription fan-out.
+
+    .. grid-item-card:: Migrating to 0.12
+        :link: migration_0_12
+        :link-type: doc
+
+        Move initialize-era clients to MCP 2026-07-28 request metadata,
+        extensions, subscriptions, and MRTR.
 
     .. grid-item-card:: ADK Integration
         :link: adk
@@ -124,4 +131,5 @@ examples drawn from :mod:`docs.examples`.
     reference_examples
     uvx_guide
     deployment
+    migration_0_12
     adk

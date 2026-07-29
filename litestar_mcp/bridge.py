@@ -1,9 +1,10 @@
 """Stdio to Streamable HTTP bridge for Litestar MCP endpoints."""
 
 import asyncio
+import base64
 import inspect
 import sys
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from types import TracebackType
 from typing import Any
 
@@ -19,12 +20,18 @@ from typing_extensions import Self
 from litestar_mcp.auth.backend import BEARER_TOKEN_PREFIX, DEFAULT_AUTH_HEADER_NAME
 from litestar_mcp.exceptions import BridgeConnectionError, BridgeMessageTooLargeError, MissingDependencyError
 from litestar_mcp.jsonrpc import JSONRPCError, error_response
-from litestar_mcp.routes import MCP_PROTOCOL_VERSION_HEADER, MCP_SESSION_HEADER
+from litestar_mcp.routes import (
+    MCP_METHOD_HEADER,
+    MCP_NAME_HEADER,
+    MCP_PROTOCOL_VERSION,
+    MCP_PROTOCOL_VERSION_HEADER,
+)
 
 TokenProvider = Callable[[], str] | Callable[[], Awaitable[str]]
 BRIDGE_ERROR = -32001
 DEFAULT_MAX_STDIN_MESSAGE_SIZE = 16 * 1024 * 1024
-_SSE_RECONNECT_DELAY_SECONDS = 1.0
+_MIN_VISIBLE_ASCII = 0x20
+_MAX_VISIBLE_ASCII = 0x7E
 
 __all__ = (
     "BRIDGE_ERROR",
@@ -85,49 +92,36 @@ async def run_stdio_streamable_http_bridge(
     error: BaseException | None = None
 
     try:
-        async with _StreamableHTTPBridgeClient(
-            endpoint,
-            headers=headers,
-            auth=auth,
-            timeout=timeout,
-            sse_read_timeout=_normalize_sse_read_timeout(sse_read_timeout),
-            stdout=stdout_stream,
-            stderr=stderr_stream,
-            event_source_cls=event_source_cls,
-        ) as bridge_client:
-            get_stream_started = False
-            async with anyio.create_task_group() as task_group:
+        async with (
+            _StreamableHTTPBridgeClient(
+                endpoint,
+                headers=headers,
+                auth=auth,
+                timeout=timeout,
+                sse_read_timeout=_normalize_sse_read_timeout(sse_read_timeout),
+                stdout=stdout_stream,
+                stderr=stderr_stream,
+                event_source_cls=event_source_cls,
+            ) as bridge_client,
+            anyio.create_task_group() as task_group,
+        ):
 
-                def record_error(exc: BaseException) -> None:
-                    nonlocal error
-                    if error is None:
-                        error = exc
+            def record_error(exc: BaseException) -> None:
+                nonlocal error
+                if error is None:
+                    error = exc
 
-                def start_get_stream() -> None:
-                    nonlocal get_stream_started
-                    if get_stream_started:
-                        return
-                    get_stream_started = True
-                    task_group.start_soon(
-                        _run_bridge_pump,
-                        bridge_client.run_sse_stream(),
-                        task_group.cancel_scope,
-                        record_error,
-                        False,
-                    )
-
-                task_group.start_soon(
-                    _run_bridge_pump,
-                    _pump_stdin_to_remote(
-                        stdin_stream,
-                        bridge_client,
-                        start_get_stream,
-                        max_message_size=max_message_size,
-                    ),
-                    task_group.cancel_scope,
-                    record_error,
-                    True,
-                )
+            task_group.start_soon(
+                _run_bridge_pump,
+                _pump_stdin_to_remote(
+                    stdin_stream,
+                    bridge_client,
+                    max_message_size=max_message_size,
+                ),
+                task_group.cancel_scope,
+                record_error,
+                True,
+            )
     except MissingDependencyError:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -225,9 +219,11 @@ class _StreamableHTTPBridgeClient:
             auth=auth,
             follow_redirects=True,
         )
-        self._session_id: str | None = None
-        self._protocol_version: str | None = None
-        self._get_stream_disabled = False
+        self._tool_headers: dict[str, list[tuple[tuple[str, ...], str]]] | None = None
+        self._tool_headers_lock = asyncio.Lock()
+        self._inflight: dict[Any, anyio.CancelScope] = {}
+        self._inflight_lock = asyncio.Lock()
+        self._stdout_lock = asyncio.Lock()
 
     async def __aenter__(self) -> Self:
         await self._client.__aenter__()
@@ -243,96 +239,160 @@ class _StreamableHTTPBridgeClient:
         await self._client.__aexit__(exc_type, exc_val, exc_tb)
 
     async def close(self) -> None:
-        if self._session_id is None:
-            return
-        try:
-            response = await self._client.delete(self._endpoint, headers=self._mcp_headers())
-        except httpx.HTTPError:
-            return
-        if response.status_code not in (200, 204, 405):
-            print(
-                f"litestar mcp bridge ignored shutdown DELETE status {response.status_code}",
-                file=self._stderr,
-            )
+        async with self._inflight_lock:
+            scopes = tuple(self._inflight.values())
+            self._inflight.clear()
+        for scope in scopes:
+            scope.cancel()
 
-    async def post_message(self, message: dict[str, Any], *, start_get_stream: Callable[[], None]) -> None:
+    async def post_message(self, message: dict[str, Any]) -> None:
+        if message.get("method") == "notifications/cancelled":
+            params = message.get("params")
+            if isinstance(params, dict):
+                await self.cancel_request(params.get("requestId"))
+            return
+        prepared = self._prepare_message(message)
+        headers = await self._mcp_headers(prepared)
+        request_id = prepared.get("id")
+        cancel_scope = anyio.CancelScope()
+        if request_id is not None:
+            async with self._inflight_lock:
+                self._inflight[request_id] = cancel_scope
         try:
-            async with self._client.stream(
-                "POST",
-                self._endpoint,
-                json=message,
-                headers=self._mcp_headers(),
-            ) as response:
-                if response.status_code == HTTP_202_ACCEPTED:
-                    if message.get("method") == "notifications/initialized":
-                        start_get_stream()
-                    return
-                response.raise_for_status()
-                self._capture_headers(response)
-                content_type = response.headers.get("content-type", "").lower()
-                if content_type.startswith("application/json"):
-                    payload = decode_json(await response.aread())
-                    self._capture_protocol_version(payload)
-                    await _write_json_line(self._stdout, payload)
-                elif content_type.startswith("text/event-stream"):
-                    await self._consume_sse_response(response, expected_id=message.get("id"))
-                else:
-                    msg = f"Unexpected Streamable HTTP content type: {content_type or '<empty>'}"
-                    raise RuntimeError(msg)
+            with cancel_scope:
+                try:
+                    async with self._client.stream(
+                        "POST",
+                        self._endpoint,
+                        json=prepared,
+                        headers=headers,
+                    ) as response:
+                        if response.status_code == HTTP_202_ACCEPTED:
+                            return
+                        response.raise_for_status()
+                        content_type = response.headers.get("content-type", "").lower()
+                        if content_type.startswith("application/json"):
+                            payload = decode_json(await response.aread())
+                            async with self._stdout_lock:
+                                await _write_json_line(self._stdout, payload)
+                        elif content_type.startswith("text/event-stream"):
+                            await self._consume_sse_response(response, expected_id=request_id)
+                        else:
+                            msg = f"Unexpected Streamable HTTP content type: {content_type or '<empty>'}"
+                            raise RuntimeError(msg)
+                except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                    raise BridgeConnectionError(self._endpoint) from exc
         except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
             raise BridgeConnectionError(self._endpoint) from exc
+        finally:
+            if request_id is not None:
+                async with self._inflight_lock:
+                    self._inflight.pop(request_id, None)
 
-        if message.get("method") == "notifications/initialized":
-            start_get_stream()
+    async def cancel_request(self, request_id: Any) -> None:
+        """Close the HTTP response stream associated with a stdio request."""
+        async with self._inflight_lock:
+            scope = self._inflight.get(request_id)
+        if scope is not None:
+            scope.cancel()
 
-    async def run_sse_stream(self) -> None:
-        if self._session_id is None or self._get_stream_disabled:
-            return
-        while not self._get_stream_disabled:
-            try:
-                async with self._client.stream(
-                    "GET",
-                    self._endpoint,
-                    headers={**self._mcp_headers(), "Accept": "text/event-stream"},
-                ) as response:
-                    if response.status_code in (404, 405):
-                        self._get_stream_disabled = True
-                        print(
-                            "litestar mcp bridge: server does not offer a GET SSE stream; continuing with POST responses",
-                            file=self._stderr,
-                        )
-                        return
-                    response.raise_for_status()
-                    await self._consume_sse_response(response, expected_id=None)
-            except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
-                raise BridgeConnectionError(self._endpoint) from exc
-            await anyio.sleep(_SSE_RECONNECT_DELAY_SECONDS)
-
-    def _mcp_headers(self) -> dict[str, str]:
+    async def _mcp_headers(self, message: dict[str, Any]) -> dict[str, str]:
+        method = str(message.get("method", ""))
         headers = {
             "Accept": "application/json, text/event-stream",
             "Content-Type": "application/json",
+            MCP_PROTOCOL_VERSION_HEADER: MCP_PROTOCOL_VERSION,
+            MCP_METHOD_HEADER: method,
         }
-        if self._session_id is not None:
-            headers[MCP_SESSION_HEADER] = self._session_id
-        if self._protocol_version is not None:
-            headers[MCP_PROTOCOL_VERSION_HEADER] = self._protocol_version
+        params = message.get("params")
+        if isinstance(params, dict):
+            name_field = {
+                "tools/call": "name",
+                "resources/read": "uri",
+                "prompts/get": "name",
+                "tasks/get": "taskId",
+                "tasks/update": "taskId",
+                "tasks/cancel": "taskId",
+            }.get(method)
+            if name_field is not None and isinstance(params.get(name_field), str):
+                headers[MCP_NAME_HEADER] = _encode_header_value(params[name_field])
+            if method == "tools/call":
+                headers.update(await self._custom_tool_headers(params))
         return headers
 
-    def _capture_headers(self, response: httpx.Response) -> None:
-        session_id = response.headers.get("mcp-session-id")
-        if session_id:
-            self._session_id = session_id
-        protocol_version = response.headers.get(MCP_PROTOCOL_VERSION_HEADER)
-        if protocol_version:
-            self._protocol_version = protocol_version
+    @staticmethod
+    def _prepare_message(message: dict[str, Any]) -> dict[str, Any]:
+        prepared = dict(message)
+        params = dict(prepared.get("params") or {})
+        meta = dict(params.get("_meta") or {})
+        meta.setdefault("io.modelcontextprotocol/protocolVersion", MCP_PROTOCOL_VERSION)
+        meta.setdefault("io.modelcontextprotocol/clientCapabilities", {})
+        meta.setdefault(
+            "io.modelcontextprotocol/clientInfo",
+            {"name": "litestar-mcp-stdio-bridge", "version": "0.12.0"},
+        )
+        params["_meta"] = meta
+        prepared["params"] = params
+        return prepared
 
-    def _capture_protocol_version(self, payload: Any) -> None:
-        if not isinstance(payload, dict):
-            return
-        result = payload.get("result")
-        if isinstance(result, dict) and isinstance(result.get("protocolVersion"), str):
-            self._protocol_version = result["protocolVersion"]
+    async def _custom_tool_headers(self, params: dict[str, Any]) -> dict[str, str]:
+        tool_name = params.get("name")
+        arguments = params.get("arguments")
+        if not isinstance(tool_name, str) or not isinstance(arguments, dict):
+            return {}
+        if self._tool_headers is None:
+            await self._load_tool_headers()
+        headers: dict[str, str] = {}
+        for path, header_name in (self._tool_headers or {}).get(tool_name, ()):
+            value: Any = arguments
+            for part in path:
+                if not isinstance(value, dict) or part not in value:
+                    break
+                value = value[part]
+            else:
+                if value is not None:
+                    rendered = ("true" if value else "false") if isinstance(value, bool) else str(value)
+                    headers[f"Mcp-Param-{header_name}"] = _encode_header_value(rendered)
+        return headers
+
+    async def _load_tool_headers(self) -> None:
+        async with self._tool_headers_lock:
+            if self._tool_headers is not None:
+                return
+            cache: dict[str, list[tuple[tuple[str, ...], str]]] = {}
+            cursor: str | None = None
+            page = 0
+            while True:
+                params = {"cursor": cursor} if cursor is not None else {}
+                request = self._prepare_message(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": f"litestar-mcp-schema-cache-{page}",
+                        "method": "tools/list",
+                        "params": params,
+                    }
+                )
+                response = await self._client.post(
+                    self._endpoint,
+                    json=request,
+                    headers={
+                        "Accept": "application/json",
+                        "Content-Type": "application/json",
+                        MCP_PROTOCOL_VERSION_HEADER: MCP_PROTOCOL_VERSION,
+                        MCP_METHOD_HEADER: "tools/list",
+                    },
+                )
+                response.raise_for_status()
+                payload = decode_json(response.content)
+                result = payload.get("result") if isinstance(payload, dict) else None
+                for tool in result.get("tools", ()) if isinstance(result, dict) else ():
+                    if isinstance(tool, dict) and isinstance(tool.get("name"), str):
+                        cache[tool["name"]] = list(_iter_header_schema(tool.get("inputSchema")))
+                cursor = result.get("nextCursor") if isinstance(result, dict) else None
+                if not isinstance(cursor, str):
+                    break
+                page += 1
+            self._tool_headers = cache
 
     async def _consume_sse_response(self, response: httpx.Response, *, expected_id: Any | None) -> None:
         event_source = self._event_source_cls(response)
@@ -340,8 +400,8 @@ class _StreamableHTTPBridgeClient:
             if not event.data:
                 continue
             payload = decode_json(event.data)
-            self._capture_protocol_version(payload)
-            await _write_json_line(self._stdout, payload)
+            async with self._stdout_lock:
+                await _write_json_line(self._stdout, payload)
             if expected_id is not None and isinstance(payload, dict) and payload.get("id") == expected_id:
                 return
 
@@ -385,7 +445,7 @@ async def _run_bridge_pump(
     except get_cancelled_exc_class():
         raise
     except Exception as exc:  # noqa: BLE001
-        record_error(exc)
+        record_error(_unwrap_exception_group(exc))
         cancel_scope.cancel()
     else:
         if terminal:
@@ -395,18 +455,18 @@ async def _run_bridge_pump(
 async def _pump_stdin_to_remote(
     stdin: ByteReceiveStream,
     bridge_client: _StreamableHTTPBridgeClient,
-    start_get_stream: Callable[[], None],
     *,
     max_message_size: int,
 ) -> None:
-    async for line in _iter_stdin_lines(stdin, max_message_size=max_message_size):
-        if not line.strip():
-            continue
-        raw = decode_json(line)
-        if not isinstance(raw, dict):
-            msg = "JSON-RPC messages must be JSON objects"
-            raise TypeError(msg)
-        await bridge_client.post_message(raw, start_get_stream=start_get_stream)
+    async with anyio.create_task_group() as task_group:
+        async for line in _iter_stdin_lines(stdin, max_message_size=max_message_size):
+            if not line.strip():
+                continue
+            raw = decode_json(line)
+            if not isinstance(raw, dict):
+                msg = "JSON-RPC messages must be JSON objects"
+                raise TypeError(msg)
+            task_group.start_soon(bridge_client.post_message, raw)
 
 
 async def _iter_stdin_lines(stdin: ByteReceiveStream, *, max_message_size: int) -> AsyncIterator[bytes]:
@@ -442,3 +502,33 @@ async def _write_json_line(stdout: ByteSendStream, payload: dict[str, Any]) -> N
 
 def _normalize_sse_read_timeout(value: float | None) -> float | None:
     return None if value is None or value <= 0 else value
+
+
+def _unwrap_exception_group(exc: BaseException) -> BaseException:
+    while exceptions := getattr(exc, "exceptions", None):
+        exc = exceptions[0]
+    return exc
+
+
+def _encode_header_value(value: str) -> str:
+    if (
+        value
+        and all(_MIN_VISIBLE_ASCII <= ord(char) <= _MAX_VISIBLE_ASCII for char in value)
+        and not value.startswith("=?base64?")
+    ):
+        return value
+    encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
+    return f"=?base64?{encoded}?="
+
+
+def _iter_header_schema(schema: Any, path: tuple[str, ...] = ()) -> Iterator[tuple[tuple[str, ...], str]]:
+    """Yield ``(property_path, header_name)`` pairs from an input schema."""
+    if not isinstance(schema, dict):
+        return
+    header_name = schema.get("x-mcp-header")
+    if isinstance(header_name, str):
+        yield path, header_name
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        for name, child in properties.items():
+            yield from _iter_header_schema(child, (*path, name))

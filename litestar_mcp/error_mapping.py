@@ -27,7 +27,7 @@ from typing import Any
 from litestar_mcp.executor import MCPToolErrorResult
 from litestar_mcp.jsonrpc import INTERNAL_ERROR, JSONRPCError
 
-RESOURCE_NOT_FOUND = -32002
+RESOURCE_NOT_FOUND = -32602
 
 
 def _tool_error_data(err: "MCPToolErrorResult") -> "dict[str, Any]":

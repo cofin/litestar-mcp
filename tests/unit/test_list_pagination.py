@@ -23,18 +23,7 @@ def _rpc(
 
 
 def _init_session(client: "TestClient[Any]") -> "str":
-    init = _rpc(
-        client,
-        "initialize",
-        {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "x"}},
-    )
-    sid: str = init.headers["mcp-session-id"]
-    client.post(
-        "/mcp",
-        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        headers={"Mcp-Session-Id": sid},
-    )
-    return sid
+    return ""
 
 
 def _make_tools_app(count: "int", page_size: "int") -> "Litestar":

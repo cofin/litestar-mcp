@@ -36,7 +36,7 @@ from litestar.serialization import decode_json, encode_json
 from litestar.types.empty import Empty
 from litestar.utils.sync import ensure_async_callable
 
-from litestar_mcp.content import MCPBlobResource, MCPResourceLink, MCPToolResult
+from litestar_mcp.content import MCPBlobResource, MCPInputRequiredResult, MCPResourceLink, MCPToolResult
 from litestar_mcp.utils.handler_signature import get_advertised_handler_parameters
 
 if TYPE_CHECKING:
@@ -337,7 +337,7 @@ async def _run_handler_pipeline(
                 handler_fn = ensure_async_callable(handler.fn)
                 raw_result = await handler_fn(**parsed_kwargs)
 
-            if isinstance(raw_result, (MCPBlobResource, MCPResourceLink, MCPToolResult)):
+            if isinstance(raw_result, (MCPBlobResource, MCPInputRequiredResult, MCPResourceLink, MCPToolResult)):
                 return MCPHandlerResponse(
                     content=raw_result,
                     status_code=200,

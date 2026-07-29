@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from litestar import Litestar, get
-from litestar.testing import TestClient
+from litestar.testing import AsyncTestClient, TestClient
 
 from litestar_mcp import LitestarMCP
 
@@ -13,6 +13,65 @@ if TYPE_CHECKING:
     from litestar.handlers import BaseRouteHandler
 
 pytestmark = pytest.mark.unit
+
+_PROTOCOL_VERSION = "2026-07-28"
+
+
+@pytest.fixture(autouse=True)
+def modern_mcp_requests(monkeypatch: "pytest.MonkeyPatch") -> "None":
+    """Upgrade unit-test MCP requests to the stateless 2026-07-28 envelope.
+
+    Individual tests still own the method and parameters they exercise. This
+    adapter centralizes transport boilerplate while legacy handshake-specific
+    assertions are migrated explicitly.
+    """
+    original_post = TestClient.post
+    original_async_post = AsyncTestClient.post
+
+    def enrich(url: "str", kwargs: "dict[str, Any]") -> "None":
+        if not url.rstrip("/").endswith("mcp"):
+            return
+        payload = kwargs.get("json")
+        if not isinstance(payload, dict):
+            return
+        method = payload.get("method")
+        params = payload.setdefault("params", {})
+        if not isinstance(method, str) or not isinstance(params, dict):
+            return
+        meta = params.setdefault("_meta", {})
+        if isinstance(meta, dict):
+            meta.setdefault("io.modelcontextprotocol/protocolVersion", _PROTOCOL_VERSION)
+            meta.setdefault("io.modelcontextprotocol/clientCapabilities", {})
+            meta.setdefault(
+                "io.modelcontextprotocol/clientInfo",
+                {"name": "unit-tests", "version": "1"},
+            )
+        headers = dict(kwargs.get("headers") or {})
+        headers.setdefault("Accept", "application/json, text/event-stream")
+        headers.setdefault("MCP-Protocol-Version", _PROTOCOL_VERSION)
+        headers.setdefault("Mcp-Method", method)
+        name_fields = {
+            "tools/call": "name",
+            "resources/read": "uri",
+            "prompts/get": "name",
+            "tasks/get": "taskId",
+            "tasks/update": "taskId",
+            "tasks/cancel": "taskId",
+        }
+        if method in name_fields:
+            headers.setdefault("Mcp-Name", str(params.get(name_fields[method], "")))
+        kwargs["headers"] = headers
+
+    def post(client: "TestClient[Any]", url: "str", *args: "Any", **kwargs: "Any") -> "Any":
+        enrich(url, kwargs)
+        return original_post(client, url, *args, **kwargs)
+
+    async def async_post(client: "AsyncTestClient[Any]", url: "str", *args: "Any", **kwargs: "Any") -> "Any":
+        enrich(url, kwargs)
+        return await original_async_post(client, url, *args, **kwargs)
+
+    monkeypatch.setattr(TestClient, "post", post)
+    monkeypatch.setattr(AsyncTestClient, "post", async_post)
 
 
 @pytest.fixture

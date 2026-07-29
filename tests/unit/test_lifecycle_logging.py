@@ -1,4 +1,5 @@
 import logging
+from copy import copy
 
 import pytest
 from litestar import Litestar, get
@@ -63,11 +64,29 @@ def test_registry_overwrite_still_warns(caplog: "pytest.LogCaptureFixture") -> "
     def ping() -> "dict[str, bool]":
         return {"ok": True}
 
+    @get("/replacement", mcp_tool="replacement", sync_to_thread=False)
+    def replacement() -> "dict[str, bool]":
+        return {"ok": True}
+
     registry = Registry()
     caplog.set_level(logging.WARNING, logger="litestar_mcp.registry")
 
     registry.register_tool("ping", ping)
-    registry.register_tool("ping", ping)
+    registry.register_tool("ping", replacement)
 
     messages = [record.getMessage() for record in _warning_records(caplog, "litestar_mcp.registry")]
     assert any("Overwriting existing tool registration: ping" in message for message in messages)
+
+
+def test_registry_copied_handler_registration_is_idempotent(caplog: "pytest.LogCaptureFixture") -> "None":
+    @get("/ping", mcp_tool="ping", sync_to_thread=False)
+    def ping() -> "dict[str, bool]":
+        return {"ok": True}
+
+    registry = Registry()
+    caplog.set_level(logging.WARNING, logger="litestar_mcp.registry")
+
+    registry.register_tool("ping", ping)
+    registry.register_tool("ping", copy(ping))
+
+    assert _warning_records(caplog, "litestar_mcp.registry") == []

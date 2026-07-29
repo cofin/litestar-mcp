@@ -11,30 +11,10 @@ from litestar_mcp import LitestarMCP
 from litestar_mcp.config import MCPConfig, MCPOptKeys
 
 
-def _init(client: "TestClient[Any]") -> "str":
-    init = client.post(
-        "/mcp",
-        json={
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
-        },
-    )
-    sid = init.headers["mcp-session-id"]
-    client.post(
-        "/mcp",
-        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        headers={"Mcp-Session-Id": sid},
-    )
-    return sid
-
-
-def _rpc(client: "TestClient[Any]", method: "str", sid: "str") -> "dict[str, Any]":
+def _rpc(client: "TestClient[Any]", method: "str") -> "dict[str, Any]":
     resp = client.post(
         "/mcp",
-        json={"jsonrpc": "2.0", "id": 1, "method": method},
-        headers={"Mcp-Session-Id": sid},
+        json={"jsonrpc": "2.0", "id": 1, "method": method, "params": {}},
     )
     return resp.json()  # type: ignore[no-any-return]
 
@@ -66,9 +46,8 @@ def test_renamed_tool_and_resource_opt_keys_drive_discovery() -> "None":
     assert "nope_tool" not in plugin.discovered_tools
 
     with TestClient(app=app) as client:
-        sid = _init(client)
-        tools = _rpc(client, "tools/list", sid)["result"]["tools"]
-        resources = _rpc(client, "resources/list", sid)["result"]["resources"]
+        tools = _rpc(client, "tools/list")["result"]["tools"]
+        resources = _rpc(client, "resources/list")["result"]["resources"]
 
         tool_names = {t["name"] for t in tools}
         assert "list_users" in tool_names
@@ -103,21 +82,16 @@ def test_renamed_description_opt_keys_render_through_endpoints() -> "None":
     )
 
     with TestClient(app=app) as client:
-        sid = _init(client)
-        tools = _rpc(client, "tools/list", sid)["result"]["tools"]
+        tools = _rpc(client, "tools/list")["result"]["tools"]
         descr = next(t["description"] for t in tools if t["name"] == "list_users")
         assert descr.startswith("LLM prose for users.")
         assert "## When to use\nAsked for users." in descr
         assert "ignored-docstring" not in descr
 
-        # Well-known manifests mirror the rendered description.
+        # The separate A2A card mirrors the rendered description.
         agent_card = client.get("/.well-known/agent-card.json").json()
         ac_descr = next(s["description"] for s in agent_card["skills"] if s["id"] == "list_users")
         assert ac_descr == descr
-
-        mcp_manifest = client.get("/.well-known/mcp-server.json").json()
-        mm_descr = next(t["description"] for t in mcp_manifest["tools"] if t["name"] == "list_users")
-        assert mm_descr == descr
 
 
 def test_default_opt_keys_unchanged_when_config_omits_opt_keys() -> "None":
@@ -133,7 +107,16 @@ def test_default_opt_keys_unchanged_when_config_omits_opt_keys() -> "None":
     assert plugin.config.opt_keys == MCPOptKeys()
 
     with TestClient(app=app) as client:
-        sid = _init(client)
-        tools = _rpc(client, "tools/list", sid)["result"]["tools"]
+        tools = _rpc(client, "tools/list")["result"]["tools"]
         descr = next(t["description"] for t in tools if t["name"] == "list_users")
         assert descr == "prose"
+
+
+def test_modern_tool_policy_opt_keys_can_be_renamed() -> "None":
+    opt_keys = MCPOptKeys(
+        required_client_capabilities="x_required_capabilities",
+        task_input_before_start="x_task_input_before_start",
+    )
+
+    assert opt_keys.required_client_capabilities == "x_required_capabilities"
+    assert opt_keys.task_input_before_start == "x_task_input_before_start"

@@ -5,13 +5,13 @@ from typing import TYPE_CHECKING, Any, cast
 
 import psycopg
 import pytest
+from litestar.testing import AsyncTestClient, TestClient
 
 from tests.integration.apps import POSTGRES_TEST_TABLES, AuthMode
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from litestar.testing import TestClient
     from pytest_databases.docker.postgres import PostgresService
 
 
@@ -83,6 +83,57 @@ def duckdb_database_path(tmp_path: "Path") -> "str":
 AUTH_MODES: "tuple[AuthMode, ...]" = ("none", "bearer")
 
 
+@pytest.fixture(autouse=True)
+def modern_direct_mcp_requests(monkeypatch: "pytest.MonkeyPatch") -> "None":
+    """Add the modern envelope to integration tests that issue MCP directly."""
+    sync_post = TestClient.post
+    async_post = AsyncTestClient.post
+
+    def enrich(url: str, kwargs: dict[str, Any]) -> None:
+        if not url.rstrip("/").endswith("mcp"):
+            return
+        payload = kwargs.get("json")
+        if not isinstance(payload, dict) or not isinstance(payload.get("method"), str):
+            return
+        method = payload["method"]
+        params = payload.setdefault("params", {})
+        if not isinstance(params, dict):
+            return
+        meta = params.setdefault("_meta", {})
+        if isinstance(meta, dict):
+            meta["io.modelcontextprotocol/protocolVersion"] = "2026-07-28"
+            meta.setdefault("io.modelcontextprotocol/clientCapabilities", {})
+            meta.setdefault(
+                "io.modelcontextprotocol/clientInfo",
+                {"name": "integration-tests", "version": "1"},
+            )
+        headers = dict(kwargs.get("headers") or {})
+        headers.setdefault("MCP-Protocol-Version", "2026-07-28")
+        headers.setdefault("Mcp-Method", method)
+        name_field = {
+            "tools/call": "name",
+            "resources/read": "uri",
+            "prompts/get": "name",
+            "tasks/get": "taskId",
+            "tasks/update": "taskId",
+            "tasks/cancel": "taskId",
+        }.get(method)
+        if name_field is not None:
+            headers.setdefault("Mcp-Name", str(params.get(name_field, "")))
+        kwargs["headers"] = headers
+
+    def patched_sync(client: TestClient[Any], url: str, *args: Any, **kwargs: Any) -> Any:
+        enrich(url, kwargs)
+        return sync_post(client, url, *args, **kwargs)
+
+    async def patched_async(client: AsyncTestClient[Any], url: str, *args: Any, **kwargs: Any) -> Any:
+        enrich(url, kwargs)
+        return await async_post(client, url, *args, **kwargs)
+
+    monkeypatch.setattr(TestClient, "post", patched_sync)
+    monkeypatch.setattr(AsyncTestClient, "post", patched_async)
+
+
 def auth_headers(auth_mode: "AuthMode") -> "dict[str, str]":
     """Return the HTTP ``Authorization`` header(s) for the given auth mode.
 
@@ -97,49 +148,36 @@ def auth_headers(auth_mode: "AuthMode") -> "dict[str, str]":
     return {}
 
 
-def _ensure_session(client: "TestClient[Any]", headers: "dict[str, str] | None" = None) -> "str":
-    """Lazily initialize an MCP session per (client, auth) pair and cache it."""
-    auth_token = (headers or {}).get("Authorization", "") or (headers or {}).get("authorization", "")
-    key = f"_mcp_session::{auth_token}"
-    sid = getattr(client, key, None)
-    if sid:
-        return cast("str", sid)
-    init_headers = dict(headers or {})
-    init = client.post(
-        "/mcp",
-        json={
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "it"}},
-        },
-        headers=init_headers,
-    )
-    sid_val = init.headers.get("mcp-session-id", "")
-    if sid_val:
-        client.post(
-            "/mcp",
-            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-            headers={**init_headers, "Mcp-Session-Id": sid_val},
-        )
-    setattr(client, key, sid_val)
-    return str(sid_val)
-
-
-def _inject_session_header(
-    client: "TestClient[Any]",
+def _modern_headers(
     method: "str",
+    params: "dict[str, Any]",
     headers: "dict[str, str] | None",
 ) -> "dict[str, str]":
     final_headers = dict(headers or {})
-    if method == "initialize":
-        return final_headers
-    if "Mcp-Session-Id" in final_headers or "mcp-session-id" in final_headers:
-        return final_headers
-    sid = _ensure_session(client, headers)
-    if sid:
-        final_headers["Mcp-Session-Id"] = sid
+    final_headers.setdefault("Accept", "application/json, text/event-stream")
+    final_headers.setdefault("MCP-Protocol-Version", "2026-07-28")
+    final_headers.setdefault("Mcp-Method", method)
+    name_fields = {
+        "tools/call": "name",
+        "resources/read": "uri",
+        "prompts/get": "name",
+        "tasks/get": "taskId",
+        "tasks/update": "taskId",
+        "tasks/cancel": "taskId",
+    }
+    if method in name_fields:
+        final_headers.setdefault("Mcp-Name", str(params.get(name_fields[method], "")))
     return final_headers
+
+
+def _modern_params(params: "dict[str, Any] | None") -> "dict[str, Any]":
+    modern = dict(params or {})
+    modern["_meta"] = {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+        "io.modelcontextprotocol/clientInfo": {"name": "integration-tests", "version": "1"},
+    }
+    return modern
 
 
 def rpc(
@@ -152,10 +190,9 @@ def rpc(
 ) -> "dict[str, Any]":
     """Execute an MCP JSON-RPC request against the test app."""
 
-    body: dict[str, Any] = {"jsonrpc": "2.0", "id": msg_id, "method": method}
-    if params is not None:
-        body["params"] = params
-    response = client.post("/mcp", json=body, headers=_inject_session_header(client, method, headers))
+    request_params = _modern_params(params)
+    body: dict[str, Any] = {"jsonrpc": "2.0", "id": msg_id, "method": method, "params": request_params}
+    response = client.post("/mcp", json=body, headers=_modern_headers(method, request_params, headers))
     return cast("dict[str, Any]", response.json())
 
 
@@ -169,10 +206,9 @@ def rpc_response(
 ) -> "Any":
     """Execute an MCP JSON-RPC request and return the raw HTTP response."""
 
-    body: dict[str, Any] = {"jsonrpc": "2.0", "id": msg_id, "method": method}
-    if params is not None:
-        body["params"] = params
-    return client.post("/mcp", json=body, headers=_inject_session_header(client, method, headers))
+    request_params = _modern_params(params)
+    body: dict[str, Any] = {"jsonrpc": "2.0", "id": msg_id, "method": method, "params": request_params}
+    return client.post("/mcp", json=body, headers=_modern_headers(method, request_params, headers))
 
 
 def parse_tool_payload(result: "dict[str, Any]") -> "dict[str, Any]":

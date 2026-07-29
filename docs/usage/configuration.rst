@@ -68,9 +68,9 @@ form, which routes a prompt under HTTP *and* publishes it via
 Task Lifecycle
 ==============
 
-Enable the experimental in-memory task endpoints by passing an
-:class:`~litestar_mcp.config.MCPTaskConfig`. Tasks let MCP clients submit
-long-running work and poll for completion.
+Enable the opt-in ``io.modelcontextprotocol/tasks`` extension by passing an
+:class:`~litestar_mcp.config.MCPTaskConfig`. Task records use a Litestar
+Store; the default in-memory Store is intended for development.
 
 .. literalinclude:: /examples/snippets/configuration_tasks.py
     :language: python
@@ -115,7 +115,19 @@ Configuration Options
       - Enable bearer-token validation and OAuth protected-resource metadata.
     * - ``tasks``
       - ``False``
-      - Enable experimental in-memory MCP task support.
+      - Enable the Tasks extension, optionally with a persistent Store.
+    * - ``cache_ttl_ms`` / ``cache_scope``
+      - ``0`` / ``"private"``
+      - Cache hints on discovery, list, and resource-read results.
+    * - ``subscription_max_streams``
+      - ``10000``
+      - Maximum concurrent ``subscriptions/listen`` response streams.
+    * - ``subscription_keepalive_seconds``
+      - ``15.0``
+      - Seconds between subscription keepalive comments.
+    * - ``subscription_channels``
+      - ``None``
+      - Optional configured Litestar ``ChannelsPlugin`` for cross-worker fan-out.
     * - ``before_tool_call``
       - ``None``
       - Optional callback invoked once before each ``tools/call`` dispatch.
@@ -179,9 +191,8 @@ it defaults to ``100`` and must be a positive integer.
 
 These methods enumerate the *catalog* of registered primitives, which is
 built once at startup; the cursor is a base64-encoded offset into that
-stable list. For paginating application data, see ``tasks/list`` (which
-accepts a client ``limit`` and delegates to a task store) or implement
-paging inside an individual tool.
+stable list. Implement application-data pagination inside an individual
+tool. The Tasks extension intentionally has no list method.
 
 Environment Overrides
 =====================

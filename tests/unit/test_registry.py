@@ -1,7 +1,5 @@
 """Tests for the MCP Registry."""
 
-import json
-
 import pytest
 from litestar.handlers import get
 
@@ -33,27 +31,26 @@ def test_registry_resource_registration(registry: "Registry") -> "None":
     assert registry.resources["my_resource"] == my_handler
 
 
-def test_registry_sse_manager_property_requires_configuration(registry: "Registry") -> "None":
-    with pytest.raises(RuntimeError, match="SSE manager has not been configured"):
-        _ = registry.sse_manager
+def test_registry_subscription_manager_property_requires_configuration(registry: "Registry") -> "None":
+    with pytest.raises(RuntimeError, match="Subscription manager has not been configured"):
+        _ = registry.subscription_manager
 
 
 @pytest.mark.asyncio
 async def test_registry_notifications(registry: "Registry") -> "None":
-    from litestar_mcp.sse import SSEManager
+    from litestar_mcp.sse import SubscriptionManager
 
-    sse_manager = SSEManager()
-    registry.set_sse_manager(sse_manager)
+    subscription_manager = SubscriptionManager()
+    registry.set_subscription_manager(subscription_manager)
 
-    stream_id, stream = await sse_manager.open_stream(session_id="session1")
-    await stream.__anext__()  # Prime event
+    stream_id, stream = await subscription_manager.open("request-1", {"resourceSubscriptions": ["test://res"]})
+    await stream.__anext__()
 
     # Notify
     await registry.notify_resource_updated("test://res")
 
     # Check received
-    msg = await stream.__anext__()
-    data = json.loads(msg.data)
+    data = await stream.__anext__()
     assert data["method"] == "notifications/resources/updated"
     assert data["params"]["uri"] == "test://res"
-    sse_manager.disconnect(stream_id)
+    await subscription_manager.disconnect(stream_id)

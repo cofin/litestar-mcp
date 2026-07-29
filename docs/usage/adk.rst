@@ -51,7 +51,8 @@ If your Litestar MCP server uses bearer authentication (see :doc:`auth`), pass t
 Cleanup
 -------
 
-Because MCP is stateful and maintains active HTTP sessions, you must clean up connections when shutting down:
+MCP requests are stateless, but ADK's HTTP client still owns network
+connections. Close the toolset during application shutdown:
 
 .. literalinclude:: /examples/snippets/adk_snippets.py
     :language: python
@@ -61,7 +62,9 @@ Because MCP is stateful and maintains active HTTP sessions, you must clean up co
 Compatibility Matrix
 ====================
 
-The following matrix distinguishes features tested with Google ADK 1.x from native MCP protocol features:
+Google ADK 2.3 still implements the initialize-era lifecycle and therefore
+cannot connect to the modern-only ``2026-07-28`` endpoint. The table records
+the compatibility boundary until ADK adds the stateless lifecycle:
 
 .. list-table::
     :widths: 30 20 50
@@ -71,37 +74,39 @@ The following matrix distinguishes features tested with Google ADK 1.x from nati
       - Supported in ADK
       - Verification Path / Note
     * - Tool Discovery
-      - Yes
-      - Verified via ``McpToolset.get_tools()``
+      - No
+      - ADK sends the removed ``initialize`` request
     * - Tool Execution
-      - Yes
-      - Verified via calling tool wrapper ``run_async()``
+      - No
+      - Blocked by the lifecycle mismatch
     * - Auth Propagation
-      - Yes
-      - Verified via ``Authorization`` bearer header in connection parameters
+      - No
+      - Header propagation works, but initialization is rejected
     * - Resource Listing
-      - Yes
-      - Verified via ``McpToolset.list_resources()``
+      - No
+      - Blocked by the lifecycle mismatch
     * - Resource Reading
-      - Yes
-      - Verified via ``McpToolset.read_resource()`` (by resource name)
+      - No
+      - Blocked by the lifecycle mismatch
     * - Resource Templates
       - No (Direct MCP)
       - Covered by direct MCP tests (``tests/integration/test_resources_templates.py``)
     * - Completion
       - No (Direct MCP)
       - Covered by direct MCP tests (``tests/integration/test_resources_templates.py``)
-    * - SSE Replay Streams
+    * - Subscriptions
       - No (Direct MCP)
-      - Covered by direct MCP tests (``tests/integration/test_streamable_http_session.py``)
-    * - Task Augmentation
+      - Covered by direct MCP tests (``tests/unit/test_subscriptions.py``)
+    * - Tasks Extension
       - No (Direct MCP)
       - Covered by direct MCP tests (``tests/unit/test_tasks.py``)
 
 MCP vs A2A Protocol Boundary
 ============================
 
-While the plugin publishes an agent metadata card (at ``/.well-known/agent-card.json``) used by MCP discovery clients, **it does not advertise or support the A2A protocol from this endpoint**.
+The plugin's separate ``/.well-known/agent-card.json`` document is not MCP
+discovery and does not imply an A2A execution endpoint. MCP clients must call
+``server/discover``.
 
 Full Agent-to-Agent (A2A) protocol compatibility requires:
 - A separate A2A routing tree.
@@ -114,5 +119,10 @@ Production Persistence Hardening
 ================================
 
 For high-availability or multi-replica production deployments of ADK and Litestar MCP:
-- State such as task lists, SSE replay events, and active sessions should be backed by a persistent storage tier.
-- This plugin supports a persistent storage layer to manage these needs across server instances. Refer to `docs/usage/persistence.rst` for detail on configuring persistence once available.
+
+- MCP request processing itself needs no sticky routing.
+- Configure Tasks with a shared Litestar Store when task handles must survive
+  process restarts or move between replicas.
+- Configure ``subscription_channels`` with a shared Channels backend when
+  notifications must fan out across workers. Subscription streams have no
+  replay.

@@ -194,3 +194,7 @@ GEMINI.md
 
 # Local uv configuration
 uv.toml
+
+# Local Node development runtime and dependencies
+.node-version
+node_modules/

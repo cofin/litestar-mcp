@@ -19,6 +19,9 @@ on:
         type: number
         default: 60
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ${{ inputs.os }}
@@ -26,9 +29,13 @@ jobs:
     defaults:
       run:
         shell: bash
+    env:
+      PYTHON_VERSION: ${{ inputs.python-version }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Microsoft ODBC Drivers
         run: sudo ACCEPT_EULA=Y apt-get install msodbcsql18 -y
@@ -48,13 +55,15 @@ jobs:
           && sudo apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@f98e06938123ccabd21905ea5d0069192241f9f1 # v8.3.2
+        with:
+          enable-cache: true
 
       - name: Set up Python
-        run: uv python install ${{ inputs.python-version }}
+        run: uv python install "$PYTHON_VERSION"
 
       - name: Install dependencies
-        run: uv sync --all-extras --dev
+        run: uv sync --group test --python "$PYTHON_VERSION"
 
       - name: Set PYTHONPATH
         run: echo "PYTHONPATH=$PWD" >> $GITHUB_ENV
@@ -65,9 +74,32 @@ jobs:
 
       - name: Test with coverage
         if: ${{ inputs.coverage }}
-        run: uv run pytest tests --dist "loadgroup" -m "" --cov=advanced_alchemy --cov-report=xml -n 2
+        run: uv run pytest tests --dist "loadgroup" -m "" --cov=litestar_mcp --cov-branch --cov-report=xml -n 2
 
-      - uses: actions/upload-artifact@v7
+      - name: Build and smoke-test installed wheel
+        run: |
+          uv build --wheel --out-dir /tmp/litestar-mcp-dist
+          uv venv --python "$PYTHON_VERSION" /tmp/litestar-mcp-wheel
+          uv pip install --python /tmp/litestar-mcp-wheel/bin/python "/tmp/litestar-mcp-dist/litestar_mcp-"*.whl
+          cd /tmp
+          /tmp/litestar-mcp-wheel/bin/python -I - <<'PY'
+          from importlib.resources import files
+          from pkgutil import walk_packages
+          import importlib
+          import sys
+
+          import litestar_mcp
+
+          for module in walk_packages(litestar_mcp.__path__, "litestar_mcp."):
+              if not any(part.startswith("_") for part in module.name.split(".")):
+                  importlib.import_module(module.name)
+
+          assert litestar_mcp.__version__ == "0.12.0"
+          assert files("litestar_mcp").joinpath("py.typed").is_file()
+          assert "pytest" not in sys.modules
+          PY
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: ${{ inputs.coverage }}
         with:
           name: coverage-xml

@@ -9,6 +9,34 @@ notes, and important protocol fixes.
 Recent Updates
 ==============
 
+.. changelog:: 0.12.0
+    :date: 2026-07-29
+
+    .. change:: Stateless MCP 2026-07-28
+        :type: breaking
+
+        MCP is now POST-only and request-scoped. The initialize handshake,
+        sessions, ping, GET/DELETE transport handlers, replay, and the
+        experimental MCP server manifest were removed. Every request carries
+        protocol, client, method, name, and custom-header metadata; use
+        ``server/discover`` for capabilities.
+
+    .. change:: Tasks, subscriptions, and MRTR
+        :type: feature
+
+        Added filtered ``subscriptions/listen`` streams, the opt-in
+        ``io.modelcontextprotocol/tasks`` extension, durable Litestar Store
+        task records, and typed multi-round-trip ``input_required`` results
+        for tools, resources, and prompts.
+
+    .. change:: Concurrent stdio bridge
+        :type: feature
+
+        The bridge now forwards independent request-scoped POST streams
+        concurrently, multiplexes subscription responses, maps cancellation
+        to stream closure, and lazily maps annotated tool parameters to MCP
+        headers.
+
 .. changelog:: 0.11.1
 
     .. change:: hide MCP plugin discovery routes from OpenAPI by default

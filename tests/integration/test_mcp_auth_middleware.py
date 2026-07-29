@@ -1,13 +1,4 @@
-"""Ch3 Phase 1 red-phase integration tests.
-
-Exercises the Ch3 public contract: ``DefineMiddleware(MCPAuthBackend, ...)``
-as the auth enforcement point, ``MCPAuthConfig`` collapsed to pure metadata
-for the ``.well-known`` manifest, and the ``initialize``/``ping`` exemption
-removed so clients must present a token before any JSON-RPC call.
-
-These tests will fail until Phase 2 (module reorg) + Phase 3 (backend impl)
-+ Phase 4 (routes.py cleanup) land.
-"""
+"""Authentication middleware integration for stateless MCP requests."""
 
 from typing import Any
 
@@ -65,14 +56,20 @@ def _build_app_with_backend() -> "Litestar":
     )
 
 
-def _initialize(client: "TestClient[Any]", headers: "dict[str, str] | None" = None) -> "Any":
+def _request(
+    client: "TestClient[Any]",
+    *,
+    method: "str" = "server/discover",
+    params: "dict[str, Any] | None" = None,
+    headers: "dict[str, str] | None" = None,
+) -> "Any":
     return client.post(
         "/mcp",
         json={
             "jsonrpc": "2.0",
             "id": 0,
-            "method": "initialize",
-            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
+            "method": method,
+            "params": params or {},
         },
         headers=headers or {},
     )
@@ -81,32 +78,32 @@ def _initialize(client: "TestClient[Any]", headers: "dict[str, str] | None" = No
 class TestMCPAuthBackendMiddleware:
     """Integration tests for MCPAuthBackend installed as middleware on /mcp."""
 
-    def test_well_known_paths_unauthenticated(self) -> "None":
+    def test_supported_well_known_paths_unauthenticated(self) -> "None":
         """.well-known routes are exempt via opt={'exclude_from_auth': True}."""
         with TestClient(app=_build_app_with_backend()) as client:
             for path in (
                 "/.well-known/oauth-protected-resource",
                 "/.well-known/agent-card.json",
-                "/.well-known/mcp-server.json",
             ):
                 resp = client.get(path)
                 assert resp.status_code == 200, f"{path} should be unauthenticated; got {resp.status_code}"
+            assert client.get("/.well-known/mcp-server.json").status_code == 404
 
-    def test_initialize_requires_token(self) -> "None":
-        """Ch3 removes the initialize/ping auth exemption. Clients MUST present a token."""
+    def test_discovery_requires_token(self) -> "None":
+        """Every MCP request, including discovery, passes through authentication."""
         with TestClient(app=_build_app_with_backend()) as client:
             # Without a token → 401
-            resp = _initialize(client)
+            resp = _request(client)
             assert resp.status_code == 401
 
             # With a valid token → 200
-            resp = _initialize(client, headers={"Authorization": f"Bearer {VALID_TOKEN}"})
+            resp = _request(client, headers={"Authorization": f"Bearer {VALID_TOKEN}"})
             assert resp.status_code == 200
 
     def test_invalid_token_rejected(self) -> "None":
         """Invalid bearer tokens return 401 with WWW-Authenticate: Bearer."""
         with TestClient(app=_build_app_with_backend()) as client:
-            resp = _initialize(client, headers={"Authorization": f"Bearer {FORGED_TOKEN}"})
+            resp = _request(client, headers={"Authorization": f"Bearer {FORGED_TOKEN}"})
             assert resp.status_code == 401
             assert "bearer" in resp.headers.get("www-authenticate", "").lower()
 
@@ -114,28 +111,11 @@ class TestMCPAuthBackendMiddleware:
         """Tool handlers see ``request.user`` populated by the middleware."""
         headers = {"Authorization": f"Bearer {VALID_TOKEN}"}
         with TestClient(app=_build_app_with_backend()) as client:
-            init = _initialize(client, headers=headers)
-            assert init.status_code == 200
-            session_id = init.headers.get("mcp-session-id", "")
-            assert session_id
-
-            notif_headers = {**headers, "Mcp-Session-Id": session_id}
-            client.post(
-                "/mcp",
-                json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-                headers=notif_headers,
-            )
-
-            call_headers = {**headers, "Mcp-Session-Id": session_id}
-            resp = client.post(
-                "/mcp",
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 2,
-                    "method": "tools/call",
-                    "params": {"name": "echo_user", "arguments": {}},
-                },
-                headers=call_headers,
+            resp = _request(
+                client,
+                method="tools/call",
+                params={"name": "echo_user", "arguments": {}},
+                headers=headers,
             )
             assert resp.status_code == 200
             body = resp.json()
@@ -177,25 +157,11 @@ class TestBYOAuthMiddlewareCompatibility:
 
         headers = {"Authorization": f"Bearer {VALID_TOKEN}"}
         with TestClient(app=app) as client:
-            init = _initialize(client, headers=headers)
-            assert init.status_code == 200
-            sid = init.headers["mcp-session-id"]
-            notif_headers = {**headers, "Mcp-Session-Id": sid}
-            client.post(
-                "/mcp",
-                json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-                headers=notif_headers,
-            )
-
-            resp = client.post(
-                "/mcp",
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 2,
-                    "method": "tools/call",
-                    "params": {"name": "whoami", "arguments": {}},
-                },
-                headers=notif_headers,
+            resp = _request(
+                client,
+                method="tools/call",
+                params={"name": "whoami", "arguments": {}},
+                headers=headers,
             )
             assert resp.status_code == 200
             body = resp.json()
@@ -245,28 +211,14 @@ class TestDomainObjectAuthorization:
 
         headers = {"Authorization": f"Bearer {VALID_TOKEN}"}
         with TestClient(app=app) as client:
-            init = _initialize(client, headers=headers)
-            assert init.status_code == 200
-            sid = init.headers["mcp-session-id"]
-            call_headers = {**headers, "Mcp-Session-Id": sid}
-            client.post(
-                "/mcp",
-                json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-                headers=call_headers,
-            )
-
-            resp = client.post(
-                "/mcp",
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 2,
-                    "method": "tools/call",
-                    "params": {
-                        "name": "export_workspace",
-                        "arguments": {"workspace_owner_id": "other-user"},
-                    },
+            resp = _request(
+                client,
+                method="tools/call",
+                params={
+                    "name": "export_workspace",
+                    "arguments": {"workspace_owner_id": "other-user"},
                 },
-                headers=call_headers,
+                headers=headers,
             )
 
         assert resp.status_code == 200
@@ -304,6 +256,6 @@ class TestCollapsedAuthConfigMetadata:
             assert body["authorization_servers"] == ["https://idp.example.com"]
             assert set(body["scopes_supported"]) == {"mcp:read", "mcp:write"}
 
-            # With no middleware installed, there's no enforcement → initialize succeeds.
-            init = _initialize(client)
-            assert init.status_code == 200
+            # With no middleware installed, discovery remains public.
+            discovery = _request(client)
+            assert discovery.status_code == 200

@@ -3,6 +3,7 @@
 
 import asyncio
 import base64
+import contextvars
 import inspect
 import logging
 from dataclasses import dataclass
@@ -14,9 +15,9 @@ from litestar.serialization import encode_json
 from litestar_mcp._cursor import decode_cursor, encode_cursor
 from litestar_mcp.content import (
     MCPBlobResource,
+    MCPInputRequiredResult,
     MCPResourceLink,
     MCPToolResult,
-    add_related_task_meta,
     enforce_blob_size,
     is_content_block,
     normalize_content_blocks,
@@ -36,7 +37,6 @@ from litestar_mcp.executor import (
 from litestar_mcp.jsonrpc import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
-    INVALID_REQUEST,
     METHOD_NOT_FOUND,
     JSONRPCError,
     JSONRPCErrorException,
@@ -50,7 +50,7 @@ from litestar_mcp.registry import (
     should_include_prompt,
 )
 from litestar_mcp.schema_builder import generate_schema_for_handler
-from litestar_mcp.tasks import InMemoryTaskStore, TaskLookupError, TaskRecord, TaskStateError
+from litestar_mcp.tasks import MCPTaskStore, TaskLookupError, TaskRecord
 from litestar_mcp.utils import (
     get_handler_function,
     get_mcp_metadata,
@@ -68,11 +68,13 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger(__name__)
 
-MCP_PROTOCOL_VERSION = "2025-11-25"
+MCP_PROTOCOL_VERSION = "2026-07-28"
+TASKS_EXTENSION = "io.modelcontextprotocol/tasks"
+MISSING_REQUIRED_CLIENT_CAPABILITY = -32021
 
 
 @dataclass
-class RequestContext:
+class MCPRequestContext:
     """Request context threaded through tool and task execution.
 
     Authentication lives in Litestar middleware; ``request.user`` and
@@ -82,9 +84,30 @@ class RequestContext:
     """
 
     client_id: "str"
-    owner_id: "str"
+    owner_id: "str | None"
     request: "Request[Any, Any, Any] | None" = None
     scope_overrides: "dict[str, Any] | None" = None
+    protocol_version: "str" = MCP_PROTOCOL_VERSION
+    client_capabilities: "dict[str, Any] | None" = None
+    client_info: "dict[str, Any] | None" = None
+    input_responses: "dict[str, Any] | None" = None
+    request_state: "str | None" = None
+
+
+RequestContext = MCPRequestContext
+
+_request_context: contextvars.ContextVar[MCPRequestContext | None] = contextvars.ContextVar(
+    "litestar_mcp_request_context", default=None
+)
+
+
+def get_mcp_request_context() -> "MCPRequestContext":
+    """Return the context for the currently executing MCP handler."""
+    context = _request_context.get()
+    if context is None:
+        msg = "No MCP request is currently executing"
+        raise RuntimeError(msg)
+    return context
 
 
 _T = TypeVar("_T")
@@ -146,6 +169,24 @@ def _resource_mime_type(handler: "BaseRouteHandler", config: "MCPConfig") -> "st
     return "application/json"
 
 
+def _resource_uri(name: "str", handler: "BaseRouteHandler", config: "MCPConfig") -> "str":
+    """Resolve a resource's concrete URI override."""
+    opt = getattr(handler, "opt", None) or {}
+    configured_uri = opt.get(config.opt_keys.resource_uri)
+    if isinstance(configured_uri, str) and configured_uri:
+        return configured_uri
+    return f"litestar://{name}"
+
+
+def _without_undefined_values(value: "Any") -> "Any":
+    """Remove Litestar OpenAPI undefined sentinels before JSON encoding."""
+    if isinstance(value, dict):
+        return {key: _without_undefined_values(item) for key, item in value.items() if type(item) is not object}
+    if isinstance(value, list):
+        return [_without_undefined_values(item) for item in value if type(item) is not object]
+    return value
+
+
 def _resource_content_from_response(
     uri: "str",
     response: "MCPHandlerResponse",
@@ -185,21 +226,20 @@ def _build_tool_result(
     value: "Any",
     *,
     is_error: "bool",
-    task_id: "str | None" = None,
     max_blob_bytes: "int | None" = None,
 ) -> "dict[str, Any]":
     try:
+        if isinstance(value, MCPInputRequiredResult):
+            return value.to_result()
         if isinstance(value, MCPToolResult):
-            result = value.to_result(max_blob_bytes=max_blob_bytes, task_id=task_id)
+            result = value.to_result(max_blob_bytes=max_blob_bytes)
             result["isError"] = bool(is_error or result.get("isError", False))
             return result
         if _looks_like_tool_content(value):
-            result = {
+            return {
                 "content": normalize_content_blocks(value, max_blob_bytes=max_blob_bytes),
                 "isError": is_error,
             }
-            add_related_task_meta(result, task_id)
-            return result
         result = {
             "content": [{"type": "text", "text": _serialize_tool_content(value)}],
             "isError": is_error,
@@ -209,7 +249,6 @@ def _build_tool_result(
             "content": [{"type": "text", "text": _serialize_tool_content({"error": str(exc)})}],
             "isError": True,
         }
-    add_related_task_meta(result, task_id)
     return result
 
 
@@ -343,7 +382,7 @@ class MCPHandlerService:
         discovered_prompts: "dict[str, PromptRegistration]",
         app_ref: "Litestar",
         registry: "Registry | None",
-        task_store: "InMemoryTaskStore | None" = None,
+        task_store: "MCPTaskStore | None" = None,
     ) -> "None":
         self.config = config
         self.discovered_tools = discovered_tools
@@ -360,44 +399,45 @@ class MCPHandlerService:
         handler: "BaseRouteHandler",
         tool_args: "dict[str, Any]",
         context: "RequestContext",
-        *,
-        task_id: "str | None" = None,
     ) -> "dict[str, Any]":
         validation_errors = _validate_tool_arguments(handler, tool_args)
         if validation_errors:
             return _build_tool_result(
                 {"error": "Invalid tool arguments", "errors": validation_errors},
                 is_error=True,
-                task_id=task_id,
                 max_blob_bytes=self.config.max_blob_bytes,
             )
 
         try:
-            result = await execute_tool(
-                handler,
-                self.app_ref,
-                tool_args,
-                request=context.request,
-                scope_overrides=_scope_overrides_for_context(context),
-                config=self.config,
-                tool_name=tool_name,
-            )
+            token = _request_context.set(context)
+            try:
+                result = await execute_tool(
+                    handler,
+                    self.app_ref,
+                    tool_args,
+                    request=context.request,
+                    scope_overrides=_scope_overrides_for_context(context),
+                    config=self.config,
+                    tool_name=tool_name,
+                )
+            finally:
+                _request_context.reset(token)
         except MCPToolErrorResult as err:
             return _build_tool_result(
                 err.content,
                 is_error=True,
-                task_id=task_id,
                 max_blob_bytes=self.config.max_blob_bytes,
             )
+        except JSONRPCErrorException:
+            raise
         except Exception as exc:  # noqa: BLE001
             return _build_tool_result(
                 {"error": str(exc)},
                 is_error=True,
-                task_id=task_id,
                 max_blob_bytes=self.config.max_blob_bytes,
             )
 
-        return _build_tool_result(result, is_error=False, task_id=task_id, max_blob_bytes=self.config.max_blob_bytes)
+        return _build_tool_result(result, is_error=False, max_blob_bytes=self.config.max_blob_bytes)
 
     async def _run_task(
         self,
@@ -410,12 +450,23 @@ class MCPHandlerService:
         if self.task_store is None:
             return
         try:
-            result = await self._execute_tool_call(tool_name, handler, tool_args, context, task_id=record.task_id)
-            await self.task_store.complete(record.task_id, result)
+            while True:
+                result = await self._execute_tool_call(tool_name, handler, tool_args, context)
+                if result.get("resultType") != "input_required":
+                    result.setdefault("resultType", "complete")
+                    await self.task_store.complete(record.task_id, result)
+                    return
+                await self.task_store.require_input(
+                    record.task_id,
+                    result.get("inputRequests"),
+                    result.get("requestState"),
+                )
+                context.input_responses = await self.task_store.wait_for_input(record.task_id)
+                context.request_state = result.get("requestState")
         except JSONRPCErrorException as exc:
             await self.task_store.fail(record.task_id, exc.error)
         except asyncio.CancelledError:
-            raise
+            await self.task_store.mark_cancelled(record.task_id)
         except Exception as exc:  # noqa: BLE001
             await self.task_store.fail(
                 record.task_id,
@@ -423,48 +474,27 @@ class MCPHandlerService:
                 status_message=str(exc),
             )
 
-    async def initialize(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
-        server_name = self.config.name or "Litestar MCP Server"
-        server_version = "1.0.0"
-
-        if self.app_ref is not None:
-            openapi_config = self.app_ref.openapi_config
-            if openapi_config:
-                server_name = self.config.name or openapi_config.title
-                server_version = openapi_config.version
-
+    async def server_discover(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
+        """Describe the modern protocol versions, capabilities, and extensions."""
         capabilities: dict[str, Any] = {
             "tools": {"listChanged": True},
-            "resources": {"subscribe": True, "listChanged": True},
+            "resources": {"listChanged": True},
         }
         if self.discovered_prompts:
             capabilities["prompts"] = {"listChanged": True}
         if self.task_config is not None:
-            task_capabilities: dict[str, Any] = {"requests": {"tools": {"call": {}}}}
-            if self.task_config.list_enabled:
-                task_capabilities["list"] = {}
-            if self.task_config.cancel_enabled:
-                task_capabilities["cancel"] = {}
-            capabilities["tasks"] = task_capabilities
-
+            capabilities["extensions"] = {TASKS_EXTENSION: {}}
         result: dict[str, Any] = {
-            "protocolVersion": MCP_PROTOCOL_VERSION,
+            "supportedVersions": [MCP_PROTOCOL_VERSION],
             "capabilities": capabilities,
-            "serverInfo": {"name": server_name, "version": server_version},
         }
         if self.config.instructions is not None:
             result["instructions"] = self.config.instructions
         return result
 
-    async def initialized(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
-        return {}
-
-    async def ping(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
-        return {}
-
     async def tools_list(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
         tools = []
-        for name, handler in self.discovered_tools.items():
+        for name, handler in sorted(self.discovered_tools.items()):
             handler_tags = set(getattr(handler, "tags", None) or [])
             if not should_include_handler(name, handler_tags, self.config):
                 continue
@@ -476,7 +506,7 @@ class MCPHandlerService:
                 "description": render_description(
                     handler, fn, kind="tool", fallback_name=name, opt_keys=self.config.opt_keys
                 ),
-                "inputSchema": generate_schema_for_handler(handler),
+                "inputSchema": metadata.get("input_schema", generate_schema_for_handler(handler)),
             }
             if "output_schema" in metadata:
                 tool_entry["outputSchema"] = metadata["output_schema"]
@@ -486,8 +516,6 @@ class MCPHandlerService:
                 annotations = tool_entry.get("annotations") or {}
                 annotations.setdefault("scopes", list(metadata["scopes"]))
                 tool_entry["annotations"] = annotations
-            if self.task_config is not None and metadata.get("task_support") is not None:
-                tool_entry["execution"] = {"taskSupport": metadata["task_support"]}
             tools.append(tool_entry)
         try:
             page, next_cursor = _paginate_list(tools, params, self.config.list_page_size)
@@ -512,6 +540,32 @@ class MCPHandlerService:
 
         fn = get_handler_function(handler)
         metadata = get_mcp_metadata(handler) or get_mcp_metadata(fn) or {}
+        handler_opt = getattr(handler, "opt", None) or {}
+        required_capabilities = metadata.get("required_client_capabilities") or handler_opt.get(
+            self.config.opt_keys.required_client_capabilities
+        )
+        if required_capabilities is not None:
+            if not isinstance(required_capabilities, dict):
+                raise JSONRPCErrorException(
+                    JSONRPCError(
+                        code=INTERNAL_ERROR,
+                        message=f"Tool '{tool_name}' has invalid required client capability metadata",
+                    )
+                )
+            client_capabilities = context.client_capabilities or {}
+            missing_capabilities = {
+                name: declaration
+                for name, declaration in required_capabilities.items()
+                if name not in client_capabilities
+            }
+            if missing_capabilities:
+                raise JSONRPCErrorException(
+                    JSONRPCError(
+                        code=MISSING_REQUIRED_CLIENT_CAPABILITY,
+                        message=f"Tool '{tool_name}' requires additional client capabilities",
+                        data={"requiredCapabilities": missing_capabilities},
+                    )
+                )
         tool_args = params.get("arguments", {})
         if not isinstance(tool_args, dict):
             return _build_tool_result(
@@ -520,42 +574,32 @@ class MCPHandlerService:
                 max_blob_bytes=self.config.max_blob_bytes,
             )
 
-        task_request = params.get("task")
         task_support = metadata.get("task_support")
-
-        if task_request is None:
-            if task_support == "required" and self.task_config is not None:
-                raise JSONRPCErrorException(
-                    JSONRPCError(
-                        code=INVALID_REQUEST,
-                        message="Task augmentation required for tools/call requests",
-                    )
+        extensions = (context.client_capabilities or {}).get("extensions", {})
+        task_capable = isinstance(extensions, dict) and TASKS_EXTENSION in extensions
+        task_enabled = self.task_config is not None and self.task_store is not None
+        if task_support == "required" and not (task_enabled and task_capable):
+            raise JSONRPCErrorException(
+                JSONRPCError(
+                    code=MISSING_REQUIRED_CLIENT_CAPABILITY,
+                    message=f"Tool '{tool_name}' requires the {TASKS_EXTENSION} client capability",
                 )
+            )
+        if task_support not in {"optional", "required"} or not task_enabled or not task_capable:
+            return await self._execute_tool_call(tool_name, handler, tool_args, context)
+        task_input_before_start = metadata.get("task_input_before_start") or handler_opt.get(
+            self.config.opt_keys.task_input_before_start
+        )
+        if task_input_before_start and context.input_responses is None:
             return await self._execute_tool_call(tool_name, handler, tool_args, context)
 
-        if self.task_config is None or self.task_store is None:
-            raise JSONRPCErrorException(
-                JSONRPCError(
-                    code=METHOD_NOT_FOUND,
-                    message=f"Task augmentation is not supported for tool: {tool_name}",
-                )
-            )
-        if task_support not in {"optional", "required"}:
-            raise JSONRPCErrorException(
-                JSONRPCError(
-                    code=METHOD_NOT_FOUND,
-                    message=f"Task augmentation is not supported for tool: {tool_name}",
-                )
-            )
-        if not isinstance(task_request, dict):
-            raise JSONRPCErrorException(
-                JSONRPCError(code=INVALID_PARAMS, message="The 'task' parameter must be an object")
-            )
-
-        record = await self.task_store.create(context.owner_id, task_request.get("ttl"))
+        task_store = self.task_store
+        if task_store is None:  # pragma: no cover - narrowed by task_enabled
+            return await self._execute_tool_call(tool_name, handler, tool_args, context)
+        record = await task_store.create(context.owner_id)
         background_task = asyncio.create_task(self._run_task(record, tool_name, handler, tool_args, context))
-        await self.task_store.attach_background_task(record.task_id, background_task)
-        return {"task": record.to_dict()}
+        await task_store.attach_runner(record.task_id, background_task)
+        return {"resultType": "task", **record.to_dict()}
 
     async def resources_list(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
         resources = [
@@ -574,7 +618,7 @@ class MCPHandlerService:
             fn = get_handler_function(handler)
             resources.append(
                 {
-                    "uri": f"litestar://{name}",
+                    "uri": _resource_uri(name, handler, self.config),
                     "name": name,
                     "description": render_description(
                         handler,
@@ -632,39 +676,52 @@ class MCPHandlerService:
         if not isinstance(uri, str) or not uri:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=f"Invalid resource URI: {uri}"))
 
-        if uri.startswith("litestar://"):
-            resource_name = uri[len("litestar://") :]
-            if resource_name == "openapi" and self.app_ref is not None:
-                return {
-                    "contents": [
-                        {
-                            "uri": "litestar://openapi",
-                            "mimeType": "application/json",
-                            "text": encode_json(self.app_ref.openapi_schema).decode("utf-8"),
-                        }
-                    ]
-                }
+        if uri == "litestar://openapi" and self.app_ref is not None:
+            return {
+                "contents": [
+                    {
+                        "uri": "litestar://openapi",
+                        "mimeType": "application/json",
+                        "text": encode_json(_without_undefined_values(self.app_ref.openapi_schema.to_schema())).decode(
+                            "utf-8"
+                        ),
+                    }
+                ]
+            }
 
-            handler = self.discovered_resources.get(resource_name)
-            if handler is None:
-                raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
+        resource_match = next(
+            (
+                (name, handler)
+                for name, handler in self.discovered_resources.items()
+                if _resource_uri(name, handler, self.config) == uri
+            ),
+            None,
+        )
+        if resource_match is not None:
+            resource_name, handler = resource_match
             handler_tags = set(getattr(handler, "tags", None) or [])
             if not should_include_handler(resource_name, handler_tags, self.config):
                 raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
 
             try:
-                response = await execute_handler_response(
-                    handler,
-                    self.app_ref,
-                    {},
-                    request=context.request,
-                    scope_overrides=_scope_overrides_for_context(context),
-                )
+                token = _request_context.set(context)
+                try:
+                    response = await execute_handler_response(
+                        handler,
+                        self.app_ref,
+                        {},
+                        request=context.request,
+                        scope_overrides=_scope_overrides_for_context(context),
+                    )
+                finally:
+                    _request_context.reset(token)
             except MCPToolErrorResult as err:
                 raise JSONRPCErrorException(mcp_error_for_resource_read(err)) from err
             except Exception as exc:
                 raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
 
+            if isinstance(response.content, MCPInputRequiredResult):
+                return response.content.to_result()
             try:
                 content = _resource_content_from_response(
                     uri,
@@ -686,18 +743,24 @@ class MCPHandlerService:
             if not should_include_handler(entry.name, handler_tags, self.config):
                 continue
             try:
-                response = await execute_handler_response(
-                    entry.handler,
-                    self.app_ref,
-                    dict(extracted),
-                    request=context.request,
-                    scope_overrides=_scope_overrides_for_context(context),
-                )
+                token = _request_context.set(context)
+                try:
+                    response = await execute_handler_response(
+                        entry.handler,
+                        self.app_ref,
+                        dict(extracted),
+                        request=context.request,
+                        scope_overrides=_scope_overrides_for_context(context),
+                    )
+                finally:
+                    _request_context.reset(token)
             except MCPToolErrorResult as err:
                 raise JSONRPCErrorException(mcp_error_for_resource_read(err)) from err
             except Exception as exc:
                 raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
 
+            if isinstance(response.content, MCPInputRequiredResult):
+                return response.content.to_result()
             try:
                 content = _resource_content_from_response(
                     uri,
@@ -779,13 +842,17 @@ class MCPHandlerService:
                 )
 
             try:
-                result = await execute_handler(
-                    registration.handler,
-                    self.app_ref,
-                    prompt_args,
-                    request=context.request,
-                    scope_overrides=_scope_overrides_for_context(context),
-                )
+                token = _request_context.set(context)
+                try:
+                    result = await execute_handler(
+                        registration.handler,
+                        self.app_ref,
+                        prompt_args,
+                        request=context.request,
+                        scope_overrides=_scope_overrides_for_context(context),
+                    )
+                finally:
+                    _request_context.reset(token)
             except MCPToolErrorResult as err:
                 _logger.warning(
                     "Prompt handler returned error result: %s (status=%d)",
@@ -804,6 +871,8 @@ class MCPHandlerService:
                         data={"error": type(exc).__name__, "detail": str(exc)},
                     )
                 ) from exc
+            if isinstance(result, MCPInputRequiredResult):
+                return result.to_result()
             handler_result: dict[str, Any]
             if isinstance(result, dict) and "messages" in result:
                 handler_result = result
@@ -822,9 +891,13 @@ class MCPHandlerService:
                 ) from exc
 
             try:
-                result = registration.fn(**prompt_args)
-                if inspect.isawaitable(result):
-                    result = await result
+                token = _request_context.set(context)
+                try:
+                    result = registration.fn(**prompt_args)
+                    if inspect.isawaitable(result):
+                        result = await result
+                finally:
+                    _request_context.reset(token)
             except Exception as exc:
                 _logger.exception("Prompt function execution failed: %s", prompt_name)
                 raise JSONRPCErrorException(
@@ -834,6 +907,8 @@ class MCPHandlerService:
                         data={"error": type(exc).__name__, "detail": str(exc)},
                     )
                 ) from exc
+            if isinstance(result, MCPInputRequiredResult):
+                return result.to_result()
             messages = _normalize_prompt_result(result)
             get_result: dict[str, Any] = {"messages": messages}
             if resolved_description is not None and "description" not in get_result:
@@ -843,6 +918,7 @@ class MCPHandlerService:
         raise JSONRPCErrorException(JSONRPCError(code=INTERNAL_ERROR, message=f"Prompt has no callable: {prompt_name}"))
 
     async def tasks_get(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
+        _require_tasks_capability(context)
         if self.task_store is None:
             raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message="Task store not configured"))
         task_id = params.get("taskId")
@@ -854,59 +930,44 @@ class MCPHandlerService:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
         return record.to_dict()
 
-    async def tasks_result(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
+    async def tasks_update(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
+        _require_tasks_capability(context)
         if self.task_store is None:
             raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message="Task store not configured"))
         task_id = params.get("taskId")
         if not task_id:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'taskId'"))
+        input_responses = params.get("inputResponses")
+        if not isinstance(input_responses, dict):
+            raise JSONRPCErrorException(
+                JSONRPCError(code=INVALID_PARAMS, message="The 'inputResponses' parameter must be an object")
+            )
         try:
-            record = await self.task_store.wait_for_terminal(task_id, context.owner_id)
+            await self.task_store.update(task_id, context.owner_id, input_responses)
         except TaskLookupError as exc:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
-
-        if record.result is not None:
-            meta = record.result.setdefault("_meta", {})
-            meta["io.modelcontextprotocol/related-task"] = {"taskId": task_id}
-            return record.result
-        if record.error is not None:
-            raise JSONRPCErrorException(record.error)
-        raise JSONRPCErrorException(JSONRPCError(code=INTERNAL_ERROR, message="Task did not produce a final result"))
-
-    async def tasks_list(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
-        if self.task_store is None:
-            raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message="Task store not configured"))
-        limit = params.get("limit", 50)
-        if not isinstance(limit, int) or limit <= 0:
-            raise JSONRPCErrorException(
-                JSONRPCError(
-                    code=INVALID_PARAMS,
-                    message="The 'limit' parameter must be a positive integer",
-                )
-            )
-        try:
-            tasks, next_cursor = await self.task_store.list(
-                context.owner_id,
-                cursor=params.get("cursor"),
-                limit=limit,
-            )
-        except ValueError as exc:
-            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
-        result: dict[str, Any] = {"tasks": [task.to_dict() for task in tasks]}
-        if next_cursor is not None:
-            result["nextCursor"] = next_cursor
-        return result
+        return {}
 
     async def tasks_cancel(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
+        _require_tasks_capability(context)
         if self.task_store is None:
             raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message="Task store not configured"))
         task_id = params.get("taskId")
         if not task_id:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'taskId'"))
         try:
-            record = await self.task_store.cancel(task_id, context.owner_id)
+            await self.task_store.cancel(task_id, context.owner_id)
         except TaskLookupError as exc:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
-        except TaskStateError as exc:
-            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
-        return record.to_dict()
+        return {}
+
+
+def _require_tasks_capability(context: "RequestContext") -> None:
+    extensions = (context.client_capabilities or {}).get("extensions")
+    if not isinstance(extensions, dict) or TASKS_EXTENSION not in extensions:
+        raise JSONRPCErrorException(
+            JSONRPCError(
+                code=MISSING_REQUIRED_CLIENT_CAPABILITY,
+                message=f"The {TASKS_EXTENSION} client capability is required",
+            )
+        )

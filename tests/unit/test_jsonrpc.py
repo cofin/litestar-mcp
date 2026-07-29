@@ -160,63 +160,31 @@ class TestJSONRPCRouter:
 
 
 # ---------------------------------------------------------------------------
-# initialize handshake
+# server discovery
 # ---------------------------------------------------------------------------
 
 
-class TestInitialize:
-    def test_initialize_returns_capabilities(self, client: "TestClient[Any]") -> "None":
-        result = _rpc(
-            client,
-            "initialize",
-            {
-                "protocolVersion": "2025-11-25",
-                "capabilities": {},
-                "clientInfo": {"name": "test-client", "version": "1.0"},
-            },
-        )
+class TestServerDiscover:
+    def test_server_discover_returns_capabilities(self, client: "TestClient[Any]") -> "None":
+        result = _rpc(client, "server/discover")
         assert "result" in result
-        assert result["result"]["protocolVersion"] == "2025-11-25"
+        assert result["result"]["supportedVersions"] == ["2026-07-28"]
         assert "capabilities" in result["result"]
-        assert "serverInfo" in result["result"]
+        assert "io.modelcontextprotocol/serverInfo" in result["result"]["_meta"]
 
-    def test_initialize_returns_server_info(self, client: "TestClient[Any]") -> "None":
-        result = _rpc(
-            client,
-            "initialize",
-            {
-                "protocolVersion": "2025-11-25",
-                "capabilities": {},
-                "clientInfo": {"name": "test-client", "version": "1.0"},
-            },
-        )
-        server_info = result["result"]["serverInfo"]
+    def test_server_discover_returns_server_info(self, client: "TestClient[Any]") -> "None":
+        result = _rpc(client, "server/discover")
+        server_info = result["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]
         assert "name" in server_info
         assert "version" in server_info
 
-    def test_initialize_capabilities_include_tools(self, client: "TestClient[Any]") -> "None":
-        result = _rpc(
-            client,
-            "initialize",
-            {
-                "protocolVersion": "2025-11-25",
-                "capabilities": {},
-                "clientInfo": {"name": "test-client", "version": "1.0"},
-            },
-        )
+    def test_server_discover_capabilities_include_tools(self, client: "TestClient[Any]") -> "None":
+        result = _rpc(client, "server/discover")
         caps = result["result"]["capabilities"]
         assert "tools" in caps
 
-    def test_initialize_capabilities_include_resources(self, client: "TestClient[Any]") -> "None":
-        result = _rpc(
-            client,
-            "initialize",
-            {
-                "protocolVersion": "2025-11-25",
-                "capabilities": {},
-                "clientInfo": {"name": "test-client", "version": "1.0"},
-            },
-        )
+    def test_server_discover_capabilities_include_resources(self, client: "TestClient[Any]") -> "None":
+        result = _rpc(client, "server/discover")
         caps = result["result"]["capabilities"]
         assert "resources" in caps
 
@@ -227,9 +195,9 @@ class TestInitialize:
 
 
 class TestPing:
-    def test_ping_returns_empty(self, client: "TestClient[Any]") -> "None":
+    def test_ping_is_removed(self, client: "TestClient[Any]") -> "None":
         result = _rpc(client, "ping")
-        assert result["result"] == {}
+        assert result["error"]["code"] == -32601
 
 
 # ---------------------------------------------------------------------------
@@ -286,7 +254,7 @@ class TestToolsCall:
     def test_tools_call_missing_name(self, client: "TestClient[Any]") -> "None":
         result = _rpc(client, "tools/call", {"arguments": {}})
         assert "error" in result
-        assert result["error"]["code"] == INVALID_PARAMS
+        assert result["error"]["code"] == -32020
 
     def test_tools_call_invalid_arguments_return_call_tool_error(self) -> "None":
         @get("/typed", opt={"mcp_tool": "typed_tool"}, sync_to_thread=False)
@@ -380,7 +348,7 @@ class TestResourcesRead:
     def test_resources_read_unknown_resource(self, client: "TestClient[Any]") -> "None":
         result = _rpc(client, "resources/read", {"uri": "litestar://nonexistent"})
         assert "error" in result
-        assert result["error"]["code"] == -32002
+        assert result["error"]["code"] == -32602
         assert result["error"]["data"] == {"uri": "litestar://nonexistent"}
 
     def test_resources_read_openapi(self, client: "TestClient[Any]") -> "None":
@@ -437,13 +405,10 @@ class TestErrorHandling:
 
 
 class TestNotifications:
-    def test_notifications_initialized_no_response(self, client: "TestClient[Any]") -> "None":
-        """notifications/initialized is accepted with 202 and no response body."""
-        sid = _ensure_session(client)
+    def test_notifications_initialized_is_removed(self, client: "TestClient[Any]") -> "None":
         body = {"jsonrpc": "2.0", "method": "notifications/initialized"}
-        resp = client.post("/mcp", json=body, headers={"Mcp-Session-Id": sid})
-        assert resp.status_code == 202
-        assert resp.content == b""
+        resp = client.post("/mcp", json=body)
+        assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,5 @@
 """Tests for MCP Prompts support (prompts/list and prompts/get)."""
 
-import json
 from collections.abc import Callable  # noqa: TC003
 from typing import Any, cast
 
@@ -480,20 +479,19 @@ class TestRegistryPrompts:
 
     @pytest.mark.asyncio
     async def test_notify_prompts_list_changed(self, registry: "Registry") -> "None":
-        from litestar_mcp.sse import SSEManager
+        from litestar_mcp.sse import SubscriptionManager
 
-        sse_manager = SSEManager()
-        registry.set_sse_manager(sse_manager)
+        subscription_manager = SubscriptionManager()
+        registry.set_subscription_manager(subscription_manager)
 
-        stream_id, stream = await sse_manager.open_stream(session_id="session1")
-        await anext(stream)  # Prime event
+        stream_id, stream = await subscription_manager.open("request-1", {"promptsListChanged": True})
+        await anext(stream)
 
         await registry.notify_prompts_list_changed()
 
-        msg = await anext(stream)
-        data = json.loads(msg.data)
+        data = await anext(stream)
         assert data["method"] == "notifications/prompts/list_changed"
-        sse_manager.disconnect(stream_id)
+        await subscription_manager.disconnect(stream_id)
 
 
 # ---------------------------------------------------------------------------
@@ -742,7 +740,7 @@ class TestPromptsGetRPC:
         with TestClient(app) as client:
             data = _rpc(client, "prompts/get", params={})
             assert "error" in data
-            assert "Missing required param" in data["error"]["message"]
+            assert data["error"]["code"] == -32020
 
     def test_get_prompt_arguments_must_be_object(self) -> "None":
         @mcp_prompt(name="typed")
@@ -796,23 +794,23 @@ class TestPromptsGetRPC:
 
 
 class TestPromptsCapability:
-    def test_initialize_advertises_prompts_when_registered(self) -> "None":
+    def test_server_discover_advertises_prompts_when_registered(self) -> "None":
         @mcp_prompt(name="any_prompt")
         def any_prompt() -> "str":
             return ""
 
         app = _make_app_with_prompts(any_prompt)
         with TestClient(app) as client:
-            data = _rpc(client, "initialize")
+            data = _rpc(client, "server/discover")
             capabilities = data["result"]["capabilities"]
             assert "prompts" in capabilities
             assert capabilities["prompts"]["listChanged"] is True
 
-    def test_initialize_omits_prompts_capability_when_none_registered(self) -> "None":
+    def test_server_discover_omits_prompts_capability_when_none_registered(self) -> "None":
         """Per MCP spec, only advertise capabilities the server provides."""
         app = _make_app_with_prompts()
         with TestClient(app) as client:
-            data = _rpc(client, "initialize")
+            data = _rpc(client, "server/discover")
             assert "prompts" not in data["result"]["capabilities"]
 
 
@@ -932,7 +930,8 @@ class TestPromptsGetMetaEcho:
         with TestClient(app) as client:
             data = _rpc(client, "prompts/get", params={"name": "meta_prompt"})
             result = data["result"]
-            assert result["_meta"] == {"trace_id": "abc-123"}
+            assert result["_meta"]["trace_id"] == "abc-123"
+            assert "io.modelcontextprotocol/serverInfo" in result["_meta"]
 
 
 # ---------------------------------------------------------------------------
@@ -1118,27 +1117,21 @@ class TestPromptFiltering:
 
 
 class TestPromptsManifest:
-    def test_manifest_omits_prompts_capability_when_none_registered(self) -> "None":
-        """Per MCP spec, advertise prompts capability only when prompts exist."""
+    def test_removed_manifest_is_not_generated_without_prompts(self) -> "None":
         app = _make_app_with_prompts()
         with TestClient(app) as client:
-            payload = client.get("/.well-known/mcp-server.json").json()
-            assert "prompts" not in payload["capabilities"]
-            assert payload["prompts"] == []
+            assert client.get("/.well-known/mcp-server.json").status_code == 404
 
-    def test_manifest_advertises_prompts_capability_when_registered(self) -> "None":
+    def test_removed_manifest_is_not_generated_with_prompts(self) -> "None":
         @mcp_prompt(name="hello")
         def hello() -> "str":
             return ""
 
         app = _make_app_with_prompts(hello)
         with TestClient(app) as client:
-            payload = client.get("/.well-known/mcp-server.json").json()
-            assert payload["capabilities"]["prompts"] == {"listChanged": True}
-            assert any(p["name"] == "hello" for p in payload["prompts"])
+            assert client.get("/.well-known/mcp-server.json").status_code == 404
 
-    def test_manifest_filters_excluded_prompts(self) -> "None":
-        """Manifest must apply should_include_prompt — must not leak hidden prompts."""
+    def test_removed_manifest_stays_absent_with_filters(self) -> "None":
 
         @mcp_prompt(name="hidden")
         def hidden() -> "str":
@@ -1150,9 +1143,7 @@ class TestPromptsManifest:
         )
         app = Litestar(route_handlers=[], plugins=[plugin])
         with TestClient(app) as client:
-            payload = client.get("/.well-known/mcp-server.json").json()
-            assert payload["prompts"] == []
-            assert "prompts" not in payload["capabilities"]
+            assert client.get("/.well-known/mcp-server.json").status_code == 404
 
 
 # ---------------------------------------------------------------------------

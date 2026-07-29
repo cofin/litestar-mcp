@@ -7,10 +7,9 @@ import os
 import shlex
 import subprocess
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-import httpx
 from anyio.abc import ByteSendStream
 from anyio.to_thread import run_sync as run_sync_in_worker_thread
 from click.exceptions import Exit as ClickExit
@@ -22,8 +21,7 @@ from rich.json import JSON
 
 from litestar_mcp import bridge as bridge_transport
 from litestar_mcp.auth.backend import BEARER_TOKEN_PREFIX, DEFAULT_AUTH_HEADER_NAME
-from litestar_mcp.bridge import TokenProvider
-from litestar_mcp.exceptions import BridgeConnectionError, MissingDependencyError
+from litestar_mcp.exceptions import MissingDependencyError
 from litestar_mcp.executor import NotCallableInCLIContextError, execute_tool
 from litestar_mcp.utils import get_handler_function, render_description
 from litestar_mcp.utils.handler_signature import iter_dependency_input_parameters
@@ -37,6 +35,7 @@ if TYPE_CHECKING:
     from litestar import Litestar
     from litestar.cli._utils import LitestarEnv
 
+    from litestar_mcp.bridge import TokenProvider
     from litestar_mcp.plugin import LitestarMCP
 
 
@@ -262,7 +261,6 @@ mcp_group.add_command(ToolExecutor(name="run", help="Run a discovered MCP tool b
     type=int,
     help="Maximum bytes for one stdin JSON-RPC message. Use -1 to disable the limit.",
 )
-@click.option("--discover", is_flag=True, help="Resolve the endpoint from /.well-known/mcp-server.json.")
 def _bridge_command(
     ctx: "click.Context",
     endpoint: "str | None",
@@ -275,7 +273,6 @@ def _bridge_command(
     timeout: "float",
     sse_read_timeout: "float",
     max_message_size: "int",
-    discover: "bool",
 ) -> "None":
     """Proxy local stdio JSON-RPC to this Litestar app's MCP endpoint."""
     plugin = _get_ctx_plugin(ctx)
@@ -295,7 +292,6 @@ def _bridge_command(
         timeout=timeout,
         sse_read_timeout=sse_read_timeout,
         max_message_size=max_message_size,
-        discover=discover,
     )
 
 
@@ -464,68 +460,6 @@ def _token_provider_from_cmd(command: str) -> Callable[[], str]:
     return provide_token
 
 
-def _headers_with_token(
-    headers: Mapping[str, str],
-    token_provider: TokenProvider | None,
-    *,
-    header_name: str,
-    token_prefix: str,
-) -> dict[str, str]:
-    request_headers = dict(headers)
-    if token_provider is None:
-        return request_headers
-    token = token_provider()
-    if inspect.isawaitable(token):
-        msg = "--discover requires a synchronous bearer token provider."
-        raise click.ClickException(msg)
-    request_headers[header_name] = f"{token_prefix}{token}"
-    return request_headers
-
-
-def _discover_endpoint(
-    origin: str,
-    *,
-    headers: Mapping[str, str],
-    token_provider: TokenProvider | None,
-    header_name: str,
-    token_prefix: str,
-    timeout: float,
-) -> str:
-    url = httpx.URL(origin)
-    root = f"{url.scheme}://{url.netloc.decode()}"
-    manifest_url = f"{root}/.well-known/mcp-server.json"
-    try:
-        response = httpx.get(
-            manifest_url,
-            headers=_headers_with_token(
-                headers,
-                token_provider,
-                header_name=header_name,
-                token_prefix=token_prefix,
-            ),
-            timeout=timeout,
-            follow_redirects=True,
-        )
-        response.raise_for_status()
-    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
-        raise click.ClickException(str(BridgeConnectionError(manifest_url))) from exc
-    except httpx.HTTPError as exc:
-        msg = f"Failed to fetch MCP server manifest at {manifest_url}: {exc}"
-        raise click.ClickException(msg) from exc
-
-    try:
-        manifest = decode_json(response.content)
-    except Exception as exc:
-        msg = f"Failed to decode MCP server manifest at {manifest_url}: {exc}"
-        raise click.ClickException(msg) from exc
-
-    endpoint = manifest.get("endpoints", {}).get("mcp") if isinstance(manifest, dict) else None
-    if not isinstance(endpoint, str) or not endpoint:
-        msg = f"{manifest_url} did not include endpoints.mcp"
-        raise click.ClickException(msg)
-    return endpoint
-
-
 def _run_bridge_from_options(
     *,
     endpoint: str,
@@ -537,7 +471,6 @@ def _run_bridge_from_options(
     timeout: float,
     sse_read_timeout: float,
     max_message_size: int,
-    discover: bool,
 ) -> None:
     if bearer_env and bearer_cmd:
         msg = "--bearer-env and --bearer-cmd are mutually exclusive."
@@ -550,23 +483,11 @@ def _run_bridge_from_options(
     elif bearer_cmd:
         token_provider = _token_provider_from_cmd(bearer_cmd)
 
-    resolved_endpoint = (
-        _discover_endpoint(
-            endpoint,
-            headers=headers,
-            token_provider=token_provider,
-            header_name=header_name,
-            token_prefix=token_prefix,
-            timeout=timeout,
-        )
-        if discover
-        else endpoint
-    )
     stdout = _BufferedByteSendStream(sys.stdout.buffer)
     try:
         with contextlib.redirect_stdout(sys.stderr):
             exit_code = bridge_transport.run_bridge(
-                endpoint=resolved_endpoint,
+                endpoint=endpoint,
                 headers=headers,
                 token_provider=token_provider,
                 header_name=header_name,

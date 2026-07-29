@@ -147,10 +147,12 @@ def mcp_tool(
     agent_instructions: "str | None" = None,
     when_to_use: "str | None" = None,
     returns: "str | None" = None,
+    input_schema: "dict[str, Any] | None" = None,
     output_schema: "dict[str, Any] | None" = None,
     annotations: "dict[str, Any] | None" = None,
     scopes: "list[str] | None" = None,
     task_support: "str | None" = None,
+    task_input_before_start: "bool" = False,
 ) -> "Callable[[F], F]":
     """Decorator to mark a route handler as an MCP tool.
 
@@ -166,6 +168,7 @@ def mcp_tool(
             the ``## When to use`` section.
         returns: Optional return-shape hint — rendered as the ``## Returns``
             section.
+        input_schema: Optional explicit JSON Schema for the tool input.
         output_schema: Optional JSON Schema for the tool's structured output.
         annotations: Optional metadata annotations (audience, priority, etc.).
         scopes: Optional list of OAuth scopes advertised as discovery
@@ -175,6 +178,9 @@ def mcp_tool(
             authorization.
         task_support: Optional task support mode. Must be one of ``optional``,
             ``required``, or ``forbidden``.
+        task_input_before_start: Execute the first call synchronously so an
+            MRTR input-required result can be completed before creating the
+            task on the retry.
 
     Returns:
         Decorator function that adds MCP metadata to the handler.
@@ -192,8 +198,9 @@ def mcp_tool(
 
         The decorator form is retained for parity; it carries the same
         metadata to the registry and is useful when you want to stamp
-        ``output_schema``, ``annotations``, ``scopes``, or ``task_support``
-        without mixing more keys into ``handler.opt``.
+        an explicit ``input_schema`` / ``output_schema``, ``annotations``,
+        ``scopes``, or task/MRTR policy without mixing more keys into
+        ``handler.opt``.
     """
 
     def decorator(fn: "F") -> "F":
@@ -206,6 +213,8 @@ def mcp_tool(
             metadata["when_to_use"] = when_to_use
         if returns is not None:
             metadata["returns"] = returns
+        if input_schema is not None:
+            metadata["input_schema"] = input_schema
         if output_schema is not None:
             metadata["output_schema"] = output_schema
         if annotations is not None:
@@ -217,6 +226,8 @@ def mcp_tool(
                 msg = "task_support must be one of 'optional', 'required', or 'forbidden'"
                 raise ValueError(msg)
             metadata["task_support"] = task_support
+        if task_input_before_start:
+            metadata["task_input_before_start"] = True
         _REGISTRY.set(fn, metadata)
         return fn
 

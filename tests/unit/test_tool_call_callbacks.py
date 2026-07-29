@@ -12,38 +12,19 @@ from litestar_mcp import LitestarMCP, MCPConfig, mcp_tool
 from litestar_mcp.executor import MCPToolErrorResult
 
 
-def _ensure_session(client: "TestClient[Any]") -> "str":
-    sid = getattr(client, "_mcp_session", None)
-    if sid is not None:
-        return str(sid)
-    init = client.post(
-        "/mcp",
-        json={
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
-        },
-    )
-    sid_val = init.headers.get("mcp-session-id", "")
-    client.post(
-        "/mcp",
-        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        headers={"Mcp-Session-Id": sid_val},
-    )
-    client._mcp_session = sid_val  # type: ignore[attr-defined]
-    return str(sid_val)
-
-
 def _rpc(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None) -> "dict[str, Any]":
-    body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
-    if params is not None:
-        body["params"] = params
-    headers: dict[str, str] = {}
-    if method != "initialize":
-        sid = _ensure_session(client)
-        if sid:
-            headers["Mcp-Session-Id"] = sid
+    request_params = dict(params or {})
+    meta = dict(request_params.get("_meta") or {})
+    capabilities = dict(meta.get("io.modelcontextprotocol/clientCapabilities") or {})
+    if method.startswith("tasks/"):
+        capabilities["extensions"] = {"io.modelcontextprotocol/tasks": {}}
+    meta.setdefault("io.modelcontextprotocol/protocolVersion", "2026-07-28")
+    meta["io.modelcontextprotocol/clientCapabilities"] = capabilities
+    request_params["_meta"] = meta
+    body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": request_params}
+    headers = {"MCP-Protocol-Version": "2026-07-28", "Mcp-Method": method}
+    if method == "tools/call":
+        headers["Mcp-Name"] = str(request_params.get("name", ""))
     return client.post("/mcp", json=body, headers=headers).json()  # type: ignore[no-any-return]
 
 
@@ -275,11 +256,19 @@ def test_task_tool_calls_run_callbacks() -> "None":
         response = _rpc(
             client,
             "tools/call",
-            {"name": "tasked", "arguments": {"delay": 0.01}, "task": {"ttl": 1000}},
+            {
+                "name": "tasked",
+                "arguments": {"delay": 0.01},
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                    "io.modelcontextprotocol/clientCapabilities": {"extensions": {"io.modelcontextprotocol/tasks": {}}},
+                    "io.modelcontextprotocol/clientInfo": {"name": "tests", "version": "1"},
+                },
+            },
         )
-        task_id = response["result"]["task"]["taskId"]
+        task_id = response["result"]["taskId"]
         time.sleep(0.05)
-        task_result = _rpc(client, "tasks/result", {"taskId": task_id})
+        task_result = _rpc(client, "tasks/get", {"taskId": task_id})
 
-    assert task_result["result"]["isError"] is False
+    assert task_result["result"]["result"]["isError"] is False
     assert seen == ["before:tasked", "after:tasked:True:True:True"]
