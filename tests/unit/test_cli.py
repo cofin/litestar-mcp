@@ -180,7 +180,7 @@ def test_mcp_bridge_discover_option_is_removed(
     cli_runner: CliRunner,
     make_env: Callable[..., LitestarEnv],
 ) -> None:
-    result = cli_runner.invoke(
+    invalid_result = cli_runner.invoke(
         mcp_group,
         [
             "bridge",
@@ -190,9 +190,11 @@ def test_mcp_bridge_discover_option_is_removed(
         ],
         obj=make_env(),
     )
+    help_result = cli_runner.invoke(mcp_group, ["bridge", "--help"], obj=make_env())
 
-    assert result.exit_code == 2
-    assert "No such option '--discover'." in result.output
+    assert invalid_result.exit_code == 2
+    assert help_result.exit_code == 0
+    assert "--discover" not in help_result.output
 
 
 def test_mcp_bridge_missing_bridge_extra_is_clean_click_error(
