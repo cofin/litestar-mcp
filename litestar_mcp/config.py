@@ -193,7 +193,6 @@ class MCPConfig:
     name: "str | None" = None
     instructions: "str | None" = None
     guards: "list[Any] | None" = None
-    route_opt: "dict[str, Any] | None" = None
     allowed_origins: "list[str] | None" = None
     include_operations: "list[str] | None" = None
     exclude_operations: "list[str] | None" = None
@@ -211,6 +210,7 @@ class MCPConfig:
     before_tool_call: "BeforeToolCallHook | None" = None
     after_tool_call: "AfterToolCallHook | None" = None
     max_blob_bytes: "int | None" = 25 * 1024 * 1024
+    route_opt: "dict[str, Any] | None" = None
 
     def __post_init__(self) -> "None":
         if self.list_page_size <= 0:
