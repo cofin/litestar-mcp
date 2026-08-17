@@ -159,17 +159,21 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         }
         if self._config.guards is not None:
             router_kwargs["guards"] = self._config.guards
+        if self._config.route_opt is not None:
+            router_kwargs["opt"] = dict(self._config.route_opt)
 
         mcp_router = Router(**router_kwargs)
         app_config.route_handlers.append(mcp_router)
         app_config.on_startup.append(self.on_startup)
         app_config.on_shutdown.append(self.on_shutdown)
 
+        well_known_opt: dict[str, Any] = {"exclude_from_auth": True, **(self._config.route_opt or {})}
+
         @litestar_get(
             "/.well-known/oauth-protected-resource",
             sync_to_thread=False,
             include_in_schema=self._config.include_in_schema,
-            opt={"exclude_from_auth": True},
+            opt=well_known_opt,
         )
         def oauth_protected_resource(request: "Request[Any, Any, Any]") -> "dict[str, Any]":
             return build_oauth_protected_resource(self._config.auth, request.app)
@@ -178,7 +182,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
             "/.well-known/agent-card.json",
             sync_to_thread=False,
             include_in_schema=self._config.include_in_schema,
-            opt={"exclude_from_auth": True},
+            opt=well_known_opt,
         )
         def agent_card(request: "Request[Any, Any, Any]") -> "dict[str, Any]":
             return build_agent_card(

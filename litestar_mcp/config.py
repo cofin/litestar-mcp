@@ -180,6 +180,12 @@ class MCPConfig:
             elapsed dispatch duration in seconds.
         max_blob_bytes: Maximum raw byte length for base64-embedded MCP blobs.
             Set to ``None`` to disable the library cap.
+        route_opt: Optional ``opt`` mapping merged into every route the plugin
+            mounts — the ``/mcp`` router and the ``.well-known`` discovery
+            handlers. Keys win over the plugin defaults on conflict, letting
+            deployments stamp an ``opt``-based auth policy (API keys, IAP
+            headers) onto the MCP surface. The discovery handlers default to
+            ``{"exclude_from_auth": True}`` when no override is supplied.
     """
 
     base_path: "str" = "/mcp"
@@ -187,6 +193,7 @@ class MCPConfig:
     name: "str | None" = None
     instructions: "str | None" = None
     guards: "list[Any] | None" = None
+    route_opt: "dict[str, Any] | None" = None
     allowed_origins: "list[str] | None" = None
     include_operations: "list[str] | None" = None
     exclude_operations: "list[str] | None" = None

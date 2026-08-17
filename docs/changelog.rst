@@ -9,6 +9,18 @@ notes, and important protocol fixes.
 Recent Updates
 ==============
 
+.. changelog:: 0.13.0
+
+    .. change:: customize route ``opt`` for the mounted MCP surface
+        :type: feature
+
+        Added ``MCPConfig.route_opt``, an ``opt`` mapping merged into every
+        route the plugin mounts (the ``/mcp`` router and the ``.well-known``
+        discovery handlers). Keys win over the plugin defaults, letting
+        deployments stamp an ``opt``-based auth policy (API keys, IAP headers)
+        onto the MCP surface. The discovery handlers still default to
+        ``{"exclude_from_auth": True}`` when no override is supplied.
+
 .. changelog:: 0.12.0
     :date: 2026-07-29
 

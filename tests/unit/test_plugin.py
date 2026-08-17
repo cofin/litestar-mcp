@@ -288,3 +288,47 @@ class TestLitestarMCP:
         parsed = json.loads(contents[0]["text"])
         assert parsed["config"] == "value"
         assert parsed["enabled"] is True
+
+
+def _handler_opts(app: "Litestar", path_prefix: "str") -> "list[dict[str, Any]]":
+    opts: list[dict[str, Any]] = []
+    for route in app.routes:
+        if route.path == path_prefix or route.path.startswith(f"{path_prefix}/"):
+            opts.extend(
+                dict(handler.opt)
+                for handler in getattr(route, "route_handlers", [])
+                if handler.http_methods & {"GET", "POST"}
+            )
+    return opts
+
+
+class TestRouteOpt:
+    """route_opt passthrough merged into mounted routes."""
+
+    def test_default_well_known_excluded_from_auth(self) -> "None":
+        app = Litestar(plugins=[LitestarMCP()])
+        for path in ("/.well-known/oauth-protected-resource", "/.well-known/agent-card.json"):
+            opts = _handler_opts(app, path)
+            assert opts, path
+            assert all(o.get("exclude_from_auth") is True for o in opts), path
+
+    def test_default_mcp_router_has_no_auth_opt(self) -> "None":
+        app = Litestar(plugins=[LitestarMCP()])
+        for o in _handler_opts(app, "/mcp"):
+            assert "exclude_from_auth" not in o
+
+    def test_route_opt_merged_into_mcp_router(self) -> "None":
+        app = Litestar(plugins=[LitestarMCP(MCPConfig(route_opt={"auth_policy": "apikey"}))])
+        opts = _handler_opts(app, "/mcp")
+        assert opts
+        assert all(o.get("auth_policy") == "apikey" for o in opts)
+
+    def test_route_opt_wins_over_well_known_default(self) -> "None":
+        app = Litestar(
+            plugins=[LitestarMCP(MCPConfig(route_opt={"auth_policy": "apikey", "exclude_from_auth": False}))]
+        )
+        for path in ("/.well-known/oauth-protected-resource", "/.well-known/agent-card.json"):
+            opts = _handler_opts(app, path)
+            assert opts, path
+            assert all(o.get("auth_policy") == "apikey" for o in opts), path
+            assert all(o.get("exclude_from_auth") is False for o in opts), path
