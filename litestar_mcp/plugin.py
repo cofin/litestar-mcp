@@ -159,6 +159,8 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         }
         if self._config.guards is not None:
             router_kwargs["guards"] = self._config.guards
+        if self._config.route_opt is not None:
+            router_kwargs["opt"] = dict(self._config.route_opt)
 
         mcp_router = Router(**router_kwargs)
         app_config.route_handlers.append(mcp_router)
@@ -188,7 +190,10 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                 discovered_tools=self._registry.tools,
             )
 
-        app_config.route_handlers.extend([oauth_protected_resource, agent_card])
+        if self._config.register_oauth_protected_resource:
+            app_config.route_handlers.append(oauth_protected_resource)
+        if self._config.register_agent_card:
+            app_config.route_handlers.append(agent_card)
         return app_config
 
     def on_startup(self, app: "Litestar") -> "None":

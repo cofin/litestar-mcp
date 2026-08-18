@@ -160,6 +160,14 @@ class MCPConfig:
         include_in_schema: Whether to include MCP routes in OpenAPI schema generation.
         name: Optional override for server name. If not set, uses OpenAPI title.
         guards: Optional list of guards to protect MCP endpoints.
+        route_opt: Optional route ``opt`` mapping applied to the mounted MCP
+            router. Use this to declare an opt-based authentication policy for
+            the MCP surface.
+        register_oauth_protected_resource: Whether to register the RFC 9728
+            protected resource metadata route. Disable this when another
+            plugin owns the application-root discovery path.
+        register_agent_card: Whether to register the agent card discovery
+            route.
         allowed_origins: Exact additional Origin values to accept. A missing
             Origin is valid; a present Origin must match the request origin or
             one of these configured values.
@@ -204,6 +212,9 @@ class MCPConfig:
     before_tool_call: "BeforeToolCallHook | None" = None
     after_tool_call: "AfterToolCallHook | None" = None
     max_blob_bytes: "int | None" = 25 * 1024 * 1024
+    route_opt: "dict[str, Any] | None" = None
+    register_oauth_protected_resource: "bool" = True
+    register_agent_card: "bool" = True
 
     def __post_init__(self) -> "None":
         if self.list_page_size <= 0:

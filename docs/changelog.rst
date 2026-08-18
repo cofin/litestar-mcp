@@ -9,6 +9,16 @@ notes, and important protocol fixes.
 Recent Updates
 ==============
 
+.. changelog:: 0.13.0
+
+    .. change:: configure MCP router options and discovery route ownership
+        :type: feature
+
+        Added ``MCPConfig.route_opt`` for mounted-router policies and separate
+        controls for registering the OAuth protected-resource metadata and
+        agent-card discovery routes. Applications can now let another plugin
+        own the RFC 9728 root path without a duplicate-route startup failure.
+
 .. changelog:: 0.12.0
     :date: 2026-07-29
 
