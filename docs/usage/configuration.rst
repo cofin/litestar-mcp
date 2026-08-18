@@ -103,12 +103,12 @@ Configuration Options
       - Litestar guards applied to the MCP router.
     * - ``route_opt``
       - ``None``
-      - ``opt`` mapping merged into the two route groups the plugin owns (the
-        ``/mcp`` router and the ``.well-known`` discovery handlers); your own
-        ``@mcp_tool`` / ``@mcp_resource`` handlers are untouched. Keys win over
-        the plugin defaults, letting an ``opt``-based auth policy be stamped
-        onto the MCP surface. The discovery handlers default to
-        ``{"exclude_from_auth": True}`` when no override is supplied.
+      - ``opt`` mapping merged into the ``/mcp`` router, letting an
+        ``opt``-based auth policy be stamped onto the MCP endpoint (e.g. for
+        ``litestar-security``). Your own ``@mcp_tool`` / ``@mcp_resource``
+        handlers and the ``.well-known`` discovery routes are untouched; the
+        latter stay ``{"exclude_from_auth": True}`` so clients can always reach
+        them unauthenticated.
     * - ``allowed_origins``
       - ``None``
       - Restrict accepted ``Origin`` header values.

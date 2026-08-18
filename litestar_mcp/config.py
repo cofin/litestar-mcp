@@ -180,14 +180,14 @@ class MCPConfig:
             elapsed dispatch duration in seconds.
         max_blob_bytes: Maximum raw byte length for base64-embedded MCP blobs.
             Set to ``None`` to disable the library cap.
-        route_opt: Optional ``opt`` mapping merged into the two route groups
-            the plugin owns — the ``/mcp`` router and the ``.well-known``
-            discovery handlers. It is *not* applied to your own ``@mcp_tool`` /
-            ``@mcp_resource`` route handlers, which keep whatever ``opt`` you
-            declared on them. Keys win over the plugin defaults on conflict,
-            letting deployments stamp an ``opt``-based auth policy (API keys,
-            IAP headers) onto the MCP surface. The discovery handlers default
-            to ``{"exclude_from_auth": True}`` when no override is supplied.
+        route_opt: Optional ``opt`` mapping merged into the ``/mcp`` router the
+            plugin mounts, letting deployments stamp an ``opt``-based auth
+            policy (API keys, IAP headers) onto the MCP endpoint — e.g. for
+            tighter integration with ``litestar-security``. It is *not* applied
+            to your own ``@mcp_tool`` / ``@mcp_resource`` route handlers, nor to
+            the ``.well-known`` discovery handlers: those stay hardcoded as
+            ``{"exclude_from_auth": True}`` so clients can always reach them
+            unauthenticated to learn how to authenticate.
     """
 
     base_path: "str" = "/mcp"

@@ -303,7 +303,7 @@ def _handler_opts(app: "Litestar", path_prefix: "str") -> "list[dict[str, Any]]"
 
 
 class TestRouteOpt:
-    """route_opt passthrough merged into mounted routes."""
+    """route_opt passthrough merged into the ``/mcp`` router only."""
 
     def test_default_well_known_excluded_from_auth(self) -> "None":
         app = Litestar(plugins=[LitestarMCP()])
@@ -323,12 +323,10 @@ class TestRouteOpt:
         assert opts
         assert all(o.get("auth_policy") == "apikey" for o in opts)
 
-    def test_route_opt_wins_over_well_known_default(self) -> "None":
-        app = Litestar(
-            plugins=[LitestarMCP(MCPConfig(route_opt={"auth_policy": "apikey", "exclude_from_auth": False}))]
-        )
+    def test_route_opt_does_not_touch_well_known(self) -> "None":
+        app = Litestar(plugins=[LitestarMCP(MCPConfig(route_opt={"auth_policy": "apikey"}))])
         for path in ("/.well-known/oauth-protected-resource", "/.well-known/agent-card.json"):
             opts = _handler_opts(app, path)
             assert opts, path
-            assert all(o.get("auth_policy") == "apikey" for o in opts), path
-            assert all(o.get("exclude_from_auth") is False for o in opts), path
+            assert all("auth_policy" not in o for o in opts), path
+            assert all(o.get("exclude_from_auth") is True for o in opts), path

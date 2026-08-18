@@ -11,15 +11,15 @@ Recent Updates
 
 .. changelog:: 0.13.0
 
-    .. change:: customize route ``opt`` for the mounted MCP surface
+    .. change:: customize route ``opt`` for the ``/mcp`` router
         :type: feature
 
-        Added ``MCPConfig.route_opt``, an ``opt`` mapping merged into every
-        route the plugin mounts (the ``/mcp`` router and the ``.well-known``
-        discovery handlers). Keys win over the plugin defaults, letting
-        deployments stamp an ``opt``-based auth policy (API keys, IAP headers)
-        onto the MCP surface. The discovery handlers still default to
-        ``{"exclude_from_auth": True}`` when no override is supplied.
+        Added ``MCPConfig.route_opt``, an ``opt`` mapping merged into the
+        ``/mcp`` router, letting deployments stamp an ``opt``-based auth policy
+        (API keys, IAP headers) onto the MCP endpoint — e.g. for tighter
+        integration with ``litestar-security``. The ``.well-known`` discovery
+        handlers stay ``{"exclude_from_auth": True}`` so clients can always
+        reach them unauthenticated.
 
 .. changelog:: 0.12.0
     :date: 2026-07-29
