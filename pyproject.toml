@@ -104,6 +104,7 @@ test = [
     "advanced-alchemy",
     "aiosqlite",
     "dishka",
+    "pyarrow",
     "sqlspec[asyncpg,aiosqlite,duckdb]",
     "pytest-databases[postgres]",
     "pytest-sugar",
