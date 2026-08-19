@@ -74,11 +74,13 @@ Mark your routes to expose them via MCP:
 from litestar import get, post
 from litestar_mcp import LitestarMCP
 
+
 # Expose as MCP tool (executable)
 @get("/users", mcp_tool="list_users")
 async def get_users() -> list[dict]:
     """List users - executable via MCP."""
     return [{"id": 1, "name": "Alice"}]
+
 
 # Expose as MCP resource (readable)
 @get("/schema", mcp_resource="user_schema")
@@ -86,15 +88,14 @@ async def get_user_schema() -> dict:
     """User schema - readable via MCP."""
     return {"type": "object", "properties": {}}
 
+
 # Regular route - not exposed to MCP
 @get("/health")
 async def health_check() -> dict:
     return {"status": "ok"}
 
-app = Litestar(
-    route_handlers=[get_users, get_user_schema, health_check],
-    plugins=[LitestarMCP()]
-)
+
+app = Litestar(route_handlers=[get_users, get_user_schema, health_check], plugins=[LitestarMCP()])
 ```
 
 ## Common MCP Interactions
@@ -136,25 +137,22 @@ Use the hello-world example as a template:
 from litestar import Litestar, get
 from litestar_mcp import LitestarMCP, MCPConfig
 
+
 # Mark routes you want exposed to MCP
 @get("/data", mcp_tool="get_data")
 async def get_data() -> dict:
     return {"data": "example"}
 
+
 @get("/info", mcp_resource="app_info")
 async def get_info() -> dict:
     return {"name": "My App", "version": "1.0"}
 
-# Configure the plugin
-config = MCPConfig(
-    name="My Application",
-    base_path="/mcp"
-)
 
-app = Litestar(
-    route_handlers=[get_data, get_info],
-    plugins=[LitestarMCP(config)]
-)
+# Configure the plugin
+config = MCPConfig(name="My Application", base_path="/mcp")
+
+app = Litestar(route_handlers=[get_data, get_info], plugins=[LitestarMCP(config)])
 ```
 
 ## Troubleshooting
@@ -186,9 +184,9 @@ The plugin supports minimal configuration:
 from litestar_mcp import MCPConfig
 
 config = MCPConfig(
-    base_path="/mcp",              # Base path for MCP endpoints
-    include_in_schema=False,       # Include MCP routes in OpenAPI schema
-    name=None,                     # Override server name (uses OpenAPI title by default)
+    base_path="/mcp",  # Base path for MCP endpoints
+    include_in_schema=False,  # Include MCP routes in OpenAPI schema
+    name=None,  # Override server name (uses OpenAPI title by default)
 )
 ```
 

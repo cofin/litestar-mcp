@@ -40,7 +40,7 @@ __all__ = (
     "reset_default_cache",
 )
 
-ValidationErrorHook = Callable[[str, BaseException], "None | Awaitable[None]"]
+ValidationErrorHook = Callable[[str, BaseException], "Awaitable[None] | None"]
 """Observability callback: ``(issuer, exception) -> None | Awaitable[None]``.
 
 Invoked when a provider validator rejects a token or raises during

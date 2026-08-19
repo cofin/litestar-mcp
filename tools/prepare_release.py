@@ -193,7 +193,7 @@ class _Thing:
         first_prs: list[PRInfo] = []
 
         async def is_user_first_commit(user_login: "str") -> "None":
-            first_pr = sorted(prs_by_user_login[user_login], key=lambda p: p.created_at)[0]
+            first_pr = min(prs_by_user_login[user_login], key=lambda p: p.created_at)
             res = await self._api_client.get(
                 "/commits",
                 params={

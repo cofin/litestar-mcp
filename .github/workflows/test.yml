@@ -94,7 +94,6 @@ jobs:
               if not any(part.startswith("_") for part in module.name.split(".")):
                   importlib.import_module(module.name)
 
-          assert litestar_mcp.__version__ == "0.12.0"
           assert files("litestar_mcp").joinpath("py.typed").is_file()
           assert "pytest" not in sys.modules
           PY

@@ -101,6 +101,17 @@ Configuration Options
     * - ``guards``
       - ``None``
       - Litestar guards applied to the MCP router.
+    * - ``route_opt``
+      - ``None``
+      - Route ``opt`` mapping applied to the mounted MCP router, for example
+        to select an opt-based authentication policy.
+    * - ``register_oauth_protected_resource``
+      - ``True``
+      - Register ``/.well-known/oauth-protected-resource``. Disable this when
+        another plugin publishes the RFC 9728 document.
+    * - ``register_agent_card``
+      - ``True``
+      - Register ``/.well-known/agent-card.json``.
     * - ``allowed_origins``
       - ``None``
       - Restrict accepted ``Origin`` header values.

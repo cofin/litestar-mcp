@@ -5,6 +5,7 @@ from typing import Any
 
 from litestar import Litestar, get, post
 from litestar.openapi.config import OpenAPIConfig
+from litestar.routes import HTTPRoute
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP
@@ -56,6 +57,21 @@ def _rpc(
 def _openapi_paths(app: "Litestar") -> "set[str]":
     with TestClient(app=app) as client:
         return set(client.get("/schema/openapi.json").json()["paths"])
+
+
+def _registered_paths(app: "Litestar") -> "set[str]":
+    return {route.path for route in app.routes}
+
+
+def _http_handler_opts(app: "Litestar", path: "str") -> "list[dict[str, Any]]":
+    route = next(route for route in app.routes if isinstance(route, HTTPRoute) and route.path == path)
+    opts = [
+        dict(handler.opt)
+        for handler in route.route_handlers
+        if getattr(handler, "http_methods", set()) & {"GET", "POST"}
+    ]
+    assert opts
+    return opts
 
 
 class TestLitestarMCP:
@@ -158,6 +174,47 @@ class TestLitestarMCP:
         assert "/.well-known/oauth-protected-resource" in paths
         assert "/.well-known/agent-card.json" in paths
         assert "/.well-known/mcp-server.json" not in paths
+
+    def test_route_opt_applies_to_mcp_router(self) -> "None":
+        route_opt = {"auth_policy": "api-key"}
+
+        app = Litestar(plugins=[LitestarMCP(MCPConfig(route_opt=route_opt))])
+
+        assert all(opt["auth_policy"] == "api-key" for opt in _http_handler_opts(app, "/mcp"))
+        assert route_opt == {"auth_policy": "api-key"}
+
+    def test_default_mcp_router_has_no_auth_policy_opt(self) -> "None":
+        app = Litestar(plugins=[LitestarMCP()])
+
+        assert all("auth_policy" not in opt for opt in _http_handler_opts(app, "/mcp"))
+
+    def test_oauth_protected_resource_registration_can_be_disabled(self) -> "None":
+        app = Litestar(plugins=[LitestarMCP(MCPConfig(register_oauth_protected_resource=False))])
+
+        assert "/.well-known/oauth-protected-resource" not in _registered_paths(app)
+        assert "/.well-known/agent-card.json" in _registered_paths(app)
+
+    def test_agent_card_registration_can_be_disabled(self) -> "None":
+        app = Litestar(plugins=[LitestarMCP(MCPConfig(register_agent_card=False))])
+
+        assert "/.well-known/oauth-protected-resource" in _registered_paths(app)
+        assert "/.well-known/agent-card.json" not in _registered_paths(app)
+
+    def test_foreign_oauth_protected_resource_route_can_be_registered(self) -> "None":
+        @get("/.well-known/oauth-protected-resource")
+        async def oauth_protected_resource() -> "dict[str, str]":
+            return {"owner": "application"}
+
+        app = Litestar(
+            route_handlers=[oauth_protected_resource],
+            plugins=[LitestarMCP(MCPConfig(register_oauth_protected_resource=False))],
+        )
+
+        with TestClient(app=app) as client:
+            response = client.get("/.well-known/oauth-protected-resource")
+
+        assert response.status_code == 200
+        assert response.json() == {"owner": "application"}
 
     def test_tool_execution_real(self) -> "None":
         @post("/analyze", opt={"mcp_tool": "analyze_data"})
