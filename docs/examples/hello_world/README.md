@@ -109,11 +109,13 @@ To expose your own routes to MCP, mark them with kwargs:
 from litestar import get, post
 from litestar_mcp import LitestarMCP
 
+
 # Expose as an MCP tool (executable)
 @get("/data", mcp_tool="get_data")
 async def get_data(query: str) -> dict:
     """Get data based on query."""
     return {"query": query, "results": []}
+
 
 # Expose as an MCP resource (readable)
 @get("/schema", mcp_resource="api_schema")
@@ -121,10 +123,8 @@ async def get_schema() -> dict:
     """Get the API schema."""
     return {"type": "object", "properties": {}}
 
-app = Litestar(
-    route_handlers=[get_data, get_schema],
-    plugins=[LitestarMCP()]
-)
+
+app = Litestar(route_handlers=[get_data, get_schema], plugins=[LitestarMCP()])
 ```
 
 ## Next Steps
