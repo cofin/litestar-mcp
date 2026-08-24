@@ -2,9 +2,10 @@
 
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
+from typing import Any, cast
 
 import pytest
-from litestar import Litestar, Request, get
+from litestar import Request
 from litestar.stores.memory import MemoryStore
 
 import litestar_mcp.shared as shared_pkg
@@ -84,7 +85,7 @@ async def test_jsonrpc_router_dispatch() -> None:
     """Test JSONRPCRouter method registration and execution."""
     router = JSONRPCRouter()
 
-    async def my_handler(params: dict, context: dict) -> dict:
+    async def my_handler(params: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         if "fail" in params:
             raise JSONRPCErrorException(JSONRPCError(code=INTERNAL_ERROR, message="Custom error"))
         if "crash" in params:
@@ -203,7 +204,7 @@ async def test_executor_pipeline() -> None:
     """Test synthetic executor pipeline with Litestar app and handlers."""
     from tests.unit.conftest import create_app_with_handler
 
-    async def get_item(item_id: int, q: str = "default") -> dict:
+    async def get_item(item_id: int, q: str = "default") -> dict[str, Any]:
         return {"item_id": item_id, "q": q}
 
     app, handler = create_app_with_handler(get_item, route_path="/items/{item_id:int}")
@@ -225,7 +226,7 @@ async def test_executor_pipeline() -> None:
 
     # Execute pipeline
     async with AsyncExitStack() as stack:
-        req = Request(scope, receive=receive)
+        req: Request[Any, Any, Any] = Request(cast("Any", scope), receive=cast("Any", receive))
         response = await run_handler_pipeline(handler, app, path_params, req, stack)
         assert isinstance(response, CapturedHandlerResponse)
         assert response.status_code == 200
