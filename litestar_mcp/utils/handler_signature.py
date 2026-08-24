@@ -11,6 +11,7 @@ from types import UnionType
 from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin, get_type_hints
 
 from litestar.constants import RESERVED_KWARGS
+from litestar.enums import ParamType
 from litestar.params import ParameterKwarg
 
 from litestar_mcp.typing import DISHKA_INSTALLED, DishkaDependencyKey
@@ -394,11 +395,14 @@ def _wire_name_for(python_name: "str", param: "inspect.Parameter") -> "str":
     for meta in metas:
         if meta.query:
             return meta.query
-        if meta.header or meta.cookie:
+        if meta.header or meta.cookie or getattr(meta, "param_type", None) in {ParamType.HEADER, ParamType.COOKIE}:
             _logger.debug(
                 "Provider param %r declares non-query source (header/cookie); wire name falls back to python name.",
                 python_name,
             )
+            continue
+        if meta.name:
+            return meta.name
     return python_name
 
 

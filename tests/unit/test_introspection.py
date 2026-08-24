@@ -5,7 +5,7 @@ from typing import Annotated, Any
 import pytest
 from litestar import Litestar, Request, get
 from litestar.di import Provide
-from litestar.params import Parameter
+from litestar.params import CookieParameter, HeaderParameter, Parameter, ParameterKwarg, QueryParameter
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig, mcp_resource, mcp_tool
@@ -69,6 +69,75 @@ class TestParameterAliases:
             return {"tenant_id": tenant_id}
 
         _, h = create_app_with_handler(handler)
+        assert parameter_aliases(h) == {}
+
+    def test_query_parameter_name_alias_is_included(self) -> "None":
+        def handler(
+            category_name_in: "Annotated[list[str] | None, QueryParameter(name='categoryNameIn')]" = None,
+        ) -> "dict[str, Any]":
+            return {"category_name_in": category_name_in}
+
+        _, h = create_app_with_handler(handler)
+        assert parameter_aliases(h) == {"categoryNameIn": "category_name_in"}
+
+    def test_parameter_kwarg_name_alias_is_included(self) -> "None":
+        def handler(
+            category_name_in: "Annotated[list[str] | None, ParameterKwarg(name='categoryNameIn')]" = None,
+        ) -> "dict[str, Any]":
+            return {"category_name_in": category_name_in}
+
+        _, h = create_app_with_handler(handler)
+        assert parameter_aliases(h) == {"categoryNameIn": "category_name_in"}
+
+    def test_header_parameter_name_alias_ignored(self) -> "None":
+        def handler(
+            tenant_id: "Annotated[str, HeaderParameter(name='X-Tenant')]" = "",
+        ) -> "dict[str, Any]":
+            return {"tenant_id": tenant_id}
+
+        _, h = create_app_with_handler(handler)
+        assert parameter_aliases(h) == {}
+
+    def test_cookie_parameter_name_alias_ignored(self) -> "None":
+        def handler(
+            session_id: "Annotated[str, CookieParameter(name='session_id_cookie')]" = "",
+        ) -> "dict[str, Any]":
+            return {"session_id": session_id}
+
+        _, h = create_app_with_handler(handler)
+        assert parameter_aliases(h) == {}
+
+    def test_dependency_provider_query_parameter_name_alias(self) -> "None":
+        def provide_filter(
+            category_name_in: "Annotated[list[str] | None, QueryParameter(name='categoryNameIn')]" = None,
+        ) -> "list[str]":
+            return category_name_in or []
+
+        def handler(filter_data: "list[str]") -> "dict[str, Any]":
+            return {"data": filter_data}
+
+        _, h = create_app_with_handler(
+            handler,
+            route_path="/items",
+            dependencies={"filter_data": Provide(provide_filter, sync_to_thread=False)},
+        )
+        assert parameter_aliases(h) == {"categoryNameIn": "category_name_in"}
+
+    def test_dependency_provider_header_and_cookie_parameter_ignored(self) -> "None":
+        def provide_context(
+            auth_header: "Annotated[str, HeaderParameter(name='Authorization')]" = "",
+            cookie_val: "Annotated[str, CookieParameter(name='session')]" = "",
+        ) -> "str":
+            return auth_header or cookie_val
+
+        def handler(ctx: "str") -> "dict[str, Any]":
+            return {"ctx": ctx}
+
+        _, h = create_app_with_handler(
+            handler,
+            route_path="/items",
+            dependencies={"ctx": Provide(provide_context, sync_to_thread=False)},
+        )
         assert parameter_aliases(h) == {}
 
     def test_no_query_omitted_even_when_annotated(self) -> "None":

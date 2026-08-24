@@ -10,7 +10,7 @@ from litestar import get
 from litestar.datastructures import State  # noqa: TC002
 from litestar.di import NamedDependency  # noqa: TC002
 from litestar.handlers import BaseRouteHandler
-from litestar.params import FromQuery, Parameter, ParameterKwarg, SkipValidation
+from litestar.params import FromQuery, Parameter, ParameterKwarg, QueryParameter, SkipValidation
 
 from litestar_mcp.schema_builder import (
     _merge_parameter_meta,
@@ -1049,6 +1049,28 @@ class TestDependencyProviderParameters:
         assert "userId" in schema["properties"]
         assert "user_id" not in schema["properties"]
         assert parameter_aliases(h) == {"userId": "user_id"}
+
+    def test_provider_query_parameter_name_alias_round_trips(self) -> "None":
+        from litestar.di import Provide
+        from litestar.params import Dependency
+
+        from litestar_mcp.utils.handler_signature import parameter_aliases
+
+        async def provide_filter(
+            category_name_in: "Annotated[list[str] | None, QueryParameter(name='categoryNameIn')]" = None,
+        ) -> "dict[str, Any]":
+            return {"category_name_in": category_name_in}
+
+        async def handler(
+            flt: "Annotated[dict[str, Any], Dependency(skip_validation=True)]",
+        ) -> "dict[str, Any]":
+            return flt
+
+        h = self._build_handler(handler, {"flt": Provide(provide_filter)})
+        schema = generate_schema_for_handler(h)
+        assert "categoryNameIn" in schema["properties"]
+        assert "category_name_in" not in schema["properties"]
+        assert parameter_aliases(h) == {"categoryNameIn": "category_name_in"}
 
     def test_shared_callable_across_providers_is_walked_once(self) -> "None":
         """Cycle protection keys on the provider function, not the Provide wrapper.

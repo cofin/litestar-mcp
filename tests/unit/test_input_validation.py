@@ -13,7 +13,10 @@ import msgspec
 import pytest
 from litestar import Litestar, get, post
 from litestar.di import Provide
-from litestar.params import FromQuery  # noqa: TC002 - Litestar resolves handler markers at runtime.
+from litestar.params import (
+    FromQuery,
+    QueryParameter,
+)
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig
@@ -304,3 +307,45 @@ class TestInputValidation:
         assert "result" in result
         assert result["result"]["isError"] is False
         assert json.loads(result["result"]["content"][0]["text"]) == {"hello": "Ada"}
+
+    def test_query_parameter_name_alias_validation_and_dispatch(self) -> "None":
+        @get("/query_alias", opt={"mcp_tool": "query_alias_tool"}, sync_to_thread=False)
+        def query_alias_tool(
+            category_name_in: "Annotated[list[str] | None, QueryParameter(name='categoryNameIn')]" = None,
+        ) -> "dict[str, Any]":
+            return {"category_name_in": category_name_in}
+
+        app = Litestar(route_handlers=[query_alias_tool], plugins=[LitestarMCP(MCPConfig())])
+        with TestClient(app=app) as client:
+            # 1. Calling with wire name categoryNameIn works and populates the parameter
+            result = _call(client, "query_alias_tool", {"categoryNameIn": ["alpha", "beta"]})
+            assert "result" in result
+            assert result["result"]["isError"] is False
+            assert json.loads(result["result"]["content"][0]["text"]) == {"category_name_in": ["alpha", "beta"]}
+
+            # 2. Type validation error reports the wire name path
+            err_result = _call(client, "query_alias_tool", {"categoryNameIn": 123})
+            payload = _error_payload(err_result)
+            paths = {e["path"] for e in payload["errors"]}
+            assert "/arguments/categoryNameIn" in paths
+
+    def test_dependency_provider_query_parameter_name_filter_dispatch(self) -> "None":
+        def provide_category_filter(
+            category_name_in: "Annotated[list[str] | None, QueryParameter(name='categoryNameIn')]" = None,
+        ) -> "list[str] | None":
+            return category_name_in
+
+        @get("/items", opt={"mcp_tool": "list_items"}, sync_to_thread=False)
+        def list_items(category_filter: "list[str] | None") -> "dict[str, Any]":
+            return {"filter": category_filter}
+
+        app = Litestar(
+            route_handlers=[list_items],
+            dependencies={"category_filter": Provide(provide_category_filter, sync_to_thread=False)},
+            plugins=[LitestarMCP(MCPConfig())],
+        )
+        with TestClient(app=app) as client:
+            result = _call(client, "list_items", {"categoryNameIn": ["shoes", "hats"]})
+            assert "result" in result
+            assert result["result"]["isError"] is False
+            assert json.loads(result["result"]["content"][0]["text"]) == {"filter": ["shoes", "hats"]}
