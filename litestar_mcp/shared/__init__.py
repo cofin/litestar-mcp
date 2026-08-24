@@ -1,0 +1,83 @@
+"""Shared protocol primitives for MCP and A2A."""
+
+from litestar_mcp.shared.executor import (
+    CapturedHandlerResponse,
+    NotCallableInCLIContextError,
+    PathParamCoercionError,
+    build_dispatch_scope,
+    find_route_path_parameters,
+    open_stdio_dishka_container,
+    run_handler_pipeline,
+)
+from litestar_mcp.shared.introspection import (
+    basic_type_to_json_schema,
+    collection_type_to_json_schema,
+    dataclass_to_json_schema,
+    generate_schema_for_handler,
+    model_to_json_schema,
+    msgspec_to_json_schema,
+    type_to_json_schema,
+    union_type_to_json_schema,
+)
+from litestar_mcp.shared.jsonrpc import (
+    INTERNAL_ERROR,
+    INVALID_PARAMS,
+    INVALID_REQUEST,
+    METHOD_NOT_FOUND,
+    PARSE_ERROR,
+    JSONRPCError,
+    JSONRPCErrorException,
+    JSONRPCRequest,
+    JSONRPCRouter,
+    MethodHandler,
+    error_response,
+    parse_request,
+)
+from litestar_mcp.shared.sse import (
+    BaseSubscriptionManager,
+    StreamLimitExceeded,
+    StreamSubscription,
+)
+from litestar_mcp.shared.tasks import (
+    BaseTaskStore,
+    TaskLookupError,
+    TaskRecord,
+    TaskStateError,
+)
+
+__all__ = (
+    "INTERNAL_ERROR",
+    "INVALID_PARAMS",
+    "INVALID_REQUEST",
+    "METHOD_NOT_FOUND",
+    "PARSE_ERROR",
+    "BaseSubscriptionManager",
+    "BaseTaskStore",
+    "CapturedHandlerResponse",
+    "JSONRPCError",
+    "JSONRPCErrorException",
+    "JSONRPCRequest",
+    "JSONRPCRouter",
+    "MethodHandler",
+    "NotCallableInCLIContextError",
+    "PathParamCoercionError",
+    "StreamLimitExceeded",
+    "StreamSubscription",
+    "TaskLookupError",
+    "TaskRecord",
+    "TaskStateError",
+    "basic_type_to_json_schema",
+    "build_dispatch_scope",
+    "collection_type_to_json_schema",
+    "dataclass_to_json_schema",
+    "error_response",
+    "find_route_path_parameters",
+    "generate_schema_for_handler",
+    "model_to_json_schema",
+    "msgspec_to_json_schema",
+    "open_stdio_dishka_container",
+    "parse_request",
+    "run_handler_pipeline",
+    "type_to_json_schema",
+    "union_type_to_json_schema",
+)

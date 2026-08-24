@@ -1,14 +1,14 @@
 """In-process notification subscriptions for MCP 2026-07-28."""
 
 import asyncio
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import uuid4
 
 from litestar.serialization import decode_json
 
-if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+from litestar_mcp.shared.sse import StreamLimitExceeded
 
 __all__ = ("StreamLimitExceeded", "SubscriptionManager")
 
@@ -20,22 +20,18 @@ _METHOD_FILTERS = {
 }
 
 
-class StreamLimitExceeded(Exception):  # noqa: N818
-    """Raised when the configured subscription stream cap is reached."""
-
-
 @dataclass
 class _Subscription:
-    stream_id: "str"
-    subscription_id: "Any"
-    notifications: "dict[str, Any]"
-    queue: "asyncio.Queue[dict[str, Any] | object]" = field(default_factory=asyncio.Queue)
+    stream_id: str
+    subscription_id: Any
+    notifications: dict[str, Any]
+    queue: asyncio.Queue[dict[str, Any] | object] = field(default_factory=asyncio.Queue)
 
 
 class SubscriptionManager:
     """Manage stateless, filtered subscription response streams."""
 
-    def __init__(self, *, max_streams: "int" = 10_000, channels: "Any | None" = None) -> "None":
+    def __init__(self, *, max_streams: int = 10_000, channels: Any | None = None) -> None:
         self._max_streams = max_streams
         self._channels = channels
         self._streams: dict[str, _Subscription] = {}
@@ -49,9 +45,9 @@ class SubscriptionManager:
 
     async def open(
         self,
-        subscription_id: "Any",
-        notifications: "dict[str, Any]",
-    ) -> "tuple[str, AsyncGenerator[dict[str, Any], None]]":
+        subscription_id: Any,
+        notifications: dict[str, Any],
+    ) -> tuple[str, "AsyncGenerator[dict[str, Any], None]"]:
         """Open a filtered stream whose first item is its acknowledgement."""
         async with self._lock:
             if len(self._streams) >= self._max_streams:
@@ -67,7 +63,7 @@ class SubscriptionManager:
             self._streams[stream_id] = state
             state.queue.put_nowait(self._acknowledgement(state))
 
-        async def stream() -> "AsyncGenerator[dict[str, Any], None]":
+        async def stream() -> AsyncGenerator[dict[str, Any], None]:
             try:
                 while True:
                     message = await state.queue.get()
@@ -79,7 +75,7 @@ class SubscriptionManager:
 
         return stream_id, stream()
 
-    async def publish(self, method: "str", params: "dict[str, Any]") -> "None":
+    async def publish(self, method: str, params: dict[str, Any]) -> None:
         """Publish a notification only to subscriptions whose filter matches."""
         if self._channels is not None:
             self._channels.publish(
@@ -89,7 +85,7 @@ class SubscriptionManager:
             return
         await self._publish_local(method, params)
 
-    async def _publish_local(self, method: "str", params: "dict[str, Any]") -> "None":
+    async def _publish_local(self, method: str, params: dict[str, Any]) -> None:
         async with self._lock:
             states = tuple(self._streams.values())
         for state in states:
@@ -101,14 +97,14 @@ class SubscriptionManager:
             tagged_params["_meta"] = meta
             state.queue.put_nowait({"jsonrpc": "2.0", "method": method, "params": tagged_params})
 
-    async def disconnect(self, stream_id: "str") -> "None":
+    async def disconnect(self, stream_id: str) -> None:
         """Remove one stream and wake its consumer."""
         async with self._lock:
             state = self._streams.pop(stream_id, None)
         if state is not None:
             state.queue.put_nowait(_CLOSED)
 
-    async def close_all(self) -> "None":
+    async def close_all(self) -> None:
         """Gracefully close every active stream."""
         if self._broker_task is not None:
             self._broker_task.cancel()
@@ -120,7 +116,7 @@ class SubscriptionManager:
         for state in states:
             state.queue.put_nowait(_CLOSED)
 
-    async def _consume_broker(self) -> "None":
+    async def _consume_broker(self) -> None:
         channels = self._channels
         if channels is None:
             return
@@ -133,7 +129,7 @@ class SubscriptionManager:
                         await self._publish_local(payload["method"], params)
 
     @staticmethod
-    def _normalize_filter(notifications: "dict[str, Any]") -> "dict[str, Any]":
+    def _normalize_filter(notifications: dict[str, Any]) -> dict[str, Any]:
         accepted: dict[str, Any] = {}
         for filter_name in ("toolsListChanged", "promptsListChanged", "resourcesListChanged"):
             if notifications.get(filter_name) is True:
@@ -147,7 +143,7 @@ class SubscriptionManager:
         return accepted
 
     @staticmethod
-    def _acknowledgement(state: "_Subscription") -> "dict[str, Any]":
+    def _acknowledgement(state: _Subscription) -> dict[str, Any]:
         return {
             "jsonrpc": "2.0",
             "method": "notifications/subscriptions/acknowledged",
@@ -158,7 +154,7 @@ class SubscriptionManager:
         }
 
     @staticmethod
-    def _matches(notifications: "dict[str, Any]", method: "str", params: "dict[str, Any]") -> "bool":
+    def _matches(notifications: dict[str, Any], method: str, params: dict[str, Any]) -> bool:
         filter_name = _METHOD_FILTERS.get(method)
         if filter_name is not None:
             return notifications.get(filter_name) is True

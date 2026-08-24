@@ -1,0 +1,266 @@
+# ruff: noqa: PLR0911
+"""Parameter signature introspection and JSON Schema (Draft 2020-12) generation."""
+
+import inspect
+import logging
+from dataclasses import MISSING, fields
+from types import UnionType
+from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
+
+import msgspec
+
+from litestar_mcp.typing import (
+    attrs_fields,
+    is_attrs_instance,
+    is_dataclass,
+    is_msgspec_struct,
+    is_pydantic_model,
+)
+from litestar_mcp.utils import get_handler_function
+from litestar_mcp.utils.handler_signature import (
+    _unwrap_annotated,
+    get_advertised_handler_parameters,
+)
+
+if TYPE_CHECKING:
+    from litestar.handlers import BaseRouteHandler
+    from litestar.params import ParameterKwarg
+
+_logger = logging.getLogger(__name__)
+
+
+def basic_type_to_json_schema(annotation: Any) -> dict[str, Any] | None:
+    """Convert basic Python types to JSON Schema format."""
+    if annotation is str:
+        return {"type": "string"}
+    if annotation is int:
+        return {"type": "integer"}
+    if annotation is float:
+        return {"type": "number"}
+    if annotation is bool:
+        return {"type": "boolean"}
+    return None
+
+
+def collection_type_to_json_schema(annotation: Any) -> dict[str, Any] | None:
+    """Convert collection types (list, dict, set) to JSON Schema format."""
+    origin = get_origin(annotation)
+
+    if annotation is list or origin is list:
+        args = get_args(annotation)
+        if args:
+            return {"type": "array", "items": type_to_json_schema(args[0])}
+        return {"type": "array"}
+
+    if annotation is dict or origin is dict:
+        return {"type": "object"}
+
+    if annotation is set or origin is set:
+        args = get_args(annotation)
+        if args:
+            return {"type": "array", "items": type_to_json_schema(args[0]), "uniqueItems": True}
+        return {"type": "array", "uniqueItems": True}
+
+    return None
+
+
+def pydantic_to_json_schema(model: Any) -> dict[str, Any]:
+    """Convert Pydantic model to JSON Schema format."""
+    schema: dict[str, Any] = model.model_json_schema()
+    return schema
+
+
+def msgspec_to_json_schema(struct_type: Any) -> dict[str, Any]:
+    """Generate JSON Schema 2020-12 for a msgspec.Struct via msgspec's built-in."""
+    return msgspec.json.schema(struct_type)
+
+
+def dataclass_to_json_schema(dataclass_type: Any) -> dict[str, Any]:
+    """Convert dataclass to JSON Schema format."""
+    properties = {}
+    required = []
+
+    for field in fields(dataclass_type):
+        field_schema = type_to_json_schema(field.type)
+        properties[field.name] = field_schema
+        if field.default is MISSING and field.default_factory is MISSING:
+            required.append(field.name)
+
+    schema = {"type": "object", "properties": properties}
+    if required:
+        schema["required"] = required
+    return schema
+
+
+def attrs_to_json_schema(attrs_type: Any) -> dict[str, Any]:
+    """Convert attrs class to JSON Schema format."""
+    properties = {}
+    required = []
+
+    for field in attrs_fields(attrs_type):
+        field_schema = type_to_json_schema(field.type)
+        properties[field.name] = field_schema
+        if field.default is inspect.Parameter.empty:
+            required.append(field.name)
+
+    schema = {"type": "object", "properties": properties}
+    if required:
+        schema["required"] = required
+    return schema
+
+
+def model_to_json_schema(annotation: Any) -> dict[str, Any] | None:
+    """Convert a model class (Pydantic, msgspec, attrs, dataclass) to JSON Schema format."""
+    if is_pydantic_model(annotation):
+        return pydantic_to_json_schema(annotation)
+
+    if is_msgspec_struct(annotation):
+        return msgspec_to_json_schema(annotation)
+
+    if is_attrs_instance(annotation):
+        return attrs_to_json_schema(annotation)
+
+    if is_dataclass(annotation):
+        return dataclass_to_json_schema(annotation)
+
+    return None
+
+
+def union_type_to_json_schema(annotation: Any) -> dict[str, Any] | None:
+    """Convert Union types (including Optional) to JSON Schema format."""
+    origin = get_origin(annotation)
+
+    if origin is type(None):
+        return {"type": "null"}
+
+    if origin in {Union, UnionType}:
+        args = get_args(annotation)
+        if len(args) == 1:
+            return type_to_json_schema(args[0])
+        any_of = []
+        for arg in args:
+            if arg is type(None):
+                any_of.append({"type": "null"})
+            else:
+                any_of.append(type_to_json_schema(arg))
+        return {"anyOf": any_of}
+
+    return None
+
+
+def _resolve_string_annotation(annotation: str) -> Any:
+    basic_types = {
+        "int": int,
+        "str": str,
+        "float": float,
+        "bool": bool,
+        "list": list,
+        "dict": dict,
+        "set": set,
+    }
+
+    if annotation in basic_types:
+        return basic_types[annotation]
+
+    return {"type": "object", "description": "Parameter of type " + str(annotation)}
+
+
+_META_FIELD_MAP: tuple[tuple[str, str], ...] = (
+    ("description", "description"),
+    ("title", "title"),
+    ("examples", "examples"),
+    ("ge", "minimum"),
+    ("le", "maximum"),
+    ("gt", "exclusiveMinimum"),
+    ("lt", "exclusiveMaximum"),
+    ("min_length", "minLength"),
+    ("max_length", "maxLength"),
+    ("pattern", "pattern"),
+    ("multiple_of", "multipleOf"),
+)
+
+
+def _merge_parameter_meta(schema: dict[str, Any], meta: "ParameterKwarg") -> None:
+    for attr, key in _META_FIELD_MAP:
+        value = getattr(meta, attr, None)
+        if value is None:
+            continue
+        if key == "examples" and not isinstance(value, list):
+            schema[key] = [value]
+        else:
+            schema[key] = value
+    schema_extra = getattr(meta, "schema_extra", None)
+    if isinstance(schema_extra, dict):
+        schema.update(schema_extra)
+
+
+def type_to_json_schema(annotation: Any) -> dict[str, Any]:
+    """Convert a Python type annotation to JSON Schema format."""
+    if annotation is None or annotation == inspect.Parameter.empty:
+        return {"type": "object", "description": "No type annotation provided"}
+
+    inner, metas = _unwrap_annotated(annotation)
+    if inner is not annotation:
+        schema = type_to_json_schema(inner)
+        for meta in metas:
+            _merge_parameter_meta(schema, meta)
+        return schema
+
+    if isinstance(annotation, str):
+        annotation = _resolve_string_annotation(annotation)
+        if isinstance(annotation, dict):
+            return annotation
+
+    if result := basic_type_to_json_schema(annotation):
+        return result
+    if result := collection_type_to_json_schema(annotation):
+        return result
+    if result := model_to_json_schema(annotation):
+        return result
+
+    return union_type_to_json_schema(annotation) or {
+        "type": "object",
+        "description": "Parameter of type " + str(annotation),
+    }
+
+
+def generate_schema_for_handler(handler: "BaseRouteHandler") -> dict[str, Any]:
+    """Generate a JSON Schema for a route handler's input parameters."""
+    try:
+        fn = get_handler_function(handler)
+    except AttributeError:
+        fn = handler
+
+    advertised_params = get_advertised_handler_parameters(handler)
+
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+
+    for param in advertised_params:
+        prop_schema = type_to_json_schema(param.annotation)
+        _, metas = _unwrap_annotated(param.annotation)
+        if param.default is not inspect.Parameter.empty and any(getattr(m, "const", False) for m in metas):
+            prop_schema["const"] = param.default
+        properties[param.wire_name] = prop_schema
+
+        if param.required:
+            required.append(param.wire_name)
+
+    schema: dict[str, Any] = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": properties,
+        "additionalProperties": False,
+    }
+
+    if required:
+        schema["required"] = required
+
+    fn_name = getattr(fn, "__name__", "unknown_function")
+    fn_doc = getattr(fn, "__doc__", None)
+    if fn_doc:
+        schema["description"] = "Input parameters for " + str(fn_name) + ": " + str(fn_doc.strip())
+    else:
+        schema["description"] = "Input parameters for " + str(fn_name)
+
+    return schema
