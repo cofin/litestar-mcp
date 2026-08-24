@@ -1,19 +1,24 @@
 """A2A JSON-RPC 2.0 handler service."""
 
+import asyncio
 import inspect
 import uuid
+from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, cast
 
 from litestar.serialization import decode_json, encode_json
 
 from litestar_mcp.a2a.context import TaskContext
 from litestar_mcp.a2a.registry import A2ARegistry
+from litestar_mcp.a2a.streaming import A2ASubscriptionManager, format_a2a_sse_event
 from litestar_mcp.a2a.tasks import A2ATaskStore
 from litestar_mcp.a2a.types import (
     Artifact,
     DataPart,
     Task,
+    TaskArtifactUpdateEvent,
     TaskStatus,
+    TaskStatusUpdateEvent,
     TextPart,
 )
 from litestar_mcp.shared.jsonrpc import (
@@ -85,10 +90,12 @@ class A2AHandlerService:
         app: "Litestar",
         registry: A2ARegistry,
         task_store: A2ATaskStore,
+        subscription_manager: A2ASubscriptionManager | None = None,
     ) -> None:
         self.app = app
         self.registry = registry
         self.task_store = task_store
+        self.subscription_manager = subscription_manager or A2ASubscriptionManager()
         self.router = JSONRPCRouter()
         self._register_routes()
 
@@ -163,6 +170,88 @@ class A2AHandlerService:
             )
             await self.task_store.save_task(err_task)
             raise JSONRPCErrorException(JSONRPCError(code=INTERNAL_ERROR, message=str(exc))) from exc
+
+    async def stream_tasks_send_subscribe(
+        self,
+        request: JSONRPCRequest,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """Stream task execution status and artifact updates via SSE."""
+        params = request.params
+        if not isinstance(params, dict):
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Params must be a dictionary"))
+
+        skill_id = params.get("skill") or params.get("skillId")
+        if not skill_id or not isinstance(skill_id, str):
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required 'skill' parameter"))
+
+        skill_reg = self.registry.get(skill_id)
+        if skill_reg is None:
+            raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message=f"Skill {skill_id!r} not found"))
+
+        task_id = str(params.get("taskId") or params.get("id") or uuid.uuid4())
+        session_id = params.get("sessionId")
+        queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+
+        async def event_cb(event: TaskStatusUpdateEvent | TaskArtifactUpdateEvent) -> None:
+            payload = format_a2a_sse_event(event)
+            await queue.put(payload)
+            if self.subscription_manager is not None:
+                await self.subscription_manager.publish_event(event)
+
+        task = Task(
+            id=task_id,
+            session_id=session_id,
+            status=TaskStatus(state="working", message="Started skill execution"),
+        )
+        await self.task_store.save_task(task)
+
+        task_ctx = TaskContext(
+            task_id=task_id,
+            session_id=session_id,
+            task_store=self.task_store,
+            event_callback=event_cb,
+        )
+        kwargs = _extract_arguments_from_message(params.get("message"))
+
+        # Emit initial status
+        initial_event = TaskStatusUpdateEvent(
+            task_id=task_id,
+            status=TaskStatus(state="working", message="Started skill execution"),
+        )
+        await queue.put(format_a2a_sse_event(initial_event))
+
+        async def run_worker() -> None:
+            try:
+                result = await self._execute_callable(skill_reg.fn, kwargs, task_ctx)
+                final_task = _convert_result_to_task(result, task_id, session_id, task_ctx.emitted_artifacts)
+                await self.task_store.save_task(final_task)
+                final_event = TaskStatusUpdateEvent(
+                    task_id=task_id,
+                    status=final_task.status,
+                    final=True,
+                )
+                await queue.put(format_a2a_sse_event(final_event))
+            except Exception as exc:  # noqa: BLE001
+                err_event = TaskStatusUpdateEvent(
+                    task_id=task_id,
+                    status=TaskStatus(state="failed", message=str(exc)),
+                    final=True,
+                )
+                await queue.put(format_a2a_sse_event(err_event))
+            finally:
+                await queue.put(None)
+
+        worker_task = asyncio.create_task(run_worker())
+
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                yield item
+        finally:
+            if not worker_task.done():
+                worker_task.cancel()
 
     async def handle_tasks_get(self, params: dict[str, Any], context: Any) -> dict[str, Any]:
         """Handle tasks/get query."""
