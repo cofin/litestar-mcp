@@ -20,7 +20,6 @@ transport caveat.
 import inspect
 import logging
 import re
-import weakref
 from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
@@ -328,6 +327,8 @@ async def _run_handler_pipeline(
             else:
                 kwargs_model = handler.create_kwargs_model(path_parameters=path_parameters)
                 kwargs = await kwargs_model.to_kwargs(connection=dispatch_request)
+                if kwargs.get("data") is Empty:
+                    del kwargs["data"]
                 cleanup_group = await kwargs_model.resolve_dependencies(dispatch_request, kwargs)
                 await stack.enter_async_context(cleanup_group)
                 parsed_kwargs = handler.signature_model.parse_values_from_connection_kwargs(
@@ -618,31 +619,34 @@ async def _dispatch_via_exception_handlers(
     return MCPHandlerResponse(content=raw, status_code=500, body=encode_json(raw), media_type="application/json")
 
 
-_PATH_PARAMETERS_CACHE: "weakref.WeakKeyDictionary[Any, dict[str, Any]]" = weakref.WeakKeyDictionary()
+_PATH_PARAMETERS_CACHE_STATE_KEY = "_litestar_mcp_path_parameters_cache"
 
 
 def _find_route_path_parameters(app: "Litestar", handler: "BaseRouteHandler") -> "dict[str, Any]":
     """Look up ``path_parameters`` for the route owning ``handler``.
 
-    Memoized on ``handler`` via :class:`weakref.WeakKeyDictionary` so each
-    handler's path-parameter map is discovered exactly once per process.
-    Path parameters are derived from ``handler.paths``, so they're stable
-    across any app the handler is registered on. The weakref keys release
-    cache entries automatically when handlers are collected.
+    Memoized on ``app.state`` and strongly keyed by handler so slotted route
+    handlers that do not support weak references remain usable. App lifetime
+    bounds retention and prevents one app's route tree from contaminating
+    another app's lookup results.
     """
-    cached = _PATH_PARAMETERS_CACHE.get(handler)
+    cache: dict[Any, dict[str, Any]] | None = getattr(app.state, _PATH_PARAMETERS_CACHE_STATE_KEY, None)
+    if cache is None:
+        cache = {}
+        setattr(app.state, _PATH_PARAMETERS_CACHE_STATE_KEY, cache)
+    cached = cache.get(handler)
     if cached is not None:
         return dict(cached)
     for route in app.routes:
         for candidate in getattr(route, "route_handlers", []):
             if candidate is handler:
                 found = dict(getattr(route, "path_parameters", {}))
-                _PATH_PARAMETERS_CACHE[handler] = found
+                cache[handler] = found
                 return dict(found)
         candidate = getattr(route, "route_handler", None)
         if candidate is handler:
             found = dict(getattr(route, "path_parameters", {}))
-            _PATH_PARAMETERS_CACHE[handler] = found
+            cache[handler] = found
             return dict(found)
     return {}
 
@@ -737,14 +741,17 @@ def _split_tool_args(
 
     query_payload = {k: v for k, v in remaining.items() if k in wire_scalar_keys}
 
-    body_payload: Any = {}
+    body_payload: Any = None
+    body_supplied = False
     if has_data:
         if "data" in remaining:
             body_payload = remaining["data"]
+            body_supplied = True
         else:
             body_payload = {k: v for k, v in remaining.items() if k not in query_payload}
+            body_supplied = bool(body_payload)
 
-    body = encode_json(body_payload, serializer=handler.default_serializer) if body_payload else b""
+    body = encode_json(body_payload, serializer=handler.default_serializer) if body_supplied else b""
     return path_values, query_payload, body
 
 

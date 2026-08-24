@@ -27,7 +27,7 @@ import msgspec
 import pytest
 from dishka import Provider, Scope, make_async_container, provide
 from dishka.integrations.litestar import FromDishka, inject, setup_dishka
-from litestar import Litestar, Response, delete, get, post
+from litestar import Controller, Litestar, Response, delete, get, post
 from litestar.di import Provide
 from litestar.exceptions import NotAuthorizedException
 from litestar.status_codes import (
@@ -186,6 +186,101 @@ def test_path_param_routes_through_scope() -> "None":
 
     assert resp["result"]["isError"] is False
     assert '"id":"abc"' in resp["result"]["content"][0]["text"]
+
+
+def test_controller_path_param_routes_through_scope() -> "None":
+    """Controller-owned handlers support native path-parameter dispatch."""
+
+    class NotesController(Controller):
+        path = "/notes"
+
+        @get("/{note_id:int}", mcp_tool="get_note", sync_to_thread=False)
+        def get_note(self, note_id: "int") -> "dict[str, int]":
+            return {"id": note_id}
+
+    app = Litestar(route_handlers=[NotesController], plugins=[LitestarMCP()])
+
+    with TestClient(app=app) as client:
+        resp = _call_tool(client, "get_note", {"note_id": 7})
+
+    assert resp["result"]["isError"] is False
+    assert '"id":7' in resp["result"]["content"][0]["text"]
+
+
+def test_controller_invalid_path_param_fails() -> "None":
+    """Controller path parameters retain Litestar's normal coercion errors."""
+
+    class NotesController(Controller):
+        path = "/notes"
+
+        @get("/{note_id:int}", mcp_tool="get_note", sync_to_thread=False)
+        def get_note(self, note_id: "int") -> "dict[str, int]":
+            return {"id": note_id}
+
+    app = Litestar(route_handlers=[NotesController], plugins=[LitestarMCP()])
+
+    with TestClient(app=app) as client:
+        resp = _call_tool(client, "get_note", {"note_id": "invalid"})
+
+    assert resp["result"]["isError"] is True
+
+
+def test_omitted_optional_data_uses_handler_default() -> "None":
+    """An omitted MCP body is omitted from handler kwargs as it is in HTTP dispatch."""
+
+    @post("/optional", mcp_tool="optional_body", sync_to_thread=False)
+    def optional_body(data: "Any" = "declared-default") -> "dict[str, Any]":
+        return {"received": data}
+
+    app = Litestar(route_handlers=[optional_body], plugins=[LitestarMCP()])
+
+    with TestClient(app=app) as client:
+        resp = _call_tool(client, "optional_body", {})
+
+    assert resp["result"]["isError"] is False
+    assert '"received":"declared-default"' in resp["result"]["content"][0]["text"]
+
+
+@pytest.mark.parametrize(
+    "explicit_body",
+    (
+        pytest.param({}, id="object"),
+        pytest.param(None, id="null"),
+        pytest.param(False, id="false"),
+        pytest.param(0, id="zero"),
+        pytest.param("", id="string"),
+        pytest.param([], id="array"),
+    ),
+)
+def test_explicit_falsey_data_is_not_omitted(explicit_body: "Any") -> "None":
+    """Every explicit JSON body value remains distinct from an omitted body."""
+
+    @post("/optional", mcp_tool="optional_body", sync_to_thread=False)
+    def optional_body(data: "Any" = "declared-default") -> "dict[str, Any]":
+        return {"received": data}
+
+    app = Litestar(route_handlers=[optional_body], plugins=[LitestarMCP()])
+
+    with TestClient(app=app) as client:
+        resp = _call_tool(client, "optional_body", {"data": explicit_body})
+
+    assert resp["result"]["isError"] is False
+    assert msgspec.json.decode(resp["result"]["content"][0]["text"])["received"] == explicit_body
+
+
+def test_omitted_required_data_fails() -> "None":
+    """Omitting a required body still produces a normal validation failure."""
+
+    @post("/required", mcp_tool="required_body", sync_to_thread=False)
+    def required_body(data: "dict[str, str]") -> "dict[str, str]":
+        return data
+
+    app = Litestar(route_handlers=[required_body], plugins=[LitestarMCP()])
+
+    with TestClient(app=app) as client:
+        resp = _call_tool(client, "required_body", {})
+
+    assert resp["result"]["isError"] is True
 
 
 def test_query_param_routes_through_scope() -> "None":
