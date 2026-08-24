@@ -58,7 +58,11 @@ from litestar_mcp.utils import (
     render_description,
     should_include_handler,
 )
-from litestar_mcp.utils.handler_signature import _unwrap_annotated, get_advertised_handler_parameters
+from litestar_mcp.utils.handler_signature import (
+    _unwrap_annotated,
+    get_advertised_handler_parameters,
+    resolve_tool_argument_aliases,
+)
 
 if TYPE_CHECKING:
     from litestar import Litestar, Request
@@ -294,10 +298,16 @@ def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: "dict[str, 
 
     advertised_params = get_advertised_handler_parameters(handler)
     python_to_wire = {p.python_name: p.wire_name for p in advertised_params}
-    aliases = {p.wire_name: p.python_name for p in advertised_params if p.wire_name != p.python_name}
-
-    if aliases:
-        tool_args = {aliases.get(k, k): v for k, v in tool_args.items()}
+    resolved_args, consumed, _ = resolve_tool_argument_aliases(tool_args, advertised_params)
+    normalized_args = {key: value for key, value in tool_args.items() if key not in consumed}
+    normalized_args.update(
+        {
+            parameter.python_name: resolved_args[parameter.wire_name]
+            for parameter in advertised_params
+            if parameter.wire_name in resolved_args
+        }
+    )
+    tool_args = normalized_args
 
     try:
         declared_by_name = dict(handler.parsed_fn_signature.parameters)

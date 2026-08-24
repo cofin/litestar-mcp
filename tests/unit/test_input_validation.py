@@ -7,6 +7,7 @@ arguments vs. DI-injected context.
 """
 
 import json
+import logging
 from typing import Annotated, Any
 
 import msgspec
@@ -15,6 +16,7 @@ from litestar import Litestar, get, post
 from litestar.di import Provide
 from litestar.params import (
     FromQuery,
+    PathParameter,
     QueryParameter,
 )
 from litestar.testing import TestClient
@@ -349,3 +351,113 @@ class TestInputValidation:
             assert "result" in result
             assert result["result"]["isError"] is False
             assert json.loads(result["result"]["content"][0]["text"]) == {"filter": ["shoes", "hats"]}
+
+    def test_query_parameter_name_alias_actually_narrows_results(self) -> "None":
+        """Reproduces issue #92's table: the filter must narrow, not silently no-op."""
+        rows = [
+            {"name": "a", "category": "alpha"},
+            {"name": "b", "category": "alpha"},
+            {"name": "c", "category": "beta"},
+        ]
+
+        @get("/things", opt={"mcp_tool": "list_things"}, sync_to_thread=False)
+        def list_things(
+            category_name_in: "Annotated[list[str] | None, QueryParameter(name='categoryNameIn')]" = None,
+        ) -> "dict[str, Any]":
+            if category_name_in is None:
+                return {"rows": rows}
+            return {"rows": [r for r in rows if r["category"] in category_name_in]}
+
+        app = Litestar(route_handlers=[list_things], plugins=[LitestarMCP(MCPConfig())])
+        with TestClient(app=app) as client:
+            for arguments, expected in (
+                ({}, 3),
+                ({"categoryNameIn": ["alpha"]}, 2),
+                ({"categoryNameIn": ["does-not-exist"]}, 0),
+            ):
+                result = _call(client, "list_things", arguments)
+                assert result["result"]["isError"] is False, arguments
+                payload = json.loads(result["result"]["content"][0]["text"])
+                assert len(payload["rows"]) == expected, arguments
+
+    def test_python_name_still_accepted_after_wire_name_change(self) -> "None":
+        """Clients written against the pre-fix schema keep working (issue #92 note 2)."""
+        rows = [{"category": "alpha"}, {"category": "alpha"}, {"category": "beta"}]
+
+        @get("/things", opt={"mcp_tool": "list_things"}, sync_to_thread=False)
+        def list_things(
+            category_name_in: "Annotated[list[str] | None, QueryParameter(name='categoryNameIn')]" = None,
+        ) -> "dict[str, Any]":
+            if category_name_in is None:
+                return {"rows": rows}
+            return {"rows": [r for r in rows if r["category"] in category_name_in]}
+
+        # Capture the executor logger directly: Litestar's logging config
+        # stops records propagating to the root logger pytest's caplog uses.
+        records: list[logging.LogRecord] = []
+        handler = logging.Handler()
+        handler.emit = records.append  # type: ignore[method-assign]
+        executor_logger = logging.getLogger("litestar_mcp.executor")
+        executor_logger.addHandler(handler)
+
+        app = Litestar(route_handlers=[list_things], plugins=[LitestarMCP(MCPConfig())])
+        try:
+            with TestClient(app=app) as client:
+                result = _call(client, "list_things", {"category_name_in": ["alpha"]})
+                assert result["result"]["isError"] is False
+                assert len(json.loads(result["result"]["content"][0]["text"])["rows"]) == 2
+        finally:
+            executor_logger.removeHandler(handler)
+
+        # The compatibility path is loud, not silent.
+        assert any("categoryNameIn" in record.getMessage() for record in records)
+
+    def test_wire_name_wins_when_both_spellings_are_supplied(self) -> "None":
+        @get("/things", opt={"mcp_tool": "list_things"}, sync_to_thread=False)
+        def list_things(
+            category_name_in: "Annotated[list[str] | None, QueryParameter(name='categoryNameIn')]" = None,
+        ) -> "dict[str, Any]":
+            return {"category_name_in": category_name_in}
+
+        app = Litestar(route_handlers=[list_things], plugins=[LitestarMCP(MCPConfig())])
+        with TestClient(app=app) as client:
+            result = _call(
+                client,
+                "list_things",
+                {"category_name_in": ["legacy"], "categoryNameIn": ["wire"]},
+            )
+            assert result["result"]["isError"] is False
+            assert json.loads(result["result"]["content"][0]["text"]) == {"category_name_in": ["wire"]}
+
+            result = _call(
+                client,
+                "list_things",
+                {"categoryNameIn": ["wire"], "category_name_in": 123},
+            )
+            assert result["result"]["isError"] is False
+            assert json.loads(result["result"]["content"][0]["text"]) == {"category_name_in": ["wire"]}
+
+            result = _call(
+                client,
+                "list_things",
+                {"categoryNameIn": 123, "category_name_in": ["legacy"]},
+            )
+            payload = _error_payload(result)
+            assert {error["path"] for error in payload["errors"]} == {"/arguments/categoryNameIn"}
+
+    def test_python_name_still_accepted_for_path_parameter_alias(self) -> "None":
+        @get("/things/{thingId:int}", opt={"mcp_tool": "get_thing"}, sync_to_thread=False)
+        def get_thing(
+            thing_id: "Annotated[int, PathParameter(name='thingId')]",
+        ) -> "dict[str, int]":
+            return {"thing_id": thing_id}
+
+        app = Litestar(route_handlers=[get_thing], plugins=[LitestarMCP(MCPConfig())])
+        with TestClient(app=app) as client:
+            result = _call(client, "get_thing", {"thing_id": 42})
+            assert result["result"]["isError"] is False
+            assert json.loads(result["result"]["content"][0]["text"]) == {"thing_id": 42}
+
+            result = _call(client, "get_thing", {"thingId": 7, "thing_id": 42})
+            assert result["result"]["isError"] is False
+            assert json.loads(result["result"]["content"][0]["text"]) == {"thing_id": 7}

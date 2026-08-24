@@ -38,6 +38,40 @@ class AdvertisedHandlerParameter:
     description: "str | None" = None
 
 
+def resolve_tool_argument_aliases(
+    tool_args: "Mapping[str, Any]",
+    parameters: "Iterable[AdvertisedHandlerParameter]",
+) -> "tuple[dict[str, Any], set[str], dict[str, str]]":
+    """Resolve advertised scalar arguments to wire names.
+
+    Returns the resolved ``{wire_name: value}``, every consumed input key, and
+    the legacy ``{python_name: wire_name}`` spellings that were present. When
+    both spellings are supplied, the wire-name value always wins.
+    """
+    resolved: dict[str, Any] = {}
+    consumed: set[str] = set()
+    legacy_aliases: dict[str, str] = {}
+    parameters = tuple(parameters)
+    wire_names = {parameter.wire_name for parameter in parameters if parameter.python_name != "data"}
+
+    for parameter in parameters:
+        if parameter.python_name == "data":
+            continue
+        if (
+            parameter.python_name != parameter.wire_name
+            and parameter.python_name not in wire_names
+            and parameter.python_name in tool_args
+        ):
+            resolved[parameter.wire_name] = tool_args[parameter.python_name]
+            consumed.add(parameter.python_name)
+            legacy_aliases[parameter.python_name] = parameter.wire_name
+        if parameter.wire_name in tool_args:
+            resolved[parameter.wire_name] = tool_args[parameter.wire_name]
+            consumed.add(parameter.wire_name)
+
+    return resolved, consumed, legacy_aliases
+
+
 _GOOGLE_SECTION_HEADERS = frozenset(
     {
         "Args:",
@@ -391,14 +425,20 @@ def _unwrap_annotated(annotation: "Any") -> "tuple[Any, list[ParameterKwarg]]":
 
 
 def _wire_name_for(python_name: "str", param: "inspect.Parameter") -> "str":
+    """Return the query-string key a parameter is read from.
+
+    ``ParameterKwarg`` normalises every spelling into ``.name``: the deprecated
+    ``Parameter(query=/header=/cookie=)`` forms each assign both ``.name`` and
+    ``.param_type`` in ``__post_init__``. So ``.name`` is the only source that
+    needs consulting, gated on the meta declaring a query source.
+    """
     _, metas = _unwrap_annotated(param.annotation)
     for meta in metas:
-        if meta.query:
-            return meta.query
-        if meta.header or meta.cookie or getattr(meta, "param_type", None) in {ParamType.HEADER, ParamType.COOKIE}:
+        if meta.param_type in {ParamType.HEADER, ParamType.COOKIE}:
             _logger.debug(
-                "Provider param %r declares non-query source (header/cookie); wire name falls back to python name.",
+                "Param %r declares a non-query source (%s); skipping it for wire-name resolution.",
                 python_name,
+                meta.param_type,
             )
             continue
         if meta.name:

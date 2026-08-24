@@ -11,6 +11,22 @@ Recent Updates
 
 .. changelog:: 0.13.0
 
+    .. change:: resolve tool wire names from ``Parameter(name=...)``
+        :type: bugfix
+
+        A parameter whose wire alias came from ``QueryParameter(name=...)`` or
+        ``ParameterKwarg(name=...)`` was advertised and dispatched under its
+        python name, so Litestar never read it and the handler ran as if the
+        argument had never been sent. This made every ``advanced-alchemy``
+        filter provider silently inert over MCP. Wire names now resolve from
+        ``.name``, and header/cookie parameters are excluded from query
+        wire-name resolution.
+
+        Advertised names change for affected parameters (for example
+        ``category_name_in`` becomes ``categoryNameIn``). For compatibility,
+        the python name is still accepted at dispatch and rewritten to the
+        wire name, logging a warning; the wire name wins when both are sent.
+
     .. change:: configure MCP router options and discovery route ownership
         :type: feature
 

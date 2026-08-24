@@ -36,7 +36,7 @@ from litestar.types.empty import Empty
 from litestar.utils.sync import ensure_async_callable
 
 from litestar_mcp.content import MCPBlobResource, MCPInputRequiredResult, MCPResourceLink, MCPToolResult
-from litestar_mcp.utils.handler_signature import get_advertised_handler_parameters
+from litestar_mcp.utils.handler_signature import get_advertised_handler_parameters, resolve_tool_argument_aliases
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
@@ -724,22 +724,41 @@ def _split_tool_args(
 ) -> "tuple[dict[str, Any], dict[str, Any], bytes]":
     """Partition ``tool_args`` into (path_params, query_params, body_bytes).
 
-    Wire-name aliases (``Parameter(query=...)``) are kept verbatim in
+    Wire-name aliases (``Parameter(name=...)``) are kept verbatim in
     ``query_payload`` so Litestar's signature-model extractor can resolve
-    them against the declared ``Parameter(query=...)`` name. To decide
-    whether a key represents a scalar handler kwarg, the alias map is
-    consulted: a wire-name key counts as a scalar parameter when its
-    aliased python name appears in the advertised parameter list.
+    them against the declared parameter name. To decide whether a key
+    represents a scalar handler kwarg, the alias map is consulted: a
+    wire-name key counts as a scalar parameter when its aliased python name
+    appears in the advertised parameter list.
+
+    For compatibility, an aliased parameter also accepts its python name and
+    is rewritten to the wire name before dispatch. Clients written against a
+    schema that advertised the python name therefore keep working instead of
+    silently losing the argument. The wire name wins when both are supplied.
     """
     advertised_params = get_advertised_handler_parameters(handler, path_parameters=path_parameters)
-
-    wire_scalar_keys = {p.wire_name for p in advertised_params if p.python_name != "data"}
+    resolved_args, consumed, legacy_python_aliases = resolve_tool_argument_aliases(tool_args, advertised_params)
     has_data = "data" in handler.parsed_fn_signature.parameters
 
     path_values = {k: tool_args[k] for k in path_parameters if k in tool_args}
-    remaining = {k: v for k, v in tool_args.items() if k not in path_values}
+    consumed.update(path_values)
 
-    query_payload = {k: v for k, v in remaining.items() if k in wire_scalar_keys}
+    for key, wire_name in legacy_python_aliases.items():
+        _logger.warning(
+            "Tool argument %r is the python name of parameter advertised as %r; "
+            "accepting it for compatibility. Send %r instead.",
+            key,
+            wire_name,
+            wire_name,
+        )
+    query_payload: dict[str, Any] = {}
+    for wire_name, value in resolved_args.items():
+        if wire_name in path_parameters and wire_name not in path_values:
+            path_values[wire_name] = value
+        elif wire_name not in path_parameters:
+            query_payload[wire_name] = value
+
+    remaining = {k: v for k, v in tool_args.items() if k not in consumed}
 
     body_payload: Any = None
     body_supplied = False
@@ -748,7 +767,7 @@ def _split_tool_args(
             body_payload = remaining["data"]
             body_supplied = True
         else:
-            body_payload = {k: v for k, v in remaining.items() if k not in query_payload}
+            body_payload = {k: v for k, v in remaining.items() if k not in consumed}
             body_supplied = bool(body_payload)
 
     body = encode_json(body_payload, serializer=handler.default_serializer) if body_supplied else b""
