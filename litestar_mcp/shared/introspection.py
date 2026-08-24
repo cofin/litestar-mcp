@@ -232,19 +232,32 @@ def generate_schema_for_handler(handler: "BaseRouteHandler") -> dict[str, Any]:
         fn = handler
 
     advertised_params = get_advertised_handler_parameters(handler)
+    parsed_params = getattr(getattr(handler, "parsed_fn_signature", None), "parameters", None)
 
     properties: dict[str, Any] = {}
     required: list[str] = []
 
-    for param in advertised_params:
-        prop_schema = type_to_json_schema(param.annotation)
-        _, metas = _unwrap_annotated(param.annotation)
-        if param.default is not inspect.Parameter.empty and any(getattr(m, "const", False) for m in metas):
-            prop_schema["const"] = param.default
-        properties[param.wire_name] = prop_schema
+    if parsed_params is None or not parsed_params:
+        try:
+            sig = inspect.signature(fn)
+            for p_name, sig_param in sig.parameters.items():
+                if p_name in ("self", "cls", "request"):
+                    continue
+                properties[p_name] = type_to_json_schema(sig_param.annotation)
+                if sig_param.default is inspect.Parameter.empty:
+                    required.append(p_name)
+        except Exception:  # noqa: BLE001, S110
+            pass
+    else:
+        for param in advertised_params:
+            prop_schema = type_to_json_schema(param.annotation)
+            _, metas = _unwrap_annotated(param.annotation)
+            if param.default is not inspect.Parameter.empty and any(getattr(m, "const", False) for m in metas):
+                prop_schema["const"] = param.default
+            properties[param.wire_name] = prop_schema
 
-        if param.required:
-            required.append(param.wire_name)
+            if param.required:
+                required.append(param.wire_name)
 
     schema: dict[str, Any] = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",

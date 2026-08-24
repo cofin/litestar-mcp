@@ -1,5 +1,7 @@
 """Agent-to-Agent (A2A) protocol implementation for Litestar."""
 
+from litestar_mcp.a2a.manifest import build_agent_card
+from litestar_mcp.a2a.registry import A2ARegistry, SkillRegistration
 from litestar_mcp.a2a.types import (
     TERMINAL_A2A_STATES,
     AgentCapabilities,
@@ -24,6 +26,7 @@ from litestar_mcp.a2a.types import (
 
 __all__ = (
     "TERMINAL_A2A_STATES",
+    "A2ARegistry",
     "AgentCapabilities",
     "AgentCard",
     "AgentProvider",
@@ -35,6 +38,7 @@ __all__ = (
     "Part",
     "SecurityRequirement",
     "SecurityScheme",
+    "SkillRegistration",
     "Task",
     "TaskArtifactUpdateEvent",
     "TaskState",
@@ -42,4 +46,5 @@ __all__ = (
     "TaskStatusUpdateEvent",
     "TextPart",
     "ThoughtPart",
+    "build_agent_card",
 )
