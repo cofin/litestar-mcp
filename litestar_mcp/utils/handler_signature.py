@@ -171,17 +171,16 @@ def get_advertised_handler_parameters(
         di_params = set(handler.resolve_dependencies().keys())
 
     skipped_names = _ADVERTISED_RESERVED_KWARGS | di_params | set(_path_parameter_names(path_parameters))
-    aliases = parameter_aliases(handler)
-    python_to_wire = {python_name: wire_name for wire_name, python_name in aliases.items()}
+    handler_aliases = {python_name: wire_name for wire_name, python_name in parameter_aliases(handler).items()}
     fn = get_handler_function(handler)
     doc_descriptions = _parse_docstring_args(getattr(fn, "__doc__", None))
 
     advertised: list[AdvertisedHandlerParameter] = []
-    advertised_names: set[str] = set()
+    advertised_inputs: set[tuple[str, str]] = set()
     for name, definition in parsed_parameters.items():
         if name == "self" or name in skipped_names:
             continue
-        wire_name = python_to_wire.get(name, name)
+        wire_name = handler_aliases.get(name, name)
         description = doc_descriptions.get(name) or doc_descriptions.get(wire_name)
         advertised.append(
             AdvertisedHandlerParameter(
@@ -193,13 +192,13 @@ def get_advertised_handler_parameters(
                 description=description or None,
             )
         )
-        advertised_names.add(name)
+        advertised_inputs.add((name, wire_name))
 
     path_param_names = _path_parameter_names(path_parameters)
     for name, param in iter_dependency_input_parameters(handler, path_param_names=path_param_names):
-        if name in advertised_names:
+        wire_name = _wire_name_for(name, param)
+        if (name, wire_name) in advertised_inputs:
             continue
-        wire_name = python_to_wire.get(name, name)
         description = doc_descriptions.get(name) or doc_descriptions.get(wire_name)
         advertised.append(
             AdvertisedHandlerParameter(
@@ -211,7 +210,7 @@ def get_advertised_handler_parameters(
                 description=description or None,
             )
         )
-        advertised_names.add(name)
+        advertised_inputs.add((name, wire_name))
     return advertised
 
 
@@ -256,7 +255,7 @@ def iter_dependency_input_parameters(
     dishka_container = _handler_dishka_container(handler)
 
     visited: set[int] = set()
-    seen_names: set[str] = set()
+    seen_inputs: set[tuple[str, str]] = set()
     collected: list[tuple[str, inspect.Parameter]] = []
     queue: deque[Any] = deque(top_deps.values())
 
@@ -292,12 +291,15 @@ def iter_dependency_input_parameters(
                 dep_names=dep_names,
                 top_deps=top_deps,
                 queue=queue,
-                seen_names=seen_names,
             ):
                 continue
             param = _resolve_provider_parameter_annotation(pname, param, resolved_hints)
             if _dishka_can_resolve(dishka_container, param.annotation):
                 continue
+            input_identity = (pname, _wire_name_for(pname, param))
+            if input_identity in seen_inputs:
+                continue
+            seen_inputs.add(input_identity)
             collected.append((pname, param))
     return collected
 
@@ -454,7 +456,6 @@ def _should_collect_dependency_parameter(
     dep_names: "set[str]",
     top_deps: "dict[str, Any]",
     queue: "deque[Any]",
-    seen_names: "set[str]",
 ) -> "bool":
     if param.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}:
         return False
@@ -465,9 +466,6 @@ def _should_collect_dependency_parameter(
         if nested is not None:
             queue.append(nested)
         return False
-    if pname in seen_names:
-        return False
-    seen_names.add(pname)
     return True
 
 

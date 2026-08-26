@@ -368,7 +368,7 @@ validator = create_oidc_validator(
 
 ```bash
 # Clone the repository
-git clone https://github.com/litestar-org/litestar-mcp.git
+git clone https://github.com/cofin/litestar-mcp.git
 cd litestar-mcp
 
 # Install with development dependencies

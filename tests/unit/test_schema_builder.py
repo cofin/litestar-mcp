@@ -939,6 +939,40 @@ class TestDependencyProviderParameters:
         assert schema["properties"]["offset"] == {"type": "integer"}
         assert "required" not in schema  # both have defaults
 
+    @pytest.mark.parametrize("provider_package", ["advanced_alchemy", "sqlspec"])
+    def test_supported_filter_providers_preserve_wire_aliases(self, provider_package: "str") -> "None":
+        from litestar.params import Dependency
+
+        if provider_package == "advanced_alchemy":
+            from advanced_alchemy.extensions.litestar.providers import create_filter_dependencies as create_aa_filters
+
+            dependencies: dict[str, Any] = create_aa_filters(
+                {"created_at": True, "updated_at": True, "pagination_type": "limit_offset"}
+            )
+        else:
+            from sqlspec.extensions.litestar.providers import create_filter_dependencies as create_sqlspec_filters
+
+            dependencies = create_sqlspec_filters(
+                {"created_at": True, "updated_at": True, "pagination_type": "limit_offset"}
+            )
+
+        async def handler(
+            filters: "Annotated[list[Any], Dependency(skip_validation=True)]",
+        ) -> "list[Any]":
+            return filters
+
+        h = self._build_handler(handler, dependencies)
+        schema = generate_schema_for_handler(h)
+
+        assert set(schema["properties"]) == {
+            "createdBefore",
+            "createdAfter",
+            "updatedBefore",
+            "updatedAfter",
+            "currentPage",
+            "pageSize",
+        }
+
     def test_transitive_provider_params_appear_in_schema(self) -> "None":
         from litestar.di import Provide
         from litestar.params import Dependency

@@ -9,7 +9,7 @@ notes, and important protocol fixes.
 Recent Updates
 ==============
 
-.. changelog:: 0.13.0
+.. changelog:: 0.13.2
 
     .. change:: resolve tool wire names from ``Parameter(name=...)``
         :type: bugfix

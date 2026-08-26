@@ -394,9 +394,15 @@ class TestInputValidation:
 
         # Capture the executor logger directly: Litestar's logging config
         # stops records propagating to the root logger pytest's caplog uses.
-        records: list[logging.LogRecord] = []
-        handler = logging.Handler()
-        handler.emit = records.append  # type: ignore[method-assign]
+        class RecordHandler(logging.Handler):
+            def __init__(self) -> "None":
+                super().__init__()
+                self.records: list[logging.LogRecord] = []
+
+            def emit(self, record: "logging.LogRecord") -> "None":
+                self.records.append(record)
+
+        handler = RecordHandler()
         executor_logger = logging.getLogger("litestar_mcp.executor")
         executor_logger.addHandler(handler)
 
@@ -410,7 +416,7 @@ class TestInputValidation:
             executor_logger.removeHandler(handler)
 
         # The compatibility path is loud, not silent.
-        assert any("categoryNameIn" in record.getMessage() for record in records)
+        assert any("categoryNameIn" in record.getMessage() for record in handler.records)
 
     def test_wire_name_wins_when_both_spellings_are_supplied(self) -> "None":
         @get("/things", opt={"mcp_tool": "list_things"}, sync_to_thread=False)
