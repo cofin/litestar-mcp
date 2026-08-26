@@ -1,12 +1,15 @@
 name: "Pull Request Labeler"
 
 on:
-  pull_request:
+  # This workflow only labels PRs and must never check out or execute PR code.
+  # pull_request_target supplies the base-repository token needed for fork PRs.
+  pull_request_target:
 
 jobs:
   apply-labels:
     permissions:
       contents: read
+      issues: write
       pull-requests: write
       checks: write
       statuses: write
@@ -20,6 +23,7 @@ jobs:
     needs: apply-labels
     if: ${{ always() }}
     permissions:
+      issues: write
       pull-requests: write
     runs-on: ubuntu-latest
     steps:
