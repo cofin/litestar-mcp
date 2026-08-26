@@ -13,6 +13,8 @@ Recent Updates
 
     .. change:: resolve tool wire names from ``Parameter(name=...)``
         :type: bugfix
+        :pr: 93
+        :issue: 92
 
         A parameter whose wire alias came from ``QueryParameter(name=...)`` or
         ``ParameterKwarg(name=...)`` was advertised and dispatched under its
@@ -27,8 +29,35 @@ Recent Updates
         the python name is still accepted at dispatch and rewritten to the
         wire name, logging a warning; the wire name wins when both are sent.
 
+    .. change:: correct the contributor clone URL
+        :type: misc
+        :pr: 91
+
+        The README development instructions now clone the canonical
+        ``cofin/litestar-mcp`` repository.
+
+.. changelog:: 0.13.1
+    :date: 2026-08-24
+
+    .. change:: preserve native dispatch for controllers and request bodies
+        :type: bugfix
+        :pr: 94
+
+        MCP tools declared on controllers now resolve path parameters without
+        requiring route handlers to support weak references. Path metadata is
+        cached per application so separate Litestar applications remain
+        isolated.
+
+        Omitted request bodies now use the handler's declared default, while
+        explicit falsey JSON bodies such as ``null``, ``false``, ``0``, empty
+        strings, empty lists, and empty objects are passed through unchanged.
+
+.. changelog:: 0.13.0
+    :date: 2026-08-19
+
     .. change:: configure MCP router options and discovery route ownership
         :type: feature
+        :pr: 88
 
         Added ``MCPConfig.route_opt`` for mounted-router policies and separate
         controls for registering the OAuth protected-resource metadata and
