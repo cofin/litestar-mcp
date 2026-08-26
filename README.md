@@ -1,5 +1,3 @@
-
-
 # Litestar MCP Plugin
 
 A lightweight plugin that integrates Litestar web applications with the Model Context Protocol (MCP) by exposing marked routes as MCP tools, resources, and prompts over MCP Streamable HTTP and JSON-RPC.
