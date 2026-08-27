@@ -32,6 +32,13 @@ from litestar_mcp.core.schema import (
     type_to_json_schema,
     union_type_to_json_schema,
 )
+from litestar_mcp.core.serialization import (
+    SchemaSerializer,
+    get_collection_serializer,
+    reset_serializer_cache,
+    schema_dump,
+    serialize_collection,
+)
 from litestar_mcp.core.signature import (
     AdvertisedHandlerParameter,
     extract_advertised_handler_arguments,
@@ -89,6 +96,7 @@ __all__ = (
     "JSONRPCRequest",
     "JSONRPCRouter",
     "MethodHandler",
+    "SchemaSerializer",
     "StreamLimitExceeded",
     "StreamSubscription",
     "Struct",
@@ -103,6 +111,7 @@ __all__ = (
     "extract_advertised_handler_arguments",
     "generate_schema_for_handler",
     "get_advertised_handler_parameters",
+    "get_collection_serializer",
     "get_handler_function",
     "is_attrs_instance",
     "is_attrs_schema",
@@ -117,7 +126,10 @@ __all__ = (
     "parameter_aliases",
     "parse_request",
     "pydantic_to_json_schema",
+    "reset_serializer_cache",
     "resolve_tool_argument_aliases",
+    "schema_dump",
+    "serialize_collection",
     "type_to_json_schema",
     "union_type_to_json_schema",
 )

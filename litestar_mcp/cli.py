@@ -19,12 +19,12 @@ from litestar.serialization import decode_json
 from rich.console import Console
 from rich.json import JSON
 
-from litestar_mcp import bridge as bridge_transport
-from litestar_mcp.auth.backend import BEARER_TOKEN_PREFIX, DEFAULT_AUTH_HEADER_NAME
-from litestar_mcp.exceptions import MissingDependencyError
-from litestar_mcp.executor import NotCallableInCLIContextError, execute_tool
-from litestar_mcp.utils import get_handler_function, render_description
-from litestar_mcp.utils.handler_signature import iter_dependency_input_parameters
+from litestar_mcp.core.signature import get_handler_function, iter_dependency_input_parameters
+from litestar_mcp.mcp import bridge as bridge_transport
+from litestar_mcp.mcp.auth.backend import BEARER_TOKEN_PREFIX, DEFAULT_AUTH_HEADER_NAME
+from litestar_mcp.mcp.exceptions import MissingDependencyError
+from litestar_mcp.mcp.executor import NotCallableInCLIContextError, execute_tool
+from litestar_mcp.mcp.utils import render_description
 
 try:
     import rich_click as click
@@ -35,8 +35,8 @@ if TYPE_CHECKING:
     from litestar import Litestar
     from litestar.cli._utils import LitestarEnv
 
-    from litestar_mcp.bridge import TokenProvider
-    from litestar_mcp.plugin import LitestarMCP
+    from litestar_mcp.mcp.bridge import TokenProvider
+    from litestar_mcp.mcp.plugin import LitestarMCP
 
 
 def get_mcp_plugin(app: "Litestar") -> "LitestarMCP":
@@ -56,7 +56,7 @@ def get_mcp_plugin(app: "Litestar") -> "LitestarMCP":
     """
     from contextlib import suppress
 
-    from litestar_mcp.plugin import LitestarMCP
+    from litestar_mcp.mcp.plugin import LitestarMCP
 
     with suppress(KeyError):
         return app.plugins.get(LitestarMCP)

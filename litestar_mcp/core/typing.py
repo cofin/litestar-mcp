@@ -88,8 +88,8 @@ class StructStub:
 
 
 def convert_stub(
-    obj: Any,
-    type: Any,
+    _obj: Any,
+    _type: Any,
     *,
     strict: bool = True,
     from_attributes: bool = False,
@@ -98,6 +98,7 @@ def convert_stub(
     str_keys: bool = False,
 ) -> Any:
     """Placeholder converter."""
+    _ = (strict, from_attributes, dec_hook, builtin_types, str_keys)
     return {}
 
 
@@ -110,6 +111,7 @@ UNSET_STUB = UnsetTypeStub.UNSET
 Struct: Any
 UnsetType: Any
 UNSET: Any
+convert: Any
 try:
     from msgspec import UNSET as _REAL_UNSET
     from msgspec import Struct as _RealStruct
@@ -143,27 +145,27 @@ class AttrsInstanceStub:
         return f"{self.__class__.__name__}()"
 
 
-def attrs_asdict_stub(*args: Any, **kwargs: Any) -> dict[str, Any]:
+def attrs_asdict_stub(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
     """Placeholder dictionary conversion for attrs."""
     return {}
 
 
-def attrs_define_stub(*args: Any, **kwargs: Any) -> Any:
+def attrs_define_stub(*_args: Any, **_kwargs: Any) -> Any:
     """Placeholder class decorator for attrs."""
     return lambda cls: cls
 
 
-def attrs_field_stub(*args: Any, **kwargs: Any) -> Any:
+def attrs_field_stub(*_args: Any, **_kwargs: Any) -> Any:
     """Placeholder field definition for attrs."""
     return None
 
 
-def attrs_fields_stub(*args: Any, **kwargs: Any) -> tuple[Any, ...]:
+def attrs_fields_stub(*_args: Any, **_kwargs: Any) -> tuple[Any, ...]:
     """Placeholder fields accessor for attrs."""
     return ()
 
 
-def attrs_has_stub(*args: Any, **kwargs: Any) -> bool:
+def attrs_has_stub(*_args: Any, **_kwargs: Any) -> bool:
     """Placeholder type check for attrs."""
     return False
 
@@ -277,6 +279,7 @@ def is_schema_model(obj: Any) -> TypeGuard[Any]:
 def is_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
     """Check if a value is a dictionary."""
     return isinstance(obj, dict)
+
 
 
 __all__ = (

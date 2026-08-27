@@ -13,8 +13,8 @@ from litestar.middleware.authentication import (
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig
-from litestar_mcp.auth import MCPAuthBackend, MCPAuthConfig
-from litestar_mcp.utils import mcp_tool
+from litestar_mcp.mcp.auth import MCPAuthBackend, MCPAuthConfig
+from litestar_mcp.mcp.utils import mcp_tool
 from tests.integration._auth import (
     AUDIENCE,
     FORGED_TOKEN,

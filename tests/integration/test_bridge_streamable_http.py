@@ -19,8 +19,8 @@ from litestar import Litestar, get
 from litestar.middleware import DefineMiddleware
 
 from litestar_mcp import LitestarMCP, MCPConfig
-from litestar_mcp.auth import MCPAuthBackend
-from litestar_mcp.bridge import run_stdio_streamable_http_bridge
+from litestar_mcp.mcp.auth import MCPAuthBackend
+from litestar_mcp.mcp.bridge import run_stdio_streamable_http_bridge
 from tests.conftest import BridgeBytesSink, BridgeQueuedBytesSource
 from tests.integration._auth import (
     FORGED_TOKEN,

@@ -57,8 +57,7 @@ from docs.examples.notes.sqlspec.common import (
     note_row_to_public,
     provide_note_service,
 )
-from litestar_mcp import LitestarMCP, MCPConfig
-from litestar_mcp.auth import MCPAuthConfig
+from litestar_mcp import LitestarMCP, MCPAuthConfig, MCPConfig
 
 
 def create_app(

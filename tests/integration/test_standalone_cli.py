@@ -21,7 +21,7 @@ def test_mcp_run_cli_execution(tmp_path: "Path") -> "None":
         import os
         import signal
         import sys
-        from litestar_mcp.app import MCP
+        from litestar_mcp.mcp.app import MCP
 
         async def stop_server(app) -> None:
             async def _fn() -> None:

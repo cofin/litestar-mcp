@@ -13,7 +13,7 @@ import jwt
 from litestar.middleware import DefineMiddleware
 from litestar.security.jwt import OAuth2PasswordBearerAuth, Token
 
-from litestar_mcp.auth import MCPAuthBackend, MCPAuthConfig
+from litestar_mcp.mcp.auth import MCPAuthBackend, MCPAuthConfig
 
 if TYPE_CHECKING:
     from litestar.connection import ASGIConnection

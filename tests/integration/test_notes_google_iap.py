@@ -3,7 +3,7 @@
 The example validates the signed ``x-goog-iap-jwt-assertion`` header via
 Google's public JWKS. To keep the tests hermetic, we generate a throwaway
 ``ES256`` keypair, pre-seed the shared JWKS cache in
-:mod:`litestar_mcp.auth` with the public key, and mint tokens locally.
+:mod:`litestar_mcp.mcp.auth` with the public key, and mint tokens locally.
 No live Google metadata fetches are performed.
 """
 
@@ -22,7 +22,7 @@ from docs.examples.notes.sqlspec.google_iap import create_app
 from jwt.algorithms import ECAlgorithm
 from litestar.testing import TestClient
 
-from litestar_mcp.auth.oidc import get_default_cache
+from litestar_mcp.mcp.auth.oidc import get_default_cache
 from tests.integration.conftest import parse_tool_payload, rpc, rpc_response
 
 if TYPE_CHECKING:

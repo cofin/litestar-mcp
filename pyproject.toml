@@ -213,8 +213,9 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ['F401', 'D104']
-"litestar_mcp/core/*" = ["N818", "PLR0911", "PLR0913", "A002", "DOC201", "PLR6301", "PLR0917", "ARG004", "ARG002", "ARG001", "BLE001"]
+"litestar_mcp/core/*" = ["N818", "PLR0911"]
 "litestar_mcp/a2a/*" = ["BLE001"]
+"litestar_mcp/mcp/*" = ["N818", "PLR0911", "PLR0915", "C901", "BLE001", "TC001", "TC002", "TC003"]
 "docs/**/*.*" = ["S", "B", "DTZ", "A", "TC", "ERA", "D", "RET", "E731", "RUF012", "FA100", "ARG001"]
 "docs/examples/**/test_*.py" = ["PLR2004", "S101", "S105", "S106", "ARG001", "SLF001", "DOC"]
 "docs/conf.py" = ["FIX002", "ARG001", "INP001"]

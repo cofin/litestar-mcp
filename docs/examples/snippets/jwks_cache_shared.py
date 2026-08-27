@@ -1,8 +1,7 @@
 """Share one :class:`DefaultJWKSCache` across MCP validators."""
 
 # start-example
-from litestar_mcp import DefaultJWKSCache, create_oidc_validator
-from litestar_mcp.auth import OIDCProviderConfig
+from litestar_mcp import DefaultJWKSCache, OIDCProviderConfig, create_oidc_validator
 
 shared_cache = DefaultJWKSCache()
 
