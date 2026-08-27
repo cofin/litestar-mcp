@@ -14,8 +14,8 @@ from click.testing import CliRunner
 from litestar import Litestar
 from litestar.cli._utils import LitestarEnv
 
-from litestar_mcp import LitestarMCP, MCPConfig
-from litestar_mcp.cli import mcp_group
+from litestar_mcp import A2APlugin, LitestarMCP, MCPConfig
+from litestar_mcp.cli import a2a_group, mcp_group
 
 
 @pytest.fixture(scope="session")
@@ -236,3 +236,58 @@ def test_mcp_bridge_redirects_runtime_stdout_pollution(
     assert result.exit_code == 0
     assert result.stdout == '{"jsonrpc":"2.0","id":1,"result":{}}\n'
     assert "accidental app output" in result.stderr
+
+
+def test_a2a_group_help_command(cli_runner: CliRunner) -> None:
+    """Test a2a --help displays subcommands."""
+    result = cli_runner.invoke(a2a_group, ["--help"], obj=Mock(app=None))
+
+    assert result.exit_code == 0
+    assert "Manage A2A agents and skills" in result.output
+    assert "list-skills" in result.output
+    assert "card" in result.output
+
+
+def test_litestar_a2a_registers_a2a_group() -> None:
+    """Test A2APlugin registers a2a_group on CLI."""
+    plugin = A2APlugin()
+    cli = Group()
+
+    plugin.on_cli_init(cli)
+
+    with Context(cli) as ctx:
+        assert cli.get_command(ctx, "a2a") is a2a_group
+
+
+def test_a2a_list_skills_command(cli_runner: CliRunner) -> None:
+    """Test a2a list-skills prints discovered skills."""
+    from litestar import get
+
+    @get("/skills/add", opt={"a2a_skill": "add_tool", "a2a_description": "Add two numbers"})
+    def add_op(a: int, b: int) -> int:
+        return a + b
+
+    plugin = A2APlugin()
+    app = Litestar(route_handlers=[add_op], plugins=[plugin])
+    env = LitestarEnv(app_path="test:app", app=app, cwd=Path.cwd())
+
+    result = cli_runner.invoke(a2a_group, ["list-skills"], obj=env)
+    assert result.exit_code == 0
+    assert "add_tool" in result.output
+    assert "Add two numbers" in result.output
+
+
+def test_a2a_card_command(cli_runner: CliRunner) -> None:
+    """Test a2a card prints agent card table and JSON output."""
+    plugin = A2APlugin()
+    app = Litestar(route_handlers=[], plugins=[plugin])
+    env = LitestarEnv(app_path="test:app", app=app, cwd=Path.cwd())
+
+    result = cli_runner.invoke(a2a_group, ["card"], obj=env)
+    assert result.exit_code == 0
+    assert "Agent Card" in result.output
+    assert "A2A Agent" in result.output
+
+    json_result = cli_runner.invoke(a2a_group, ["card", "--json"], obj=env)
+    assert json_result.exit_code == 0
+    assert '"protocolVersion"' in json_result.output

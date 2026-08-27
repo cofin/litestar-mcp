@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 from litestar import MediaType, Request, Response, Router, get
 from litestar.di import Provide
 from litestar.handlers import BaseRouteHandler
-from litestar.plugins import InitPluginProtocol
+from litestar.plugins import CLIPlugin, InitPluginProtocol
 
 from litestar_mcp.a2a.config import A2AConfig
 from litestar_mcp.a2a.manifest import build_agent_card
@@ -19,12 +19,13 @@ from litestar_mcp.a2a.tasks import A2AMemoryTaskStore, A2ATaskStore
 from litestar_mcp.core.signature import get_handler_function
 
 if TYPE_CHECKING:
+    from click import Group
     from litestar.config.app import AppConfig
 
 _logger = logging.getLogger(__name__)
 
 
-class A2APlugin(InitPluginProtocol):
+class A2APlugin(InitPluginProtocol, CLIPlugin):
     """Litestar plugin for Agent-to-Agent (A2A) protocol integration."""
 
     def __init__(
@@ -83,6 +84,12 @@ class A2APlugin(InitPluginProtocol):
     def discovered_skills(self) -> dict[str, SkillRegistration]:
         """Dictionary of discovered skills by id."""
         return {s.id: s for s in self._registry.skills}
+
+    def on_cli_init(self, cli: "Group") -> None:
+        """Configure CLI commands for A2A operations."""
+        from litestar_mcp.cli.a2a import a2a_group
+
+        cli.add_command(a2a_group)
 
     def on_app_init(self, app_config: "AppConfig") -> "AppConfig":
         """Initialize A2A routes, dependencies, and discovery on application init."""
