@@ -21,19 +21,9 @@ Standalone Agent
 
 For standalone agent scripts and microservices, the ``Agent`` class provides an intuitive interface:
 
-.. code-block:: python
-
-    from litestar_mcp import Agent
-
-    agent = Agent(name="ResearchAgent", description="Conducts online research")
-
-    @agent.skill(name="summarize", description="Summarize a block of text")
-    def summarize(text: str) -> str:
-        """Summarize text content."""
-        return f"Summary: {text[:100]}..."
-
-    if __name__ == "__main__":
-        agent.run(host="127.0.0.1", port=8000)
+.. literalinclude:: /examples/snippets/a2a_agent_minimal.py
+    :language: python
+    :caption: ``docs/examples/snippets/a2a_agent_minimal.py``
 
 Access the underlying Litestar application at any time via ``agent.app``.
 
@@ -42,63 +32,27 @@ Using A2APlugin in Litestar
 
 For larger applications, mount ``A2APlugin`` directly on your Litestar app:
 
-.. code-block:: python
-
-    from litestar import Litestar, get
-    from litestar_mcp import A2AConfig, A2APlugin
-
-    @get("/skills/calc", opt={"a2a_skill": "calc", "a2a_description": "Perform calculation"})
-    def calc(a: int, b: int) -> dict[str, int]:
-        return {"result": a + b}
-
-    config = A2AConfig(
-        name="ComputeAgent",
-        version="1.0.0",
-        base_path="/a2a",
-    )
-
-    app = Litestar(
-        route_handlers=[calc],
-        plugins=[A2APlugin(config=config)],
-    )
+.. literalinclude:: /examples/snippets/a2a_plugin_example.py
+    :language: python
+    :caption: ``docs/examples/snippets/a2a_plugin_example.py``
 
 Task Execution Context
 ======================
 
 Skills can inject ``TaskContext`` to emit intermediate thoughts, report status transitions, or emit multi-part artifacts during execution:
 
-.. code-block:: python
-
-    from litestar import post
-    from litestar_mcp import TaskContext, Artifact, TextPart
-
-    @post("/skills/analyze", opt={"a2a_skill": "analyze"})
-    async def analyze_task(query: str, ctx: TaskContext) -> dict[str, str]:
-        await ctx.thought("Parsing query arguments...")
-        await ctx.report_status("working", message="Analysis in progress")
-        await ctx.emit_artifact(
-            Artifact(name="report.txt", parts=[TextPart(text="Initial findings")])
-        )
-        return {"status": "complete"}
+.. literalinclude:: /examples/snippets/a2a_task_context.py
+    :language: python
+    :caption: ``docs/examples/snippets/a2a_task_context.py``
 
 Multi-Protocol Coexistence
 ==========================
 
 You can mount both ``LitestarMCP`` and ``A2APlugin`` on the same Litestar instance. Setting ``auto_export_mcp_tools=True`` in ``A2AConfig`` automatically surfaces all registered MCP tools in the agent card and allows A2A clients to invoke them directly:
 
-.. code-block:: python
-
-    from litestar import Litestar, get
-    from litestar_mcp import A2AConfig, A2APlugin, LitestarMCP, MCPConfig
-
-    @get("/tools/multiply", mcp_tool="multiply", mcp_description="Multiply numbers")
-    def multiply(a: int, b: int) -> int:
-        return a * b
-
-    mcp = LitestarMCP(config=MCPConfig(base_path="/mcp"))
-    a2a = A2APlugin(config=A2AConfig(base_path="/a2a", auto_export_mcp_tools=True))
-
-    app = Litestar(route_handlers=[multiply], plugins=[mcp, a2a])
+.. literalinclude:: /examples/snippets/a2a_coexistence.py
+    :language: python
+    :caption: ``docs/examples/snippets/a2a_coexistence.py``
 
 CLI Commands
 ============

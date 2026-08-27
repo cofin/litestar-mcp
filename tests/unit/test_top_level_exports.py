@@ -114,9 +114,13 @@ def test_top_level_a2a_exports() -> None:
         Agent,
         AgentCard,
         Artifact,
+        DataPart,
+        FilePart,
         Message,
         Task,
         TaskContext,
+        TextPart,
+        ThoughtPart,
         a2a_skill,
         skill,
     )
@@ -131,6 +135,10 @@ def test_top_level_a2a_exports() -> None:
     assert TaskContext is not None
     assert a2a_skill is not None
     assert skill is not None
+    assert TextPart is not None
+    assert DataPart is not None
+    assert FilePart is not None
+    assert ThoughtPart is not None
 
 
 def test_version_exported() -> None:
