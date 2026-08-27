@@ -5,8 +5,7 @@ from typing import Any
 from litestar import Litestar
 from litestar.middleware import DefineMiddleware
 
-from litestar_mcp import LitestarMCP, MCPAuthBackend, MCPConfig
-from litestar_mcp import MCPAuthConfig
+from litestar_mcp import LitestarMCP, MCPAuthBackend, MCPAuthConfig, MCPConfig
 
 
 async def validate_token(token: "str") -> "dict[str, Any] | None":

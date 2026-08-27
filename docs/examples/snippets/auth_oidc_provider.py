@@ -3,8 +3,7 @@
 from litestar import Litestar
 from litestar.middleware import DefineMiddleware
 
-from litestar_mcp import LitestarMCP, MCPAuthBackend, MCPConfig, OIDCProviderConfig
-from litestar_mcp import MCPAuthConfig
+from litestar_mcp import LitestarMCP, MCPAuthBackend, MCPAuthConfig, MCPConfig, OIDCProviderConfig
 
 
 def build() -> "Litestar":

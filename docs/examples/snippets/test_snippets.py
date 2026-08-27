@@ -13,7 +13,12 @@ from litestar import Litestar
 import docs.examples.snippets as snippets_pkg
 
 CLIENT_ONLY_SNIPPET_MODULES = {"adk_snippets"}
-NON_APP_SNIPPET_MODULES = CLIENT_ONLY_SNIPPET_MODULES | {"jwks_cache_shared"}
+NON_APP_SNIPPET_MODULES = CLIENT_ONLY_SNIPPET_MODULES | {
+    "jwks_cache_shared",
+    "configuration_stateless",
+    "tool_explicit_input_schema",
+    "tool_task_input_before_start",
+}
 
 SNIPPET_MODULES = [
     name
@@ -32,8 +37,10 @@ def test_snippet_build_returns_litestar(module_name: "str") -> "None":
         app = mod.app
     elif hasattr(mod, "mcp"):
         app = mod.mcp.app
+    elif hasattr(mod, "agent"):
+        app = mod.agent.app
     else:
-        pytest.fail(f"{module_name} has neither build(), app, nor mcp variable")
+        pytest.fail(f"{module_name} has neither build(), app, mcp, nor agent variable")
     assert isinstance(app, Litestar)
 
 
