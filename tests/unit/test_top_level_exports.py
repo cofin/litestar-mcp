@@ -109,6 +109,8 @@ def test_top_level_core_exports() -> None:
 def test_top_level_a2a_exports() -> None:
     """Verify primary A2A symbols are directly importable from litestar_mcp."""
     from litestar_mcp import (
+        A2AConfig,
+        A2APlugin,
         AgentCard,
         Artifact,
         Message,
@@ -116,6 +118,8 @@ def test_top_level_a2a_exports() -> None:
         TaskContext,
     )
 
+    assert A2AConfig is not None
+    assert A2APlugin is not None
     assert AgentCard is not None
     assert Task is not None
     assert Message is not None

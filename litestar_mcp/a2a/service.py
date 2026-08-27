@@ -11,7 +11,7 @@ from litestar.serialization import decode_json, encode_json
 from litestar_mcp.a2a.context import TaskContext
 from litestar_mcp.a2a.registry import A2ARegistry
 from litestar_mcp.a2a.streaming import A2ASubscriptionManager, format_a2a_sse_event
-from litestar_mcp.a2a.tasks import A2ATaskStore, TaskLookupError
+from litestar_mcp.a2a.tasks import A2AMemoryTaskStore, A2ATaskStore, TaskLookupError
 from litestar_mcp.a2a.types import (
     Artifact,
     DataPart,
@@ -86,14 +86,14 @@ class A2AHandlerService:
 
     def __init__(
         self,
-        app: "Litestar",
-        registry: A2ARegistry,
-        task_store: A2ATaskStore,
+        app: "Litestar | None" = None,
+        registry: A2ARegistry | None = None,
+        task_store: A2ATaskStore | None = None,
         subscription_manager: A2ASubscriptionManager | None = None,
     ) -> None:
         self.app = app
-        self.registry = registry
-        self.task_store = task_store
+        self.registry = registry or A2ARegistry()
+        self.task_store = task_store or A2AMemoryTaskStore()
         self.subscription_manager = subscription_manager or A2ASubscriptionManager()
         self.router = JSONRPCRouter()
         self._register_routes()
@@ -172,10 +172,10 @@ class A2AHandlerService:
 
     async def stream_tasks_send_subscribe(
         self,
-        request: JSONRPCRequest,
+        request: JSONRPCRequest | dict[str, Any],
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Stream task execution status and artifact updates via SSE."""
-        params = request.params
+        params = request.params if isinstance(request, JSONRPCRequest) else (request.get("params") if "params" in request else request)
         if not isinstance(params, dict):
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Params must be a dictionary"))
 

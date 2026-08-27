@@ -195,7 +195,12 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         if self._config.register_oauth_protected_resource:
             app_config.route_handlers.append(oauth_protected_resource)
         if self._config.register_agent_card:
-            app_config.route_handlers.append(agent_card)
+            already_has_card = any(
+                isinstance(h, BaseRouteHandler) and "/.well-known/agent-card.json" in getattr(h, "paths", set())
+                for h in app_config.route_handlers
+            )
+            if not already_has_card:
+                app_config.route_handlers.append(agent_card)
         return app_config
 
     def on_startup(self, app: "Litestar") -> "None":

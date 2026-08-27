@@ -6,12 +6,14 @@ protocol support and protocol-agnostic primitives.
 """
 
 from litestar_mcp.__metadata__ import __version__
-from litestar_mcp.a2a.context import TaskContext
-from litestar_mcp.a2a.types import (
+from litestar_mcp.a2a import (
+    A2AConfig,
+    A2APlugin,
     AgentCard,
     Artifact,
     Message,
     Task,
+    TaskContext,
 )
 from litestar_mcp.core.jsonrpc import (
     JSONRPCError,
@@ -66,6 +68,8 @@ from litestar_mcp.mcp import (
 
 __all__ = (
     "MCP",
+    "A2AConfig",
+    "A2APlugin",
     "AfterToolCallHook",
     "AgentCard",
     "Artifact",

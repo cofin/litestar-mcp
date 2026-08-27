@@ -39,8 +39,9 @@ def build_agent_card(
         mcp_registry = getattr(getattr(app, "state", None), "mcp_registry", None)
         if mcp_registry is None and hasattr(app, "plugins"):
             for plugin in app.plugins:
-                if hasattr(plugin, "_registry"):
-                    mcp_registry = getattr(plugin, "_registry", None)
+                reg = getattr(plugin, "_registry", None)
+                if reg is not None and hasattr(reg, "tools"):
+                    mcp_registry = reg
                     break
 
         if mcp_registry is not None and hasattr(mcp_registry, "tools"):
