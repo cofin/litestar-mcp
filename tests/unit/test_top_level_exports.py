@@ -111,20 +111,26 @@ def test_top_level_a2a_exports() -> None:
     from litestar_mcp import (
         A2AConfig,
         A2APlugin,
+        Agent,
         AgentCard,
         Artifact,
         Message,
         Task,
         TaskContext,
+        a2a_skill,
+        skill,
     )
 
     assert A2AConfig is not None
     assert A2APlugin is not None
+    assert Agent is not None
     assert AgentCard is not None
     assert Task is not None
     assert Message is not None
     assert Artifact is not None
     assert TaskContext is not None
+    assert a2a_skill is not None
+    assert skill is not None
 
 
 def test_version_exported() -> None:

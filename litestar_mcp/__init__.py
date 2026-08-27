@@ -9,11 +9,14 @@ from litestar_mcp.__metadata__ import __version__
 from litestar_mcp.a2a import (
     A2AConfig,
     A2APlugin,
+    Agent,
     AgentCard,
     Artifact,
     Message,
     Task,
     TaskContext,
+    a2a_skill,
+    skill,
 )
 from litestar_mcp.core.jsonrpc import (
     JSONRPCError,
@@ -71,6 +74,7 @@ __all__ = (
     "A2AConfig",
     "A2APlugin",
     "AfterToolCallHook",
+    "Agent",
     "AgentCard",
     "Artifact",
     "BeforeToolCallHook",
@@ -109,6 +113,7 @@ __all__ = (
     "TaskContext",
     "TokenValidator",
     "__version__",
+    "a2a_skill",
     "bridge",
     "create_oidc_validator",
     "get_handler_function",
@@ -120,5 +125,6 @@ __all__ = (
     "prompt",
     "resource",
     "run_stdio_streamable_http_bridge",
+    "skill",
     "tool",
 )

@@ -1,5 +1,6 @@
 """Agent-to-Agent (A2A) protocol implementation for Litestar."""
 
+from litestar_mcp.a2a.agent import Agent, a2a_skill, skill
 from litestar_mcp.a2a.config import A2AConfig, A2AOptKeys
 from litestar_mcp.a2a.context import TaskContext
 from litestar_mcp.a2a.manifest import build_agent_card
@@ -42,6 +43,7 @@ __all__ = (
     "A2ARegistry",
     "A2ASubscriptionManager",
     "A2ATaskStore",
+    "Agent",
     "AgentCapabilities",
     "AgentCard",
     "AgentProvider",
@@ -62,6 +64,8 @@ __all__ = (
     "TaskStatusUpdateEvent",
     "TextPart",
     "ThoughtPart",
+    "a2a_skill",
     "build_agent_card",
     "format_a2a_sse_event",
+    "skill",
 )
