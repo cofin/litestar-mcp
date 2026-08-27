@@ -11,7 +11,7 @@ from litestar.serialization import decode_json, encode_json
 from litestar_mcp.a2a.context import TaskContext
 from litestar_mcp.a2a.registry import A2ARegistry
 from litestar_mcp.a2a.streaming import A2ASubscriptionManager, format_a2a_sse_event
-from litestar_mcp.a2a.tasks import A2ATaskStore
+from litestar_mcp.a2a.tasks import A2ATaskStore, TaskLookupError
 from litestar_mcp.a2a.types import (
     Artifact,
     DataPart,
@@ -21,7 +21,7 @@ from litestar_mcp.a2a.types import (
     TaskStatusUpdateEvent,
     TextPart,
 )
-from litestar_mcp.shared.jsonrpc import (
+from litestar_mcp.core import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
     METHOD_NOT_FOUND,
@@ -30,7 +30,6 @@ from litestar_mcp.shared.jsonrpc import (
     JSONRPCRequest,
     JSONRPCRouter,
 )
-from litestar_mcp.shared.tasks import TaskLookupError
 
 if TYPE_CHECKING:
     from litestar import Litestar
@@ -213,7 +212,6 @@ class A2AHandlerService:
         )
         kwargs = _extract_arguments_from_message(params.get("message"))
 
-        # Emit initial status
         initial_event = TaskStatusUpdateEvent(
             task_id=task_id,
             status=TaskStatus(state="working", message="Started skill execution"),
@@ -231,7 +229,7 @@ class A2AHandlerService:
                     final=True,
                 )
                 await queue.put(format_a2a_sse_event(final_event))
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 err_event = TaskStatusUpdateEvent(
                     task_id=task_id,
                     status=TaskStatus(state="failed", message=str(exc)),

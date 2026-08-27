@@ -11,7 +11,7 @@ from litestar_mcp.a2a.types import (
     SecurityRequirement,
     SecurityScheme,
 )
-from litestar_mcp.shared.introspection import generate_schema_for_handler
+from litestar_mcp.core import generate_schema_for_handler
 
 if TYPE_CHECKING:
     from litestar import Litestar
@@ -35,7 +35,6 @@ def build_agent_card(
     """Dynamically construct an AgentCard metadata structure."""
     skills: list[AgentSkill] = [reg.to_agent_skill() for reg in registry.skills]
 
-    # Optionally merge tools from LitestarMCP plugin or app.state.mcp_registry
     if auto_export_mcp_tools:
         mcp_registry = getattr(getattr(app, "state", None), "mcp_registry", None)
         if mcp_registry is None and hasattr(app, "plugins"):

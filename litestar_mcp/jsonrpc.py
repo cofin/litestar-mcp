@@ -1,6 +1,6 @@
-"""JSON-RPC 2.0 message routing for MCP (re-exported from litestar_mcp.shared.jsonrpc)."""
+"""JSON-RPC 2.0 message routing for MCP (re-exported from litestar_mcp.core.jsonrpc)."""
 
-from litestar_mcp.shared.jsonrpc import (
+from litestar_mcp.core.jsonrpc import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
     INVALID_REQUEST,

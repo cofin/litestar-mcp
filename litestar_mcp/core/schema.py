@@ -1,5 +1,4 @@
-# ruff: noqa: PLR0911
-"""Parameter signature introspection and JSON Schema (Draft 2020-12) generation."""
+"""Automatic JSON Schema (Draft 2020-12) generation from Python signatures and models."""
 
 import inspect
 import logging
@@ -8,22 +7,24 @@ from types import UnionType
 from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
 
 import msgspec
+from litestar.handlers import BaseRouteHandler
 
-from litestar_mcp.typing import (
+from litestar_mcp.core.signature import (
+    _unwrap_annotated,
+    get_advertised_handler_parameters,
+    get_handler_function,
+)
+from litestar_mcp.core.typing import (
     attrs_fields,
     is_attrs_instance,
     is_dataclass,
     is_msgspec_struct,
     is_pydantic_model,
 )
-from litestar_mcp.utils import get_handler_function
-from litestar_mcp.utils.handler_signature import (
-    _unwrap_annotated,
-    get_advertised_handler_parameters,
-)
 
 if TYPE_CHECKING:
-    from litestar.handlers import BaseRouteHandler
+    from collections.abc import Callable
+
     from litestar.params import ParameterKwarg
 
 _logger = logging.getLogger(__name__)
@@ -71,14 +72,14 @@ def pydantic_to_json_schema(model: Any) -> dict[str, Any]:
 
 
 def msgspec_to_json_schema(struct_type: Any) -> dict[str, Any]:
-    """Generate JSON Schema 2020-12 for a msgspec.Struct via msgspec's built-in."""
+    """Generate JSON Schema 2020-12 for a msgspec.Struct via msgspec built-in."""
     return msgspec.json.schema(struct_type)
 
 
 def dataclass_to_json_schema(dataclass_type: Any) -> dict[str, Any]:
     """Convert dataclass to JSON Schema format."""
-    properties = {}
-    required = []
+    properties: dict[str, Any] = {}
+    required: list[str] = []
 
     for field in fields(dataclass_type):
         field_schema = type_to_json_schema(field.type)
@@ -86,7 +87,7 @@ def dataclass_to_json_schema(dataclass_type: Any) -> dict[str, Any]:
         if field.default is MISSING and field.default_factory is MISSING:
             required.append(field.name)
 
-    schema = {"type": "object", "properties": properties}
+    schema: dict[str, Any] = {"type": "object", "properties": properties}
     if required:
         schema["required"] = required
     return schema
@@ -94,8 +95,8 @@ def dataclass_to_json_schema(dataclass_type: Any) -> dict[str, Any]:
 
 def attrs_to_json_schema(attrs_type: Any) -> dict[str, Any]:
     """Convert attrs class to JSON Schema format."""
-    properties = {}
-    required = []
+    properties: dict[str, Any] = {}
+    required: list[str] = []
 
     for field in attrs_fields(attrs_type):
         field_schema = type_to_json_schema(field.type)
@@ -103,7 +104,7 @@ def attrs_to_json_schema(attrs_type: Any) -> dict[str, Any]:
         if field.default is inspect.Parameter.empty:
             required.append(field.name)
 
-    schema = {"type": "object", "properties": properties}
+    schema: dict[str, Any] = {"type": "object", "properties": properties}
     if required:
         schema["required"] = required
     return schema
@@ -224,14 +225,13 @@ def type_to_json_schema(annotation: Any) -> dict[str, Any]:
     }
 
 
-def generate_schema_for_handler(handler: "BaseRouteHandler") -> dict[str, Any]:
+def generate_schema_for_handler(handler: "BaseRouteHandler | Callable[..., Any]") -> dict[str, Any]:
     """Generate a JSON Schema for a route handler's input parameters."""
-    try:
-        fn = get_handler_function(handler)
-    except AttributeError:
-        fn = handler
+    fn = get_handler_function(handler)
 
-    advertised_params = get_advertised_handler_parameters(handler)
+    advertised_params = (
+        get_advertised_handler_parameters(handler) if isinstance(handler, BaseRouteHandler) else []
+    )
     parsed_params = getattr(getattr(handler, "parsed_fn_signature", None), "parameters", None)
 
     properties: dict[str, Any] = {}
@@ -246,8 +246,8 @@ def generate_schema_for_handler(handler: "BaseRouteHandler") -> dict[str, Any]:
                 properties[p_name] = type_to_json_schema(sig_param.annotation)
                 if sig_param.default is inspect.Parameter.empty:
                     required.append(p_name)
-        except Exception:  # noqa: BLE001, S110
-            pass
+        except (ValueError, TypeError) as exc:
+            _logger.debug("Failed to inspect signature for %r: %s", fn, exc)
     else:
         for param in advertised_params:
             prop_schema = type_to_json_schema(param.annotation)
@@ -277,3 +277,17 @@ def generate_schema_for_handler(handler: "BaseRouteHandler") -> dict[str, Any]:
         schema["description"] = "Input parameters for " + str(fn_name)
 
     return schema
+
+
+__all__ = (
+    "attrs_to_json_schema",
+    "basic_type_to_json_schema",
+    "collection_type_to_json_schema",
+    "dataclass_to_json_schema",
+    "generate_schema_for_handler",
+    "model_to_json_schema",
+    "msgspec_to_json_schema",
+    "pydantic_to_json_schema",
+    "type_to_json_schema",
+    "union_type_to_json_schema",
+)

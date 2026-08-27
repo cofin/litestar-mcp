@@ -11,7 +11,7 @@ from litestar_mcp.a2a.types import (
     TaskArtifactUpdateEvent,
     TaskStatusUpdateEvent,
 )
-from litestar_mcp.shared.sse import BaseSubscriptionManager
+from litestar_mcp.core import BaseSubscriptionManager
 
 
 def format_a2a_sse_event(event: TaskStatusUpdateEvent | TaskArtifactUpdateEvent) -> dict[str, Any]:

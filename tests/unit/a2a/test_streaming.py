@@ -18,7 +18,7 @@ from litestar_mcp.a2a.types import (
     TaskStatusUpdateEvent,
     TextPart,
 )
-from litestar_mcp.shared.jsonrpc import JSONRPCRequest
+from litestar_mcp.core import JSONRPCRequest
 
 
 def test_format_a2a_sse_event() -> None:

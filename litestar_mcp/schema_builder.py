@@ -4,7 +4,7 @@ import logging
 import re
 from typing import Any
 
-from litestar_mcp.shared.introspection import (
+from litestar_mcp.core.schema import (
     _merge_parameter_meta,
     _resolve_string_annotation,
     attrs_to_json_schema,

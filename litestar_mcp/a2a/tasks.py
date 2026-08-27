@@ -12,7 +12,10 @@ from litestar_mcp.a2a.types import (
     TaskState,
     TaskStatus,
 )
-from litestar_mcp.shared.tasks import TaskLookupError
+
+
+class TaskLookupError(Exception):
+    """Raised when a task ID cannot be found in the store."""
 
 
 class A2ATaskStore:

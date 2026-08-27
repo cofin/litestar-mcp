@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from litestar.serialization import decode_json
 
-from litestar_mcp.shared.sse import StreamLimitExceeded
+from litestar_mcp.core.sse import StreamLimitExceeded
 
 __all__ = ("StreamLimitExceeded", "SubscriptionManager")
 

@@ -6,11 +6,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from litestar_mcp.a2a.types import AgentSkill
-from litestar_mcp.shared.introspection import (
+from litestar_mcp.core import (
     generate_schema_for_handler,
     type_to_json_schema,
 )
-from litestar_mcp.utils.handler_signature import _parse_docstring_args
+from litestar_mcp.core.signature import _parse_docstring_args
 
 if TYPE_CHECKING:
     from litestar.types import Guard
@@ -56,9 +56,8 @@ class SkillRegistration:
         in_schema = self.input_schema
         if in_schema is None:
             if hasattr(fn, "create_kwargs_model") or hasattr(fn, "parsed_fn_signature"):
-                in_schema = generate_schema_for_handler(fn)  # type: ignore[arg-type]
+                in_schema = generate_schema_for_handler(fn)
             else:
-                # Introspect plain python callable
                 sig = inspect.signature(unwrapped)
                 param_docs = _parse_docstring_args(doc)
                 properties: dict[str, Any] = {}

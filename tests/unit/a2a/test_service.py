@@ -8,7 +8,7 @@ from litestar_mcp.a2a.registry import A2ARegistry, SkillRegistration
 from litestar_mcp.a2a.service import A2AHandlerService
 from litestar_mcp.a2a.tasks import A2AMemoryTaskStore, A2ATaskStore
 from litestar_mcp.a2a.types import Artifact, Task, TextPart
-from litestar_mcp.shared.jsonrpc import JSONRPCRequest
+from litestar_mcp.core import JSONRPCRequest
 
 
 @pytest.fixture

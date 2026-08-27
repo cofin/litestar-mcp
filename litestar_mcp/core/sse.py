@@ -9,7 +9,7 @@ from uuid import uuid4
 _CLOSED = object()
 
 
-class StreamLimitExceeded(Exception):  # noqa: N818
+class StreamLimitExceeded(Exception):
     """Raised when the configured subscription stream cap is reached."""
 
 
@@ -60,7 +60,8 @@ class BaseSubscriptionManager:
                     message = await sub.queue.get()
                     if message is _CLOSED:
                         return
-                    yield message  # type: ignore[misc]
+                    if isinstance(message, dict):
+                        yield message
             finally:
                 await self.disconnect(stream_id)
 
@@ -84,3 +85,10 @@ class BaseSubscriptionManager:
             self._streams.clear()
         for sub in subs:
             sub.queue.put_nowait(_CLOSED)
+
+
+__all__ = (
+    "BaseSubscriptionManager",
+    "StreamLimitExceeded",
+    "StreamSubscription",
+)
