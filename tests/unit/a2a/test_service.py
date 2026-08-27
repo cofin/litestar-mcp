@@ -188,4 +188,3 @@ async def test_extract_arguments_and_fallback(task_store: A2ATaskStore) -> None:
     resp = await service.dispatch_request(req)
     assert resp is not None
     assert resp["result"]["artifacts"][0]["parts"][0]["text"] == "Hi Alice"
-

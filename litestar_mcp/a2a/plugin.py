@@ -191,5 +191,6 @@ class A2APlugin(InitPluginProtocol, CLIPlugin):
                             tags=tags if isinstance(tags, list) else [str(tags)],
                         )
                     )
-            if getattr(handler, "route_handlers", None):
-                self._discover_skills(handler.route_handlers)
+            nested_handlers = getattr(handler, "route_handlers", None)
+            if nested_handlers is not None and isinstance(nested_handlers, list):
+                self._discover_skills(nested_handlers)

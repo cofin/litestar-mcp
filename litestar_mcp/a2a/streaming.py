@@ -63,8 +63,8 @@ class A2ASubscriptionManager(BaseSubscriptionManager):
         for dead_id in dead_ids:
             sub_ids.discard(dead_id)
 
-    async def disconnect(self, subscription_id: str) -> None:
+    async def disconnect(self, stream_id: str) -> None:
         """Disconnect and clean up task subscription index."""
-        await super().disconnect(subscription_id)
+        await super().disconnect(stream_id)
         for sub_ids in self._task_subscriptions.values():
-            sub_ids.discard(subscription_id)
+            sub_ids.discard(stream_id)

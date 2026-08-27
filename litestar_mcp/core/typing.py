@@ -281,7 +281,6 @@ def is_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
     return isinstance(obj, dict)
 
 
-
 __all__ = (
     "ATTRS_INSTALLED",
     "DISHKA_INSTALLED",

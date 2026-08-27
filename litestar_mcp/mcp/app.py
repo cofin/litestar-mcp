@@ -722,9 +722,7 @@ class MCP:
             with contextlib.suppress(asyncio.CancelledError):
                 await app_task
 
-    async def _stdio_loop(
-        self, *, stdio_context: "MCPStdioContext | None" = None
-    ) -> "None":
+    async def _stdio_loop(self, *, stdio_context: "MCPStdioContext | None" = None) -> "None":
         """Run the stdin/stdout read/write loop."""
         logger = logging.getLogger(__name__)
         loop = asyncio.get_running_loop()

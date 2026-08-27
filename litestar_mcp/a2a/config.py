@@ -35,9 +35,7 @@ class A2AConfig:
     include_in_schema: bool = True
     register_agent_card: bool = True
     auto_export_mcp_tools: bool = False
-    capabilities: AgentCapabilities = field(
-        default_factory=lambda: AgentCapabilities(streaming=True, stateful=True)
-    )
+    capabilities: AgentCapabilities = field(default_factory=lambda: AgentCapabilities(streaming=True, stateful=True))
     provider: AgentProvider | None = None
     security_schemes: dict[str, SecurityScheme] = field(default_factory=dict)
     security: list[SecurityRequirement] = field(default_factory=list)

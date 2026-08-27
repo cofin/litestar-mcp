@@ -229,9 +229,7 @@ def generate_schema_for_handler(handler: "BaseRouteHandler | Callable[..., Any]"
     """Generate a JSON Schema for a route handler's input parameters."""
     fn = get_handler_function(handler)
 
-    advertised_params = (
-        get_advertised_handler_parameters(handler) if isinstance(handler, BaseRouteHandler) else []
-    )
+    advertised_params = get_advertised_handler_parameters(handler) if isinstance(handler, BaseRouteHandler) else []
     parsed_params = getattr(getattr(handler, "parsed_fn_signature", None), "parameters", None)
 
     properties: dict[str, Any] = {}

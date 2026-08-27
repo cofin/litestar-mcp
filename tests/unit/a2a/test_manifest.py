@@ -85,6 +85,7 @@ def test_build_agent_card() -> None:
 
 def test_build_agent_card_auto_export_mcp_tools() -> None:
     """Test opt-in auto-export of MCP tools as A2A skills."""
+
     @get("/search", opt={"mcp_tool": "search_warehouse"})
     def tool_fn(search_term: str) -> str:
         """Search items in warehouse.

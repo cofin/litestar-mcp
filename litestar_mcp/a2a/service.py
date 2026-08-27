@@ -209,7 +209,11 @@ class A2AHandlerService:
         request: JSONRPCRequest | dict[str, Any],
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Stream task execution status and artifact updates via SSE."""
-        params = request.params if isinstance(request, JSONRPCRequest) else (request.get("params") if "params" in request else request)
+        params = (
+            request.params
+            if isinstance(request, JSONRPCRequest)
+            else (request.get("params") if "params" in request else request)
+        )
         if not isinstance(params, dict):
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Params must be a dictionary"))
 
@@ -298,7 +302,9 @@ class A2AHandlerService:
             task = await self.task_store.get_task(task_id)
             return cast("dict[str, Any]", decode_json(encode_json(task)))
         except TaskLookupError as exc:
-            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=f"Task {task_id!r} not found")) from exc
+            raise JSONRPCErrorException(
+                JSONRPCError(code=INVALID_PARAMS, message=f"Task {task_id!r} not found")
+            ) from exc
 
     async def handle_tasks_cancel(self, params: dict[str, Any], context: Any) -> dict[str, Any]:
         """Handle tasks/cancel command."""
@@ -313,4 +319,6 @@ class A2AHandlerService:
             updated_task = await self.task_store.update_task_status(task_id, "canceled", message="Canceled by client")
             return cast("dict[str, Any]", decode_json(encode_json(updated_task)))
         except TaskLookupError as exc:
-            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=f"Task {task_id!r} not found")) from exc
+            raise JSONRPCErrorException(
+                JSONRPCError(code=INVALID_PARAMS, message=f"Task {task_id!r} not found")
+            ) from exc
