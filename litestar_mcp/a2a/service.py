@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 from litestar.serialization import decode_json, encode_json
 
 from litestar_mcp.a2a.context import TaskContext
-from litestar_mcp.a2a.registry import A2ARegistry
+from litestar_mcp.a2a.registry import A2ARegistry, SkillRegistration
 from litestar_mcp.a2a.streaming import A2ASubscriptionManager, format_a2a_sse_event
 from litestar_mcp.a2a.tasks import A2AMemoryTaskStore, A2ATaskStore, TaskLookupError
 from litestar_mcp.a2a.types import (
@@ -50,6 +50,9 @@ def _extract_arguments_from_message(raw_msg: Any) -> dict[str, Any]:
             elif p_type == "text" and "text" in part:
                 kwargs.setdefault("query", part["text"])
                 kwargs.setdefault("input", part["text"])
+                kwargs.setdefault("message", part["text"])
+                kwargs.setdefault("prompt", part["text"])
+                kwargs.setdefault("text", part["text"])
     return kwargs
 
 
@@ -125,10 +128,41 @@ class A2AHandlerService:
                 call_kwargs[param_name] = task_ctx
             elif param_name in kwargs:
                 call_kwargs[param_name] = kwargs[param_name]
+            elif "query" in kwargs and param.default is inspect.Parameter.empty:
+                call_kwargs[param_name] = kwargs["query"]
 
         if inspect.iscoroutinefunction(unwrapped):
             return await unwrapped(**call_kwargs)
         return unwrapped(**call_kwargs)
+
+    def _resolve_skill(self, skill_id: str) -> SkillRegistration | None:
+        """Resolve a skill registration from local registry or parent app MCP registry."""
+        skill_reg = self.registry.get(skill_id)
+        if skill_reg is not None:
+            return skill_reg
+
+        if self.app is not None:
+            for p in self.app.plugins:
+                reg = getattr(p, "_registry", None)
+                if reg is not None and hasattr(reg, "tools"):
+                    tool = reg.tools.get(skill_id)
+                    if tool is not None:
+                        from litestar_mcp.core.signature import get_handler_function
+
+                        fn = get_handler_function(tool)
+                        desc = (
+                            tool.opt.get("mcp_description")
+                            if hasattr(tool, "opt") and tool.opt
+                            else getattr(tool, "description", None)
+                        )
+                        return SkillRegistration(
+                            fn=fn,
+                            id=skill_id,
+                            name=skill_id,
+                            description=desc,
+                            tags=["mcp-tool"],
+                        )
+        return None
 
     async def handle_tasks_send(self, params: dict[str, Any], context: Any) -> dict[str, Any]:
         """Handle tasks/send invocation."""
@@ -139,7 +173,7 @@ class A2AHandlerService:
         if not skill_id or not isinstance(skill_id, str):
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required 'skill' parameter"))
 
-        skill_reg = self.registry.get(skill_id)
+        skill_reg = self._resolve_skill(skill_id)
         if skill_reg is None:
             raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message=f"Skill {skill_id!r} not found"))
 
@@ -183,7 +217,7 @@ class A2AHandlerService:
         if not skill_id or not isinstance(skill_id, str):
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required 'skill' parameter"))
 
-        skill_reg = self.registry.get(skill_id)
+        skill_reg = self._resolve_skill(skill_id)
         if skill_reg is None:
             raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message=f"Skill {skill_id!r} not found"))
 

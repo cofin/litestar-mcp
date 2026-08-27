@@ -62,6 +62,8 @@ class A2AController(Controller):
     ) -> Response[Any]:
         """Validate and dispatch incoming A2A JSON-RPC requests."""
         _ = (config, registry, task_store)
+        if service.app is None:
+            service.app = request.app
         try:
             body_bytes = await request.body()
             raw = decode_json(body_bytes)

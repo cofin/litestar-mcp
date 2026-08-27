@@ -141,3 +141,51 @@ async def test_service_tasks_get_and_cancel(service: A2AHandlerService, task_sto
     # Verify updated in store
     cancelled_task = await task_store.get_task("t-cancel-1")
     assert cancelled_task.status.state == "canceled"
+
+
+@pytest.mark.asyncio
+async def test_resolve_skill_from_mcp_plugin(task_store: A2ATaskStore) -> None:
+    """Test resolving a skill from LitestarMCP plugin tools."""
+    from litestar import get
+
+    from litestar_mcp.mcp.config import MCPConfig
+    from litestar_mcp.mcp.plugin import LitestarMCP
+
+    @get("/tools/sub", opt={"mcp_tool": "sub_op", "mcp_description": "Subtract numbers"})
+    def sub(a: int, b: int) -> int:
+        return a - b
+
+    mcp_plugin = LitestarMCP(config=MCPConfig(base_path="/mcp"))
+    app = Litestar(route_handlers=[sub], plugins=[mcp_plugin])
+
+    service = A2AHandlerService(app=app, registry=A2ARegistry(), task_store=task_store)
+    skill_reg = service._resolve_skill("sub_op")
+    assert skill_reg is not None
+    assert skill_reg.id == "sub_op"
+    assert skill_reg.description == "Subtract numbers"
+
+
+@pytest.mark.asyncio
+async def test_extract_arguments_and_fallback(task_store: A2ATaskStore) -> None:
+    """Test argument extraction from text parts and single parameter fallback."""
+    reg = A2ARegistry()
+
+    def greet(name: str) -> str:
+        return f"Hi {name}"
+
+    reg.register(SkillRegistration(fn=greet, id="greet", name="Greeter"))
+    service = A2AHandlerService(app=None, registry=reg, task_store=task_store)
+
+    req = JSONRPCRequest(
+        jsonrpc="2.0",
+        method="tasks/send",
+        id=10,
+        params={
+            "skill": "greet",
+            "message": {"role": "user", "parts": [{"type": "text", "text": "Alice"}]},
+        },
+    )
+    resp = await service.dispatch_request(req)
+    assert resp is not None
+    assert resp["result"]["artifacts"][0]["parts"][0]["text"] == "Hi Alice"
+
