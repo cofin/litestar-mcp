@@ -166,8 +166,10 @@ async def search(query: str, limit: int = 10) -> dict:
 Once configured, your application exposes these MCP-compatible endpoints:
 
 - `POST /mcp` - stateless MCP `2026-07-28` JSON-RPC and subscription streams
-- `GET /.well-known/agent-card.json` - Agent metadata card
 - `GET /.well-known/oauth-protected-resource` - OAuth protected resource metadata when auth is configured
+
+Install ``litestar-mcp[a2a]`` to mount an official A2A SDK request handler and
+agent card independently of MCP.
 
 Use `server/discover` instead of an initialize handshake:
 

@@ -3,12 +3,9 @@
 from typing import TYPE_CHECKING, Any
 
 from litestar_mcp.auth import MCPAuthConfig  # noqa: TC001
-from litestar_mcp.utils import get_handler_function, get_mcp_metadata, render_description
 
 if TYPE_CHECKING:
     from litestar import Litestar
-
-    from litestar_mcp.config import MCPConfig
 
 
 def build_oauth_protected_resource(auth_config: "MCPAuthConfig | None", app: "Litestar") -> "dict[str, Any]":
@@ -50,57 +47,3 @@ def build_oauth_protected_resource(auth_config: "MCPAuthConfig | None", app: "Li
         "authorization_servers": list(dict.fromkeys(authorization_servers)),
         "scopes_supported": list(dict.fromkeys(scopes_supported)),
     }
-
-
-def build_agent_card(
-    *,
-    base_url: "str",
-    config: "MCPConfig",
-    app: "Litestar",
-    discovered_tools: "dict[str, Any]",
-) -> "dict[str, Any]":
-    """Build an agent metadata card for MCP discovery."""
-    skills = []
-    for name, handler in discovered_tools.items():
-        fn = get_handler_function(handler)
-        metadata = get_mcp_metadata(handler) or get_mcp_metadata(fn) or {}
-        skills.append(
-            {
-                "id": name,
-                "name": name,
-                "description": render_description(
-                    handler, fn, kind="tool", fallback_name=name, opt_keys=config.opt_keys
-                ),
-                "tags": sorted(getattr(handler, "tags", []) or []),
-                "examples": metadata.get("examples", []),
-            }
-        )
-
-    return {
-        "name": _server_name(config, app),
-        "description": f"A Litestar-native MCP integration for {_server_name(config, app)}.",
-        "version": _server_version(app),
-        "url": f"{base_url.rstrip('/')}{config.base_path}",
-        "capabilities": {
-            "streaming": True,
-            "mcp": True,
-            "tasks": config.task_config is not None,
-        },
-        "skills": skills,
-        "defaultInputModes": ["application/json"],
-        "defaultOutputModes": ["application/json"],
-    }
-
-
-def _server_name(config: "MCPConfig", app: "Litestar") -> "str":
-    if config.name:
-        return config.name
-    if app.openapi_config and app.openapi_config.title:
-        return app.openapi_config.title
-    return "Litestar MCP Server"
-
-
-def _server_version(app: "Litestar") -> "str":
-    if app.openapi_config and app.openapi_config.version:
-        return app.openapi_config.version
-    return "1.0.0"

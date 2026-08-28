@@ -104,16 +104,9 @@ the compatibility boundary until ADK adds the stateless lifecycle:
 MCP vs A2A Protocol Boundary
 ============================
 
-The plugin's separate ``/.well-known/agent-card.json`` document is not MCP
-discovery and does not imply an A2A execution endpoint. MCP clients must call
-``server/discover``.
-
-Full Agent-to-Agent (A2A) protocol compatibility requires:
-- A separate A2A routing tree.
-- A dedicated A2A agent card endpoint.
-- Skill execution pipelines aligned with the A2A spec.
-
-Treating A2A as distinct from MCP prevents client-side handshake confusion.
+MCP clients call ``server/discover``. A2A is an independent optional
+integration backed by the official SDK; see :doc:`a2a` for configuring an
+``AgentCard`` and ``RequestHandler`` for ADK ``RemoteA2aAgent`` clients.
 
 Production Persistence Hardening
 ================================

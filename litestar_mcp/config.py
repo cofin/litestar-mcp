@@ -166,8 +166,6 @@ class MCPConfig:
         register_oauth_protected_resource: Whether to register the RFC 9728
             protected resource metadata route. Disable this when another
             plugin owns the application-root discovery path.
-        register_agent_card: Whether to register the agent card discovery
-            route.
         allowed_origins: Exact additional Origin values to accept. A missing
             Origin is valid; a present Origin must match the request origin or
             one of these configured values.
@@ -207,6 +205,7 @@ class MCPConfig:
     cache_scope: "Literal['private', 'public']" = "private"
     subscription_max_streams: "int" = 10_000
     subscription_keepalive_seconds: "float" = 15.0
+    stream_queue_capacity: "int" = 256
     subscription_channels: "Any | None" = None
     list_page_size: "int" = 100
     before_tool_call: "BeforeToolCallHook | None" = None
@@ -214,7 +213,6 @@ class MCPConfig:
     max_blob_bytes: "int | None" = 25 * 1024 * 1024
     route_opt: "dict[str, Any] | None" = None
     register_oauth_protected_resource: "bool" = True
-    register_agent_card: "bool" = True
 
     def __post_init__(self) -> "None":
         if self.list_page_size <= 0:
@@ -231,6 +229,9 @@ class MCPConfig:
             raise ValueError(msg)
         if self.subscription_keepalive_seconds <= 0:
             msg = f"subscription_keepalive_seconds must be positive, got {self.subscription_keepalive_seconds}"
+            raise ValueError(msg)
+        if self.stream_queue_capacity <= 0:
+            msg = f"stream_queue_capacity must be positive, got {self.stream_queue_capacity}"
             raise ValueError(msg)
 
     @property

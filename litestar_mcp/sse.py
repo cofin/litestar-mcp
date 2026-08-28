@@ -1,7 +1,8 @@
 """In-process notification subscriptions for MCP 2026-07-28."""
 
 import asyncio
-from dataclasses import dataclass, field
+import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -13,6 +14,7 @@ if TYPE_CHECKING:
 __all__ = ("StreamLimitExceeded", "SubscriptionManager")
 
 _CLOSED = object()
+_logger = logging.getLogger(__name__)
 _METHOD_FILTERS = {
     "notifications/tools/list_changed": "toolsListChanged",
     "notifications/prompts/list_changed": "promptsListChanged",
@@ -29,14 +31,17 @@ class _Subscription:
     stream_id: "str"
     subscription_id: "Any"
     notifications: "dict[str, Any]"
-    queue: "asyncio.Queue[dict[str, Any] | object]" = field(default_factory=asyncio.Queue)
+    queue: "asyncio.Queue[dict[str, Any] | object]"
 
 
 class SubscriptionManager:
     """Manage stateless, filtered subscription response streams."""
 
-    def __init__(self, *, max_streams: "int" = 10_000, channels: "Any | None" = None) -> "None":
+    def __init__(
+        self, *, max_streams: "int" = 10_000, queue_capacity: "int" = 256, channels: "Any | None" = None
+    ) -> "None":
         self._max_streams = max_streams
+        self._queue_capacity = queue_capacity
         self._channels = channels
         self._streams: dict[str, _Subscription] = {}
         self._lock = asyncio.Lock()
@@ -63,6 +68,7 @@ class SubscriptionManager:
                 stream_id=stream_id,
                 subscription_id=subscription_id,
                 notifications=accepted,
+                queue=asyncio.Queue(maxsize=self._queue_capacity),
             )
             self._streams[stream_id] = state
             state.queue.put_nowait(self._acknowledgement(state))
@@ -99,7 +105,15 @@ class SubscriptionManager:
             meta = dict(tagged_params.get("_meta") or {})
             meta["io.modelcontextprotocol/subscriptionId"] = state.subscription_id
             tagged_params["_meta"] = meta
-            state.queue.put_nowait({"jsonrpc": "2.0", "method": method, "params": tagged_params})
+            try:
+                state.queue.put_nowait({"jsonrpc": "2.0", "method": method, "params": tagged_params})
+            except asyncio.QueueFull:
+                async with self._lock:
+                    self._streams.pop(state.stream_id, None)
+                _logger.warning("Closing slow MCP subscriber %s after queue overflow", state.stream_id)
+                while not state.queue.empty():
+                    state.queue.get_nowait()
+                state.queue.put_nowait(_CLOSED)
 
     async def disconnect(self, stream_id: "str") -> "None":
         """Remove one stream and wake its consumer."""

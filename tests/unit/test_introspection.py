@@ -653,7 +653,7 @@ class TestDescriptionRenderingEndpoints:
             descr = next(r["description"] for r in resources if r["name"] == "r")
             assert descr == "opt-res-prose"
 
-    def test_agent_card_matches_tools_list(self) -> "None":
+    def test_rendered_tool_description_contains_structured_sections(self) -> "None":
         @mcp_tool("t", description="primary", when_to_use="wtu", returns="r")
         @get("/x", sync_to_thread=False)
         def handler() -> "dict[str, Any]":
@@ -664,10 +664,6 @@ class TestDescriptionRenderingEndpoints:
             tl = self._rpc(client, "tools/list", sid)
             tl_descr = next(t["description"] for t in tl["result"]["tools"] if t["name"] == "t")
 
-            agent_card = client.get("/.well-known/agent-card.json").json()
-            ac_descr = next(s["description"] for s in agent_card["skills"] if s["id"] == "t")
-
-            assert tl_descr == ac_descr
             assert "## When to use\nwtu" in tl_descr
             assert "## Returns\nr" in tl_descr
 

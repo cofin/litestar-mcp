@@ -109,9 +109,6 @@ Configuration Options
       - ``True``
       - Register ``/.well-known/oauth-protected-resource``. Disable this when
         another plugin publishes the RFC 9728 document.
-    * - ``register_agent_card``
-      - ``True``
-      - Register ``/.well-known/agent-card.json``.
     * - ``allowed_origins``
       - ``None``
       - Restrict accepted ``Origin`` header values.

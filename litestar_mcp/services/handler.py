@@ -65,6 +65,8 @@ from litestar_mcp.utils.handler_signature import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from litestar import Litestar, Request
     from litestar.handlers import BaseRouteHandler
 
@@ -96,6 +98,20 @@ class MCPRequestContext:
     client_info: "dict[str, Any] | None" = None
     input_responses: "dict[str, Any] | None" = None
     request_state: "str | None" = None
+    progress_token: "str | int | None" = None
+    progress_reporter: "Callable[[dict[str, Any]], Awaitable[None]] | None" = None
+
+    async def report_progress(self, progress: float, total: float | None = None, message: str | None = None) -> None:
+        """Report progress correlated to the request's supplied progress token."""
+        if self.progress_token is None or self.progress_reporter is None:
+            msg = "This request did not supply a progress token"
+            raise RuntimeError(msg)
+        params: dict[str, Any] = {"progressToken": self.progress_token, "progress": progress}
+        if total is not None:
+            params["total"] = total
+        if message is not None:
+            params["message"] = message
+        await self.progress_reporter(params)
 
 
 RequestContext = MCPRequestContext
@@ -593,6 +609,7 @@ class MCPHandlerService:
                 JSONRPCError(
                     code=MISSING_REQUIRED_CLIENT_CAPABILITY,
                     message=f"Tool '{tool_name}' requires the {TASKS_EXTENSION} client capability",
+                    data={"requiredCapabilities": {"extensions": {TASKS_EXTENSION: {}}}},
                 )
             )
         if task_support not in {"optional", "required"} or not task_enabled or not task_capable:
@@ -979,5 +996,6 @@ def _require_tasks_capability(context: "RequestContext") -> None:
             JSONRPCError(
                 code=MISSING_REQUIRED_CLIENT_CAPABILITY,
                 message=f"The {TASKS_EXTENSION} client capability is required",
+                data={"requiredCapabilities": {"extensions": {TASKS_EXTENSION: {}}}},
             )
         )

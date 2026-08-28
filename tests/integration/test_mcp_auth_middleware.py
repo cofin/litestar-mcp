@@ -81,12 +81,10 @@ class TestMCPAuthBackendMiddleware:
     def test_supported_well_known_paths_unauthenticated(self) -> "None":
         """.well-known routes are exempt via opt={'exclude_from_auth': True}."""
         with TestClient(app=_build_app_with_backend()) as client:
-            for path in (
-                "/.well-known/oauth-protected-resource",
-                "/.well-known/agent-card.json",
-            ):
-                resp = client.get(path)
-                assert resp.status_code == 200, f"{path} should be unauthenticated; got {resp.status_code}"
+            path = "/.well-known/oauth-protected-resource"
+            resp = client.get(path)
+            assert resp.status_code == 200, f"{path} should be unauthenticated; got {resp.status_code}"
+            assert client.get("/.well-known/agent-card.json").status_code == 404
             assert client.get("/.well-known/mcp-server.json").status_code == 404
 
     def test_discovery_requires_token(self) -> "None":

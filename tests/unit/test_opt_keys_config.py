@@ -88,11 +88,6 @@ def test_renamed_description_opt_keys_render_through_endpoints() -> "None":
         assert "## When to use\nAsked for users." in descr
         assert "ignored-docstring" not in descr
 
-        # The separate A2A card mirrors the rendered description.
-        agent_card = client.get("/.well-known/agent-card.json").json()
-        ac_descr = next(s["description"] for s in agent_card["skills"] if s["id"] == "list_users")
-        assert ac_descr == descr
-
 
 def test_default_opt_keys_unchanged_when_config_omits_opt_keys() -> "None":
     """Regression guard: apps that don't set opt_keys still use the ``mcp_*`` defaults."""

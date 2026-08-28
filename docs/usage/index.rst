@@ -113,6 +113,12 @@ examples drawn from :mod:`docs.examples`.
 
         Connect Google ADK clients to your remote Litestar MCP server.
 
+    .. grid-item-card:: A2A Integration
+        :link: a2a
+        :link-type: doc
+
+        Mount an official A2A SDK handler alongside MCP.
+
 .. toctree::
     :hidden:
     :maxdepth: 1
@@ -133,3 +139,5 @@ examples drawn from :mod:`docs.examples`.
     deployment
     migration_0_12
     adk
+    a2a
+    migration_0_14

@@ -252,11 +252,18 @@ def _request_subject(request: "Request[Any, Any, Any]") -> "str | None":
     return None
 
 
-def _build_request_context(request: "Request[Any, Any, Any]", rpc_request: "JSONRPCRequest") -> "MCPRequestContext":
+def _build_request_context(
+    request: "Request[Any, Any, Any]", rpc_request: "JSONRPCRequest", registry: "Registry"
+) -> "MCPRequestContext":
     meta = rpc_request.params["_meta"]
     client_info = meta.get("io.modelcontextprotocol/clientInfo")
     client_id = client_info.get("name") if isinstance(client_info, dict) else None
     sub = _request_subject(request)
+    progress_token = meta.get("progressToken")
+
+    async def report_progress(params: "dict[str, Any]") -> "None":
+        await registry.publish_notification("notifications/progress", params)
+
     return MCPRequestContext(
         client_id=client_id or "anonymous",
         owner_id=f"user:{sub}" if sub is not None else None,
@@ -266,6 +273,8 @@ def _build_request_context(request: "Request[Any, Any, Any]", rpc_request: "JSON
         client_info=client_info if isinstance(client_info, dict) else None,
         input_responses=rpc_request.params.get("inputResponses"),
         request_state=rpc_request.params.get("requestState"),
+        progress_token=progress_token if isinstance(progress_token, (str, int)) else None,
+        progress_reporter=report_progress,
     )
 
 
@@ -444,7 +453,7 @@ class MCPController(Controller):
                 message=f"Method not found: {rpc_request.method}",
                 status_code=HTTP_404_NOT_FOUND,
             )
-        result = await router.dispatch(rpc_request, _build_request_context(request, rpc_request))
+        result = await router.dispatch(rpc_request, _build_request_context(request, rpc_request, registry))
         if result is None:
             return _error(
                 rpc_request.id,

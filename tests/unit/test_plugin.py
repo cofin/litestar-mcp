@@ -172,7 +172,7 @@ class TestLitestarMCP:
         assert "/users" in paths
         assert "/mcp" in paths
         assert "/.well-known/oauth-protected-resource" in paths
-        assert "/.well-known/agent-card.json" in paths
+        assert "/.well-known/agent-card.json" not in paths
         assert "/.well-known/mcp-server.json" not in paths
 
     def test_route_opt_applies_to_mcp_router(self) -> "None":
@@ -192,13 +192,6 @@ class TestLitestarMCP:
         app = Litestar(plugins=[LitestarMCP(MCPConfig(register_oauth_protected_resource=False))])
 
         assert "/.well-known/oauth-protected-resource" not in _registered_paths(app)
-        assert "/.well-known/agent-card.json" in _registered_paths(app)
-
-    def test_agent_card_registration_can_be_disabled(self) -> "None":
-        app = Litestar(plugins=[LitestarMCP(MCPConfig(register_agent_card=False))])
-
-        assert "/.well-known/oauth-protected-resource" in _registered_paths(app)
-        assert "/.well-known/agent-card.json" not in _registered_paths(app)
 
     def test_foreign_oauth_protected_resource_route_can_be_registered(self) -> "None":
         @get("/.well-known/oauth-protected-resource")

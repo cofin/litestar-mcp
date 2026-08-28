@@ -45,18 +45,11 @@ def _make_app(with_auth: "bool" = False) -> "Litestar":
     )
 
 
-def test_agent_card_does_not_claim_a2a() -> "None":
-    """Verify that agent-card.json does not contain A2A protocolVersion or other A2A specific fields."""
+def test_mcp_does_not_register_agent_card() -> "None":
     app = _make_app()
     with TestClient(app=app) as client:
         response = client.get("/.well-known/agent-card.json")
-        assert response.status_code == 200
-        payload = response.json()
-
-        assert "protocolVersion" not in payload
-        assert "supportsAuthenticatedExtendedCard" not in payload
-        assert payload["capabilities"]["mcp"] is True
-        assert payload["url"].endswith("/mcp")
+        assert response.status_code == 404
 
 
 def test_mcp_server_manifest_is_removed() -> "None":
@@ -66,9 +59,8 @@ def test_mcp_server_manifest_is_removed() -> "None":
         assert response.status_code == 404
 
 
-def test_agent_card_remains_public_with_auth() -> "None":
-    """Verify that agent-card.json remains public even when auth middleware is enabled."""
+def test_agent_card_is_absent_with_auth() -> "None":
     app = _make_app(with_auth=True)
     with TestClient(app=app) as client:
         response = client.get("/.well-known/agent-card.json")
-        assert response.status_code == 200
+        assert response.status_code == 404

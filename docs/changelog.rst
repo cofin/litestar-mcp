@@ -9,6 +9,24 @@ notes, and important protocol fixes.
 Recent Updates
 ==============
 
+.. changelog:: 0.14.0
+
+    .. change:: add standards-backed optional A2A support
+        :type: feature
+
+        Added ``litestar-mcp[a2a]`` and the narrow
+        ``litestar_mcp.a2a.A2AConfig`` / ``LitestarA2A`` adapter around the
+        official A2A 1.0 SDK. MCP no longer publishes a non-standard agent
+        card. Subscription queues are bounded and request contexts can report
+        token-correlated progress.
+
+    .. change:: retain the released MCP package layout
+        :type: breaking
+
+        Removed the unreleased public ``core`` and relocated ``mcp`` package
+        surfaces, proprietary A2A primitives, automatic MCP-to-A2A export,
+        standalone A2A runner, decorators, and CLI.
+
 .. changelog:: 0.13.2
 
     .. change:: resolve tool wire names from ``Parameter(name=...)``
