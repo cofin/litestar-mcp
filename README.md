@@ -1,6 +1,6 @@
-# Litestar MCP & A2A
+# Litestar MCP Plugin
 
-A lightweight, multi-protocol toolkit that integrates Litestar web applications with both the **Model Context Protocol (MCP)** and the **Agent-to-Agent (A2A)** protocol. Expose marked routes as MCP tools, resources, and prompts or as A2A skills and agent cards over Streamable HTTP, SSE, and JSON-RPC 2.0.
+A lightweight plugin that integrates Litestar web applications with the Model Context Protocol (MCP) by exposing marked routes as MCP tools, resources, and prompts over MCP Streamable HTTP and JSON-RPC.
 
 [![PyPI - Version](https://img.shields.io/pypi/v/litestar-mcp)](https://pypi.org/project/litestar-mcp/)
 [![Python Version](https://img.shields.io/pypi/pyversions/litestar-mcp)](https://pypi.org/project/litestar-mcp/)
@@ -8,20 +8,20 @@ A lightweight, multi-protocol toolkit that integrates Litestar web applications 
 
 ## Overview
 
-`litestar-mcp` connects Litestar applications to AI models and autonomous agent networks:
-- **Model Context Protocol (MCP)**: Exposes routes and callables as tools, resources, and prompts for LLM tool calling.
-- **Agent-to-Agent Protocol (A2A)**: Connects autonomous agents with dynamic agent card discovery (`/.well-known/agent-card.json`), task lifecycles, and real-time SSE streaming.
-- **Multi-Protocol Coexistence**: Run MCP and A2A concurrently on the same Litestar server with zero route collisions and optional auto-export of MCP tools as A2A skills.
+This plugin automatically discovers Litestar routes marked for MCP and exposes them through an MCP-native transport surface. Pass `mcp_tool="name"`, `mcp_resource="name"`, or `mcp_prompt="name"` straight through to `@get` / `@post` / etc. — Litestar funnels unknown kwargs into `handler.opt`, so no second decorator or `opt={...}` wrapper is needed. Standalone prompt callables that are not bound to an HTTP route can be registered through `LitestarMCP(prompts=[...])`.
 
 ## Features
 
-- **Protocol-Agnostic Core** — Unified JSON-RPC 2.0 engine, SSE streaming, signature introspection, and msgspec validation.
-- **Full MCP Primitives** — Tools, resources (with RFC 6570 templates), and prompts.
-- **Full A2A Primitives** — Dynamic agent cards, skill discovery, task lifecycles (`tasks/send`, `tasks/get`, `tasks/cancel`), and real-time streaming (`tasks/sendSubscribe`).
-- **Zero-Boilerplate Standalone Runners** — High-level `MCP` and `Agent` runners for fast scripting.
-- **Type Safe** — Strict typing with dataclasses, msgspec models, and full PEP 585/604 compliance.
-- **Built-in CLI** — Modular `litestar mcp` and `litestar a2a` subcommands.
-- **OIDC & Bearer Auth** — Built-in token validation and JWKS caching.
+- **Protocol-Native Transport** — MCP Streamable HTTP with JSON-RPC requests and SSE streams.
+- **Three MCP Primitives** — tools, resources, *and* prompts, with `prompts/list` and `prompts/get` driven by the same handler discovery as the rest of the surface.
+- **Simple Route Marking** — pass `mcp_tool` / `mcp_resource` / `mcp_prompt` kwargs straight through to Litestar's route decorators, or register standalone prompts via `LitestarMCP(prompts=[...])`.
+- **RFC 6570 URI Templates** — `mcp_resource_template="app://…/{var}"` dispatches concrete URIs to handlers with extracted vars.
+- **First-Class Descriptions** — structured `mcp_description`, `mcp_agent_instructions`, `mcp_when_to_use`, `mcp_returns` kwargs.
+- **Type Safe** — full type hints with dataclasses; `msgspec`-powered tool-argument validation.
+- **Automatic Discovery** — routes are discovered at app initialization.
+- **OpenAPI Integration** — server info derived from OpenAPI config.
+- **OIDC Auth Baked In** — bearer-token validation via `MCPAuthBackend` or a composable `create_oidc_validator()` factory; injectable `JWKSCache` protocol for shared document caches.
+- **Optional Task Support** — experimental in-memory MCP task lifecycle endpoints.
 
 ## Quick Start
 
@@ -90,47 +90,6 @@ if __name__ == "__main__":
 
 The standalone decorators accept Litestar route-handler keyword arguments such as `dependencies`, `guards`, `response_headers`, `responses`, `summary`, `tags`, DTO options, hooks, and arbitrary extra kwargs stored in `handler.opt`. The `name` keyword names the MCP primitive; use `route_name` to set Litestar's route-handler name separately.
 
-### A2A Standalone Agent
-
-Build autonomous agents exposing skills and dynamic agent cards (`/.well-known/agent-card.json`):
-
-```python
-from litestar_mcp import Agent
-
-agent = Agent(name="MathAgent", description="Performs calculations")
-
-@agent.skill(name="add", description="Add two integers")
-def add(a: int, b: int) -> int:
-    return a + b
-
-app = agent.app
-
-if __name__ == "__main__":
-    agent.run(port=8000)
-```
-
-### Multi-Protocol Coexistence
-
-Run both MCP and A2A protocols on the same Litestar server with automatic tool-to-skill export:
-
-```python
-from litestar import Litestar, get
-from litestar_mcp import A2AConfig, A2APlugin, LitestarMCP, MCPConfig
-
-@get("/tools/multiply", mcp_tool="multiply", mcp_description="Multiply numbers")
-def multiply(a: int, b: int) -> int:
-    return a * b
-
-@get("/skills/greet", opt={"a2a_skill": "greet", "a2a_description": "Greet person"})
-def greet(name: str) -> str:
-    return f"Hello, {name}!"
-
-mcp = LitestarMCP(config=MCPConfig(base_path="/mcp"))
-a2a = A2APlugin(config=A2AConfig(base_path="/a2a", auto_export_mcp_tools=True))
-
-app = Litestar(route_handlers=[multiply, greet], plugins=[mcp, a2a])
-```
-
 ### With Configuration
 
 ```python
@@ -148,16 +107,6 @@ app = Litestar(
     openapi_config=OpenAPIConfig(title="My API", version="1.0.0"),
 )
 ```
-
-## Architecture
-
-`litestar-mcp` is designed symmetrically around a protocol-agnostic core:
-
-- `litestar_mcp.core`: Shared JSON-RPC 2.0 engine, SSE streaming, signature introspection, msgspec serialization, cursor pagination, and common typing.
-- `litestar_mcp.mcp`: Model Context Protocol (MCP) transport, `LitestarMCP` plugin, `MCPConfig`, stdio bridge, OIDC auth, and standalone `MCP` runner.
-- `litestar_mcp.a2a`: Agent-to-Agent (A2A) protocol transport, `A2APlugin`, `A2AConfig`, `AgentCard` manifests, task stores, and standalone `Agent` runner.
-- `litestar_mcp.cli`: Modular Click CLI groups (`litestar mcp` and `litestar a2a`).
-- `litestar_mcp`: Top-level re-exports for backward compatibility and rapid prototyping.
 
 ## Resources vs Tools: When to Use Each
 

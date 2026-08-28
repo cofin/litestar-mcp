@@ -1,97 +1,50 @@
 """Litestar Model Context Protocol Integration Plugin.
 
 A lightweight plugin that exposes Litestar routes as MCP tools, resources,
-and prompts via JSON-RPC 2.0 over Streamable HTTP, alongside Agent-to-Agent (A2A)
-protocol support and protocol-agnostic primitives.
+and prompts via JSON-RPC 2.0 over Streamable HTTP. Mark a route handler by
+passing ``mcp_tool="name"``, ``mcp_resource="name"``, or
+``mcp_prompt="name"`` directly to the Litestar decorator — Litestar funnels
+unknown kwargs into ``handler.opt`` automatically, so no ``opt={...}``
+wrapper or ``@mcp_tool`` / ``@mcp_resource`` / ``@mcp_prompt`` second
+decorator is needed. The stacked decorator form is retained for parity
+(useful when you need an explicit ``input_schema`` / ``output_schema``,
+``annotations``, ``scopes``, or task/MRTR policy) but the kwarg form is the
+recommended approach. Standalone prompts not bound to a route handler can
+also be registered via ``LitestarMCP(prompts=[...])`` after decoration with
+``@mcp_prompt``.
 """
 
 from litestar_mcp.__metadata__ import __version__
-from litestar_mcp.a2a import (
-    A2AConfig,
-    A2APlugin,
-    Agent,
-    AgentCard,
-    Artifact,
-    DataPart,
-    FilePart,
-    Message,
-    Task,
-    TaskContext,
-    TextPart,
-    ThoughtPart,
-    a2a_skill,
-    skill,
-)
-from litestar_mcp.core.jsonrpc import (
-    JSONRPCError,
-    JSONRPCRequest,
-    JSONRPCRouter,
-)
-from litestar_mcp.mcp import (
-    MCP,
-    AfterToolCallHook,
-    BeforeToolCallHook,
-    BridgeConnectionError,
-    BridgeMessageTooLargeError,
+from litestar_mcp.app import MCP, MCPStdioContext
+from litestar_mcp.auth import (
     DefaultJWKSCache,
-    DescriptionSources,
-    InMemoryTaskStore,
     JWKSCache,
-    LitestarMCP,
-    LitestarMCPError,
     MCPAuthBackend,
     MCPAuthConfig,
-    MCPBlobResource,
-    MCPConfig,
-    MCPController,
-    MCPHandlerResponse,
-    MCPHandlerService,
-    MCPInputRequiredResult,
-    MCPOptKeys,
-    MCPPlugin,
-    MCPRequestContext,
-    MCPResourceLink,
-    MCPStdioContext,
-    MCPTaskConfig,
-    MCPTaskStore,
-    MCPToolResult,
-    MetadataRegistry,
-    MissingDependencyError,
     OIDCProviderConfig,
     TokenValidator,
-    bridge,
     create_oidc_validator,
-    get_handler_function,
-    get_mcp_metadata,
-    get_mcp_request_context,
-    mcp_prompt,
-    mcp_resource,
-    mcp_tool,
-    prompt,
-    resource,
-    run_stdio_streamable_http_bridge,
-    tool,
 )
+from litestar_mcp.config import AfterToolCallHook, BeforeToolCallHook, MCPConfig, MCPOptKeys, MCPTaskConfig
+from litestar_mcp.content import MCPBlobResource, MCPInputRequiredResult, MCPResourceLink, MCPToolResult
+from litestar_mcp.exceptions import (
+    BridgeConnectionError,
+    BridgeMessageTooLargeError,
+    LitestarMCPError,
+    MissingDependencyError,
+)
+from litestar_mcp.plugin import LitestarMCP
+from litestar_mcp.routes import MCPController
+from litestar_mcp.services.handler import MCPRequestContext, get_mcp_request_context
+from litestar_mcp.utils import mcp_prompt, mcp_resource, mcp_tool
 
 __all__ = (
     "MCP",
-    "A2AConfig",
-    "A2APlugin",
     "AfterToolCallHook",
-    "Agent",
-    "AgentCard",
-    "Artifact",
     "BeforeToolCallHook",
     "BridgeConnectionError",
     "BridgeMessageTooLargeError",
-    "DataPart",
     "DefaultJWKSCache",
-    "DescriptionSources",
-    "FilePart",
-    "InMemoryTaskStore",
-    "JSONRPCError",
-    "JSONRPCRequest",
-    "JSONRPCRouter",
     "JWKSCache",
     "LitestarMCP",
     "LitestarMCPError",
@@ -100,39 +53,20 @@ __all__ = (
     "MCPBlobResource",
     "MCPConfig",
     "MCPController",
-    "MCPHandlerResponse",
-    "MCPHandlerService",
     "MCPInputRequiredResult",
     "MCPOptKeys",
-    "MCPPlugin",
     "MCPRequestContext",
     "MCPResourceLink",
     "MCPStdioContext",
     "MCPTaskConfig",
-    "MCPTaskStore",
     "MCPToolResult",
-    "Message",
-    "MetadataRegistry",
     "MissingDependencyError",
     "OIDCProviderConfig",
-    "Task",
-    "TaskContext",
-    "TextPart",
-    "ThoughtPart",
     "TokenValidator",
     "__version__",
-    "a2a_skill",
-    "bridge",
     "create_oidc_validator",
-    "get_handler_function",
-    "get_mcp_metadata",
     "get_mcp_request_context",
     "mcp_prompt",
     "mcp_resource",
     "mcp_tool",
-    "prompt",
-    "resource",
-    "run_stdio_streamable_http_bridge",
-    "skill",
-    "tool",
 )

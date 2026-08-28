@@ -18,7 +18,7 @@ from litestar_mcp import (
     mcp_prompt,
     mcp_tool,
 )
-from litestar_mcp.core.jsonrpc import INTERNAL_ERROR, INVALID_PARAMS, JSONRPCError, JSONRPCErrorException
+from litestar_mcp.jsonrpc import INTERNAL_ERROR, INVALID_PARAMS, JSONRPCError, JSONRPCErrorException
 
 _PIXEL = b"\x89PNG\r\n\x1a\n"
 _JSON_SCHEMA_2020_12 = {

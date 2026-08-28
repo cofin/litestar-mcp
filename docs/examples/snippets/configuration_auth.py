@@ -2,7 +2,8 @@
 
 from litestar import Litestar
 
-from litestar_mcp import LitestarMCP, MCPAuthConfig, MCPConfig
+from litestar_mcp import LitestarMCP, MCPConfig
+from litestar_mcp.auth import MCPAuthConfig
 
 
 def build() -> "Litestar":

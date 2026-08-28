@@ -2,7 +2,8 @@
 
 from litestar import Litestar
 
-from litestar_mcp import LitestarMCP, MCPConfig, MCPTaskConfig
+from litestar_mcp import LitestarMCP, MCPConfig
+from litestar_mcp.config import MCPTaskConfig
 
 
 def build() -> "Litestar":

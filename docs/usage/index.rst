@@ -113,19 +113,12 @@ examples drawn from :mod:`docs.examples`.
 
         Connect Google ADK clients to your remote Litestar MCP server.
 
-    .. grid-item-card:: A2A Protocol Support
-        :link: a2a
-        :link-type: doc
-
-        Connect autonomous agents over the Agent-to-Agent (A2A) protocol.
-
 .. toctree::
     :hidden:
     :maxdepth: 1
 
     configuration
     standalone_app
-    a2a
     marking_routes
     prompts
     resources

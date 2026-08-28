@@ -12,7 +12,7 @@ from litestar.exceptions import NotAuthorizedException
 
 import litestar_mcp
 from litestar_mcp import MCP, MCPConfig
-from litestar_mcp.mcp.utils import mcp_tool
+from litestar_mcp.utils import mcp_tool
 
 pytestmark = pytest.mark.integration
 
