@@ -2173,7 +2173,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "a2a-sdk", extras = ["http-server"], marker = "extra == 'a2a'", specifier = ">=1.1.2,<2" },
+    { name = "a2a-sdk", extras = ["http-server"], marker = "extra == 'a2a'", specifier = ">=1.1.2" },
     { name = "anyio", specifier = ">=4.1" },
     { name = "httpx", specifier = ">=0.24.1" },
     { name = "httpx-sse", marker = "extra == 'bridge'", specifier = ">=0.4.0" },
