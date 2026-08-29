@@ -5,8 +5,6 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from litestar.stores.base import Store  # noqa: TC002
 
-from litestar_mcp.auth import MCPAuthConfig  # noqa: TC001
-
 if TYPE_CHECKING:
     from collections.abc import Awaitable
 
@@ -161,16 +159,13 @@ class MCPConfig:
         name: Optional override for server name. If not set, uses OpenAPI title.
         guards: Optional list of guards to protect MCP endpoints.
         route_opt: Optional route ``opt`` mapping applied to the mounted MCP
-            router. Use this to declare an opt-based authentication policy for
-            the MCP surface.
-        register_oauth_protected_resource: Whether to register the RFC 9728
-            protected resource metadata route. Disable this when another
-            plugin owns the application-root discovery path.
+            router and therefore merged into the JSON-RPC handler's ``opt``.
+            Use it to declare an opt-based authentication policy for the MCP
+            surface, for example ``{"auth": required("api-key")}`` with
+            litestar-security.
         allowed_origins: Exact additional Origin values to accept. A missing
             Origin is valid; a present Origin must match the request origin or
             one of these configured values.
-        auth: Optional OAuth 2.1 auth configuration. When set, bearer token validation
-            is enforced on MCP endpoints.
         tasks: Optional task configuration or ``True`` to enable the default
             experimental in-memory task implementation.
         list_page_size: Page size for ``tools/list``, ``resources/list``,
@@ -198,7 +193,6 @@ class MCPConfig:
     exclude_operations: "list[str] | None" = None
     include_tags: "list[str] | None" = None
     exclude_tags: "list[str] | None" = None
-    auth: "MCPAuthConfig | None" = None
     tasks: "bool | MCPTaskConfig" = False
     opt_keys: "MCPOptKeys" = field(default_factory=MCPOptKeys)
     cache_ttl_ms: "int" = 0
@@ -212,7 +206,6 @@ class MCPConfig:
     after_tool_call: "AfterToolCallHook | None" = None
     max_blob_bytes: "int | None" = 25 * 1024 * 1024
     route_opt: "dict[str, Any] | None" = None
-    register_oauth_protected_resource: "bool" = True
 
     def __post_init__(self) -> "None":
         if self.list_page_size <= 0:

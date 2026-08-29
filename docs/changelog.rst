@@ -11,6 +11,18 @@ Recent Updates
 
 .. changelog:: 0.14.0
 
+    .. change:: remove the built-in OIDC auth backend and protected-resource manifest
+        :type: breaking
+
+        Removed ``litestar_mcp.auth``, ``litestar_mcp.manifests``,
+        ``MCPConfig.auth``, ``MCPConfig.register_oauth_protected_resource``,
+        and ``/.well-known/oauth-protected-resource``. Authentication is the
+        app's Litestar middleware (litestar-security or a custom
+        ``AbstractAuthenticationMiddleware``); declare an opt-based policy
+        with ``MCPConfig.route_opt`` and publish RFC 9728 metadata from the
+        security plugin. The runtime dependency is ``litestar`` instead of
+        ``litestar[jwt]``.
+
     .. change:: add standards-backed optional A2A support
         :type: feature
 

@@ -16,7 +16,6 @@ from anyio.to_thread import run_sync as run_sync_in_worker_thread
 from litestar.status_codes import HTTP_202_ACCEPTED, HTTP_401_UNAUTHORIZED
 from typing_extensions import Self
 
-from litestar_mcp.auth.backend import BEARER_TOKEN_PREFIX, DEFAULT_AUTH_HEADER_NAME
 from litestar_mcp.exceptions import BridgeConnectionError, BridgeMessageTooLargeError, MissingDependencyError
 from litestar_mcp.jsonrpc import JSONRPCError, error_response
 from litestar_mcp.routes import (
@@ -32,9 +31,13 @@ BRIDGE_ERROR = -32001
 DEFAULT_MAX_STDIN_MESSAGE_SIZE = 16 * 1024 * 1024
 _MIN_VISIBLE_ASCII = 0x20
 _MAX_VISIBLE_ASCII = 0x7E
+BEARER_TOKEN_PREFIX = "Bearer "  # noqa: S105
+DEFAULT_AUTH_HEADER_NAME = "Authorization"
 
 __all__ = (
+    "BEARER_TOKEN_PREFIX",
     "BRIDGE_ERROR",
+    "DEFAULT_AUTH_HEADER_NAME",
     "DEFAULT_MAX_STDIN_MESSAGE_SIZE",
     "BridgeConnectionError",
     "BridgeMessageTooLargeError",

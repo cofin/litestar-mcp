@@ -16,15 +16,6 @@ also be registered via ``LitestarMCP(prompts=[...])`` after decoration with
 
 from litestar_mcp.__metadata__ import __version__
 from litestar_mcp.app import MCP, MCPStdioContext
-from litestar_mcp.auth import (
-    DefaultJWKSCache,
-    JWKSCache,
-    MCPAuthBackend,
-    MCPAuthConfig,
-    OIDCProviderConfig,
-    TokenValidator,
-    create_oidc_validator,
-)
 from litestar_mcp.config import AfterToolCallHook, BeforeToolCallHook, MCPConfig, MCPOptKeys, MCPTaskConfig
 from litestar_mcp.content import MCPBlobResource, MCPInputRequiredResult, MCPResourceLink, MCPToolResult
 from litestar_mcp.exceptions import (
@@ -44,12 +35,8 @@ __all__ = (
     "BeforeToolCallHook",
     "BridgeConnectionError",
     "BridgeMessageTooLargeError",
-    "DefaultJWKSCache",
-    "JWKSCache",
     "LitestarMCP",
     "LitestarMCPError",
-    "MCPAuthBackend",
-    "MCPAuthConfig",
     "MCPBlobResource",
     "MCPConfig",
     "MCPController",
@@ -61,10 +48,7 @@ __all__ = (
     "MCPTaskConfig",
     "MCPToolResult",
     "MissingDependencyError",
-    "OIDCProviderConfig",
-    "TokenValidator",
     "__version__",
-    "create_oidc_validator",
     "get_mcp_request_context",
     "mcp_prompt",
     "mcp_resource",

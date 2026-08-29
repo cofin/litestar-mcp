@@ -2032,7 +2032,7 @@ source = { editable = "." }
 dependencies = [
     { name = "anyio" },
     { name = "httpx" },
-    { name = "litestar", extra = ["jwt"] },
+    { name = "litestar" },
     { name = "typing-extensions" },
 ]
 
@@ -2172,7 +2172,7 @@ requires-dist = [
     { name = "anyio", specifier = ">=4.1" },
     { name = "httpx", specifier = ">=0.24.1" },
     { name = "httpx-sse", marker = "extra == 'bridge'", specifier = ">=0.4.0" },
-    { name = "litestar", extras = ["jwt"], specifier = ">=2.23.0" },
+    { name = "litestar", specifier = ">=2.23.0" },
     { name = "protobuf", marker = "extra == 'a2a'", specifier = ">=5.29.5" },
     { name = "typing-extensions", specifier = ">=4.0.0" },
 ]

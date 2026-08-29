@@ -3,15 +3,13 @@
 import logging
 from typing import TYPE_CHECKING, Any
 
-from litestar import Litestar, Request, Router
-from litestar import get as litestar_get
+from litestar import Litestar, Router
 from litestar.di import Provide
 from litestar.handlers import BaseRouteHandler
 from litestar.plugins import CLIPlugin, InitPluginProtocol
 
 from litestar_mcp.cli import mcp_group
 from litestar_mcp.config import MCPConfig
-from litestar_mcp.manifests import build_oauth_protected_resource
 from litestar_mcp.registry import PromptRegistration, Registry
 from litestar_mcp.routes import MCPController
 from litestar_mcp.schema_builder import generate_schema_for_handler, validate_mcp_header_schema
@@ -167,18 +165,6 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         app_config.route_handlers.append(mcp_router)
         app_config.on_startup.append(self.on_startup)
         app_config.on_shutdown.append(self.on_shutdown)
-
-        @litestar_get(
-            "/.well-known/oauth-protected-resource",
-            sync_to_thread=False,
-            include_in_schema=self._config.include_in_schema,
-            opt={"exclude_from_auth": True},
-        )
-        def oauth_protected_resource(request: "Request[Any, Any, Any]") -> "dict[str, Any]":
-            return build_oauth_protected_resource(self._config.auth, request.app)
-
-        if self._config.register_oauth_protected_resource:
-            app_config.route_handlers.append(oauth_protected_resource)
         return app_config
 
     def on_startup(self, app: "Litestar") -> "None":

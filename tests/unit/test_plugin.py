@@ -59,10 +59,6 @@ def _openapi_paths(app: "Litestar") -> "set[str]":
         return set(client.get("/schema/openapi.json").json()["paths"])
 
 
-def _registered_paths(app: "Litestar") -> "set[str]":
-    return {route.path for route in app.routes}
-
-
 def _http_handler_opts(app: "Litestar", path: "str") -> "list[dict[str, Any]]":
     route = next(route for route in app.routes if isinstance(route, HTTPRoute) and route.path == path)
     opts = [
@@ -171,7 +167,7 @@ class TestLitestarMCP:
 
         assert "/users" in paths
         assert "/mcp" in paths
-        assert "/.well-known/oauth-protected-resource" in paths
+        assert "/.well-known/oauth-protected-resource" not in paths
         assert "/.well-known/agent-card.json" not in paths
         assert "/.well-known/mcp-server.json" not in paths
 
@@ -187,27 +183,6 @@ class TestLitestarMCP:
         app = Litestar(plugins=[LitestarMCP()])
 
         assert all("auth_policy" not in opt for opt in _http_handler_opts(app, "/mcp"))
-
-    def test_oauth_protected_resource_registration_can_be_disabled(self) -> "None":
-        app = Litestar(plugins=[LitestarMCP(MCPConfig(register_oauth_protected_resource=False))])
-
-        assert "/.well-known/oauth-protected-resource" not in _registered_paths(app)
-
-    def test_foreign_oauth_protected_resource_route_can_be_registered(self) -> "None":
-        @get("/.well-known/oauth-protected-resource")
-        async def oauth_protected_resource() -> "dict[str, str]":
-            return {"owner": "application"}
-
-        app = Litestar(
-            route_handlers=[oauth_protected_resource],
-            plugins=[LitestarMCP(MCPConfig(register_oauth_protected_resource=False))],
-        )
-
-        with TestClient(app=app) as client:
-            response = client.get("/.well-known/oauth-protected-resource")
-
-        assert response.status_code == 200
-        assert response.json() == {"owner": "application"}
 
     def test_tool_execution_real(self) -> "None":
         @post("/analyze", opt={"mcp_tool": "analyze_data"})

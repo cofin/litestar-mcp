@@ -1,5 +1,5 @@
 """End-to-end tests for :class:`MCPOptKeys` — renamed opt keys work across
-discovery (``plugin.py``) and description rendering (routes + manifests).
+discovery (``plugin.py``) and description rendering (routes).
 """
 
 from typing import Any

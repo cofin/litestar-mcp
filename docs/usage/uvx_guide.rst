@@ -149,5 +149,6 @@ environment:
 
     - :doc:`reference_examples` — the family chooser and variant matrix.
     - :doc:`bridge` — Litestar CLI stdio bridge usage.
-    - :doc:`auth` — :class:`~litestar_mcp.auth.MCPAuthConfig` reference.
+    - :doc:`auth` — Litestar authentication middleware and the
+      ``MCPConfig.route_opt`` policy for MCP.
     - :doc:`deployment` — stateless scaling and multi-replica subscriptions.

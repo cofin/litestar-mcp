@@ -101,9 +101,6 @@ Configuration Options
     * - ``include_tags`` / ``exclude_tags``
       - ``None``
       - Filter exposure by OpenAPI tags.
-    * - ``auth``
-      - ``None``
-      - Enable bearer-token validation and OAuth protected-resource metadata.
     * - ``tasks``
       - ``False``
       - Enable the Tasks extension, optionally with a persistent Store.
