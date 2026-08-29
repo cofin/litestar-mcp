@@ -4,7 +4,7 @@ import builtins
 import io
 import json
 import threading
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from types import TracebackType
 from typing import Any
 
@@ -441,3 +441,65 @@ async def test_bridge_reports_post_exception_and_cancels_stdin_pump(
     assert stdin.receive_started.is_set()
     assert "remote transport failed" in stderr.getvalue()
     _assert_bridge_jsonrpc_error(stdout, "remote transport failed")
+
+
+class _AckGatedSource(BridgeQueuedBytesSource):
+    """Yield the queued lines, then hold EOF until the acknowledgement has been written."""
+
+    def __init__(self, *chunks: bytes, gate: anyio.Event) -> None:
+        super().__init__(*chunks)
+        self._gate = gate
+
+    async def receive(self, max_bytes: int = 65536) -> bytes:
+        chunk = await super().receive(max_bytes)
+        if chunk:
+            return chunk
+        await self._gate.wait()
+        return b""
+
+
+class _AckSink(BridgeBytesSink):
+    """Byte sink that flags the subscription acknowledgement line."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.acknowledged = anyio.Event()
+
+    async def send(self, item: bytes) -> None:
+        await super().send(item)
+        if b"notifications/subscriptions/acknowledged" in item:
+            self.acknowledged.set()
+
+
+@pytest.mark.anyio
+async def test_bridge_stdin_eof_closes_open_subscription_streams(monkeypatch: pytest.MonkeyPatch) -> None:
+    from litestar_mcp.mcp.bridge import run_stdio_streamable_http_bridge
+
+    closed = anyio.Event()
+
+    class NeverEndingSSE(httpx.AsyncByteStream):
+        async def __aiter__(self) -> "AsyncIterator[bytes]":
+            yield b'data: {"jsonrpc":"2.0","method":"notifications/subscriptions/acknowledged","params":{}}\n\n'
+            await anyio.sleep_forever()
+
+        async def aclose(self) -> None:
+            closed.set()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, headers={"content-type": "text/event-stream"}, stream=NeverEndingSSE(), request=request
+        )
+
+    _patch_async_client(monkeypatch, handler)
+    stdout = _AckSink()
+    stdin = _AckGatedSource(
+        b'{"jsonrpc":"2.0","id":1,"method":"subscriptions/listen","params":{"notifications":{"toolsListChanged":true}}}\n',
+        gate=stdout.acknowledged,
+    )
+
+    with anyio.fail_after(2):
+        exit_code = await run_stdio_streamable_http_bridge(ENDPOINT, stdin=stdin, stdout=stdout)
+
+    assert exit_code == 0
+    assert closed.is_set()
+    assert b"notifications/subscriptions/acknowledged" in stdout.buffer

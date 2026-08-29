@@ -16,6 +16,7 @@ from anyio.to_thread import run_sync as run_sync_in_worker_thread
 from litestar.status_codes import HTTP_202_ACCEPTED, HTTP_401_UNAUTHORIZED
 from typing_extensions import Self
 
+from litestar_mcp.__metadata__ import __version__
 from litestar_mcp.core.exceptions import BridgeConnectionError, BridgeMessageTooLargeError, MissingDependencyError
 from litestar_mcp.core.jsonrpc import JSONRPCError, error_response
 from litestar_mcp.core.serialization import from_json, to_json
@@ -31,6 +32,7 @@ BRIDGE_ERROR = -32001
 DEFAULT_MAX_STDIN_MESSAGE_SIZE = 16 * 1024 * 1024
 _MIN_VISIBLE_ASCII = 0x20
 _MAX_VISIBLE_ASCII = 0x7E
+_DEFAULT_CLIENT_INFO = {"name": "litestar-mcp-stdio-bridge", "version": __version__}
 BEARER_TOKEN_PREFIX = "Bearer "  # noqa: S105
 DEFAULT_AUTH_HEADER_NAME = "Authorization"
 
@@ -51,6 +53,8 @@ __all__ = (
 async def run_stdio_streamable_http_bridge(
     endpoint: str,
     *,
+    transport: "httpx.AsyncBaseTransport | None" = None,
+    client_info: "Mapping[str, str] | None" = None,
     headers: Mapping[str, str] | None = None,
     token_provider: TokenProvider | None = None,
     header_name: str = DEFAULT_AUTH_HEADER_NAME,
@@ -66,6 +70,11 @@ async def run_stdio_streamable_http_bridge(
 
     Args:
         endpoint: Full MCP Streamable HTTP endpoint URL.
+        transport: Optional httpx transport. Pass
+            :class:`~litestar_mcp.mcp.stdio.ASGIStreamingTransport` to serve an
+            in-process ASGI app instead of a remote endpoint.
+        client_info: Default ``io.modelcontextprotocol/clientInfo`` injected
+            into requests that do not carry one.
         headers: Static HTTP headers sent to the endpoint.
         token_provider: Optional callable that returns a fresh token per request.
         header_name: Header used for token auth.
@@ -98,6 +107,8 @@ async def run_stdio_streamable_http_bridge(
         async with (
             _StreamableHTTPBridgeClient(
                 endpoint,
+                transport=transport,
+                client_info=client_info,
                 headers=headers,
                 auth=auth,
                 timeout=timeout,
@@ -206,6 +217,8 @@ class _StreamableHTTPBridgeClient:
         *,
         headers: Mapping[str, str] | None,
         auth: httpx.Auth | None,
+        transport: "httpx.AsyncBaseTransport | None" = None,
+        client_info: "Mapping[str, str] | None" = None,
         timeout: float,
         sse_read_timeout: float | None,
         stdout: ByteSendStream,
@@ -216,17 +229,21 @@ class _StreamableHTTPBridgeClient:
         self._stdout = stdout
         self._stderr = stderr
         self._event_source_cls = event_source_cls
+        self._client_info: dict[str, str] = dict(client_info or _DEFAULT_CLIENT_INFO)
         self._client = httpx.AsyncClient(
             headers=dict(headers or {}),
             timeout=httpx.Timeout(timeout, read=sse_read_timeout),
             auth=auth,
             follow_redirects=True,
+            transport=transport,
         )
         self._tool_headers: dict[str, list[tuple[tuple[str, ...], str]]] | None = None
         self._tool_headers_lock = asyncio.Lock()
         self._inflight: dict[Any, anyio.CancelScope] = {}
         self._inflight_lock = asyncio.Lock()
         self._stdout_lock = asyncio.Lock()
+        self._subscriptions: set[Any] = set()
+        self._stdin_closed = False
 
     async def __aenter__(self) -> Self:
         await self._client.__aenter__()
@@ -254,6 +271,11 @@ class _StreamableHTTPBridgeClient:
             if isinstance(params, dict):
                 await self.cancel_request(params.get("requestId"))
             return
+        if message.get("method") == "subscriptions/listen":
+            if self._stdin_closed:
+                return
+            if message.get("id") is not None:
+                self._subscriptions.add(message["id"])
         prepared = self._prepare_message(message)
         headers = await self._mcp_headers(prepared)
         request_id = prepared.get("id")
@@ -299,6 +321,14 @@ class _StreamableHTTPBridgeClient:
         if scope is not None:
             scope.cancel()
 
+    async def close_subscriptions(self) -> None:
+        """Cancel open ``subscriptions/listen`` streams once local stdin has reached EOF."""
+        self._stdin_closed = True
+        async with self._inflight_lock:
+            scopes = [self._inflight[request_id] for request_id in self._subscriptions if request_id in self._inflight]
+        for scope in scopes:
+            scope.cancel()
+
     async def _mcp_headers(self, message: dict[str, Any]) -> dict[str, str]:
         method = str(message.get("method", ""))
         headers = {
@@ -323,17 +353,13 @@ class _StreamableHTTPBridgeClient:
                 headers.update(await self._custom_tool_headers(params))
         return headers
 
-    @staticmethod
-    def _prepare_message(message: dict[str, Any]) -> dict[str, Any]:
+    def _prepare_message(self, message: dict[str, Any]) -> dict[str, Any]:
         prepared = dict(message)
         params = dict(prepared.get("params") or {})
         meta = dict(params.get("_meta") or {})
         meta.setdefault("io.modelcontextprotocol/protocolVersion", MCP_PROTOCOL_VERSION)
         meta.setdefault("io.modelcontextprotocol/clientCapabilities", {})
-        meta.setdefault(
-            "io.modelcontextprotocol/clientInfo",
-            {"name": "litestar-mcp-stdio-bridge", "version": "0.12.0"},
-        )
+        meta.setdefault("io.modelcontextprotocol/clientInfo", dict(self._client_info))
         params["_meta"] = meta
         prepared["params"] = params
         return prepared
@@ -470,6 +496,7 @@ async def _pump_stdin_to_remote(
                 msg = "JSON-RPC messages must be JSON objects"
                 raise TypeError(msg)
             task_group.start_soon(bridge_client.post_message, raw)
+        await bridge_client.close_subscriptions()
 
 
 async def _iter_stdin_lines(stdin: ByteReceiveStream, *, max_message_size: int) -> AsyncIterator[bytes]:
