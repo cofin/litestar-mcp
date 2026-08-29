@@ -1,11 +1,18 @@
+from collections.abc import AsyncGenerator
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
 from a2a.client.transports.jsonrpc import JsonRpcTransport
 from a2a.server.context import ServerCallContext
-from a2a.types import AgentCard, AgentInterface, Message, Part, Role, SendMessageRequest
+from a2a.server.request_handlers import RequestHandler
+from a2a.types import AgentCard, AgentInterface, Message, Part, Role, SendMessageRequest, Task, TaskState, TaskStatus
 from litestar import Litestar, Request, get
+from litestar.config.csrf import CSRFConfig
+from litestar.connection import ASGIConnection
+from litestar.exceptions import PermissionDeniedException
+from litestar.handlers import BaseRouteHandler
+from litestar.middleware import AbstractAuthenticationMiddleware, AuthenticationResult, DefineMiddleware
 from litestar.testing import AsyncTestClient
 
 from litestar_mcp.a2a import A2AConfig, LitestarA2A
@@ -199,3 +206,191 @@ async def test_v03_compatibility_uses_official_conversions_when_enabled() -> Non
 
     assert response.status_code == 200
     assert response.json()["result"]["messageId"] == "reply-v03"
+
+
+class StubHandler(RequestHandler):
+    def __init__(self) -> None:
+        self.contexts: list[ServerCallContext] = []
+
+    async def on_get_task(self, params: Any, context: ServerCallContext | None = None) -> Any:
+        return None
+
+    async def on_cancel_task(self, params: Any, context: ServerCallContext | None = None) -> Any:
+        return None
+
+    async def on_message_send(self, params: Any, context: ServerCallContext | None = None) -> Any:
+        if context is not None:
+            self.contexts.append(context)
+        return Message(message_id="reply", role=Role.ROLE_AGENT, parts=[Part(text="ok")])
+
+    async def on_message_send_stream(
+        self, params: Any, context: ServerCallContext | None = None
+    ) -> AsyncGenerator[Any, None]:
+        yield Message(message_id="chunk", role=Role.ROLE_AGENT, parts=[Part(text="one")])
+        yield Task(id="task-1", context_id="ctx-1", status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED))
+
+    async def on_create_task_push_notification_config(
+        self, params: Any, context: ServerCallContext | None = None
+    ) -> Any:
+        raise NotImplementedError
+
+    async def on_get_task_push_notification_config(self, params: Any, context: ServerCallContext | None = None) -> Any:
+        raise NotImplementedError
+
+    async def on_list_task_push_notification_configs(
+        self, params: Any, context: ServerCallContext | None = None
+    ) -> Any:
+        raise NotImplementedError
+
+    async def on_delete_task_push_notification_config(
+        self, params: Any, context: ServerCallContext | None = None
+    ) -> Any:
+        raise NotImplementedError
+
+    async def on_subscribe_to_task(
+        self, params: Any, context: ServerCallContext | None = None
+    ) -> AsyncGenerator[Any, None]:
+        yield Task(id="task-1", context_id="ctx-1", status=TaskStatus(state=TaskState.TASK_STATE_WORKING))
+
+    async def on_get_extended_agent_card(self, params: Any, context: ServerCallContext | None = None) -> Any:
+        return make_card()
+
+    async def on_list_tasks(self, params: Any, context: ServerCallContext | None = None) -> Any:
+        raise NotImplementedError
+
+
+def send_payload(method: str = "SendMessage") -> dict[str, Any]:
+    return {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": method,
+        "params": {"message": {"messageId": "request-1", "role": "ROLE_USER", "parts": [{"text": "hello"}]}},
+    }
+
+
+@pytest.mark.anyio
+async def test_streaming_is_served_as_event_stream_to_official_client() -> None:
+    card = make_card()
+    app = Litestar(plugins=[LitestarA2A(card, StubHandler())])
+
+    async with AsyncTestClient(app=app) as http_client:
+        raw = await http_client.post("/a2a", headers={"A2A-Version": "1.0"}, json=send_payload("SendStreamingMessage"))
+        http_client.headers["A2A-Version"] = "1.0"
+        transport = JsonRpcTransport(http_client, card, "http://testserver.local/a2a")
+        payloads = [
+            event.WhichOneof("payload")
+            async for event in transport.send_message_streaming(
+                SendMessageRequest(message=Message(message_id="q", role=Role.ROLE_USER, parts=[Part(text="hi")]))
+            )
+        ]
+
+    assert raw.headers["content-type"].startswith("text/event-stream")
+    assert payloads == ["message", "task"]
+
+
+class _AnonymousPrincipal:
+    id = None
+    is_authenticated = False
+
+
+class _PrincipalMiddleware(AbstractAuthenticationMiddleware):
+    async def authenticate_request(self, connection: ASGIConnection[Any, Any, Any, Any]) -> AuthenticationResult:
+        return AuthenticationResult(user=_AnonymousPrincipal(), auth=None)
+
+
+@pytest.mark.anyio
+async def test_anonymous_principal_on_scope_is_not_authenticated() -> None:
+    handler = StubHandler()
+    app = Litestar(
+        middleware=[DefineMiddleware(_PrincipalMiddleware)],
+        plugins=[LitestarA2A(make_card(), handler)],
+    )
+
+    async with AsyncTestClient(app=app) as client:
+        response = await client.post("/a2a", headers={"A2A-Version": "1.0"}, json=send_payload())
+
+    assert "result" in response.json()
+    assert handler.contexts[0].user.is_authenticated is False
+
+
+@pytest.mark.anyio
+async def test_version_check_reads_the_request_header_with_a_bare_context_builder() -> None:
+    config = A2AConfig(context_builder=lambda _request: ServerCallContext())
+    app = Litestar(plugins=[LitestarA2A(make_card(), StubHandler(), config)])
+
+    async with AsyncTestClient(app=app) as client:
+        accepted = await client.post("/a2a", headers={"A2A-Version": "1.0"}, json=send_payload())
+        rejected = await client.post("/a2a", json=send_payload())
+
+    assert "result" in accepted.json()
+    assert rejected.json()["error"]["code"] == -32009
+
+
+@pytest.mark.anyio
+async def test_rpc_route_is_exempt_from_csrf() -> None:
+    app = Litestar(csrf_config=CSRFConfig(secret="s" * 32), plugins=[LitestarA2A(make_card(), StubHandler())])
+
+    async with AsyncTestClient(app=app) as client:
+        response = await client.post("/a2a", headers={"A2A-Version": "1.0"}, json=send_payload())
+
+    assert response.status_code == 200
+    assert "result" in response.json()
+
+
+@pytest.mark.anyio
+async def test_guards_apply_to_rpc_route() -> None:
+    def deny(connection: ASGIConnection[Any, Any, Any, Any], handler: BaseRouteHandler) -> None:
+        raise PermissionDeniedException
+
+    app = Litestar(plugins=[LitestarA2A(make_card(), StubHandler(), A2AConfig(guards=[deny]))])
+
+    async with AsyncTestClient(app=app) as client:
+        response = await client.post("/a2a", headers={"A2A-Version": "1.0"}, json=send_payload())
+
+    assert response.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_a2a_routes_are_hidden_from_openapi_unless_enabled() -> None:
+    hidden = Litestar(plugins=[LitestarA2A(make_card(), StubHandler())])
+    shown = Litestar(plugins=[LitestarA2A(make_card(), StubHandler(), A2AConfig(include_in_schema=True))])
+
+    async with AsyncTestClient(app=hidden) as client:
+        hidden_paths = (await client.get("/schema/openapi.json")).json()["paths"]
+    async with AsyncTestClient(app=shown) as client:
+        shown_paths = (await client.get("/schema/openapi.json")).json()["paths"]
+
+    assert "/a2a" not in hidden_paths
+    assert "/a2a" in shown_paths
+
+
+@pytest.mark.anyio
+async def test_v03_compat_recognises_legacy_extensions_header() -> None:
+    handler = StubHandler()
+    app = Litestar(plugins=[LitestarA2A(make_card(), handler, A2AConfig(enable_v0_3_compat=True))])
+
+    async with AsyncTestClient(app=app) as client:
+        await client.post(
+            "/a2a",
+            headers={"X-A2A-Extensions": "https://ext.example/one"},
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "message/send",
+                "params": {"message": {"messageId": "m", "role": "user", "parts": [{"kind": "text", "text": "hello"}]}},
+            },
+        )
+
+    assert "https://ext.example/one" in handler.contexts[0].requested_extensions
+
+
+@pytest.mark.anyio
+async def test_agent_card_sends_cache_headers_and_honours_if_none_match() -> None:
+    app = Litestar(plugins=[LitestarA2A(make_card(), StubHandler())])
+
+    async with AsyncTestClient(app=app) as client:
+        first = await client.get("/.well-known/agent-card.json")
+        second = await client.get("/.well-known/agent-card.json", headers={"If-None-Match": first.headers["etag"]})
+
+    assert first.headers["cache-control"].startswith("public, max-age=")
+    assert second.status_code == 304

@@ -13,7 +13,6 @@ import httpx
 from anyio import EndOfStream, get_cancelled_exc_class
 from anyio.abc import ByteReceiveStream, ByteSendStream
 from anyio.to_thread import run_sync as run_sync_in_worker_thread
-from litestar.serialization import decode_json, encode_json
 from litestar.status_codes import HTTP_202_ACCEPTED, HTTP_401_UNAUTHORIZED
 from typing_extensions import Self
 
@@ -26,6 +25,7 @@ from litestar_mcp.routes import (
     MCP_PROTOCOL_VERSION,
     MCP_PROTOCOL_VERSION_HEADER,
 )
+from litestar_mcp.utils.serialization import from_json, to_json
 
 TokenProvider = Callable[[], str] | Callable[[], Awaitable[str]]
 BRIDGE_ERROR = -32001
@@ -272,7 +272,7 @@ class _StreamableHTTPBridgeClient:
                         response.raise_for_status()
                         content_type = response.headers.get("content-type", "").lower()
                         if content_type.startswith("application/json"):
-                            payload = decode_json(await response.aread())
+                            payload = from_json(await response.aread())
                             async with self._stdout_lock:
                                 await _write_json_line(self._stdout, payload)
                         elif content_type.startswith("text/event-stream"):
@@ -383,7 +383,7 @@ class _StreamableHTTPBridgeClient:
                     },
                 )
                 response.raise_for_status()
-                payload = decode_json(response.content)
+                payload = from_json(response.content)
                 result = payload.get("result") if isinstance(payload, dict) else None
                 for tool in result.get("tools", ()) if isinstance(result, dict) else ():
                     if isinstance(tool, dict) and isinstance(tool.get("name"), str):
@@ -399,7 +399,7 @@ class _StreamableHTTPBridgeClient:
         async for event in event_source.aiter_sse():
             if not event.data:
                 continue
-            payload = decode_json(event.data)
+            payload = from_json(event.data)
             async with self._stdout_lock:
                 await _write_json_line(self._stdout, payload)
             if expected_id is not None and isinstance(payload, dict) and payload.get("id") == expected_id:
@@ -462,7 +462,7 @@ async def _pump_stdin_to_remote(
         async for line in _iter_stdin_lines(stdin, max_message_size=max_message_size):
             if not line.strip():
                 continue
-            raw = decode_json(line)
+            raw = from_json(line)
             if not isinstance(raw, dict):
                 msg = "JSON-RPC messages must be JSON objects"
                 raise TypeError(msg)
@@ -497,7 +497,7 @@ async def _write_bridge_error(stdout: ByteSendStream, message: str) -> None:
 
 
 async def _write_json_line(stdout: ByteSendStream, payload: dict[str, Any]) -> None:
-    await stdout.send(encode_json(payload) + b"\n")
+    await stdout.send(to_json(payload, as_bytes=True) + b"\n")
 
 
 def _normalize_sse_read_timeout(value: float | None) -> float | None:

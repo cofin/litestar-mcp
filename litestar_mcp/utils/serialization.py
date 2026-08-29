@@ -32,16 +32,24 @@ import msgspec
 from litestar.serialization import get_serializer
 
 from litestar_mcp._typing import PYDANTIC_INSTALLED, BaseModel
+from litestar_mcp.utils._json import DEFAULT_TYPE_ENCODERS, TypeEncodersMap, get_default_serializer
+from litestar_mcp.utils._json import decode_json as from_json
+from litestar_mcp.utils._json import encode_json as to_json
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
 
 __all__ = (
+    "DEFAULT_TYPE_ENCODERS",
     "SchemaSerializer",
+    "TypeEncodersMap",
+    "from_json",
     "get_collection_serializer",
+    "get_default_serializer",
     "reset_serializer_cache",
     "schema_dump",
     "serialize_collection",
+    "to_json",
 )
 
 _PRIMITIVE_TYPES: "tuple[type[Any], ...]" = (str, bytes, int, float, bool)

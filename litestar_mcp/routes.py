@@ -10,7 +10,6 @@ from litestar import Controller, Litestar, MediaType, Request, Response, post
 from litestar.di import NamedDependency  # noqa: TC002
 from litestar.exceptions import SerializationException
 from litestar.response import ServerSentEvent, ServerSentEventMessage
-from litestar.serialization import decode_json, encode_json
 from litestar.status_codes import (
     HTTP_200_OK,
     HTTP_400_BAD_REQUEST,
@@ -33,9 +32,10 @@ from litestar_mcp.registry import PromptRegistration, Registry  # noqa: TC001
 from litestar_mcp.schema_builder import generate_schema_for_handler, iter_mcp_header_fields
 from litestar_mcp.services.handler import MCPHandlerService, MCPRequestContext
 from litestar_mcp.tasks import MCPTaskStore  # noqa: TC001
+from litestar_mcp.utils.serialization import from_json, to_json
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+    from collections.abc import AsyncGenerator, Awaitable, Callable
 
     from litestar_mcp.jsonrpc import JSONRPCRequest
 
@@ -66,6 +66,7 @@ _CACHEABLE_METHODS = {
 }
 _BASE64_PREFIX = "=?base64?"
 _BASE64_SUFFIX = "?="
+_DISPATCH_DONE = object()
 
 
 def _error(
@@ -252,17 +253,21 @@ def _request_subject(request: "Request[Any, Any, Any]") -> "str | None":
     return None
 
 
+def _progress_token(rpc_request: "JSONRPCRequest") -> "str | int | None":
+    token = rpc_request.params["_meta"].get("progressToken")
+    return token if isinstance(token, (str, int)) and not isinstance(token, bool) else None
+
+
 def _build_request_context(
-    request: "Request[Any, Any, Any]", rpc_request: "JSONRPCRequest", registry: "Registry"
+    request: "Request[Any, Any, Any]",
+    rpc_request: "JSONRPCRequest",
+    progress_reporter: "Callable[[dict[str, Any]], Awaitable[None]] | None" = None,
 ) -> "MCPRequestContext":
     meta = rpc_request.params["_meta"]
     client_info = meta.get("io.modelcontextprotocol/clientInfo")
     client_id = client_info.get("name") if isinstance(client_info, dict) else None
     sub = _request_subject(request)
-    progress_token = meta.get("progressToken")
-
-    async def report_progress(params: "dict[str, Any]") -> "None":
-        await registry.publish_notification("notifications/progress", params)
+    progress_token = _progress_token(rpc_request) if progress_reporter is not None else None
 
     return MCPRequestContext(
         client_id=client_id or "anonymous",
@@ -273,8 +278,8 @@ def _build_request_context(
         client_info=client_info if isinstance(client_info, dict) else None,
         input_responses=rpc_request.params.get("inputResponses"),
         request_state=rpc_request.params.get("requestState"),
-        progress_token=progress_token if isinstance(progress_token, (str, int)) else None,
-        progress_reporter=report_progress,
+        progress_token=progress_token,
+        progress_reporter=progress_reporter,
     )
 
 
@@ -342,6 +347,59 @@ def _finalize_result(
         result.setdefault("cacheScope", config.cache_scope)
 
 
+def _notification_unsupported(request_id: "Any") -> "dict[str, Any]":
+    return error_response(
+        request_id,
+        JSONRPCError(code=INVALID_PARAMS, message="Client notifications are not supported over Streamable HTTP"),
+    )
+
+
+def _progress_response(
+    request: "Request[Any, Any, Any]",
+    rpc_request: "JSONRPCRequest",
+    router: "JSONRPCRouter",
+    config: "MCPConfig",
+) -> "Response[Any]":
+    """Answer a request carrying a progress token on its own SSE stream.
+
+    Progress notifications are delivered on the response stream of the request
+    that supplied the token, followed by that request's JSON-RPC response.
+    """
+    queue: asyncio.Queue[dict[str, Any] | object] = asyncio.Queue()
+    app = request.app
+
+    async def report(params: "dict[str, Any]") -> "None":
+        await queue.put({"jsonrpc": "2.0", "method": "notifications/progress", "params": params})
+
+    async def run() -> "dict[str, Any] | None":
+        try:
+            return await router.dispatch(rpc_request, _build_request_context(request, rpc_request, report))
+        finally:
+            await queue.put(_DISPATCH_DONE)
+
+    dispatch = asyncio.create_task(run())
+
+    async def event_stream() -> "AsyncGenerator[ServerSentEventMessage, None]":
+        try:
+            while True:
+                message = await queue.get()
+                if message is _DISPATCH_DONE:
+                    break
+                yield ServerSentEventMessage(data=to_json(message))
+            result = await dispatch
+            if result is None:
+                result = _notification_unsupported(rpc_request.id)
+            _finalize_result(result, method=rpc_request.method, app=app, config=config)
+            yield ServerSentEventMessage(data=to_json(result))
+        finally:
+            dispatch.cancel()
+
+    response = ServerSentEvent(event_stream())
+    response.headers[MCP_PROTOCOL_VERSION_HEADER] = MCP_PROTOCOL_VERSION
+    response.headers["X-Accel-Buffering"] = "no"
+    return response
+
+
 async def _subscription_response(
     rpc_request: "JSONRPCRequest",
     registry: "Registry",
@@ -384,7 +442,7 @@ async def _subscription_response(
                     message = next_message.result()
                 except StopAsyncIteration:
                     return
-                yield ServerSentEventMessage(data=encode_json(message).decode("utf-8"))
+                yield ServerSentEventMessage(data=to_json(message))
                 next_message = asyncio.create_task(stream.__anext__())
         finally:
             next_message.cancel()
@@ -415,7 +473,7 @@ class MCPController(Controller):
         if origin_error is not None:
             return origin_error
         try:
-            raw = decode_json(await request.body())
+            raw = from_json(await request.body())
         except (SerializationException, ValueError):
             return _error(None, code=PARSE_ERROR, message="Parse error", status_code=HTTP_400_BAD_REQUEST)
         try:
@@ -453,7 +511,9 @@ class MCPController(Controller):
                 message=f"Method not found: {rpc_request.method}",
                 status_code=HTTP_404_NOT_FOUND,
             )
-        result = await router.dispatch(rpc_request, _build_request_context(request, rpc_request, registry))
+        if _progress_token(rpc_request) is not None:
+            return _progress_response(request, rpc_request, router, config)
+        result = await router.dispatch(rpc_request, _build_request_context(request, rpc_request))
         if result is None:
             return _error(
                 rpc_request.id,

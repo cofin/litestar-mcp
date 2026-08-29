@@ -18,8 +18,28 @@ Recent Updates
         ``litestar_mcp.a2a.A2AConfig`` / ``LitestarA2A`` adapter around the
         official A2A 1.0 SDK. Litestar owns HTTP, JSON, SSE, guards,
         middleware, and disconnect cleanup; the optional extra uses bare
-        ``a2a-sdk``. Subscription queues are bounded and request contexts can
-        report token-correlated progress.
+        ``a2a-sdk``. The RPC route is exempt from CSRF, hidden from OpenAPI
+        unless ``A2AConfig.include_in_schema`` is set, honours the request's
+        ``A2A-Version`` header regardless of the configured context builder,
+        reports ``scope["user"]`` objects that carry ``is_authenticated`` as
+        such, and serves the agent card with ``ETag`` and ``Cache-Control``.
+
+    .. change:: stream progress on the requesting response
+        :type: feature
+
+        A request carrying ``_meta.progressToken`` is answered on its own
+        ``text/event-stream`` response: ``MCPRequestContext.report_progress``
+        emits ``notifications/progress`` there, followed by the JSON-RPC
+        response. Progress is never fanned out to ``subscriptions/listen``
+        streams.
+
+    .. change:: bound subscription queues
+        :type: breaking
+
+        ``MCPConfig.stream_queue_capacity`` (default ``256``) bounds each
+        ``subscriptions/listen`` queue. A subscriber that falls behind receives
+        the ``resultType: "complete"`` response for its subscription and is
+        then closed instead of growing memory without limit.
 
     .. change:: retain the released MCP package layout
         :type: breaking

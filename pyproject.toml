@@ -47,10 +47,8 @@ Issue = "https://github.com/cofin/litestar-mcp/issues/"
 Source = "https://github.com/cofin/litestar-mcp"
 
 [project.optional-dependencies]
+a2a = ["a2a-sdk>=1.1.2", "protobuf>=5.29.5"]
 bridge = ["httpx-sse>=0.4.0"]
-a2a = [
-    "a2a-sdk>=1.1.2",
-]
 
 [project.entry-points."pygments.styles"]
 litestar-mcp-dark = "tools.sphinx_ext.pygments_styles:LitestarMcpDarkStyle"
@@ -89,14 +87,7 @@ doc = [
     "sphinx-autodoc-typehints",
     "shibuya",
 ]
-lint = [
-    "mypy>=1.13.0",
-    "pre-commit>=3.5.0",
-    "pyright>=1.1.386",
-    "ruff>=0.7.1",
-    "slotscheck>=0.16.5",
-    "tomli>=2.4.1",
-]
+lint = ["mypy>=1.13.0", "pre-commit>=3.5.0", "pyright>=1.1.386", "ruff>=0.7.1", "slotscheck>=0.16.5", "tomli>=2.4.1"]
 test = [
     "httpx-sse>=0.4.0",
     "litestar[standard,jwt]",
@@ -136,18 +127,15 @@ parse = """(?x)
 regex = false
 replace = "{new_version}"
 search = "{current_version}"
-serialize = [
-    "{major}.{minor}.{patch}",
-    "{major}.{minor}.{patch}-{pre}.{pre_n}",
-]
+serialize = ["{major}.{minor}.{patch}", "{major}.{minor}.{patch}-{pre}.{pre_n}"]
 sign_tags = false
 tag = false
 tag_message = "chore(release): v{new_version}"
 tag_name = "v{new_version}"
 
 [tool.bumpversion.parts.pre]
-optional_value = "stable"
 first_value = "stable"
+optional_value = "stable"
 values = ["alpha", "beta", "rc", "stable"]
 
 [tool.bumpversion.parts.pre_n]

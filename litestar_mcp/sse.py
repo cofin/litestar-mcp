@@ -1,12 +1,13 @@
 """In-process notification subscriptions for MCP 2026-07-28."""
 
 import asyncio
+import contextlib
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from litestar.serialization import decode_json
+from litestar_mcp.utils.serialization import from_json
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -32,6 +33,7 @@ class _Subscription:
     subscription_id: "Any"
     notifications: "dict[str, Any]"
     queue: "asyncio.Queue[dict[str, Any] | object]"
+    closed: "bool" = False
 
 
 class SubscriptionManager:
@@ -76,6 +78,8 @@ class SubscriptionManager:
         async def stream() -> "AsyncGenerator[dict[str, Any], None]":
             try:
                 while True:
+                    if state.closed and state.queue.empty():
+                        return
                     message = await state.queue.get()
                     if message is _CLOSED:
                         return
@@ -111,16 +115,18 @@ class SubscriptionManager:
                 async with self._lock:
                     self._streams.pop(state.stream_id, None)
                 _logger.warning("Closing slow MCP subscriber %s after queue overflow", state.stream_id)
+                state.closed = True
                 while not state.queue.empty():
                     state.queue.get_nowait()
-                state.queue.put_nowait(_CLOSED)
+                state.queue.put_nowait(self._completion(state))
+                self._close(state)
 
     async def disconnect(self, stream_id: "str") -> "None":
         """Remove one stream and wake its consumer."""
         async with self._lock:
             state = self._streams.pop(stream_id, None)
         if state is not None:
-            state.queue.put_nowait(_CLOSED)
+            self._close(state)
 
     async def close_all(self) -> "None":
         """Gracefully close every active stream."""
@@ -132,6 +138,12 @@ class SubscriptionManager:
             states = tuple(self._streams.values())
             self._streams.clear()
         for state in states:
+            self._close(state)
+
+    @staticmethod
+    def _close(state: "_Subscription") -> "None":
+        state.closed = True
+        with contextlib.suppress(asyncio.QueueFull):
             state.queue.put_nowait(_CLOSED)
 
     async def _consume_broker(self) -> "None":
@@ -140,7 +152,7 @@ class SubscriptionManager:
             return
         async with channels.start_subscription("litestar-mcp-subscriptions") as subscriber:
             async for event in subscriber.iter_events():
-                payload = decode_json(event)
+                payload = from_json(event)
                 if isinstance(payload, dict) and isinstance(payload.get("method"), str):
                     params = payload.get("params")
                     if isinstance(params, dict):
@@ -168,6 +180,17 @@ class SubscriptionManager:
             "params": {
                 "_meta": {"io.modelcontextprotocol/subscriptionId": state.subscription_id},
                 "notifications": state.notifications,
+            },
+        }
+
+    @staticmethod
+    def _completion(state: "_Subscription") -> "dict[str, Any]":
+        return {
+            "jsonrpc": "2.0",
+            "id": state.subscription_id,
+            "result": {
+                "resultType": "complete",
+                "_meta": {"io.modelcontextprotocol/subscriptionId": state.subscription_id},
             },
         }
 
