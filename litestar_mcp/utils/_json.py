@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, overload
 
 from msgspec.json import Decoder, Encoder
 
-from litestar_mcp._typing import ATTRS_INSTALLED, PYDANTIC_INSTALLED, BaseModel
+from litestar_mcp.core._typing import ATTRS_INSTALLED, PYDANTIC_INSTALLED, BaseModel
 from litestar_mcp.utils.type_guards import is_attrs_instance, is_msgspec_struct
 
 if TYPE_CHECKING:

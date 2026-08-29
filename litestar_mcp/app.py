@@ -18,7 +18,7 @@ from litestar.serialization import decode_json, encode_json
 from litestar.types import Empty, TypeDecodersSequence
 
 from litestar_mcp.config import MCPConfig
-from litestar_mcp.jsonrpc import (
+from litestar_mcp.core.jsonrpc import (
     INTERNAL_ERROR,
     PARSE_ERROR,
     JSONRPCError,

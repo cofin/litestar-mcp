@@ -12,7 +12,7 @@ from litestar.di import NamedDependency  # noqa: TC002
 from litestar.handlers import BaseRouteHandler
 from litestar.params import FromQuery, Parameter, ParameterKwarg, QueryParameter, SkipValidation
 
-from litestar_mcp.schema_builder import (
+from litestar_mcp.core.schema_builder import (
     _merge_parameter_meta,
     basic_type_to_json_schema,
     collection_type_to_json_schema,

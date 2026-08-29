@@ -48,7 +48,7 @@ from litestar.response import ServerSentEvent, ServerSentEventMessage
 from litestar.status_codes import HTTP_304_NOT_MODIFIED
 
 from litestar_mcp.a2a.config import A2AConfig
-from litestar_mcp.utils.serialization import to_json
+from litestar_mcp.core.serialization import to_json
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator

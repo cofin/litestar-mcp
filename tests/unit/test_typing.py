@@ -1,12 +1,12 @@
-"""Tests for litestar_mcp.typing module - simplified version."""
+"""Tests for litestar_mcp.core.typing module - simplified version."""
 
 from dataclasses import dataclass
 from typing import Any
 
 import pytest
 
-from litestar_mcp._typing import BaseModelStub, DataclassProtocol
-from litestar_mcp.typing import (
+from litestar_mcp.core._typing import BaseModelStub, DataclassProtocol
+from litestar_mcp.core.typing import (
     is_attrs_instance,
     is_dataclass,
     is_dict,

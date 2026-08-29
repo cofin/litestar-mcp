@@ -7,7 +7,7 @@ from litestar import Litestar, get
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig
-from litestar_mcp.jsonrpc import (
+from litestar_mcp.core.jsonrpc import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
     INVALID_REQUEST,

@@ -18,7 +18,7 @@ from litestar_mcp.__metadata__ import __version__
 from litestar_mcp.app import MCP, MCPStdioContext
 from litestar_mcp.config import AfterToolCallHook, BeforeToolCallHook, MCPConfig, MCPOptKeys, MCPTaskConfig
 from litestar_mcp.content import MCPBlobResource, MCPInputRequiredResult, MCPResourceLink, MCPToolResult
-from litestar_mcp.exceptions import (
+from litestar_mcp.core.exceptions import (
     BridgeConnectionError,
     BridgeMessageTooLargeError,
     LitestarMCPError,

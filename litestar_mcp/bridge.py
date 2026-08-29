@@ -16,15 +16,15 @@ from anyio.to_thread import run_sync as run_sync_in_worker_thread
 from litestar.status_codes import HTTP_202_ACCEPTED, HTTP_401_UNAUTHORIZED
 from typing_extensions import Self
 
-from litestar_mcp.exceptions import BridgeConnectionError, BridgeMessageTooLargeError, MissingDependencyError
-from litestar_mcp.jsonrpc import JSONRPCError, error_response
+from litestar_mcp.core.exceptions import BridgeConnectionError, BridgeMessageTooLargeError, MissingDependencyError
+from litestar_mcp.core.jsonrpc import JSONRPCError, error_response
+from litestar_mcp.core.serialization import from_json, to_json
 from litestar_mcp.routes import (
     MCP_METHOD_HEADER,
     MCP_NAME_HEADER,
     MCP_PROTOCOL_VERSION,
     MCP_PROTOCOL_VERSION_HEADER,
 )
-from litestar_mcp.utils.serialization import from_json, to_json
 
 TokenProvider = Callable[[], str] | Callable[[], Awaitable[str]]
 BRIDGE_ERROR = -32001

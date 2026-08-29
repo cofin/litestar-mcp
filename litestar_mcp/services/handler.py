@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any, TypeVar, get_type_hints
 import msgspec
 from litestar.serialization import encode_json
 
-from litestar_mcp._cursor import decode_cursor, encode_cursor
 from litestar_mcp.content import (
     MCPBlobResource,
     MCPInputRequiredResult,
@@ -22,6 +21,15 @@ from litestar_mcp.content import (
     is_content_block,
     normalize_content_blocks,
 )
+from litestar_mcp.core._cursor import decode_cursor, encode_cursor
+from litestar_mcp.core.jsonrpc import (
+    INTERNAL_ERROR,
+    INVALID_PARAMS,
+    METHOD_NOT_FOUND,
+    JSONRPCError,
+    JSONRPCErrorException,
+)
+from litestar_mcp.core.schema_builder import generate_schema_for_handler
 from litestar_mcp.error_mapping import (
     mcp_error_for_prompt_execution,
     mcp_error_for_resource_not_found,
@@ -34,13 +42,6 @@ from litestar_mcp.executor import (
     execute_handler_response,
     execute_tool,
 )
-from litestar_mcp.jsonrpc import (
-    INTERNAL_ERROR,
-    INVALID_PARAMS,
-    METHOD_NOT_FOUND,
-    JSONRPCError,
-    JSONRPCErrorException,
-)
 from litestar_mcp.registry import (
     PromptRegistration,
     Registry,
@@ -49,7 +50,6 @@ from litestar_mcp.registry import (
     resolve_prompt_description,
     should_include_prompt,
 )
-from litestar_mcp.schema_builder import generate_schema_for_handler
 from litestar_mcp.tasks import MCPTaskStore, TaskLookupError, TaskRecord
 from litestar_mcp.utils import (
     get_handler_function,

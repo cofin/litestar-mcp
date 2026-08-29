@@ -3,7 +3,7 @@
 try:
     import a2a as _a2a
 except ImportError as exc:  # pragma: no cover - exercised by clean-wheel smoke tests
-    from litestar_mcp.exceptions import MissingDependencyError
+    from litestar_mcp.core.exceptions import MissingDependencyError
 
     raise MissingDependencyError(package="a2a-sdk", extra="a2a") from exc
 

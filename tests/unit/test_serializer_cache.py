@@ -1,4 +1,4 @@
-"""Cache semantics for :mod:`litestar_mcp.utils.serialization`."""
+"""Cache semantics for :mod:`litestar_mcp.core.serialization`."""
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -7,7 +7,7 @@ from typing import Any, cast
 import pytest
 from msgspec import Struct
 
-from litestar_mcp.utils.serialization import (
+from litestar_mcp.core.serialization import (
     SchemaSerializer,
     get_collection_serializer,
     reset_serializer_cache,

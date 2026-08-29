@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from litestar_mcp.sse import StreamLimitExceeded, SubscriptionManager
+from litestar_mcp.core.sse import StreamLimitExceeded, SubscriptionManager
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator

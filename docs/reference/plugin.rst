@@ -44,18 +44,11 @@ Registry
    :members:
    :show-inheritance:
 
-.. currentmodule:: litestar_mcp.sse
+.. currentmodule:: litestar_mcp.core.sse
 
-SSEManager
-----------
+SubscriptionManager
+-------------------
 
-.. autoclass:: SSEManager
-   :members:
-   :show-inheritance:
-
-SSEMessage
-----------
-
-.. autoclass:: SSEMessage
+.. autoclass:: SubscriptionManager
    :members:
    :show-inheritance:

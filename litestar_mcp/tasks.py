@@ -11,7 +11,7 @@ from litestar.serialization import decode_json, encode_json
 from litestar.stores.base import Store
 from litestar.stores.memory import MemoryStore
 
-from litestar_mcp.jsonrpc import JSONRPCError
+from litestar_mcp.core.jsonrpc import JSONRPCError
 
 TERMINAL_TASK_STATUSES = frozenset({"completed", "failed", "cancelled"})
 

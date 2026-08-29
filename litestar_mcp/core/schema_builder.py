@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
 
 import msgspec
 
-from litestar_mcp.typing import (
+from litestar_mcp.core.typing import (
     attrs_fields,
     is_attrs_instance,
     is_dataclass,

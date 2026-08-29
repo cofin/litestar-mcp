@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any, cast
 import msgspec
 from litestar.serialization import get_serializer
 
-from litestar_mcp._typing import PYDANTIC_INSTALLED, BaseModel
+from litestar_mcp.core._typing import PYDANTIC_INSTALLED, BaseModel
 from litestar_mcp.utils._json import DEFAULT_TYPE_ENCODERS, TypeEncodersMap, get_default_serializer
 from litestar_mcp.utils._json import decode_json as from_json
 from litestar_mcp.utils._json import encode_json as to_json

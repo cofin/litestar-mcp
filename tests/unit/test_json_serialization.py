@@ -10,8 +10,8 @@ from pathlib import PurePath
 import msgspec
 import pytest
 
+from litestar_mcp.core.serialization import DEFAULT_TYPE_ENCODERS, from_json, to_json
 from litestar_mcp.utils._json import StandardLibSerializer
-from litestar_mcp.utils.serialization import DEFAULT_TYPE_ENCODERS, from_json, to_json
 
 
 class Colour(enum.Enum):

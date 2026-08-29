@@ -8,7 +8,7 @@ from litestar import Litestar, get
 from litestar.testing import AsyncTestClient
 
 from litestar_mcp import LitestarMCP, get_mcp_request_context
-from litestar_mcp.sse import SubscriptionManager
+from litestar_mcp.core.sse import SubscriptionManager
 
 pytestmark = pytest.mark.anyio
 

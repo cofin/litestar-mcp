@@ -22,7 +22,7 @@ from litestar_mcp.utils.handler_signature import (
 
 if TYPE_CHECKING:
     from litestar_mcp.config import MCPConfig
-    from litestar_mcp.sse import SubscriptionManager
+    from litestar_mcp.core.sse import SubscriptionManager
 
 _logger = logging.getLogger(__name__)
 

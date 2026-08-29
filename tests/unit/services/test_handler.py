@@ -6,7 +6,7 @@ import pytest
 from litestar import Litestar, get
 
 from litestar_mcp.config import MCPConfig
-from litestar_mcp.jsonrpc import INVALID_PARAMS, JSONRPCErrorException
+from litestar_mcp.core.jsonrpc import INVALID_PARAMS, JSONRPCErrorException
 from litestar_mcp.registry import PromptRegistration
 from litestar_mcp.services.handler import MCPHandlerService, RequestContext
 from litestar_mcp.tasks import InMemoryTaskStore

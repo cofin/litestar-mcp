@@ -18,7 +18,7 @@ from litestar.status_codes import (
 )
 
 from litestar_mcp.config import MCPConfig  # noqa: TC001
-from litestar_mcp.jsonrpc import (
+from litestar_mcp.core.jsonrpc import (
     INVALID_PARAMS,
     METHOD_NOT_FOUND,
     PARSE_ERROR,
@@ -28,16 +28,16 @@ from litestar_mcp.jsonrpc import (
     error_response,
     parse_request,
 )
+from litestar_mcp.core.schema_builder import generate_schema_for_handler, iter_mcp_header_fields
+from litestar_mcp.core.serialization import from_json, to_json
 from litestar_mcp.registry import PromptRegistration, Registry  # noqa: TC001
-from litestar_mcp.schema_builder import generate_schema_for_handler, iter_mcp_header_fields
 from litestar_mcp.services.handler import MCPHandlerService, MCPRequestContext
 from litestar_mcp.tasks import MCPTaskStore  # noqa: TC001
-from litestar_mcp.utils.serialization import from_json, to_json
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable
 
-    from litestar_mcp.jsonrpc import JSONRPCRequest
+    from litestar_mcp.core.jsonrpc import JSONRPCRequest
 
 MCP_PROTOCOL_VERSION = "2026-07-28"
 MCP_PROTOCOL_VERSION_HEADER = "MCP-Protocol-Version"
@@ -416,7 +416,7 @@ async def _subscription_response(
     try:
         stream_id, stream = await registry.subscription_manager.open(rpc_request.id, notifications)
     except Exception as exc:
-        from litestar_mcp.sse import StreamLimitExceeded
+        from litestar_mcp.core.sse import StreamLimitExceeded
 
         if not isinstance(exc, StreamLimitExceeded):
             raise

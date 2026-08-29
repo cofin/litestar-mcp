@@ -21,7 +21,7 @@ from rich.json import JSON
 
 from litestar_mcp import bridge as bridge_transport
 from litestar_mcp.bridge import BEARER_TOKEN_PREFIX, DEFAULT_AUTH_HEADER_NAME
-from litestar_mcp.exceptions import MissingDependencyError
+from litestar_mcp.core.exceptions import MissingDependencyError
 from litestar_mcp.executor import NotCallableInCLIContextError, execute_tool
 from litestar_mcp.utils import get_handler_function, render_description
 from litestar_mcp.utils.handler_signature import iter_dependency_input_parameters

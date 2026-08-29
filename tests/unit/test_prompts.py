@@ -479,7 +479,7 @@ class TestRegistryPrompts:
 
     @pytest.mark.asyncio
     async def test_notify_prompts_list_changed(self, registry: "Registry") -> "None":
-        from litestar_mcp.sse import SubscriptionManager
+        from litestar_mcp.core.sse import SubscriptionManager
 
         subscription_manager = SubscriptionManager()
         registry.set_subscription_manager(subscription_manager)

@@ -1,6 +1,6 @@
 """Red-phase tests for schema_dump honoring route/app-level type_encoders.
 
-Chapter B goal: :func:`litestar_mcp.utils.serialization.schema_dump` must
+Chapter B goal: :func:`litestar_mcp.core.serialization.schema_dump` must
 delegate to :func:`litestar.serialization.get_serializer` so a custom type
 the user registers via ``type_encoders={MyType: fn}`` on a route serializes
 the same way through MCP ``tools/call`` as it does through HTTP. Before the
@@ -17,7 +17,7 @@ from uuid import UUID
 import pytest
 from msgspec import Struct
 
-from litestar_mcp.utils.serialization import (
+from litestar_mcp.core.serialization import (
     get_collection_serializer,
     reset_serializer_cache,
     schema_dump,

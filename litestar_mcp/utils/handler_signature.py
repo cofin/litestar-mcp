@@ -14,7 +14,7 @@ from litestar.constants import RESERVED_KWARGS
 from litestar.enums import ParamType
 from litestar.params import ParameterKwarg
 
-from litestar_mcp.typing import DISHKA_INSTALLED, DishkaDependencyKey
+from litestar_mcp.core.typing import DISHKA_INSTALLED, DishkaDependencyKey
 from litestar_mcp.utils import get_handler_function
 
 if TYPE_CHECKING:

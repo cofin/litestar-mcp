@@ -8,17 +8,17 @@ Facade that re-exports:
   :func:`is_schema_model`, :func:`is_dict` — canonical implementations in
   :mod:`litestar_mcp.utils.type_guards`.
 - Schema dump: :func:`schema_dump` — canonical implementation in
-  :mod:`litestar_mcp.utils.serialization`.
+  :mod:`litestar_mcp.core.serialization`.
 - Third-party re-exports: :class:`AttrsInstance`, :class:`BaseModel`,
   :class:`DataclassProtocol`, :class:`Struct` and the install-flag constants.
 
-Backward-compat stability: existing ``from litestar_mcp.typing import X``
+Backward-compat stability: existing ``from litestar_mcp.core.typing import X``
 imports continue to work unchanged.
 """
 
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
 
-from litestar_mcp._typing import (
+from litestar_mcp.core._typing import (
     ATTRS_INSTALLED,
     DISHKA_INSTALLED,
     MSGSPEC_INSTALLED,
@@ -33,7 +33,7 @@ from litestar_mcp._typing import (
     StructStub,
     attrs_fields,
 )
-from litestar_mcp.utils.serialization import schema_dump
+from litestar_mcp.core.serialization import schema_dump
 from litestar_mcp.utils.type_guards import (
     is_attrs_instance,
     is_attrs_schema,

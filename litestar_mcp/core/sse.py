@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from litestar_mcp.utils.serialization import from_json
+from litestar_mcp.core.serialization import from_json
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator

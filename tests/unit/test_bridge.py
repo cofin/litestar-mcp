@@ -44,7 +44,7 @@ def _assert_bridge_jsonrpc_error(stdout: BridgeBytesSink, message: str) -> None:
 @pytest.mark.anyio
 async def test_missing_bridge_extra_error_names_install_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     from litestar_mcp.bridge import MissingDependencyError, run_stdio_streamable_http_bridge
-    from litestar_mcp.exceptions import MissingDependencyError as SharedMissingDependencyError
+    from litestar_mcp.core.exceptions import MissingDependencyError as SharedMissingDependencyError
 
     assert MissingDependencyError is SharedMissingDependencyError
 
@@ -269,7 +269,7 @@ async def test_bridge_forwards_independent_requests_concurrently(monkeypatch: py
 @pytest.mark.anyio
 async def test_bridge_connection_error_is_clean_jsonrpc_error(monkeypatch: pytest.MonkeyPatch) -> None:
     from litestar_mcp import bridge
-    from litestar_mcp.exceptions import BridgeConnectionError
+    from litestar_mcp.core.exceptions import BridgeConnectionError
 
     async def handler(request: httpx.Request) -> httpx.Response:
         message = "connection refused"
@@ -296,7 +296,7 @@ async def test_bridge_connection_error_is_clean_jsonrpc_error(monkeypatch: pytes
 @pytest.mark.anyio
 async def test_bridge_rejects_oversized_stdin_message() -> None:
     from litestar_mcp import bridge
-    from litestar_mcp.exceptions import BridgeMessageTooLargeError
+    from litestar_mcp.core.exceptions import BridgeMessageTooLargeError
 
     stdout = BridgeBytesSink()
     stderr = io.StringIO()

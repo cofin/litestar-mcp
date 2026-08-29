@@ -1,4 +1,4 @@
-"""Red-phase tests for :func:`litestar_mcp.typing.schema_dump` rename fidelity.
+"""Red-phase tests for :func:`litestar_mcp.core.typing.schema_dump` rename fidelity.
 
 Pins the msgspec ``rename`` contract and regression-pins the no-rename path.
 Part of the executor-parity flow (closes GH #42).
@@ -13,7 +13,7 @@ from litestar.testing import TestClient
 from msgspec import UNSET, Struct, UnsetType
 
 from litestar_mcp import LitestarMCP
-from litestar_mcp.typing import schema_dump
+from litestar_mcp.core.typing import schema_dump
 
 pytestmark = pytest.mark.unit
 
