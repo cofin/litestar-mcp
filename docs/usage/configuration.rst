@@ -32,20 +32,6 @@ Override the base path, server name, or OpenAPI visibility via
     :end-before: # end-example
     :dedent:
 
-Auth-Enabled Configuration
-==========================
-
-Attach an :class:`~litestar_mcp.auth.MCPAuthConfig` to require bearer tokens
-on MCP endpoints and publish ``/.well-known/oauth-protected-resource``.
-See :doc:`auth` for the full authentication story.
-
-.. literalinclude:: /examples/snippets/configuration_auth.py
-    :language: python
-    :caption: ``docs/examples/snippets/configuration_auth.py``
-    :start-after: # start-example
-    :end-before: # end-example
-    :dedent:
-
 Standalone Prompts
 ==================
 
@@ -103,12 +89,9 @@ Configuration Options
       - Litestar guards applied to the MCP router.
     * - ``route_opt``
       - ``None``
-      - Route ``opt`` mapping applied to the mounted MCP router, for example
-        to select an opt-based authentication policy.
-    * - ``register_oauth_protected_resource``
-      - ``True``
-      - Register ``/.well-known/oauth-protected-resource``. Disable this when
-        another plugin publishes the RFC 9728 document.
+      - Route ``opt`` mapping merged into the MCP JSON-RPC handler. Declare an
+        opt-based authentication policy here, for example
+        ``{"auth": required("api-key")}`` with litestar-security.
     * - ``allowed_origins``
       - ``None``
       - Restrict accepted ``Origin`` header values.

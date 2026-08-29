@@ -3,137 +3,81 @@ Authentication
 ==============
 
 Authentication for the MCP endpoint is a **Litestar middleware** concern.
-Apps that already have an authentication middleware (JWT backends,
-Google IAP, custom token validators) get MCP authentication for free —
-the middleware populates ``request.user`` and ``request.auth`` before
-any route handler runs, including MCP tool handlers.
+Whatever authentication middleware the application installs (Litestar's
+JWT backends, a Google IAP validator, an API-key check) runs before any
+route handler, so MCP tool handlers inherit ``request.user`` and
+``request.auth`` exactly as HTTP handlers do. litestar-mcp ships no token
+validator, JWKS cache, or discovery document of its own.
 
 Authentication only establishes caller identity. See :doc:`security` for
 object-level authorization patterns, transport identity boundaries, and safe
 file/path argument guidance.
 
-:class:`~litestar_mcp.auth.MCPAuthConfig` is metadata-only: it
-describes the auth surface advertised by
-``/.well-known/oauth-protected-resource`` so MCP clients can discover
-how to obtain a token. Enforcement lives in whichever middleware you
-install on the app.
+Bring Your Own Middleware
+=========================
 
-Three Integration Paths
-=======================
-
-**Path A — Bring your own auth middleware.**
-Use this when your Litestar app already ships an
+Subclass
 :class:`~litestar.middleware.authentication.AbstractAuthenticationMiddleware`
-(or Litestar's built-in JWT backends). MCP tool handlers inherit
-``request.user`` / ``request.auth`` automatically. No ``MCPAuthBackend``
-needed. See ``docs/examples/notes/sqlspec/google_iap.py``.
+(or register one of Litestar's built-in JWT backends) and install it on the
+app. The middleware populates ``request.user`` / ``request.auth`` before the
+MCP JSON-RPC handler dispatches a tool, so the plugin needs no
+authentication configuration of its own:
 
-**Path B — Built-in MCPAuthBackend.**
-Install
-:class:`~litestar_mcp.auth.MCPAuthBackend` via ``DefineMiddleware``.
-It validates bearer tokens against OIDC providers and/or a custom
-``token_validator``, then populates ``connection.user`` via an optional
-``user_resolver``. See ``docs/examples/notes/sqlspec/cloud_run_jwt.py``.
-
-.. literalinclude:: /examples/snippets/auth_bearer_validator.py
+.. literalinclude:: /examples/snippets/auth_middleware.py
     :language: python
-    :caption: ``MCPAuthBackend`` with a custom validator
+    :caption: ``docs/examples/snippets/auth_middleware.py``
     :start-after: # start-example
     :end-before: # end-example
     :dedent:
 
-**Path C — MCPAuthBackend with OIDC providers.**
-For production OIDC workloads, pass one or more
-:class:`~litestar_mcp.auth.OIDCProviderConfig` entries. The backend
-handles JWKS discovery, caching, and signature verification.
+Litestar's :class:`~litestar.security.jwt.OAuth2PasswordBearerAuth` works the
+same way: pass the backend's ``on_app_init`` hook to
+:class:`~litestar.app.Litestar` and the MCP routes are guarded like every
+other route. ``docs/examples/notes/sqlspec/jwt_auth.py`` is a complete JWT
+example.
 
-.. literalinclude:: /examples/snippets/auth_oidc_provider.py
-    :language: python
-    :caption: ``MCPAuthBackend`` with OIDC auto-discovery
-    :start-after: # start-example
-    :end-before: # end-example
-    :dedent:
+litestar-security
+=================
 
-Identity Proxies (custom header / prefix)
-=========================================
+Applications that standardise on litestar-security keep the same shape:
+install the app's ``SecurityPlugin``, then name the mechanism that guards
+MCP by passing an opt-based policy through
+``MCPConfig(route_opt={"auth": required("api-key")})`` (``required`` is
+exported from ``litestar_security``). litestar-mcp registers its routes and
+forwards the opt mapping; it builds no verifier. Guards and dependencies on
+tool handlers read ``connection.user`` (a ``Principal``) and
+``connection.auth`` (a ``SecurityContext``) as they would on any other
+route.
 
-Cloud identity proxies verify the caller and inject a signed JWT into a
-non-standard header. Google Cloud IAP uses ``X-Goog-IAP-JWT-Assertion``
-with the raw token (no ``Bearer`` prefix). Point the built-in validation
-engine at that header with ``header_name`` / ``token_prefix`` instead of
-writing a bespoke middleware — caching and ``user_resolver`` are unchanged.
-IAP signs with ``ES256`` and publishes a fixed JWK set (there is no OIDC
-discovery document), so set ``jwks_uri`` and ``algorithms`` explicitly::
+MCP clients discover the authorization server through the
+``WWW-Authenticate: Bearer resource_metadata=...`` challenge. litestar-security
+emits that header only when the mechanism declares
+``security_scheme=SecurityScheme(type="http", scheme="bearer")`` and only
+for evaluator failures, not for guard failures. Publish the RFC 9728
+protected-resource document with ``SecurityConfig.protected_resource``
+(a ``ProtectedResourceConfig``). JWKS caching, service tokens, and Google IAP
+support are configured on litestar-security, not on the MCP plugin.
 
-    from litestar.middleware import DefineMiddleware
-    from litestar_mcp import MCPAuthBackend, OIDCProviderConfig
+Identity Proxies
+================
 
-    DefineMiddleware(
-        MCPAuthBackend,
-        providers=[
-            OIDCProviderConfig(
-                issuer="https://cloud.google.com/iap",
-                audience="/projects/PROJECT_NUMBER/apps/PROJECT_ID",
-                jwks_uri="https://www.gstatic.com/iap/verify/public_key-jwk",
-                algorithms=["ES256"],
-            ),
-        ],
-        header_name="X-Goog-IAP-JWT-Assertion",
-        token_prefix="",
-    )
-
-``header_name`` lookup is case-insensitive. When ``token_prefix`` is empty,
-the entire header value is the token, and an absent header is reported as a
-missing-header error (``401`` with ``WWW-Authenticate``) rather than an
-invalid-token error. The defaults (``Authorization`` header with the
-``Bearer`` prefix) preserve standard bearer behaviour, so existing deployments
-need no changes.
-
-The same ``header_name`` / ``token_prefix`` extraction applies to any proxy
-that forwards a token in a custom header (e.g. AWS ALB's ``X-Amzn-Oidc-Data``).
-Providers whose keys are not published as a JWK set — ALB signs with
-per-region PEM keys rather than a JWKS document — need a custom
-``token_validator`` for the validation step rather than ``OIDCProviderConfig``.
-
-Composable OIDC Factory
-========================
-
-:func:`~litestar_mcp.auth.create_oidc_validator` returns an async
-callable that validates a single token against an OIDC issuer. Pass it
-as ``MCPAuthBackend(token_validator=...)`` or use it inside your own
-middleware. Both ``clock_skew`` and ``jwks_cache_ttl`` are configurable.
-
-Injectable JWKS Cache
-=====================
-
-:class:`~litestar_mcp.auth.JWKSCache` is a protocol-shaped seam for
-apps that already run their own JWKS / OIDC discovery cache. Pass a
-shared instance to every validator to avoid redundant network fetches:
-
-.. literalinclude:: /examples/snippets/jwks_cache_shared.py
-    :language: python
-    :caption: ``docs/examples/snippets/jwks_cache_shared.py``
-    :start-after: # start-example
-    :end-before: # end-example
-    :dedent:
-
-When no cache is passed, the validator uses a process-wide default —
-matching 0.4.0 behaviour — so existing apps need no code changes. Any
-object implementing ``async get`` / ``async set(*, ttl=int)`` /
-``async invalidate`` satisfies the protocol, so a Redis-backed or
-application-specific cache can drop in cleanly.
+Identity proxies such as Google IAP verify the caller and forward a signed
+assertion in a custom header (``x-goog-iap-jwt-assertion`` for IAP). Validate
+that header in your own middleware, as
+``docs/examples/notes/sqlspec/google_iap.py`` does with a plain
+``AbstractAuthenticationMiddleware`` subclass, or configure
+litestar-security's IAP support.
 
 Authorization via Guards
 ========================
 
 Scopes declared on ``@mcp_tool(scopes=[...])`` are **discovery
-metadata only** — they surface under
-``tools[].annotations.scopes`` in ``tools/list`` and in
-``/.well-known/oauth-protected-resource``. MCP tool dispatch does not
-enforce scopes inline; attach a Litestar :class:`~litestar.types.Guard`
-to the route / router / controller for authorization. Guards receive
-the same :class:`~litestar.connection.ASGIConnection` that an HTTP
-request does, so existing ``requires_x`` guards work unchanged on MCP:
+metadata only** — they surface under ``tools[].annotations.scopes`` in
+``tools/list``. MCP tool dispatch does not enforce scopes inline; attach a
+Litestar :class:`~litestar.types.Guard` to the route / router / controller
+for authorization. Guards receive the same
+:class:`~litestar.connection.ASGIConnection` that an HTTP request does, so
+existing ``requires_x`` guards work unchanged on MCP:
 
 .. literalinclude:: /examples/snippets/authorization_guard.py
     :language: python
@@ -142,28 +86,19 @@ request does, so existing ``requires_x`` guards work unchanged on MCP:
     :end-before: # end-example
     :dedent:
 
-Discovery Metadata
-==================
-
-When :class:`~litestar_mcp.auth.MCPAuthConfig` is attached to
-:class:`~litestar_mcp.MCPConfig`, the plugin publishes
-``/.well-known/oauth-protected-resource`` with the configured
-``issuer``, ``audience``, and ``scopes``. This endpoint is always
-unauthenticated (via Litestar's ``exclude_from_auth`` opt key) so
-clients can bootstrap their auth flow.
-
 Mapping Claims to Users
 =======================
-
-Middleware populates ``request.auth`` with the validated claims dict
-and ``request.user`` with the resolved user object (if a
-``user_resolver`` is configured). Tool handlers access these via
-normal Litestar DI:
 
 - Read ``request.user`` directly in the handler signature.
 - Write a ``Provide(...)`` dependency that extracts the identity from
   ``request.user`` and returns a domain type.
 - Enforce scopes or roles via guards that inspect ``request.auth``.
 
-See the reference-notes examples for end-to-end wiring across JWT,
-Dishka, Advanced Alchemy, and Google IAP variants.
+Stdio Transports
+================
+
+In-process stdio (``litestar mcp stdio`` and ``MCP.run(transport="stdio")``)
+dispatches every frame through the same ASGI app, so the same middleware
+runs and tool handlers see the same ``request.user`` / ``request.auth``.
+Standalone apps that run without an authentication middleware seed the
+caller identity with ``MCPStdioContext`` instead; see :doc:`standalone_app`.

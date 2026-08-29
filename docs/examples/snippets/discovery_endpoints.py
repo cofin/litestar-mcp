@@ -1,8 +1,7 @@
-"""Snippet: well-known discovery endpoints.
+"""Snippet: MCP capability discovery.
 
 Referenced from docs/usage/discovery.rst.
-The plugin serves OAuth protected-resource metadata. MCP capability discovery
-uses ``server/discover`` on the POST transport.
+MCP capability discovery uses ``server/discover`` on the POST transport.
 """
 
 from litestar import Litestar
@@ -15,6 +14,5 @@ def build() -> "Litestar":
 
     Discovery is served at:
       POST /mcp (server/discover)
-      GET /.well-known/oauth-protected-resource
     """
     return Litestar(route_handlers=[], plugins=[LitestarMCP()])

@@ -2,19 +2,18 @@
 
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timedelta, timezone
+from time import monotonic
 from typing import Any, Final, cast
 
+import httpx
 import jwt
 import msgspec
 from litestar import Controller, post
 from litestar.connection import ASGIConnection
 from litestar.exceptions import NotAuthorizedException
-from litestar.middleware import DefineMiddleware
+from litestar.middleware import AbstractAuthenticationMiddleware, AuthenticationResult, DefineMiddleware
 from litestar.security.jwt import OAuth2PasswordBearerAuth, Token
-from litestar.types import ASGIApp, Receive, Scope, Send
-
-from litestar_mcp.auth import MCPAuthBackend, MCPAuthConfig
-from litestar_mcp.auth.oidc import _get_cached_json_document
+from litestar.types import ASGIApp
 
 DEFAULT_ISSUER: "Final" = "http://localhost:8000/auth"
 DEFAULT_AUDIENCE: "Final" = "http://localhost:8000/api"
@@ -115,11 +114,6 @@ async def _retrieve_identity_from_token(
     return AuthenticatedIdentity(sub=token.sub, email=_normalize_email(extras.get("email")))
 
 
-async def _mcp_user_resolver(claims: "dict[str, Any]", _app: "Any") -> "AuthenticatedIdentity":
-    """Resolve MCP-validated claims into :class:`AuthenticatedIdentity`."""
-    return identity_from_claims(claims)
-
-
 def build_oauth_backend(
     *,
     secret: "str",
@@ -137,22 +131,6 @@ def build_oauth_backend(
         exclude=exclude or ["^/.well-known/"],
         accepted_issuers=[issuer],
         accepted_audiences=[audience],
-    )
-
-
-def build_mcp_auth_metadata(*, issuer: "str" = DEFAULT_ISSUER, audience: "str" = DEFAULT_AUDIENCE) -> "MCPAuthConfig":
-    """Build the metadata-only auth config for /.well-known/oauth-protected-resource."""
-    return MCPAuthConfig(issuer=issuer, audience=audience)
-
-
-def build_mcp_auth_middleware(
-    *, secret: "str", issuer: "str" = DEFAULT_ISSUER, audience: "str" = DEFAULT_AUDIENCE
-) -> "DefineMiddleware":
-    """Build a ``DefineMiddleware(MCPAuthBackend, ...)`` for HS256 token validation."""
-    return DefineMiddleware(
-        MCPAuthBackend,
-        token_validator=build_token_validator(secret=secret, issuer=issuer, audience=audience),
-        user_resolver=_mcp_user_resolver,
     )
 
 
@@ -184,6 +162,26 @@ def build_login_controller(
 # Google IAP helpers
 # ---------------------------------------------------------------------------
 
+_JWKS_CACHE: "dict[str, tuple[float, dict[str, Any]]]" = {}
+
+
+def seed_jwks_cache(url: "str", jwks: "dict[str, Any]", *, ttl: "int" = IAP_JWKS_CACHE_TTL) -> "None":
+    """Pre-populate the IAP JWKS cache (used by tests to avoid network fetches)."""
+    _JWKS_CACHE[url] = (monotonic() + ttl, jwks)
+
+
+async def fetch_jwks(url: "str", *, ttl: "int" = IAP_JWKS_CACHE_TTL) -> "dict[str, Any]":
+    """Return the JWK set at ``url``, cached in-process for ``ttl`` seconds."""
+    cached = _JWKS_CACHE.get(url)
+    if cached is not None and cached[0] > monotonic():
+        return cached[1]
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(url)
+        response.raise_for_status()
+        document = cast("dict[str, Any]", response.json())
+    _JWKS_CACHE[url] = (monotonic() + ttl, document)
+    return document
+
 
 def _load_jwks_signing_key(token: "str", jwks: "dict[str, Any]") -> "Any":
     """Pick the JWKS entry matching the token's ``kid`` and return a key object."""
@@ -211,7 +209,7 @@ def build_iap_token_validator(
 
     async def _validate(token: "str") -> "dict[str, Any] | None":
         try:
-            jwks = await _get_cached_json_document(jwks_url, IAP_JWKS_CACHE_TTL)
+            jwks = await fetch_jwks(jwks_url)
             signing_key = _load_jwks_signing_key(token, jwks)
             claims = jwt.decode(
                 token,
@@ -230,45 +228,35 @@ def build_iap_token_validator(
     return _validate
 
 
+class IAPAuthenticationMiddleware(AbstractAuthenticationMiddleware):
+    """Validate the Google IAP assertion header and populate ``request.user`` / ``request.auth``."""
+
+    def __init__(
+        self,
+        app: "ASGIApp",
+        *,
+        audience: "str",
+        issuer: "str" = DEFAULT_IAP_ISSUER,
+        jwks_url: "str" = DEFAULT_IAP_JWKS_URL,
+        **kwargs: "Any",
+    ) -> "None":
+        super().__init__(app, **kwargs)
+        self._validate = build_iap_token_validator(audience=audience, issuer=issuer, jwks_url=jwks_url)
+
+    async def authenticate_request(self, connection: "ASGIConnection[Any, Any, Any, Any]") -> "AuthenticationResult":
+        token = connection.headers.get(IAP_HEADER_NAME)
+        if not token:
+            msg = "Missing IAP assertion"
+            raise NotAuthorizedException(msg)
+        claims = await self._validate(token)
+        if claims is None:
+            msg = "Invalid IAP assertion"
+            raise NotAuthorizedException(msg)
+        return AuthenticationResult(user=identity_from_claims(claims), auth=claims)
+
+
 def build_iap_auth_middleware(
-    *,
-    audience: "str",
-    issuer: "str" = DEFAULT_IAP_ISSUER,
-    jwks_url: "str" = DEFAULT_IAP_JWKS_URL,
+    *, audience: "str", issuer: "str" = DEFAULT_IAP_ISSUER, jwks_url: "str" = DEFAULT_IAP_JWKS_URL
 ) -> "DefineMiddleware":
-    """Build a ``DefineMiddleware(MCPAuthBackend, ...)`` for IAP token validation."""
-    return DefineMiddleware(
-        MCPAuthBackend,
-        token_validator=build_iap_token_validator(audience=audience, issuer=issuer, jwks_url=jwks_url),
-        user_resolver=_mcp_user_resolver,
-    )
-
-
-def build_iap_header_alias_middleware(app: "ASGIApp") -> "ASGIApp":
-    """Alias ``x-goog-iap-jwt-assertion`` as ``Authorization: Bearer`` for downstream middleware."""
-
-    async def _middleware(scope: "Scope", receive: "Receive", send: "Send") -> "None":
-        if scope["type"] not in {"http", "websocket"}:
-            await app(scope, receive, send)
-            return
-
-        headers: list[tuple[bytes, bytes]] = list(scope.get("headers") or [])
-        iap_value: bytes | None = None
-        has_authorization = False
-        for name, value in headers:
-            lower = name.lower()
-            if lower == IAP_HEADER_NAME.encode("ascii"):
-                iap_value = value
-            elif lower == b"authorization":
-                has_authorization = True
-
-        if iap_value is not None and not has_authorization:
-            headers.append((b"authorization", b"Bearer " + iap_value))
-            new_scope = cast("Scope", dict(scope))
-            new_scope["headers"] = headers
-            await app(new_scope, receive, send)
-            return
-
-        await app(scope, receive, send)
-
-    return _middleware
+    """Build the IAP authentication middleware for the reference notes example."""
+    return DefineMiddleware(IAPAuthenticationMiddleware, audience=audience, issuer=issuer, jwks_url=jwks_url)

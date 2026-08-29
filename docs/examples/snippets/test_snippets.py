@@ -13,7 +13,7 @@ from litestar import Litestar
 import docs.examples.snippets as snippets_pkg
 
 CLIENT_ONLY_SNIPPET_MODULES = {"adk_snippets"}
-NON_APP_SNIPPET_MODULES = CLIENT_ONLY_SNIPPET_MODULES | {"jwks_cache_shared"}
+NON_APP_SNIPPET_MODULES = CLIENT_ONLY_SNIPPET_MODULES
 
 SNIPPET_MODULES = [
     name

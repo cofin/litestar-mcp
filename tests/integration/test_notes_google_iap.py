@@ -2,9 +2,9 @@
 
 The example validates the signed ``x-goog-iap-jwt-assertion`` header via
 Google's public JWKS. To keep the tests hermetic, we generate a throwaway
-``ES256`` keypair, pre-seed the shared JWKS cache in
-:mod:`litestar_mcp.auth` with the public key, and mint tokens locally.
-No live Google metadata fetches are performed.
+``ES256`` keypair, pre-seed the example's in-process JWKS cache
+(``docs.examples.notes.shared.auth``) with the public key, and mint tokens
+locally. No live Google metadata fetches are performed.
 """
 
 import json
@@ -14,15 +14,16 @@ from uuid import uuid4
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
+from docs.examples.notes.shared import auth as shared_auth
 from docs.examples.notes.shared.auth import (
     DEFAULT_IAP_ISSUER,
     IAP_HEADER_NAME,
+    seed_jwks_cache,
 )
 from docs.examples.notes.sqlspec.google_iap import create_app
 from jwt.algorithms import ECAlgorithm
 from litestar.testing import TestClient
 
-from litestar_mcp.auth.oidc import get_default_cache
 from tests.integration.conftest import parse_tool_payload, rpc, rpc_response
 
 if TYPE_CHECKING:
@@ -62,18 +63,12 @@ def _mint_iap_token(
 
 @pytest.fixture
 def iap_key() -> "Iterator[tuple[ec.EllipticCurvePrivateKey, str]]":
-    """Generate an ES256 keypair and seed the shared JWKS cache."""
+    """Generate an ES256 keypair and seed the example's JWKS cache."""
     kid = f"iap-test-{uuid4().hex[:8]}"
     private_key, jwk = _make_keypair(kid)
-    # Pre-seed the default JWKS cache with our JWKS so no real HTTP call is
-    # made during validation. ``pytest-asyncio`` isn't active in this module,
-    # so bypass the async setter by writing straight to the internal store.
-    cache = get_default_cache()
-    from time import monotonic
-
-    cache._store[TEST_JWKS_URL] = (monotonic() + 3600, {"keys": [jwk]})
+    seed_jwks_cache(TEST_JWKS_URL, {"keys": [jwk]})
     yield private_key, kid
-    cache._store.pop(TEST_JWKS_URL, None)
+    shared_auth._JWKS_CACHE.pop(TEST_JWKS_URL, None)
 
 
 def _make_app(tmp_path: "Path") -> "Any":
@@ -160,14 +155,3 @@ def test_valid_iap_header_scopes_notes_by_sub(tmp_path: "Path", iap_key: "Any") 
         bob_items = bob_payload.get("items") if isinstance(bob_payload, dict) else bob_payload
         assert isinstance(bob_items, list)
         assert not any(item["id"] == note_id for item in bob_items)
-
-
-def test_well_known_publishes_configured_issuer(tmp_path: "Path", iap_key: "Any") -> "None":
-    app = _make_app(tmp_path)
-    with TestClient(app=app) as client:
-        response = client.get("/.well-known/oauth-protected-resource")
-        assert response.status_code == 200
-        body = response.json()
-        assert (
-            body["authorization_servers"] == [DEFAULT_IAP_ISSUER] or DEFAULT_IAP_ISSUER in body["authorization_servers"]
-        )

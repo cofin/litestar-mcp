@@ -10,18 +10,10 @@ import httpx
 import pytest
 import uvicorn
 from litestar import Litestar, get
-from litestar.middleware import DefineMiddleware
 
 from litestar_mcp import LitestarMCP, MCPConfig
-from litestar_mcp.auth import MCPAuthBackend, MCPAuthConfig
 from litestar_mcp.utils import mcp_tool
-from tests.integration._auth import (
-    AUDIENCE,
-    ISSUER,
-    VALID_TOKEN,
-    AuthenticatedUser,
-    bearer_token_validator,
-)
+from tests.integration._auth import VALID_TOKEN, build_oauth_backend
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -100,14 +92,6 @@ def _build_public_app() -> "Litestar":
     return Litestar(route_handlers=[hello], plugins=[LitestarMCP()])
 
 
-async def _user_resolver(claims: "dict[str, Any]", _app: "Any") -> "AuthenticatedUser":
-    """Resolve the authenticated user from JWT claims."""
-    scopes = claims.get("scopes") or []
-    if not isinstance(scopes, list):
-        scopes = []
-    return AuthenticatedUser(sub=str(claims.get("sub", "")), scopes=tuple(str(s) for s in scopes))
-
-
 def _build_auth_app() -> "Litestar":
     """Build an authenticated Litestar app with an MCP tool handler."""
 
@@ -118,17 +102,10 @@ def _build_auth_app() -> "Litestar":
         user = request.user
         return {"sub": getattr(user, "sub", None)}
 
-    metadata = MCPAuthConfig(issuer=ISSUER, audience=AUDIENCE, scopes={"mcp:read": "Read MCP tools"})
     return Litestar(
         route_handlers=[echo_user],
-        middleware=[
-            DefineMiddleware(
-                MCPAuthBackend,
-                token_validator=bearer_token_validator,
-                user_resolver=_user_resolver,
-            ),
-        ],
-        plugins=[LitestarMCP(MCPConfig(auth=metadata))],
+        on_app_init=[build_oauth_backend().on_app_init],
+        plugins=[LitestarMCP(MCPConfig())],
     )
 
 
