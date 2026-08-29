@@ -1,5 +1,5 @@
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -13,9 +13,13 @@ from litestar.connection import ASGIConnection
 from litestar.exceptions import PermissionDeniedException
 from litestar.handlers import BaseRouteHandler
 from litestar.middleware import AbstractAuthenticationMiddleware, AuthenticationResult, DefineMiddleware
+from litestar.plugins import InitPluginProtocol
 from litestar.testing import AsyncTestClient
 
 from litestar_mcp.a2a import A2AConfig, LitestarA2A
+
+if TYPE_CHECKING:
+    from litestar.config.app import AppConfig
 
 
 def make_card(path: str = "/a2a") -> AgentCard:
@@ -57,6 +61,31 @@ def test_rejects_application_owned_route_collision() -> None:
 
     with pytest.raises(ValueError, match="A2A route collision"):
         Litestar(route_handlers=[owned], plugins=[LitestarA2A(make_card(), AsyncMock())])
+
+
+class _RouteOwner(InitPluginProtocol):
+    """Companion plugin that registers an application-owned ``/a2a`` handler."""
+
+    def on_app_init(self, app_config: "AppConfig") -> "AppConfig":
+        @get("/a2a")
+        async def owned() -> None: ...
+
+        app_config.route_handlers.append(owned)
+        return app_config
+
+
+@pytest.mark.parametrize("registration", ["route_handlers", "earlier_plugin"])
+def test_collision_detection_is_order_independent(registration: str) -> None:
+    a2a = LitestarA2A(make_card(), AsyncMock())
+
+    @get("/a2a")
+    async def owned() -> None: ...
+
+    with pytest.raises(ValueError, match="A2A route collision"):
+        if registration == "route_handlers":
+            Litestar(plugins=[a2a], route_handlers=[owned])
+        else:
+            Litestar(plugins=[_RouteOwner(), a2a])
 
 
 def test_config_requires_absolute_paths() -> None:
@@ -348,6 +377,16 @@ async def test_guards_apply_to_rpc_route() -> None:
         response = await client.post("/a2a", headers={"A2A-Version": "1.0"}, json=send_payload())
 
     assert response.status_code == 403
+
+
+def test_route_opt_is_merged_onto_rpc_route() -> None:
+    config = A2AConfig(route_opt={"custom": "value"})
+    app = Litestar(plugins=[LitestarA2A(make_card(), StubHandler(), config)])
+
+    handler = app.route_handler_method_map["/a2a"]["POST"]
+
+    assert handler.opt["custom"] == "value"
+    assert handler.opt["exclude_from_csrf"] is True
 
 
 @pytest.mark.anyio
