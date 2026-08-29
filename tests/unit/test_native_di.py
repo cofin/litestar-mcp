@@ -38,7 +38,7 @@ from litestar.status_codes import (
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP
-from litestar_mcp.executor import MCPToolErrorResult, execute_tool
+from litestar_mcp.mcp.executor import MCPToolErrorResult, execute_tool
 from tests.unit.conftest import get_handler_from_app
 
 if TYPE_CHECKING:

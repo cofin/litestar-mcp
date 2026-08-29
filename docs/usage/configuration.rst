@@ -55,7 +55,7 @@ Task Lifecycle
 ==============
 
 Enable the opt-in ``io.modelcontextprotocol/tasks`` extension by passing an
-:class:`~litestar_mcp.config.MCPTaskConfig`. Task records use a Litestar
+:class:`~litestar_mcp.mcp.config.MCPTaskConfig`. Task records use a Litestar
 Store; the default in-memory Store is intended for development.
 
 .. literalinclude:: /examples/snippets/configuration_tasks.py

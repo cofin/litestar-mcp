@@ -13,8 +13,8 @@ from litestar.plugins import InitPluginProtocol
 from litestar.testing import TestClient
 
 from litestar_mcp import MCP
-from litestar_mcp.config import MCPConfig
-from litestar_mcp.plugin import LitestarMCP
+from litestar_mcp.mcp.config import MCPConfig
+from litestar_mcp.mcp.plugin import LitestarMCP
 
 
 def _rpc(

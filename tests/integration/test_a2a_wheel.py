@@ -1,10 +1,26 @@
-from __future__ import annotations
-
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
+
+_BASE_PROBE = """import importlib.util
+import sys
+
+import litestar_mcp
+import litestar_mcp.mcp.bridge
+from litestar_mcp.core.exceptions import MissingDependencyError
+
+assert importlib.util.find_spec("a2a") is None
+assert "a2a" not in sys.modules
+assert "litestar_mcp.a2a" not in sys.modules
+try:
+    litestar_mcp.LitestarA2A
+except MissingDependencyError:
+    pass
+else:
+    raise SystemExit("expected MissingDependencyError without the a2a extra")
+"""
 
 
 def _run(*command: str, cwd: Path) -> None:
@@ -32,12 +48,9 @@ def test_clean_wheel_base_and_a2a_extra(tmp_path: Path) -> None:
     _run(uv, "venv", str(base_environment), cwd=repository)
     base_python = base_environment / "bin" / "python"
     _run(uv, "pip", "install", "--python", str(base_python), str(wheel), cwd=repository)
-    _run(
-        str(base_python),
-        "-c",
-        'import importlib.util; import litestar_mcp; assert importlib.util.find_spec("a2a") is None',
-        cwd=repository,
-    )
+    probe = tmp_path / "probe_base.py"
+    probe.write_text(_BASE_PROBE)
+    _run(str(base_python), str(probe), cwd=repository)
 
     a2a_environment = tmp_path / "a2a"
     _run(uv, "venv", str(a2a_environment), cwd=repository)

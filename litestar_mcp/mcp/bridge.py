@@ -19,7 +19,7 @@ from typing_extensions import Self
 from litestar_mcp.core.exceptions import BridgeConnectionError, BridgeMessageTooLargeError, MissingDependencyError
 from litestar_mcp.core.jsonrpc import JSONRPCError, error_response
 from litestar_mcp.core.serialization import from_json, to_json
-from litestar_mcp.routes import (
+from litestar_mcp.mcp.routes import (
     MCP_METHOD_HEADER,
     MCP_NAME_HEADER,
     MCP_PROTOCOL_VERSION,

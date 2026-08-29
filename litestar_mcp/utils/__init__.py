@@ -18,12 +18,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
-from litestar_mcp.config import MCPOptKeys
+from litestar_mcp.mcp.config import MCPOptKeys
 
 if TYPE_CHECKING:
     from litestar.handlers import BaseRouteHandler
 
-    from litestar_mcp.config import MCPConfig
+    from litestar_mcp.mcp.config import MCPConfig
 
 
 F = TypeVar("F", bound=Callable[..., Any])

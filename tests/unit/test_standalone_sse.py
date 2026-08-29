@@ -4,7 +4,7 @@ import pytest
 from litestar.cli._utils import LitestarEnv
 
 from litestar_mcp import MCP
-from litestar_mcp.app import _resolve_litestar_app_env
+from litestar_mcp.mcp.app import _resolve_litestar_app_env
 
 pytestmark = pytest.mark.unit
 
@@ -18,7 +18,7 @@ def test_resolve_litestar_app_env_success() -> "None":
     assert resolved == "tests.unit.test_standalone_sse:app_resolve_test"
 
 
-@patch("litestar_mcp.app._resolve_litestar_app_env")
+@patch("litestar_mcp.mcp.app._resolve_litestar_app_env")
 @patch("litestar.cli.main.litestar_group.main")
 @patch("litestar.cli._utils.LitestarEnv.from_env")
 def test_standalone_sse_success(
@@ -41,7 +41,7 @@ def test_standalone_sse_success(
     )
 
 
-@patch("litestar_mcp.app._resolve_litestar_app_env")
+@patch("litestar_mcp.mcp.app._resolve_litestar_app_env")
 def test_standalone_sse_resolve_failure_raises(
     mock_resolve: "MagicMock",
 ) -> "None":

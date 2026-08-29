@@ -5,11 +5,11 @@ from typing import Any
 import pytest
 from litestar import Litestar, get
 
-from litestar_mcp.config import MCPConfig
 from litestar_mcp.core.jsonrpc import INVALID_PARAMS, JSONRPCErrorException
-from litestar_mcp.registry import PromptRegistration
-from litestar_mcp.services.handler import MCPHandlerService, RequestContext
-from litestar_mcp.tasks import InMemoryTaskStore
+from litestar_mcp.mcp.config import MCPConfig
+from litestar_mcp.mcp.registry import PromptRegistration
+from litestar_mcp.mcp.service import MCPHandlerService, RequestContext
+from litestar_mcp.mcp.tasks import InMemoryTaskStore
 
 # Using unit marker for these tests
 pytestmark = pytest.mark.unit

@@ -1,7 +1,5 @@
 """Litestar-native HTTP transport for the official A2A SDK contracts."""
 
-from __future__ import annotations
-
 import hashlib
 import logging
 from inspect import isawaitable
@@ -59,31 +57,31 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _message_to_dict(message: Any, **kwargs: Any) -> dict[str, Any]:
+def _message_to_dict(message: "Any", **kwargs: "Any") -> "dict[str, Any]":
     return cast("dict[str, Any]", MessageToDict(message, **kwargs))
 
 
-def _success_response(request_id: str | int | None, result: Any) -> dict[str, Any]:
+def _success_response(request_id: "str | int | None", result: "Any") -> "dict[str, Any]":
     return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
 
-def _sse_data(payload: dict[str, Any]) -> str:
+def _sse_data(payload: "dict[str, Any]") -> "str":
     return to_json(payload)
 
 
 class _LitestarUser(User):
-    def __init__(self, value: Any) -> None:
+    def __init__(self, value: "Any") -> "None":
         self.value = value
 
     @property
-    def is_authenticated(self) -> bool:
+    def is_authenticated(self) -> "bool":
         flag = getattr(self.value, "is_authenticated", None)
         if isinstance(flag, bool):
             return flag
         return self.value is not None
 
     @property
-    def user_name(self) -> str:
+    def user_name(self) -> "str":
         for name in ("id", "sub", "username", "display_name"):
             value = self.value.get(name) if isinstance(self.value, dict) else getattr(self.value, name, None)
             if value is not None:
@@ -91,11 +89,11 @@ class _LitestarUser(User):
         return str(self.value)
 
 
-def _header_values(request: Request[Any, Any, Any], name: str) -> list[str]:
+def _header_values(request: "Request[Any, Any, Any]", name: "str") -> "list[str]":
     return list(request.headers.getall(name)) if name in request.headers else []
 
 
-def _default_context_builder(request: Request[Any, Any, Any]) -> ServerCallContext:
+def _default_context_builder(request: "Request[Any, Any, Any]") -> "ServerCallContext":
     scope = request.scope
     headers = dict(request.headers)
     litestar_state = scope.get("state", {})
@@ -108,7 +106,7 @@ def _default_context_builder(request: Request[Any, Any, Any]) -> ServerCallConte
     )
 
 
-def _validate_card(card: AgentCard, path: str) -> None:
+def _validate_card(card: "AgentCard", path: "str") -> "None":
     for interface in card.supported_interfaces:
         if interface.protocol_version == "1.0" and interface.protocol_binding == "JSONRPC":
             url = urlparse(interface.url)
@@ -119,7 +117,7 @@ def _validate_card(card: AgentCard, path: str) -> None:
 
 
 class _JsonRpcTransport:
-    _models: dict[str, type[Any]] = {
+    _models: "dict[str, type[Any]]" = {
         "SendMessage": SendMessageRequest,
         "SendStreamingMessage": SendMessageRequest,
         "GetTask": GetTaskRequest,
@@ -132,7 +130,7 @@ class _JsonRpcTransport:
         "SubscribeToTask": SubscribeToTaskRequest,
         "GetExtendedAgentCard": GetExtendedAgentCardRequest,
     }
-    _v03_models: dict[str, type[Any]] = {
+    _v03_models: "dict[str, type[Any]]" = {
         "message/send": types_v03.SendMessageRequest,
         "message/stream": types_v03.SendStreamingMessageRequest,
         "tasks/get": types_v03.GetTaskRequest,
@@ -145,26 +143,26 @@ class _JsonRpcTransport:
         "agent/getAuthenticatedExtendedCard": types_v03.GetAuthenticatedExtendedCardRequest,
     }
 
-    def __init__(self, handler: RequestHandler, config: A2AConfig) -> None:
+    def __init__(self, handler: "RequestHandler", config: "A2AConfig") -> "None":
         self.handler = handler
         self.config = config
         self.v03_handler = RequestHandler03(request_handler=handler) if config.enable_v0_3_compat else None
 
     @staticmethod
-    def _error(request_id: str | int | None, error: Exception | JSONRPCError | A2AError) -> dict[str, Any]:
+    def _error(request_id: "str | int | None", error: "Exception | JSONRPCError | A2AError") -> "dict[str, Any]":
         if not isinstance(error, A2AError | JSONRPCError):
             error = InternalError(message=str(error))
         return build_error_response(request_id, error)
 
     @staticmethod
-    def _validate_version(request: Request[Any, Any, Any], expected: str) -> None:
+    def _validate_version(request: "Request[Any, Any, Any]", expected: "str") -> "None":
         actual = request.headers.get(constants.VERSION_HEADER) or constants.PROTOCOL_VERSION_0_3
         if str(actual).split(".", 1)[0] != expected.split(".", 1)[0]:
             raise VersionNotSupportedError(
                 message=f"A2A version '{actual}' is not supported. Expected version '{expected}'."
             )
 
-    async def handle(self, request: Request[Any, Any, Any]) -> dict[str, Any] | ServerSentEvent:  # noqa: PLR0911
+    async def handle(self, request: "Request[Any, Any, Any]") -> "dict[str, Any] | ServerSentEvent":  # noqa: PLR0911
         request_id: str | int | None = None
         try:
             try:
@@ -210,8 +208,8 @@ class _JsonRpcTransport:
             return self._error(request_id, InternalError(message=str(exc)))
 
     async def _dispatch(  # noqa: PLR0911
-        self, method: str, params: Any, context: ServerCallContext
-    ) -> dict[str, Any] | None:
+        self, method: "str", params: "Any", context: "ServerCallContext"
+    ) -> "dict[str, Any] | None":
         result: Any
         if method == "SendMessage":
             result = await self.handler.on_message_send(params, context)
@@ -247,8 +245,8 @@ class _JsonRpcTransport:
         raise UnsupportedOperationError(message=f"Method {method} is not supported.")
 
     async def _stream(
-        self, method: str, params: Any, context: ServerCallContext, request_id: str | int | None
-    ) -> ServerSentEvent:
+        self, method: "str", params: "Any", context: "ServerCallContext", request_id: "str | int | None"
+    ) -> "ServerSentEvent":
         stream = (
             self.handler.on_message_send_stream(params, context)
             if method == "SendStreamingMessage"
@@ -262,8 +260,8 @@ class _JsonRpcTransport:
             await stream.aclose()
             raise
 
-        async def events() -> AsyncGenerator[ServerSentEventMessage, None]:
-            def encode(item: Any) -> ServerSentEventMessage:
+        async def events() -> "AsyncGenerator[ServerSentEventMessage, None]":
+            def encode(item: "Any") -> "ServerSentEventMessage":
                 response = proto_utils.to_stream_response(item)
                 return ServerSentEventMessage(data=_sse_data(_success_response(request_id, _message_to_dict(response))))
 
@@ -283,8 +281,8 @@ class _JsonRpcTransport:
         return ServerSentEvent(events())
 
     async def _handle_v03(
-        self, request: Request[Any, Any, Any], body: dict[str, Any], request_id: str | int | None, method: str
-    ) -> dict[str, Any] | ServerSentEvent:
+        self, request: "Request[Any, Any, Any]", body: "dict[str, Any]", request_id: "str | int | None", method: "str"
+    ) -> "dict[str, Any] | ServerSentEvent":
         model = self._v03_models.get(method)
         if model is None or self.v03_handler is None:
             return self._error(request_id, MethodNotFoundError())
@@ -307,8 +305,8 @@ class _JsonRpcTransport:
         return cast("dict[str, Any]", result.model_dump(mode="json", by_alias=True, exclude_none=True))
 
     async def _dispatch_v03(  # noqa: PLR0911
-        self, method: str, request_obj: Any, context: ServerCallContext, request_id: str | int | None
-    ) -> Any:
+        self, method: "str", request_obj: "Any", context: "ServerCallContext", request_id: "str | int | None"
+    ) -> "Any":
         handler = self.v03_handler
         if handler is None:
             raise UnsupportedOperationError(message="A2A v0.3 compatibility is disabled")
@@ -352,8 +350,8 @@ class _JsonRpcTransport:
         raise UnsupportedOperationError(message=f"Method {method} is not supported")
 
     async def _stream_v03(
-        self, method: str, request_obj: Any, context: ServerCallContext, request_id: str | int | None
-    ) -> ServerSentEvent:
+        self, method: "str", request_obj: "Any", context: "ServerCallContext", request_id: "str | int | None"
+    ) -> "ServerSentEvent":
         handler = self.v03_handler
         if handler is None:
             raise UnsupportedOperationError(message="A2A v0.3 compatibility is disabled")
@@ -371,7 +369,7 @@ class _JsonRpcTransport:
             await stream.aclose()
             raise
 
-        async def events() -> AsyncGenerator[ServerSentEventMessage, None]:
+        async def events() -> "AsyncGenerator[ServerSentEventMessage, None]":
             try:
                 if first is not None:
                     yield ServerSentEventMessage(data=first.model_dump_json(by_alias=True, exclude_none=True))
@@ -394,13 +392,15 @@ class _JsonRpcTransport:
 class LitestarA2A(InitPluginProtocol):
     """Register an official A2A request handler on Litestar-native routes."""
 
-    def __init__(self, agent_card: AgentCard, request_handler: RequestHandler, config: A2AConfig | None = None) -> None:
+    def __init__(
+        self, agent_card: "AgentCard", request_handler: "RequestHandler", config: "A2AConfig | None" = None
+    ) -> "None":
         self.agent_card = agent_card
         self.request_handler = request_handler
         self.config = config or A2AConfig()
         _validate_card(agent_card, self.config.path)
 
-    def on_app_init(self, app_config: AppConfig) -> AppConfig:
+    def on_app_init(self, app_config: "AppConfig") -> "AppConfig":
         occupied = {
             route.path
             for entry in app_config.route_handlers
@@ -423,7 +423,7 @@ class LitestarA2A(InitPluginProtocol):
             status_code=200,
             include_in_schema=self.config.include_in_schema,
         )
-        async def a2a_endpoint(request: Request[Any, Any, Any]) -> Response[Any]:
+        async def a2a_endpoint(request: "Request[Any, Any, Any]") -> "Response[Any]":
             result = await transport.handle(request)
             if isinstance(result, ServerSentEvent):
                 return result
@@ -434,7 +434,7 @@ class LitestarA2A(InitPluginProtocol):
             include_in_schema=self.config.include_in_schema,
             opt={"exclude_from_auth": True, "exclude_from_csrf": True},
         )
-        async def agent_card(request: Request[Any, Any, Any]) -> Response[bytes]:
+        async def agent_card(request: "Request[Any, Any, Any]") -> "Response[bytes]":
             if request.headers.get("if-none-match") == card_etag:
                 return Response(content=b"", status_code=HTTP_304_NOT_MODIFIED, headers=card_headers)
             return Response(content=card_body, media_type=MediaType.JSON, headers=card_headers)
@@ -443,7 +443,7 @@ class LitestarA2A(InitPluginProtocol):
         app_config.on_shutdown.append(self.on_shutdown)
         return app_config
 
-    async def on_shutdown(self, app: Litestar) -> None:
+    async def on_shutdown(self, app: "Litestar") -> "None":
         del app
         close = getattr(self.request_handler, "aclose", None)
         if close is not None:

@@ -9,7 +9,7 @@ from litestar.exceptions import NotAuthorizedException
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig, mcp_tool
-from litestar_mcp.executor import MCPToolErrorResult
+from litestar_mcp.mcp.executor import MCPToolErrorResult
 
 
 def _rpc(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None) -> "dict[str, Any]":
@@ -212,7 +212,7 @@ def test_tool_call_callback_failures_are_logged_and_swallowed(caplog: "Any") -> 
         response = _call_tool(client, "x")
 
     assert response["result"]["isError"] is False
-    records = [record for record in caplog.records if record.name == "litestar_mcp.executor"]
+    records = [record for record in caplog.records if record.name == "litestar_mcp.mcp.executor"]
     assert len(records) == 2
     assert all(record.exc_info is not None for record in records)
 

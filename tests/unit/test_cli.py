@@ -15,7 +15,7 @@ from litestar import Litestar
 from litestar.cli._utils import LitestarEnv
 
 from litestar_mcp import LitestarMCP, MCPConfig
-from litestar_mcp.cli import mcp_group
+from litestar_mcp.mcp.cli import mcp_group
 
 
 @pytest.fixture(scope="session")
@@ -45,7 +45,7 @@ def captured_bridge(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         captured.update(kwargs)
         return 0
 
-    monkeypatch.setattr("litestar_mcp.bridge.run_bridge", fake_run_bridge)
+    monkeypatch.setattr("litestar_mcp.mcp.bridge.run_bridge", fake_run_bridge)
     return captured
 
 
@@ -229,7 +229,7 @@ def test_mcp_bridge_redirects_runtime_stdout_pollution(
         asyncio.run(kwargs["stdout"].send(b'{"jsonrpc":"2.0","id":1,"result":{}}\n'))
         return 0
 
-    monkeypatch.setattr("litestar_mcp.bridge.run_bridge", fake_run_bridge)
+    monkeypatch.setattr("litestar_mcp.mcp.bridge.run_bridge", fake_run_bridge)
 
     result = cli_runner.invoke(mcp_group, ["bridge"], obj=make_env())
 

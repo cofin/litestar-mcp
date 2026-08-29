@@ -53,12 +53,19 @@ Recent Updates
         the ``resultType: "complete"`` response for its subscription and is
         then closed instead of growing memory without limit.
 
-    .. change:: retain the released MCP package layout
+    .. change:: group the package into core, mcp, a2a, and utils
         :type: breaking
 
-        Removed the unreleased public ``core`` and relocated ``mcp`` package
-        surfaces, proprietary A2A primitives, automatic MCP-to-A2A export,
-        standalone A2A runner, decorators, and CLI.
+        ``litestar_mcp.core`` holds the protocol-agnostic primitives
+        (JSON-RPC, subscription streams, schema building, serialization,
+        typing, exceptions); ``litestar_mcp.mcp`` holds the MCP plugin,
+        configuration, routes, executor, registry, tasks, bridge, and CLI;
+        ``litestar_mcp.a2a`` is unchanged; ``litestar_mcp.utils`` keeps the
+        decorators and signature helpers. Root imports are unchanged and
+        ``litestar_mcp.A2AConfig`` / ``litestar_mcp.LitestarA2A`` resolve
+        lazily without importing ``a2a-sdk`` at package import time. Deep
+        module paths moved without compatibility aliases; see
+        :doc:`/usage/migration_0_14`.
 
 .. changelog:: 0.13.2
 

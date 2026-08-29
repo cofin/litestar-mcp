@@ -467,7 +467,7 @@ class TestCustomOptKeys:
     """Downstream apps can rename opt keys via ``MCPConfig.opt_keys``."""
 
     def test_renamed_tool_description_opt_key_is_honoured(self) -> "None":
-        from litestar_mcp.config import MCPOptKeys
+        from litestar_mcp.mcp.config import MCPOptKeys
 
         opt_keys = MCPOptKeys(description="x_mcp_description")
 
@@ -485,7 +485,7 @@ class TestCustomOptKeys:
         assert default_result == "Docstring."
 
     def test_renamed_resource_description_opt_key(self) -> "None":
-        from litestar_mcp.config import MCPOptKeys
+        from litestar_mcp.mcp.config import MCPOptKeys
 
         opt_keys = MCPOptKeys(resource_description="x_mcp_resource_description")
 
@@ -498,7 +498,7 @@ class TestCustomOptKeys:
         assert render_description(handler, fn, kind="resource", fallback_name="bar", opt_keys=opt_keys) == "opt-res"
 
     def test_renamed_structured_field_opt_keys(self) -> "None":
-        from litestar_mcp.config import MCPOptKeys
+        from litestar_mcp.mcp.config import MCPOptKeys
 
         opt_keys = MCPOptKeys(
             description="x_desc",

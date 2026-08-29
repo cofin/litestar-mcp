@@ -18,7 +18,7 @@ from anyio.to_thread import run_sync as run_sync_in_worker_thread
 from litestar import Litestar, get
 
 from litestar_mcp import LitestarMCP, MCPConfig
-from litestar_mcp.bridge import run_stdio_streamable_http_bridge
+from litestar_mcp.mcp.bridge import run_stdio_streamable_http_bridge
 from tests.conftest import BridgeBytesSink, BridgeQueuedBytesSource
 from tests.integration._auth import FORGED_TOKEN, build_oauth_backend, mint_access_token
 

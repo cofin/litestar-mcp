@@ -130,5 +130,5 @@ def test_after_exception_failure_is_logged_and_swallowed(caplog: "pytest.LogCapt
     # The ORIGINAL exception must still bubble to the blanket catch.
     assert resp["result"]["isError"] is True
     assert "original" in resp["result"]["content"][0]["text"]
-    matching = [rec for rec in caplog.records if rec.name == "litestar_mcp.executor" and rec.exc_info is not None]
-    assert matching, "expected an exception log record from litestar_mcp.executor"
+    matching = [rec for rec in caplog.records if rec.name == "litestar_mcp.mcp.executor" and rec.exc_info is not None]
+    assert matching, "expected an exception log record from litestar_mcp.mcp.executor"

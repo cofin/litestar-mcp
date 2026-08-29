@@ -35,7 +35,7 @@ from litestar.serialization import decode_json, encode_json
 from litestar.types.empty import Empty
 from litestar.utils.sync import ensure_async_callable
 
-from litestar_mcp.content import MCPBlobResource, MCPInputRequiredResult, MCPResourceLink, MCPToolResult
+from litestar_mcp.mcp.content import MCPBlobResource, MCPInputRequiredResult, MCPResourceLink, MCPToolResult
 from litestar_mcp.utils.handler_signature import get_advertised_handler_parameters, resolve_tool_argument_aliases
 
 if TYPE_CHECKING:
@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from litestar.types import Message, Receive, Scope, Send
     from litestar.types.internal_types import PathParameterDefinition
 
-    from litestar_mcp.config import MCPConfig
+    from litestar_mcp.mcp.config import MCPConfig
 
 __all__ = (
     "MCPHandlerResponse",

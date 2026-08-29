@@ -113,7 +113,7 @@ autodoc_typehints_format = "short"
 autodoc_warningiserror = False
 autodoc_type_aliases = {
     "RouteHandlerType": "litestar.types.RouteHandlerType",
-    "MCPConfig": "litestar_mcp.config.MCPConfig",
+    "MCPConfig": "litestar_mcp.mcp.config.MCPConfig",
     "Union": "typing.Union",
     "Callable": "typing.Callable",
     "Any": "typing.Any",

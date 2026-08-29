@@ -30,7 +30,7 @@ def _patch_async_client(monkeypatch: pytest.MonkeyPatch, handler: Callable[[http
             follow_redirects=kwargs.get("follow_redirects", False),
         )
 
-    monkeypatch.setattr("litestar_mcp.bridge.httpx.AsyncClient", fake_async_client)
+    monkeypatch.setattr("litestar_mcp.mcp.bridge.httpx.AsyncClient", fake_async_client)
 
 
 def _assert_bridge_jsonrpc_error(stdout: BridgeBytesSink, message: str) -> None:
@@ -43,8 +43,8 @@ def _assert_bridge_jsonrpc_error(stdout: BridgeBytesSink, message: str) -> None:
 
 @pytest.mark.anyio
 async def test_missing_bridge_extra_error_names_install_extra(monkeypatch: pytest.MonkeyPatch) -> None:
-    from litestar_mcp.bridge import MissingDependencyError, run_stdio_streamable_http_bridge
     from litestar_mcp.core.exceptions import MissingDependencyError as SharedMissingDependencyError
+    from litestar_mcp.mcp.bridge import MissingDependencyError, run_stdio_streamable_http_bridge
 
     assert MissingDependencyError is SharedMissingDependencyError
 
@@ -68,7 +68,7 @@ async def test_missing_bridge_extra_error_names_install_extra(monkeypatch: pytes
 
 @pytest.mark.anyio
 async def test_token_provider_auth_resolves_fresh_token_and_retries_one_401() -> None:
-    from litestar_mcp.bridge import _TokenProviderAuth
+    from litestar_mcp.mcp.bridge import _TokenProviderAuth
 
     tokens = iter(["first", "second", "third", "fourth"])
     seen_auth: list[str] = []
@@ -100,7 +100,7 @@ async def test_token_provider_auth_resolves_fresh_token_and_retries_one_401() ->
 
 @pytest.mark.anyio
 async def test_token_provider_auth_offloads_sync_provider_from_event_loop() -> None:
-    from litestar_mcp.bridge import _TokenProviderAuth
+    from litestar_mcp.mcp.bridge import _TokenProviderAuth
 
     event_loop_thread = threading.get_ident()
     provider_threads: list[int] = []
@@ -125,7 +125,7 @@ async def test_token_provider_auth_offloads_sync_provider_from_event_loop() -> N
 
 @pytest.mark.anyio
 async def test_bridge_never_uses_legacy_get_or_delete(monkeypatch: pytest.MonkeyPatch) -> None:
-    from litestar_mcp import bridge
+    from litestar_mcp.mcp import bridge
 
     requests: list[tuple[str, str]] = []
 
@@ -160,7 +160,7 @@ async def test_bridge_never_uses_legacy_get_or_delete(monkeypatch: pytest.Monkey
 
 @pytest.mark.anyio
 async def test_bridge_uses_exact_custom_endpoint_for_all_requests(monkeypatch: pytest.MonkeyPatch) -> None:
-    from litestar_mcp import bridge
+    from litestar_mcp.mcp import bridge
 
     requests: list[tuple[str, str]] = []
 
@@ -188,7 +188,7 @@ async def test_bridge_uses_exact_custom_endpoint_for_all_requests(monkeypatch: p
 
 @pytest.mark.anyio
 async def test_bridge_adds_modern_metadata_and_lazy_custom_headers(monkeypatch: pytest.MonkeyPatch) -> None:
-    from litestar_mcp import bridge
+    from litestar_mcp.mcp import bridge
 
     requests: list[httpx.Request] = []
 
@@ -238,7 +238,7 @@ async def test_bridge_adds_modern_metadata_and_lazy_custom_headers(monkeypatch: 
 
 @pytest.mark.anyio
 async def test_bridge_forwards_independent_requests_concurrently(monkeypatch: pytest.MonkeyPatch) -> None:
-    from litestar_mcp import bridge
+    from litestar_mcp.mcp import bridge
 
     async def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
@@ -268,8 +268,8 @@ async def test_bridge_forwards_independent_requests_concurrently(monkeypatch: py
 
 @pytest.mark.anyio
 async def test_bridge_connection_error_is_clean_jsonrpc_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    from litestar_mcp import bridge
     from litestar_mcp.core.exceptions import BridgeConnectionError
+    from litestar_mcp.mcp import bridge
 
     async def handler(request: httpx.Request) -> httpx.Response:
         message = "connection refused"
@@ -295,8 +295,8 @@ async def test_bridge_connection_error_is_clean_jsonrpc_error(monkeypatch: pytes
 
 @pytest.mark.anyio
 async def test_bridge_rejects_oversized_stdin_message() -> None:
-    from litestar_mcp import bridge
     from litestar_mcp.core.exceptions import BridgeMessageTooLargeError
+    from litestar_mcp.mcp import bridge
 
     stdout = BridgeBytesSink()
     stderr = io.StringIO()
@@ -317,7 +317,7 @@ async def test_bridge_rejects_oversized_stdin_message() -> None:
 
 @pytest.mark.anyio
 async def test_bridge_max_message_size_minus_one_disables_limit(monkeypatch: pytest.MonkeyPatch) -> None:
-    from litestar_mcp import bridge
+    from litestar_mcp.mcp import bridge
 
     requests: list[dict[str, Any]] = []
 
@@ -349,7 +349,7 @@ async def test_bridge_max_message_size_minus_one_disables_limit(monkeypatch: pyt
 
 @pytest.mark.anyio
 async def test_bridge_clean_eof_exits_zero_without_error() -> None:
-    from litestar_mcp.bridge import run_stdio_streamable_http_bridge
+    from litestar_mcp.mcp.bridge import run_stdio_streamable_http_bridge
 
     stdout = BridgeBytesSink()
     stderr = io.StringIO()
@@ -369,7 +369,7 @@ async def test_bridge_clean_eof_exits_zero_without_error() -> None:
 
 @pytest.mark.anyio
 async def test_bridge_close_does_not_issue_http_request(monkeypatch: pytest.MonkeyPatch) -> None:
-    from litestar_mcp import bridge
+    from litestar_mcp.mcp import bridge
 
     requests: list[httpx.Request] = []
 
@@ -396,7 +396,7 @@ async def test_bridge_close_does_not_issue_http_request(monkeypatch: pytest.Monk
 async def test_bridge_reports_post_exception_and_cancels_stdin_pump(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from litestar_mcp import bridge
+    from litestar_mcp.mcp import bridge
 
     stdin = BridgeQueuedBytesSource(
         b'{"jsonrpc":"2.0","id":1,"method":"server/discover"}\n',

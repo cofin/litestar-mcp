@@ -18,7 +18,7 @@ from litestar.exceptions import NotAuthorizedException
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP
-from litestar_mcp.executor import execute_tool
+from litestar_mcp.mcp.executor import execute_tool
 from tests.unit.conftest import get_handler_from_app
 
 if TYPE_CHECKING:
@@ -224,8 +224,8 @@ def test_after_response_failure_is_logged_and_swallowed(caplog: "pytest.LogCaptu
 
     # Handler succeeded; after_response failure must not surface as an error.
     assert resp["result"]["isError"] is False
-    matching = [rec for rec in caplog.records if rec.name == "litestar_mcp.executor" and rec.exc_info is not None]
-    assert matching, "expected an exception log record from litestar_mcp.executor"
+    matching = [rec for rec in caplog.records if rec.name == "litestar_mcp.mcp.executor" and rec.exc_info is not None]
+    assert matching, "expected an exception log record from litestar_mcp.mcp.executor"
 
 
 # ---------------------------------------------------------------------------

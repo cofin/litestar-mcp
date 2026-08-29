@@ -49,7 +49,7 @@ from litestar.testing import AsyncTestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig
 from litestar_mcp.a2a import LitestarA2A
-from litestar_mcp.routes import MCP_PROTOCOL_VERSION
+from litestar_mcp.mcp.routes import MCP_PROTOCOL_VERSION
 
 pytestmark = pytest.mark.integration
 

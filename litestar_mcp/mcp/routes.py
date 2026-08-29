@@ -17,7 +17,6 @@ from litestar.status_codes import (
     HTTP_404_NOT_FOUND,
 )
 
-from litestar_mcp.config import MCPConfig  # noqa: TC001
 from litestar_mcp.core.jsonrpc import (
     INVALID_PARAMS,
     METHOD_NOT_FOUND,
@@ -30,9 +29,10 @@ from litestar_mcp.core.jsonrpc import (
 )
 from litestar_mcp.core.schema_builder import generate_schema_for_handler, iter_mcp_header_fields
 from litestar_mcp.core.serialization import from_json, to_json
-from litestar_mcp.registry import PromptRegistration, Registry  # noqa: TC001
-from litestar_mcp.services.handler import MCPHandlerService, MCPRequestContext
-from litestar_mcp.tasks import MCPTaskStore  # noqa: TC001
+from litestar_mcp.mcp.config import MCPConfig  # noqa: TC001
+from litestar_mcp.mcp.registry import PromptRegistration, Registry  # noqa: TC001
+from litestar_mcp.mcp.service import MCPHandlerService, MCPRequestContext
+from litestar_mcp.mcp.tasks import MCPTaskStore  # noqa: TC001
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable

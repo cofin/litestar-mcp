@@ -17,7 +17,6 @@ from litestar.openapi.spec import Operation
 from litestar.serialization import decode_json, encode_json
 from litestar.types import Empty, TypeDecodersSequence
 
-from litestar_mcp.config import MCPConfig
 from litestar_mcp.core.jsonrpc import (
     INTERNAL_ERROR,
     PARSE_ERROR,
@@ -26,9 +25,10 @@ from litestar_mcp.core.jsonrpc import (
     error_response,
     parse_request,
 )
-from litestar_mcp.plugin import LitestarMCP
-from litestar_mcp.routes import MCP_PROTOCOL_VERSION, _build_cached_router, _finalize_result
-from litestar_mcp.services.handler import MCPRequestContext
+from litestar_mcp.mcp.config import MCPConfig
+from litestar_mcp.mcp.plugin import LitestarMCP
+from litestar_mcp.mcp.routes import MCP_PROTOCOL_VERSION, _build_cached_router, _finalize_result
+from litestar_mcp.mcp.service import MCPRequestContext
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

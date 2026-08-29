@@ -3,7 +3,7 @@
 import pytest
 from litestar.handlers import get
 
-from litestar_mcp.registry import Registry
+from litestar_mcp.mcp.registry import Registry
 
 
 @pytest.fixture

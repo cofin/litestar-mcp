@@ -236,7 +236,7 @@ class TestInputValidation:
         """
         from litestar.params import Dependency
 
-        from litestar_mcp.services.handler import _validate_tool_arguments
+        from litestar_mcp.mcp.service import _validate_tool_arguments
 
         async def provide_pagination(limit: "int" = 20, offset: "int" = 0) -> "dict[str, int]":
             return {"limit": limit, "offset": offset}
@@ -403,7 +403,7 @@ class TestInputValidation:
                 self.records.append(record)
 
         handler = RecordHandler()
-        executor_logger = logging.getLogger("litestar_mcp.executor")
+        executor_logger = logging.getLogger("litestar_mcp.mcp.executor")
         executor_logger.addHandler(handler)
 
         app = Litestar(route_handlers=[list_things], plugins=[LitestarMCP(MCPConfig())])

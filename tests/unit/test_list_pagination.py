@@ -7,7 +7,7 @@ from litestar import Litestar, get
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, mcp_prompt
-from litestar_mcp.config import MCPConfig
+from litestar_mcp.mcp.config import MCPConfig
 
 
 def _rpc(

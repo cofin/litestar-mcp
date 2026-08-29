@@ -8,13 +8,13 @@ from litestar.di import Provide
 from litestar.handlers import BaseRouteHandler
 from litestar.plugins import CLIPlugin, InitPluginProtocol
 
-from litestar_mcp.cli import mcp_group
-from litestar_mcp.config import MCPConfig
 from litestar_mcp.core.schema_builder import generate_schema_for_handler, validate_mcp_header_schema
 from litestar_mcp.core.sse import SubscriptionManager
-from litestar_mcp.registry import PromptRegistration, Registry
-from litestar_mcp.routes import MCPController
-from litestar_mcp.tasks import MCPTaskStore, TaskRecord
+from litestar_mcp.mcp.cli import mcp_group
+from litestar_mcp.mcp.config import MCPConfig
+from litestar_mcp.mcp.registry import PromptRegistration, Registry
+from litestar_mcp.mcp.routes import MCPController
+from litestar_mcp.mcp.tasks import MCPTaskStore, TaskRecord
 from litestar_mcp.utils import get_handler_function, get_mcp_metadata
 
 _logger = logging.getLogger(__name__)

@@ -8,7 +8,7 @@ from litestar import Litestar, get
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP
-from litestar_mcp.config import MCPConfig, MCPOptKeys
+from litestar_mcp.mcp.config import MCPConfig, MCPOptKeys
 
 
 def _rpc(client: "TestClient[Any]", method: "str") -> "dict[str, Any]":

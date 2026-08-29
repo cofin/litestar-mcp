@@ -10,7 +10,7 @@ from litestar.testing import TestClient
 from litestar.types import HTTPRequestEvent, HTTPScope, Receive
 
 from litestar_mcp import LitestarMCP, MCPConfig, mcp_prompt
-from litestar_mcp.registry import (
+from litestar_mcp.mcp.registry import (
     PromptRegistration,
     Registry,
     _normalize_prompt_result,
@@ -278,7 +278,7 @@ class TestPromptRegistration:
         """
         from types import SimpleNamespace
 
-        from litestar_mcp.registry import _introspect_handler_arguments
+        from litestar_mcp.mcp.registry import _introspect_handler_arguments
 
         # Stub handler whose resolve_dependencies blows up. We still want
         # introspection to succeed against a None signature_model.
@@ -1161,7 +1161,7 @@ class TestCaptureAsgiResponseStatusZero:
 
     @pytest.mark.asyncio
     async def test_asgi_app_without_response_start_classified_as_500(self) -> "None":
-        from litestar_mcp.executor import _NON_JSON_STATUS, _capture_asgi_response
+        from litestar_mcp.mcp.executor import _NON_JSON_STATUS, _capture_asgi_response
 
         async def silent_asgi_app(scope: "Any", receive: "Any", send: "Any") -> "None":
             return  # never calls send → no http.response.start

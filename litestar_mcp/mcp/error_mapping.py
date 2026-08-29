@@ -25,7 +25,7 @@ this to -32602 (Invalid params).
 from typing import Any
 
 from litestar_mcp.core.jsonrpc import INTERNAL_ERROR, JSONRPCError
-from litestar_mcp.executor import MCPToolErrorResult
+from litestar_mcp.mcp.executor import MCPToolErrorResult
 
 RESOURCE_NOT_FOUND = -32602
 

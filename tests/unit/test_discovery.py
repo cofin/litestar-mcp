@@ -4,7 +4,7 @@ from litestar import Litestar, get
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP
-from litestar_mcp.config import MCPConfig
+from litestar_mcp.mcp.config import MCPConfig
 from litestar_mcp.utils import mcp_tool
 
 

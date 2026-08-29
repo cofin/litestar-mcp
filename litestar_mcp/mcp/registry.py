@@ -21,8 +21,8 @@ from litestar_mcp.utils.handler_signature import (
 )
 
 if TYPE_CHECKING:
-    from litestar_mcp.config import MCPConfig
     from litestar_mcp.core.sse import SubscriptionManager
+    from litestar_mcp.mcp.config import MCPConfig
 
 _logger = logging.getLogger(__name__)
 
@@ -473,7 +473,7 @@ class Registry:
 
         Storage only — runtime dispatch and the
         ``messages``-passthrough vs. normalize-on-return decision live in
-        :func:`litestar_mcp.routes.handle_prompts_get`. This function
+        :func:`litestar_mcp.mcp.routes.handle_prompts_get`. This function
         captures the handler reference plus any explicit overrides so the
         registry can render ``prompts/list`` entries without executing
         the handler.
