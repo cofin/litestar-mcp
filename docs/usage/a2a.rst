@@ -16,8 +16,10 @@ points at the configured mount, then supply an official
     :language: python
     :caption: Official A2A SDK adapter
 
-The default RPC mount is ``/a2a`` and the card is served from
-``/.well-known/agent-card.json``. Litestar middleware and configured guards
-remain the outer security boundary. The SDK owns JSON-RPC parsing, protocol
-version handling, streaming, cancellation, and task lifecycle. MCP routes are
-never converted into A2A skills automatically.
+The default RPC endpoint is ``/a2a`` and the card is served from
+``/.well-known/agent-card.json``. Litestar owns HTTP, JSON decoding, SSE,
+middleware, configured guards, and client-disconnect handling. The SDK supplies
+the official protocol models, errors, compatibility conversions,
+``RequestHandler`` execution contract, and task lifecycle. The adapter does not
+import Starlette, and MCP routes are never converted into A2A skills
+automatically.

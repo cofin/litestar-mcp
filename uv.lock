@@ -28,12 +28,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c1/33/d414a03d5ef5a7d6d09a20dc9f8094e7fb9edb488662ff99c535a2a62cf1/a2a_sdk-1.1.2-py3-none-any.whl", hash = "sha256:eb9a698f526dc45a9ea967d7804e7aa363ff273d2c44fbed699bc68c9399f9c9", size = 245981, upload-time = "2026-07-22T13:40:49.484Z" },
 ]
 
-[package.optional-dependencies]
-http-server = [
-    { name = "sse-starlette" },
-    { name = "starlette" },
-]
-
 [[package]]
 name = "advanced-alchemy"
 version = "1.11.0"
@@ -2044,7 +2038,7 @@ dependencies = [
 
 [package.optional-dependencies]
 a2a = [
-    { name = "a2a-sdk", extra = ["http-server"] },
+    { name = "a2a-sdk" },
 ]
 bridge = [
     { name = "httpx-sse" },
@@ -2173,7 +2167,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "a2a-sdk", extras = ["http-server"], marker = "extra == 'a2a'", specifier = ">=1.1.2" },
+    { name = "a2a-sdk", marker = "extra == 'a2a'", specifier = ">=1.1.2" },
     { name = "anyio", specifier = ">=4.1" },
     { name = "httpx", specifier = ">=0.24.1" },
     { name = "httpx-sse", marker = "extra == 'bridge'", specifier = ">=0.4.0" },

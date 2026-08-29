@@ -16,9 +16,10 @@ Recent Updates
 
         Added ``litestar-mcp[a2a]`` and the narrow
         ``litestar_mcp.a2a.A2AConfig`` / ``LitestarA2A`` adapter around the
-        official A2A 1.0 SDK. MCP no longer publishes a non-standard agent
-        card. Subscription queues are bounded and request contexts can report
-        token-correlated progress.
+        official A2A 1.0 SDK. Litestar owns HTTP, JSON, SSE, guards,
+        middleware, and disconnect cleanup; the optional extra uses bare
+        ``a2a-sdk``. Subscription queues are bounded and request contexts can
+        report token-correlated progress.
 
     .. change:: retain the released MCP package layout
         :type: breaking

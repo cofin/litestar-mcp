@@ -49,7 +49,7 @@ Source = "https://github.com/cofin/litestar-mcp"
 [project.optional-dependencies]
 bridge = ["httpx-sse>=0.4.0"]
 a2a = [
-    "a2a-sdk[http-server]>=1.1.2",
+    "a2a-sdk>=1.1.2",
 ]
 
 [project.entry-points."pygments.styles"]

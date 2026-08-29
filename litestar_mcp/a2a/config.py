@@ -4,9 +4,10 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
-    from a2a.server.routes.common import ServerCallContextBuilder
+    from a2a.server.context import ServerCallContext
+    from litestar.connection import Request
     from litestar.types import Guard
 
 
@@ -18,7 +19,7 @@ class A2AConfig:
     agent_card_path: str = "/.well-known/agent-card.json"
     guards: "Sequence[Guard]" = ()
     route_opt: dict[str, Any] = field(default_factory=dict)
-    context_builder: "ServerCallContextBuilder | None" = None
+    context_builder: "Callable[[Request[Any, Any, Any]], ServerCallContext] | None" = None
     enable_v0_3_compat: bool = False
 
     def __post_init__(self) -> None:
