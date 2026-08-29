@@ -41,7 +41,7 @@ from a2a.types import (
 from a2a.utils import constants, proto_utils
 from a2a.utils.errors import A2AError, TaskNotFoundError, UnsupportedOperationError, VersionNotSupportedError
 from google.protobuf.json_format import MessageToDict, ParseDict  # type: ignore[import-untyped]
-from litestar import Litestar, MediaType, Request, Response, get, post
+from litestar import Litestar, MediaType, Request, Response, Router, get, post
 from litestar.exceptions import SerializationException
 from litestar.plugins import InitPluginProtocol
 from litestar.response import ServerSentEvent, ServerSentEventMessage
@@ -401,7 +401,11 @@ class LitestarA2A(InitPluginProtocol):
         _validate_card(agent_card, self.config.path)
 
     def on_app_init(self, app_config: AppConfig) -> AppConfig:
-        occupied = {path for handler in app_config.route_handlers for path in getattr(handler, "paths", ())}
+        occupied = {
+            route.path
+            for entry in app_config.route_handlers
+            for route in Router(path="", route_handlers=[entry]).routes
+        }
         collisions = occupied.intersection((self.config.path, self.config.agent_card_path))
         if collisions:
             msg = f"A2A route collision: {', '.join(sorted(collisions))}"

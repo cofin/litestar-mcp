@@ -10,12 +10,13 @@ from a2a.types import AgentCard, AgentInterface, Message, Part, Role, SendMessag
 from litestar import Litestar, Request, get
 from litestar.config.csrf import CSRFConfig
 from litestar.connection import ASGIConnection
-from litestar.exceptions import PermissionDeniedException
+from litestar.exceptions import ImproperlyConfiguredException, PermissionDeniedException
 from litestar.handlers import BaseRouteHandler
 from litestar.middleware import AbstractAuthenticationMiddleware, AuthenticationResult, DefineMiddleware
 from litestar.plugins import InitPluginProtocol
 from litestar.testing import AsyncTestClient
 
+from litestar_mcp import LitestarMCP, MCPConfig
 from litestar_mcp.a2a import A2AConfig, LitestarA2A
 
 if TYPE_CHECKING:
@@ -86,6 +87,20 @@ def test_collision_detection_is_order_independent(registration: str) -> None:
             Litestar(plugins=[a2a], route_handlers=[owned])
         else:
             Litestar(plugins=[_RouteOwner(), a2a])
+
+
+def test_mcp_router_mount_collision_is_reported_by_the_adapter() -> None:
+    mcp = LitestarMCP(MCPConfig(base_path="/a2a"))
+
+    with pytest.raises(ValueError, match="A2A route collision: /a2a"):
+        Litestar(plugins=[mcp, LitestarA2A(make_card(), AsyncMock())])
+
+
+def test_mcp_router_mounted_after_a2a_is_rejected_by_litestar() -> None:
+    mcp = LitestarMCP(MCPConfig(base_path="/a2a"))
+
+    with pytest.raises(ImproperlyConfiguredException, match="Handler already registered"):
+        Litestar(plugins=[LitestarA2A(make_card(), AsyncMock()), mcp])
 
 
 def test_config_requires_absolute_paths() -> None:
