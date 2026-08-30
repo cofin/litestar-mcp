@@ -20,7 +20,6 @@ transport caveat.
 import inspect
 import logging
 import re
-from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from time import perf_counter
@@ -149,7 +148,6 @@ async def execute_tool(
     tool_args: "dict[str, Any]",
     *,
     request: "Request[Any, Any, Any] | None" = None,
-    scope_overrides: "dict[str, Any] | None" = None,
     config: "MCPConfig | None" = None,
     tool_name: "str | None" = None,
 ) -> "Any":
@@ -187,9 +185,6 @@ async def execute_tool(
             into path / query / body based on the handler's signature.
         request: Inbound :class:`~litestar.Request` in HTTP mode, ``None``
             for CLI / stdio invocations.
-        scope_overrides: Stdio-only values to seed on the synthesized
-            dispatch scope. Ignored when ``request`` is not ``None`` because
-            HTTP mode must inherit the live middleware-populated scope.
         config: MCP plugin configuration. When supplied with ``tool_name``,
             tool-call observability callbacks are invoked around dispatch.
         tool_name: MCP tool name for callback payloads. Omit for resources,
@@ -228,13 +223,9 @@ async def execute_tool(
                 handler,
                 tool_args,
                 base_scope=base_scope,
-                scope_overrides=scope_overrides if request is None else None,
                 app=app,
                 path_parameters=path_parameters,
             )
-            if request is None:
-                await _open_stdio_dishka_container(app, dispatch_scope, stack)
-
             dispatch_request = Request(
                 cast("Any", dispatch_scope),
                 receive=cast("Any", receive),
@@ -268,7 +259,6 @@ async def execute_handler_response(
     tool_args: "dict[str, Any]",
     *,
     request: "Request[Any, Any, Any] | None" = None,
-    scope_overrides: "dict[str, Any] | None" = None,
 ) -> "MCPHandlerResponse":
     """Execute a handler and return raw response bytes plus decoded content."""
     path_parameters = _find_route_path_parameters(app, handler)
@@ -278,13 +268,9 @@ async def execute_handler_response(
             handler,
             tool_args,
             base_scope=base_scope,
-            scope_overrides=scope_overrides if request is None else None,
             app=app,
             path_parameters=path_parameters,
         )
-        if request is None:
-            await _open_stdio_dishka_container(app, dispatch_scope, stack)
-
         dispatch_request: Request[Any, Any, Any] = Request(
             cast("Any", dispatch_scope),
             receive=cast("Any", receive),
@@ -809,7 +795,6 @@ def _build_dispatch_scope(
     tool_args: "dict[str, Any]",
     *,
     base_scope: "dict[str, Any] | None",
-    scope_overrides: "dict[str, Any] | None",
     app: "Litestar",
     path_parameters: "dict[str, Any]",
 ) -> "tuple[dict[str, Any], Callable[[], Awaitable[dict[str, Any]]]]":
@@ -818,9 +803,7 @@ def _build_dispatch_scope(
     HTTP mode (``base_scope`` from the inbound /mcp request) inherits
     middleware-populated state (``scope["state"]`` — e.g., Dishka's request
     container, authentication user) so request-scoped DI flows through.
-    Stdio mode starts from a blank scope, optionally seeded with the
-    ``scope_overrides`` identity (``user`` / ``auth`` / ``session`` /
-    ``state``) supplied through :class:`~litestar_mcp.MCPStdioContext`.
+    Without a base scope, CLI and direct invocations start from a blank scope.
     """
     path_values, query_values, body = _split_tool_args(handler, tool_args, path_parameters)
     coerced_path_values = _coerce_path_params(path_parameters, path_values)
@@ -839,18 +822,6 @@ def _build_dispatch_scope(
         for passthrough in ("user", "auth", "session"):
             if passthrough in base_scope:
                 scope[passthrough] = base_scope[passthrough]
-    elif scope_overrides is not None:
-        if "state" in scope_overrides:
-            scope["state"] = dict(scope_overrides.get("state") or {})
-        if "session" in scope_overrides:
-            scope["session"] = dict(scope_overrides.get("session") or {})
-        for passthrough in ("user", "auth"):
-            if passthrough in scope_overrides:
-                value = scope_overrides[passthrough]
-                # Copy Mapping-style identity per dispatch so a handler that
-                # mutates scope["auth"] / scope["user"] can't leak into later
-                # stdio tool calls that share the same MCPStdioContext.
-                scope[passthrough] = dict(value) if isinstance(value, Mapping) else value
 
     http_methods = getattr(handler, "http_methods", None) or ("POST",)
     method = next(iter(http_methods))
@@ -874,18 +845,3 @@ def _build_dispatch_scope(
         return {"type": "http.request", "body": body, "more_body": False}
 
     return scope, receive
-
-
-async def _open_stdio_dishka_container(app: "Litestar", scope: "dict[str, Any]", stack: "AsyncExitStack") -> "None":
-    """Open a request-scoped child Dishka container for stdio dispatch.
-
-    The ``setup_dishka`` integration stores a root container factory on
-    ``app.state.dishka_container``. HTTP mode has a middleware that opens a
-    child per request; stdio needs to open one manually so ``FromDishka[T]``
-    resolves identically in both modes.
-    """
-    container_factory = getattr(app.state, "dishka_container", None)
-    if container_factory is None:
-        return
-    child = await stack.enter_async_context(container_factory())
-    scope.setdefault("state", {})["dishka_container"] = child

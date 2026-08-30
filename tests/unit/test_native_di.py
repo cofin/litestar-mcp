@@ -508,31 +508,6 @@ def test_stdio_mode_synthesizes_request() -> "None":
     assert seen["path"] == "/probe"
 
 
-def test_stdio_mode_opens_dishka_child_container() -> "None":
-    """Stdio invocation of a Dishka-injected handler resolves ``FromDishka[T]``."""
-    app = _build_dishka_app()
-    handler = get_handler_from_app(app, "/svc")
-
-    r1 = asyncio.run(execute_tool(handler, app, {}, request=None))
-    r2 = asyncio.run(execute_tool(handler, app, {}, request=None))
-
-    # Each stdio call opens a fresh child container → different uuid tokens.
-    assert r1["token"] != r2["token"]
-
-
-def test_stdio_mode_cleans_up_dishka_child_container() -> "None":
-    """Child container closes after the call — verified via an instrumented provider."""
-    _CLEANUP_LOG.clear()
-
-    app = Litestar(route_handlers=[_use_resource], plugins=[LitestarMCP()])
-    container = make_async_container(_InstrumentedProvider())
-    setup_dishka(container=container, app=app)
-    handler = get_handler_from_app(app, "/res")
-
-    asyncio.run(execute_tool(handler, app, {}, request=None))
-    assert _CLEANUP_LOG == [True]
-
-
 def test_guards_run_in_stdio_mode() -> "None":
     """Ch2 supersedes Ch1's stdio-skip: guards always run against the dispatch request."""
     denied_msg = "stdio should enforce"

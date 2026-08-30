@@ -92,7 +92,6 @@ class MCPRequestContext:
     client_id: "str"
     owner_id: "str | None"
     request: "Request[Any, Any, Any] | None" = None
-    scope_overrides: "dict[str, Any] | None" = None
     protocol_version: "str" = MCP_PROTOCOL_VERSION
     client_capabilities: "dict[str, Any] | None" = None
     client_info: "dict[str, Any] | None" = None
@@ -153,10 +152,6 @@ def _serialize_tool_content(value: "Any") -> "str":
     if isinstance(value, str):
         return value
     return encode_json(value).decode("utf-8")
-
-
-def _scope_overrides_for_context(context: "RequestContext") -> "dict[str, Any] | None":
-    return context.scope_overrides if context.request is None else None
 
 
 def _is_resource_text_media_type(mime_type: "str") -> "bool":
@@ -442,7 +437,6 @@ class MCPHandlerService:
                     self.app_ref,
                     tool_args,
                     request=context.request,
-                    scope_overrides=_scope_overrides_for_context(context),
                     config=self.config,
                     tool_name=tool_name,
                 )
@@ -738,7 +732,6 @@ class MCPHandlerService:
                         self.app_ref,
                         {},
                         request=context.request,
-                        scope_overrides=_scope_overrides_for_context(context),
                     )
                 finally:
                     _request_context.reset(token)
@@ -777,7 +770,6 @@ class MCPHandlerService:
                         self.app_ref,
                         dict(extracted),
                         request=context.request,
-                        scope_overrides=_scope_overrides_for_context(context),
                     )
                 finally:
                     _request_context.reset(token)
@@ -876,7 +868,6 @@ class MCPHandlerService:
                         self.app_ref,
                         prompt_args,
                         request=context.request,
-                        scope_overrides=_scope_overrides_for_context(context),
                     )
                 finally:
                     _request_context.reset(token)
