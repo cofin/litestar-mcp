@@ -24,12 +24,13 @@ from litestar_mcp.core.exceptions import (
     LitestarMCPError,
     MissingDependencyError,
 )
-from litestar_mcp.mcp.app import MCP, MCPStdioContext
+from litestar_mcp.mcp.app import MCP
 from litestar_mcp.mcp.config import AfterToolCallHook, BeforeToolCallHook, MCPConfig, MCPOptKeys, MCPTaskConfig
 from litestar_mcp.mcp.content import MCPBlobResource, MCPInputRequiredResult, MCPResourceLink, MCPToolResult
 from litestar_mcp.mcp.plugin import LitestarMCP
 from litestar_mcp.mcp.routes import MCPController
 from litestar_mcp.mcp.service import MCPRequestContext, get_mcp_request_context
+from litestar_mcp.mcp.stdio import MCPStdioContext
 from litestar_mcp.utils import mcp_prompt, mcp_resource, mcp_tool
 
 __all__ = (

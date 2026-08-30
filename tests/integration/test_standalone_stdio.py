@@ -1,10 +1,9 @@
 import asyncio
 import json
-import os
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import patch
 
+import anyio
 import pytest
 from litestar import Request, get
 from litestar.di import Provide
@@ -12,17 +11,14 @@ from litestar.exceptions import NotAuthorizedException
 
 import litestar_mcp
 from litestar_mcp import MCP, MCPConfig
+from litestar_mcp.mcp.stdio import MCPStdioContext, run_stdio_async
 from litestar_mcp.utils import mcp_tool
+from tests.conftest import BridgeBytesSink, BridgeQueuedBytesSource
 
 pytestmark = pytest.mark.integration
 
 
-class MockStream:
-    def __init__(self, buffer: "Any") -> "None":
-        self.buffer = buffer
-
-
-def _stdio_context(**kwargs: "Any") -> "Any":
+def _stdio_context(**kwargs: "Any") -> "MCPStdioContext":
     return litestar_mcp.MCPStdioContext(**kwargs)
 
 
@@ -58,46 +54,24 @@ async def _run_stdio_exchange(
     mcp: "MCP",
     requests: "list[dict[str, Any]]",
     *,
-    stdio_context: "Any | None" = None,
+    stdio_context: "MCPStdioContext | None" = None,
 ) -> "list[dict[str, Any]]":
-    stdin_read_fd, stdin_write_fd = os.pipe()
-    stdout_read_fd, stdout_write_fd = os.pipe()
-
-    test_stdin_writer = os.fdopen(stdin_write_fd, "wb", buffering=0)
-    test_stdout_reader = os.fdopen(stdout_read_fd, "rb", buffering=0)
-    app_stdin = os.fdopen(stdin_read_fd, "rb", buffering=0)
-    app_stdout = os.fdopen(stdout_write_fd, "wb", buffering=0)
-
-    with (
-        patch("sys.stdin", MockStream(app_stdin)),
-        patch("sys.stdout", MockStream(app_stdout)),
-    ):
-        if stdio_context is None:
-            run_task = asyncio.create_task(mcp._async_run_stdio())
-        else:
-            run_task = asyncio.create_task(mcp._async_run_stdio(stdio_context=stdio_context))
-
-        try:
-            loop = asyncio.get_running_loop()
-
-            async def read_line_async() -> "bytes":
-                return await asyncio.wait_for(
-                    loop.run_in_executor(None, test_stdout_reader.readline),
-                    timeout=5.0,
-                )
-
-            responses: list[dict[str, Any]] = []
-            for request in requests:
-                test_stdin_writer.write(json.dumps(request).encode("utf-8") + b"\n")
-                if "id" in request:
-                    responses.append(json.loads((await read_line_async()).decode("utf-8")))
-            return responses
-        finally:
-            test_stdin_writer.close()
-            await run_task
-            test_stdout_reader.close()
-            app_stdin.close()
-            app_stdout.close()
+    stdin = BridgeQueuedBytesSource(*(json.dumps(request).encode("utf-8") + b"\n" for request in requests))
+    stdout = BridgeBytesSink()
+    with anyio.fail_after(10):
+        exit_code = await run_stdio_async(
+            mcp.app,
+            stdio_context=stdio_context or MCPStdioContext(),
+            stdin=stdin,
+            stdout=stdout,
+        )
+    assert exit_code == 0
+    by_id = {
+        message["id"]: message
+        for message in (json.loads(line) for line in stdout.buffer.splitlines() if line.strip())
+        if "id" in message
+    }
+    return [by_id[request["id"]] for request in requests if "id" in request]
 
 
 async def _wait_for_terminal(store: "Any", task_id: "str", owner_id: "str | None") -> "Any":
@@ -129,64 +103,16 @@ async def test_standalone_stdio_tool_execution() -> "None":
     def greet(name: "str") -> "str":
         return f"Hello {name}"
 
-    # Setup OS pipes
-    stdin_read_fd, stdin_write_fd = os.pipe()
-    stdout_read_fd, stdout_write_fd = os.pipe()
+    responses = await _run_stdio_exchange(
+        mcp,
+        [
+            _discover_request(),
+            _request("tools/call", request_id=2, params={"name": "greet", "arguments": {"name": "World"}}),
+        ],
+    )
 
-    # Wrap write end of stdin and read end of stdout for test to use
-    test_stdin_writer = os.fdopen(stdin_write_fd, "wb", buffering=0)
-    test_stdout_reader = os.fdopen(stdout_read_fd, "rb", buffering=0)
-
-    # Wrap read end of stdin and write end of stdout for app to use
-    app_stdin = os.fdopen(stdin_read_fd, "rb", buffering=0)
-    app_stdout = os.fdopen(stdout_write_fd, "wb", buffering=0)
-
-    # Run _async_run_stdio in a background task
-    with (
-        patch("sys.stdin", MockStream(app_stdin)),
-        patch("sys.stdout", MockStream(app_stdout)),
-    ):
-        run_task = asyncio.create_task(mcp._async_run_stdio())
-
-        try:
-            loop = asyncio.get_running_loop()
-
-            async def read_line_async() -> "bytes":
-                # Timeout after 5s to prevent hanging tests
-                return await asyncio.wait_for(
-                    loop.run_in_executor(None, test_stdout_reader.readline),
-                    timeout=5.0,
-                )
-
-            # 1. Discover the server.
-            test_stdin_writer.write(json.dumps(_discover_request()).encode("utf-8") + b"\n")
-
-            discovery_resp = json.loads((await read_line_async()).decode("utf-8"))
-            assert discovery_resp["id"] == 1
-            assert "result" in discovery_resp
-
-            # 2. Call a tool with its own complete request metadata.
-            tool_req = _request(
-                "tools/call",
-                request_id=2,
-                params={"name": "greet", "arguments": {"name": "World"}},
-            )
-            test_stdin_writer.write(json.dumps(tool_req).encode("utf-8") + b"\n")
-
-            tool_resp_bytes = await read_line_async()
-            tool_resp = json.loads(tool_resp_bytes.decode("utf-8"))
-            assert tool_resp["id"] == 2
-            assert "result" in tool_resp
-            assert tool_resp["result"]["content"][0]["text"] == "Hello World"
-
-        finally:
-            # Clean up: close test writer to trigger EOF in runner stdio loop
-            test_stdin_writer.close()
-            # Wait for runner task to finish
-            await run_task
-            test_stdout_reader.close()
-            app_stdin.close()
-            app_stdout.close()
+    assert "result" in responses[0]
+    assert responses[1]["result"]["content"][0]["text"] == "Hello World"
 
 
 @pytest.mark.anyio
@@ -354,8 +280,8 @@ async def test_standalone_stdio_task_owner_defaults_to_auth_subject() -> "None":
     assert responses[1]["result"]["resultType"] == "task"
     task_id = responses[1]["result"]["taskId"]
     assert mcp.plugin.task_store is not None
-    record = await _wait_for_terminal(mcp.plugin.task_store, task_id, "owner-from-auth")
-    assert record.owner_id == "owner-from-auth"
+    record = await _wait_for_terminal(mcp.plugin.task_store, task_id, "user:owner-from-auth")
+    assert record.owner_id == "user:owner-from-auth"
     assert record.result is not None
     payload = json.loads(record.result["content"][0]["text"])
     assert payload == {"auth_sub": "owner-from-auth"}
@@ -405,54 +331,16 @@ async def test_standalone_stdio_litestar_dependency_resolution() -> "None":
         return {"message": f"Hello {name}{suffix}"}
 
     mcp = MCP(name="stdio-di-test", route_handlers=[greet])
+    responses = await _run_stdio_exchange(
+        mcp,
+        [
+            _discover_request(),
+            _request("tools/call", request_id=2, params={"name": "greet", "arguments": {"name": "World"}}),
+        ],
+    )
 
-    stdin_read_fd, stdin_write_fd = os.pipe()
-    stdout_read_fd, stdout_write_fd = os.pipe()
-
-    test_stdin_writer = os.fdopen(stdin_write_fd, "wb", buffering=0)
-    test_stdout_reader = os.fdopen(stdout_read_fd, "rb", buffering=0)
-    app_stdin = os.fdopen(stdin_read_fd, "rb", buffering=0)
-    app_stdout = os.fdopen(stdout_write_fd, "wb", buffering=0)
-
-    with (
-        patch("sys.stdin", MockStream(app_stdin)),
-        patch("sys.stdout", MockStream(app_stdout)),
-    ):
-        run_task = asyncio.create_task(mcp._async_run_stdio())
-
-        try:
-            loop = asyncio.get_running_loop()
-
-            async def read_line_async() -> "bytes":
-                return await asyncio.wait_for(
-                    loop.run_in_executor(None, test_stdout_reader.readline),
-                    timeout=5.0,
-                )
-
-            test_stdin_writer.write(json.dumps(_discover_request()).encode("utf-8") + b"\n")
-            discovery_resp = json.loads((await read_line_async()).decode("utf-8"))
-            assert "result" in discovery_resp
-
-            test_stdin_writer.write(
-                json.dumps(
-                    _request(
-                        "tools/call",
-                        request_id=2,
-                        params={"name": "greet", "arguments": {"name": "World"}},
-                    )
-                ).encode("utf-8")
-                + b"\n"
-            )
-
-            tool_resp = json.loads((await read_line_async()).decode("utf-8"))
-            assert tool_resp["id"] == 2
-            assert json.loads(tool_resp["result"]["content"][0]["text"]) == {"message": "Hello World!"}
-        finally:
-            test_stdin_writer.close()
-            await run_task
-            test_stdout_reader.close()
-            app_stdin.close()
-            app_stdout.close()
+    assert "result" in responses[0]
+    assert json.loads(responses[1]["result"]["content"][0]["text"]) == {"message": "Hello World!"}
 
 
 @pytest.mark.anyio
@@ -468,38 +356,32 @@ async def test_standalone_stdio_lifespan_hooks() -> "None":
         nonlocal shutdown_called
         shutdown_called = True
 
-    mcp = MCP(
-        name="lifespan-test",
-        on_startup=[on_startup],
-        on_shutdown=[on_shutdown],
+    @get("/probe", mcp_tool="probe", sync_to_thread=False)
+    def probe() -> "dict[str, bool]":
+        return {"startup": startup_called, "shutdown": shutdown_called}
+
+    mcp = MCP(name="lifespan-test", route_handlers=[probe], on_startup=[on_startup], on_shutdown=[on_shutdown])
+    responses = await _run_stdio_exchange(
+        mcp,
+        [_request("tools/call", params={"name": "probe", "arguments": {}})],
     )
 
-    # Setup OS pipes
-    stdin_read_fd, stdin_write_fd = os.pipe()
-    stdout_read_fd, stdout_write_fd = os.pipe()
+    assert json.loads(responses[0]["result"]["content"][0]["text"]) == {"startup": True, "shutdown": False}
+    assert shutdown_called is True
 
-    test_stdin_writer = os.fdopen(stdin_write_fd, "wb", buffering=0)
-    test_stdout_reader = os.fdopen(stdout_read_fd, "rb", buffering=0)
-    app_stdin = os.fdopen(stdin_read_fd, "rb", buffering=0)
-    app_stdout = os.fdopen(stdout_write_fd, "wb", buffering=0)
 
-    with (
-        patch("sys.stdin", MockStream(app_stdin)),
-        patch("sys.stdout", MockStream(app_stdout)),
-    ):
-        run_task = asyncio.create_task(mcp._async_run_stdio())
+@pytest.mark.anyio
+async def test_standalone_stdio_startup_failure_raises() -> "None":
+    async def failing_startup() -> "None":
+        msg = "database unavailable"
+        raise RuntimeError(msg)
 
-        try:
-            # Wait a short moment to let startup run
-            await asyncio.sleep(0.5)
-            assert startup_called is True
-            assert shutdown_called is False
-        finally:
-            # Close stdin to trigger shutdown
-            test_stdin_writer.close()
-            await run_task
-            assert shutdown_called is True
+    mcp = MCP(name="startup-failure", on_startup=[failing_startup])
 
-            test_stdout_reader.close()
-            app_stdin.close()
-            app_stdout.close()
+    with pytest.raises(RuntimeError, match="Application startup failed"):
+        await run_stdio_async(
+            mcp.app,
+            stdio_context=MCPStdioContext(),
+            stdin=BridgeQueuedBytesSource(),
+            stdout=BridgeBytesSink(),
+        )

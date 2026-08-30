@@ -43,6 +43,7 @@ MCP_PROTOCOL_VERSION = "2026-07-28"
 MCP_PROTOCOL_VERSION_HEADER = "MCP-Protocol-Version"
 MCP_METHOD_HEADER = "Mcp-Method"
 MCP_NAME_HEADER = "Mcp-Name"
+MCP_OWNER_ID_SCOPE_KEY = "litestar_mcp.owner_id"
 
 HEADER_MISMATCH = -32020
 MISSING_REQUIRED_CLIENT_CAPABILITY = -32021
@@ -267,11 +268,13 @@ def _build_request_context(
     client_info = meta.get("io.modelcontextprotocol/clientInfo")
     client_id = client_info.get("name") if isinstance(client_info, dict) else None
     sub = _request_subject(request)
+    explicit_owner = request.scope.get(MCP_OWNER_ID_SCOPE_KEY)
+    owner_id = str(explicit_owner) if explicit_owner is not None else (f"user:{sub}" if sub is not None else None)
     progress_token = _progress_token(rpc_request) if progress_reporter is not None else None
 
     return MCPRequestContext(
         client_id=client_id or "anonymous",
-        owner_id=f"user:{sub}" if sub is not None else None,
+        owner_id=owner_id,
         request=request,
         protocol_version=MCP_PROTOCOL_VERSION,
         client_capabilities=meta["io.modelcontextprotocol/clientCapabilities"],
@@ -544,6 +547,7 @@ __all__ = (
     "HEADER_MISMATCH",
     "MCP_METHOD_HEADER",
     "MCP_NAME_HEADER",
+    "MCP_OWNER_ID_SCOPE_KEY",
     "MCP_PROTOCOL_VERSION",
     "MCP_PROTOCOL_VERSION_HEADER",
     "MISSING_REQUIRED_CLIENT_CAPABILITY",

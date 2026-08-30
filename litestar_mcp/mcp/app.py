@@ -1,37 +1,23 @@
-import asyncio
-import contextlib
 import inspect
-import logging
 import os
 import sys
 import urllib.parse
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from litestar import Litestar, Response
-from litestar.exceptions import PermissionDeniedException, SerializationException
+from litestar.exceptions import PermissionDeniedException
 from litestar.handlers import get, post
 from litestar.openapi.spec import Operation
-from litestar.serialization import decode_json, encode_json
+from litestar.serialization import encode_json
 from litestar.types import Empty, TypeDecodersSequence
 
-from litestar_mcp.core.jsonrpc import (
-    INTERNAL_ERROR,
-    PARSE_ERROR,
-    JSONRPCError,
-    JSONRPCErrorException,
-    error_response,
-    parse_request,
-)
 from litestar_mcp.mcp.config import MCPConfig
 from litestar_mcp.mcp.plugin import LitestarMCP
-from litestar_mcp.mcp.routes import MCP_PROTOCOL_VERSION, _build_cached_router, _finalize_result
-from litestar_mcp.mcp.service import MCPRequestContext
+from litestar_mcp.mcp.stdio import MCPStdioContext, run_stdio
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from litestar.background_tasks import BackgroundTask, BackgroundTasks
     from litestar.config.response_cache import CACHE_FOREVER
@@ -100,47 +86,6 @@ _ROUTE_HANDLER_KWARG_NAMES = (
     "type_decoders",
     "type_encoders",
 )
-
-
-@dataclass(frozen=True, slots=True)
-class MCPStdioContext:
-    """Runtime identity context for standalone MCP stdio transports.
-
-    Stdio has no HTTP header layer. Resolve credentials out-of-band in the
-    host process, then pass the resulting identity values here so Litestar
-    handlers and guards can read the usual ``scope["user"]`` /
-    ``scope["auth"]`` / session / state fields.
-    """
-
-    client_id: "str" = "stdio"
-    owner_id: "str | None" = None
-    user: "Any" = None
-    auth: "Any" = None
-    session: "Mapping[str, Any] | None" = None
-    state: "Mapping[str, Any] | None" = None
-
-
-def _resolve_stdio_owner_id(context: "MCPStdioContext") -> "str":
-    if context.owner_id is not None:
-        return str(context.owner_id)
-    if isinstance(context.auth, Mapping):
-        auth_sub = context.auth.get("sub")
-        if auth_sub is not None:
-            return str(auth_sub)
-    for attr in ("id", "sub"):
-        value = getattr(context.user, attr, None)
-        if value is not None:
-            return str(value)
-    return "stdio"
-
-
-def _build_stdio_scope_overrides(context: "MCPStdioContext") -> "dict[str, Any]":
-    return {
-        "user": context.user,
-        "auth": context.auth,
-        "session": dict(context.session or {}),
-        "state": dict(context.state or {}),
-    }
 
 
 def _require_internal_dispatch(connection: "Any", _route_handler: "Any") -> "None":
@@ -652,223 +597,5 @@ class MCP:
         stdio_context: "MCPStdioContext | None" = None,
         **_kwargs: "Any",
     ) -> "None":
-        """Run the server using Stdio transport."""
-        with contextlib.suppress(KeyboardInterrupt):
-            asyncio.run(self._async_run_stdio(stdio_context=stdio_context))
-
-    async def _async_run_stdio(self, *, stdio_context: "MCPStdioContext | None" = None) -> "None":
-        """Run the server asynchronously using manual ASGI lifespan driver.
-
-        This sets up queues, coordinates lifespan events, starts the app task,
-        triggers startup, runs the stdio loop, and triggers shutdown on exit.
-        """
-        logger = logging.getLogger(__name__)
-
-        receive_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-        startup_complete = asyncio.Event()
-        shutdown_complete = asyncio.Event()
-        startup_error: str | None = None
-
-        async def receive() -> "dict[str, Any]":
-            return await receive_queue.get()
-
-        async def send(message: "dict[str, Any]") -> "None":
-            nonlocal startup_error
-            mtype = message.get("type")
-            if mtype == "lifespan.startup.complete":
-                startup_complete.set()
-            elif mtype == "lifespan.startup.failed":
-                startup_error = message.get("message", "Unknown startup error")
-                startup_complete.set()
-            elif mtype == "lifespan.shutdown.complete":
-                shutdown_complete.set()
-
-        scope = {
-            "type": "lifespan",
-            "asgi": {"version": "3.0", "spec_version": "2.0"},
-        }
-
-        async def run_app() -> "None":
-            try:
-                await self.app(scope, receive, send)  # type: ignore[arg-type]
-            except Exception as e:
-                nonlocal startup_error
-                if not startup_complete.is_set():
-                    startup_error = str(e)
-                    startup_complete.set()
-                logger.exception("Error in background ASGI application task")
-                raise
-
-        app_task = asyncio.create_task(run_app())
-
-        await receive_queue.put({"type": "lifespan.startup"})
-        await startup_complete.wait()
-
-        if startup_error:
-            app_task.cancel()
-            msg = f"Application startup failed: {startup_error}"
-            raise RuntimeError(msg)
-
-        try:
-            await self._stdio_loop(stdio_context=stdio_context)
-        finally:
-            await receive_queue.put({"type": "lifespan.shutdown"})
-            try:
-                await asyncio.wait_for(shutdown_complete.wait(), timeout=5.0)
-            except asyncio.TimeoutError:
-                logger.warning("Lifespan shutdown timed out after 5 seconds")
-
-            app_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await app_task
-
-    async def _stdio_loop(  # noqa: C901, PLR0915
-        self, *, stdio_context: "MCPStdioContext | None" = None
-    ) -> "None":
-        """Run the stdin/stdout read/write loop."""
-        logger = logging.getLogger(__name__)
-        loop = asyncio.get_running_loop()
-
-        # Bind pipes
-        reader = asyncio.StreamReader()
-        protocol = asyncio.StreamReaderProtocol(reader)
-        await loop.connect_read_pipe(lambda: protocol, sys.stdin.buffer)
-
-        w_transport, w_protocol = await loop.connect_write_pipe(asyncio.streams.FlowControlMixin, sys.stdout.buffer)
-        writer = asyncio.StreamWriter(w_transport, w_protocol, reader, loop)
-
-        # Build router using plugin discovered definitions
-        plugin = self.plugin
-        router = _build_cached_router(
-            app=self.app,
-            config=plugin.config,
-            discovered_tools=plugin.discovered_tools,
-            discovered_resources=plugin.discovered_resources,
-            discovered_prompts=plugin.discovered_prompts,
-            registry=plugin.registry,
-            task_store=plugin.task_store,
-        )
-
-        resolved_stdio_context = stdio_context or MCPStdioContext()
-        write_lock = asyncio.Lock()
-        in_flight: dict[Any, asyncio.Task[None]] = {}
-        subscription_tasks: set[asyncio.Task[None]] = set()
-
-        async def write(payload: "dict[str, Any]") -> "None":
-            async with write_lock:
-                writer.write(encode_json(payload) + b"\n")
-                await writer.drain()
-
-        async def process(raw: "Any") -> "None":
-            try:
-                rpc_request = parse_request(raw)
-            except JSONRPCErrorException as exc:
-                await write(error_response(raw.get("id") if isinstance(raw, dict) else None, exc.error))
-                return
-
-            if rpc_request.method == "notifications/cancelled":
-                request_id = rpc_request.params.get("requestId")
-                task = in_flight.get(request_id)
-                if task is not None:
-                    task.cancel()
-                return
-
-            meta = rpc_request.params.get("_meta")
-            if not isinstance(meta, dict):
-                await write(error_response(rpc_request.id, JSONRPCError(code=-32602, message="Missing params._meta")))
-                return
-            protocol_version = meta.get("io.modelcontextprotocol/protocolVersion")
-            capabilities = meta.get("io.modelcontextprotocol/clientCapabilities")
-            if protocol_version != MCP_PROTOCOL_VERSION or not isinstance(capabilities, dict):
-                await write(
-                    error_response(
-                        rpc_request.id,
-                        JSONRPCError(
-                            code=-32022,
-                            message=f"Unsupported protocol version: {protocol_version}",
-                            data={"supportedVersions": [MCP_PROTOCOL_VERSION]},
-                        ),
-                    )
-                )
-                return
-            client_info = meta.get("io.modelcontextprotocol/clientInfo")
-            client_name = client_info.get("name") if isinstance(client_info, dict) else None
-            request_context = MCPRequestContext(
-                client_id=client_name if isinstance(client_name, str) else resolved_stdio_context.client_id,
-                owner_id=_resolve_stdio_owner_id(resolved_stdio_context),
-                request=None,
-                scope_overrides=_build_stdio_scope_overrides(resolved_stdio_context),
-                client_capabilities=capabilities,
-                client_info=client_info if isinstance(client_info, dict) else None,
-                input_responses=rpc_request.params.get("inputResponses"),
-                request_state=rpc_request.params.get("requestState"),
-            )
-
-            if rpc_request.method == "subscriptions/listen":
-                notifications = rpc_request.params.get("notifications")
-                if not isinstance(notifications, dict):
-                    await write(
-                        error_response(
-                            rpc_request.id,
-                            JSONRPCError(code=-32602, message="subscriptions/listen notifications must be an object"),
-                        )
-                    )
-                    return
-                _stream_id, stream = await plugin.registry.subscription_manager.open(rpc_request.id, notifications)
-                async for notification in stream:
-                    await write(notification)
-                return
-
-            try:
-                result = await router.dispatch(rpc_request, request_context)
-            except Exception as exc:
-                logger.exception("Unexpected error in stdio request")
-                result = error_response(
-                    rpc_request.id,
-                    JSONRPCError(code=INTERNAL_ERROR, message=f"Internal error: {exc}"),
-                )
-            if result is not None:
-                _finalize_result(result, method=rpc_request.method, app=self.app, config=plugin.config)
-                await write(result)
-
-        while True:
-            line_bytes = await reader.readline()
-            if not line_bytes:
-                break
-
-            line = line_bytes.decode("utf-8").strip()
-            if not line:
-                continue
-
-            try:
-                raw = decode_json(line_bytes)
-            except SerializationException as exc:
-                resp = error_response(
-                    None,
-                    JSONRPCError(code=PARSE_ERROR, message=f"Parse error: {exc}"),
-                )
-                await write(resp)
-                continue
-
-            request_id = raw.get("id") if isinstance(raw, dict) else None
-            task = asyncio.create_task(process(raw))
-            if isinstance(raw, dict) and raw.get("method") == "subscriptions/listen":
-                subscription_tasks.add(task)
-                task.add_done_callback(subscription_tasks.discard)
-            if request_id is not None:
-                in_flight[request_id] = task
-
-                def forget_request(_task: "asyncio.Task[None]", key: "Any" = request_id) -> "None":
-                    in_flight.pop(key, None)
-
-                task.add_done_callback(forget_request)
-
-        tasks = set(in_flight.values())
-        regular_tasks = tasks - subscription_tasks
-        if regular_tasks:
-            await asyncio.gather(*regular_tasks, return_exceptions=True)
-        subscriptions = tuple(subscription_tasks)
-        for task in subscriptions:
-            task.cancel()
-        if subscriptions:
-            await asyncio.gather(*subscriptions, return_exceptions=True)
+        """Run the server over stdio through the in-process transport."""
+        run_stdio(self.app, stdio_context=stdio_context or MCPStdioContext())
