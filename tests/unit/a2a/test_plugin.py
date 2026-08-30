@@ -357,6 +357,26 @@ async def test_anonymous_principal_on_scope_is_not_authenticated() -> None:
     assert handler.contexts[0].user.is_authenticated is False
 
 
+class _MappingPrincipalMiddleware(AbstractAuthenticationMiddleware):
+    async def authenticate_request(self, connection: ASGIConnection[Any, Any, Any, Any]) -> AuthenticationResult:
+        return AuthenticationResult(user={"id": None, "is_authenticated": False}, auth=None)
+
+
+@pytest.mark.anyio
+async def test_anonymous_mapping_principal_on_scope_is_not_authenticated() -> None:
+    handler = StubHandler()
+    app = Litestar(
+        middleware=[DefineMiddleware(_MappingPrincipalMiddleware)],
+        plugins=[LitestarA2A(make_card(), handler)],
+    )
+
+    async with AsyncTestClient(app=app) as client:
+        response = await client.post("/a2a", headers={"A2A-Version": "1.0"}, json=send_payload())
+
+    assert "result" in response.json()
+    assert handler.contexts[0].user.is_authenticated is False
+
+
 @pytest.mark.anyio
 async def test_version_check_reads_the_request_header_with_a_bare_context_builder() -> None:
     config = A2AConfig(context_builder=lambda _request: ServerCallContext())
@@ -368,6 +388,16 @@ async def test_version_check_reads_the_request_header_with_a_bare_context_builde
 
     assert "result" in accepted.json()
     assert rejected.json()["error"]["code"] == -32009
+
+
+@pytest.mark.anyio
+async def test_version_check_rejects_malformed_compatible_major_version() -> None:
+    app = Litestar(plugins=[LitestarA2A(make_card(), StubHandler())])
+
+    async with AsyncTestClient(app=app) as client:
+        response = await client.post("/a2a", headers={"A2A-Version": "1.bad"}, json=send_payload())
+
+    assert response.json()["error"]["code"] == -32009
 
 
 @pytest.mark.anyio

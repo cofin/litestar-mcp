@@ -47,12 +47,13 @@ class MCPStdioContext:
 
 
 class _ASGIResponseState:
-    __slots__ = ("body", "disconnected", "headers", "started", "status_code")
+    __slots__ = ("body", "body_complete", "disconnected", "headers", "started", "status_code")
 
     def __init__(self) -> None:
         self.status_code: int | None = None
         self.headers: list[tuple[bytes, bytes]] = []
-        self.body: asyncio.Queue[bytes | None] = asyncio.Queue()
+        self.body: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=1)
+        self.body_complete = False
         self.started = asyncio.Event()
         self.disconnected = asyncio.Event()
 
@@ -102,6 +103,7 @@ async def _shutdown_app_task(state: "_ASGIResponseState", task: "asyncio.Task[No
 
 
 def _build_scope(request: "httpx.Request", client: "tuple[str, int]", root_path: "str") -> "dict[str, Any]":
+    server_port = request.url.port or {"http": 80, "https": 443}.get(request.url.scheme)
     return {
         "type": "http",
         "asgi": {"version": "3.0", "spec_version": "2.4"},
@@ -112,7 +114,7 @@ def _build_scope(request: "httpx.Request", client: "tuple[str, int]", root_path:
         "path": request.url.path,
         "raw_path": request.url.raw_path.split(b"?")[0],
         "query_string": request.url.query,
-        "server": (request.url.host, request.url.port or 80),
+        "server": (request.url.host, server_port),
         "client": client,
         "root_path": root_path,
         "extensions": {},
@@ -180,6 +182,7 @@ class ASGIStreamingTransport(httpx.AsyncBaseTransport):
                 if body:
                     await state.body.put(body)
                 if not message.get("more_body", False):
+                    state.body_complete = True
                     await state.body.put(None)
 
         async def run_app() -> None:
@@ -187,7 +190,8 @@ class ASGIStreamingTransport(httpx.AsyncBaseTransport):
                 await self._app(cast("Any", scope), cast("Any", receive), cast("Any", send))
             finally:
                 state.started.set()
-                state.body.put_nowait(None)
+                if not state.body_complete:
+                    await state.body.put(None)
 
         read_timeout = cast("float | None", request.extensions.get("timeout", {}).get("read"))
         task = asyncio.create_task(run_app())

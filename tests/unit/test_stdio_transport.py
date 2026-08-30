@@ -45,6 +45,49 @@ async def test_transport_streams_chunks_before_app_completes() -> None:
 
 
 @pytest.mark.anyio
+async def test_transport_applies_backpressure_when_consumer_is_blocked() -> None:
+    second_send_started = asyncio.Event()
+    second_sent = asyncio.Event()
+
+    async def app(scope: Any, receive: Any, send: Any) -> None:
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"first", "more_body": True})
+        second_send_started.set()
+        await send({"type": "http.response.body", "body": b"second", "more_body": False})
+        second_sent.set()
+
+    async with (
+        httpx.AsyncClient(transport=ASGIStreamingTransport(app)) as client,
+        client.stream("POST", "http://mcp-stdio/mcp", content=b"{}") as response,
+    ):
+        chunks = response.aiter_bytes()
+        with anyio.fail_after(2):
+            await second_send_started.wait()
+        assert not second_sent.is_set()
+        assert await chunks.__anext__() == b"first"
+        assert not second_sent.is_set()
+        assert await chunks.__anext__() == b"second"
+        with anyio.fail_after(2):
+            await second_sent.wait()
+
+
+@pytest.mark.anyio
+async def test_transport_uses_scheme_default_server_port() -> None:
+    observed: list[tuple[str, int | None]] = []
+
+    async def app(scope: Any, receive: Any, send: Any) -> None:
+        observed.append(scope["server"])
+        await send({"type": "http.response.start", "status": 204, "headers": []})
+        await send({"type": "http.response.body", "body": b"", "more_body": False})
+
+    async with httpx.AsyncClient(transport=ASGIStreamingTransport(app)) as client:
+        response = await client.get("https://example.test/path")
+
+    assert response.status_code == 204
+    assert observed == [("example.test", 443)]
+
+
+@pytest.mark.anyio
 async def test_transport_close_cancels_app_and_signals_disconnect() -> None:
     observed: list[str] = []
     started = asyncio.Event()

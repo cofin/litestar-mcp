@@ -75,7 +75,11 @@ class _LitestarUser(User):
 
     @property
     def is_authenticated(self) -> "bool":
-        flag = getattr(self.value, "is_authenticated", None)
+        flag = (
+            self.value.get("is_authenticated")
+            if isinstance(self.value, dict)
+            else getattr(self.value, "is_authenticated", None)
+        )
         if isinstance(flag, bool):
             return flag
         return self.value is not None
@@ -157,7 +161,14 @@ class _JsonRpcTransport:
     @staticmethod
     def _validate_version(request: "Request[Any, Any, Any]", expected: "str") -> "None":
         actual = request.headers.get(constants.VERSION_HEADER) or constants.PROTOCOL_VERSION_0_3
-        if str(actual).split(".", 1)[0] != expected.split(".", 1)[0]:
+        actual_parts = str(actual).split(".")
+        try:
+            actual_major = int(actual_parts[0])
+            expected_major = int(expected.split(".", 1)[0])
+        except ValueError:
+            actual_major = -1
+            expected_major = 0
+        if any(not part.isdigit() for part in actual_parts) or actual_major != expected_major:
             raise VersionNotSupportedError(
                 message=f"A2A version '{actual}' is not supported. Expected version '{expected}'."
             )
