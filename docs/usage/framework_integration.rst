@@ -38,14 +38,9 @@ OpenAPI Integration
 ===================
 
 Marked routes appear in the OpenAPI schema just like any other handler.
-The MCP routes themselves (``/mcp`` and ``/.well-known/*``) are hidden by
+The MCP route itself (``/mcp``) is hidden by
 default - pass ``include_in_schema=True`` on
 :class:`~litestar_mcp.MCPConfig` to expose them.
-
-The plugin also uses your OpenAPI ``security`` declarations to populate
-``/.well-known/oauth-protected-resource`` automatically: if your app uses
-``OAuth2PasswordBearerAuth`` or publishes an ``OAuth2`` security scheme,
-the RFC 9728 metadata picks up the scopes without additional config.
 
 Guards on MCP Routes
 ====================

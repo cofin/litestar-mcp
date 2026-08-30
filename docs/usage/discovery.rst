@@ -35,8 +35,9 @@ server never echoes arbitrary extension declarations.
 Separate metadata endpoints
 ===========================
 
-``GET /.well-known/oauth-protected-resource`` remains the RFC 9728 discovery
-document for OAuth configuration. MCP no longer owns an agent-card route;
-install the optional A2A integration when the application needs the standard
-``/.well-known/agent-card.json`` document. The MCP transport itself is
-``POST`` only.
+MCP publishes no ``/.well-known/*`` documents. OAuth protected-resource
+metadata belongs to the application's security integration, such as
+litestar-security's ``protected_resource`` configuration. Install the optional
+A2A integration when the application needs the standard
+``/.well-known/agent-card.json`` document. The MCP transport itself is ``POST``
+only.

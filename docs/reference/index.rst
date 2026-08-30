@@ -10,5 +10,6 @@ API Reference
     handlers
     types
     bridge
+    stdio
 
 This section provides detailed API documentation for all public interfaces.

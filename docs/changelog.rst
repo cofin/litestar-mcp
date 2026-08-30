@@ -11,6 +11,14 @@ Recent Updates
 
 .. changelog:: 0.14.0
 
+    .. change:: add Litestar-native in-process stdio serving
+        :type: feature
+
+        Added ``litestar mcp stdio``, ``run_stdio_async``, and a streaming
+        ASGI transport. Standalone stdio now runs through the application's
+        real MCP route, lifespan, middleware, guards, and dependency system;
+        the HTTP bridge remains available for already-running servers.
+
     .. change:: remove the built-in OIDC auth backend and protected-resource manifest
         :type: breaking
 

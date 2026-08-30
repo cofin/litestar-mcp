@@ -20,7 +20,7 @@ This plugin automatically discovers Litestar routes marked for MCP and exposes t
 - **Type Safe** — full type hints with dataclasses; `msgspec`-powered tool-argument validation.
 - **Automatic Discovery** — routes are discovered at app initialization.
 - **OpenAPI Integration** — server info derived from OpenAPI config.
-- **OIDC Auth Baked In** — bearer-token validation via `MCPAuthBackend` or a composable `create_oidc_validator()` factory; injectable `JWKSCache` protocol for shared document caches.
+- **Bring Your Own Auth** — MCP inherits the app's Litestar authentication middleware, including litestar-security or a custom `AbstractAuthenticationMiddleware`.
 - **Optional Task Support** — experimental in-memory MCP task lifecycle endpoints.
 
 ## Quick Start
@@ -166,7 +166,8 @@ async def search(query: str, limit: int = 10) -> dict:
 Once configured, your application exposes these MCP-compatible endpoints:
 
 - `POST /mcp` - stateless MCP `2026-07-28` JSON-RPC and subscription streams
-- `GET /.well-known/oauth-protected-resource` - OAuth protected resource metadata when auth is configured
+- `litestar --app my_app:app mcp stdio` - in-process stdio for desktop clients
+- `litestar mcp bridge` - stdio proxy to a running Streamable HTTP server
 
 Install ``litestar-mcp[a2a]`` to mount an official A2A SDK request handler and
 agent card independently of MCP.
@@ -206,12 +207,12 @@ config = MCPConfig()
 | `include_in_schema` | `bool` | `False` | Whether to include MCP routes in OpenAPI schema |
 | `name` | `str \| None` | `None` | Override server name. If None, uses OpenAPI title |
 | `guards` | `list[Any] \| None` | `None` | Litestar guards applied to the MCP router |
+| `route_opt` | `dict[str, Any] \| None` | `None` | Route metadata merged onto the MCP handler, including litestar-security policies |
 | `allowed_origins` | `list[str] \| None` | `None` | Exact additional Origins; present Origins must be same-origin or allowlisted |
 | `include_operations` | `list[str] \| None` | `None` | Only expose matching operation names |
 | `exclude_operations` | `list[str] \| None` | `None` | Exclude matching operation names |
 | `include_tags` | `list[str] \| None` | `None` | Only expose routes with matching OpenAPI tags |
 | `exclude_tags` | `list[str] \| None` | `None` | Exclude routes with matching OpenAPI tags |
-| `auth` | `MCPAuthConfig \| None` | `None` | Metadata for `/.well-known/oauth-protected-resource` discovery |
 | `tasks` | `bool \| MCPTaskConfig` | `False` | Enable the `io.modelcontextprotocol/tasks` extension |
 | `cache_ttl_ms` | `int` | `0` | Conservative cache lifetime for discovery/list/resource results |
 | `cache_scope` | `"private" \| "public"` | `"private"` | Cache sharing policy |
@@ -320,51 +321,13 @@ app = Litestar(
 
 See `docs/examples/notes/sqlspec/google_iap.py` for a runnable example.
 
-### Path B — Built-in MCPAuthBackend
+### litestar-security
 
-For OIDC workloads, install the built-in `MCPAuthBackend`:
+Use litestar-security for policy evaluation and RFC 9728 protected-resource metadata. Pass route policy metadata with `MCPConfig(route_opt={"auth": required("api-key")})`; evaluator failures can emit the required `WWW-Authenticate` resource metadata.
 
-```python
-from litestar import Litestar
-from litestar.middleware import DefineMiddleware
-from litestar_mcp import LitestarMCP, MCPAuthBackend, MCPConfig, OIDCProviderConfig
-from litestar_mcp.auth import MCPAuthConfig
+### In-process stdio
 
-app = Litestar(
-    route_handlers=[...],
-    plugins=[LitestarMCP(MCPConfig(auth=MCPAuthConfig(
-        issuer="https://company.okta.com",
-        audience="api://mcp-tools",
-    )))],
-    middleware=[DefineMiddleware(
-        MCPAuthBackend,
-        providers=[OIDCProviderConfig(
-            issuer="https://company.okta.com",
-            audience="api://mcp-tools",
-        )],
-        user_resolver=lambda claims, app: MyUser(sub=claims["sub"]),
-    )],
-)
-```
-
-JWKS auto-discovery, caching, and `clock_skew` tolerance are built in.
-See `docs/examples/notes/sqlspec/cloud_run_jwt.py` for the full pattern.
-
-### Path C — Composable OIDC Factory
-
-`create_oidc_validator()` returns an async callable for use as
-`MCPAuthBackend(token_validator=...)` or inside your own middleware:
-
-```python
-from litestar_mcp import create_oidc_validator
-
-validator = create_oidc_validator(
-    "https://cloud.google.com/iap",
-    "/projects/PROJECT_NUMBER/global/backendServices/SERVICE_ID",
-    algorithms=("ES256",),
-    jwks_cache_ttl=1800,
-)
-```
+Run `litestar --app my_app:app mcp stdio` to serve the application in-process to a desktop MCP client. Use `mcp bridge` when the MCP server is already running over Streamable HTTP.
 
 ## Development
 

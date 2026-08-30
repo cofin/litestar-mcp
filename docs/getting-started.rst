@@ -78,7 +78,7 @@ The simplest way to add MCP support to your Litestar application:
 That's it! Your application now has MCP endpoints available at:
 
 - ``/mcp`` - Streamable HTTP MCP endpoint
-- ``/.well-known/oauth-protected-resource`` - optional OAuth metadata
+- ``litestar --app my_app:app mcp stdio`` - in-process stdio for desktop MCP clients
 
 Marking Routes for MCP Exposure
 --------------------------------
