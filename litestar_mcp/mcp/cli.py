@@ -21,6 +21,7 @@ from rich.json import JSON
 
 from litestar_mcp.core.exceptions import MissingDependencyError
 from litestar_mcp.mcp import bridge as bridge_transport
+from litestar_mcp.mcp import stdio as stdio_transport
 from litestar_mcp.mcp.bridge import BEARER_TOKEN_PREFIX, DEFAULT_AUTH_HEADER_NAME
 from litestar_mcp.mcp.executor import NotCallableInCLIContextError, execute_tool
 from litestar_mcp.utils import get_handler_function, render_description
@@ -295,6 +296,53 @@ def _bridge_command(
     )
 
 
+@mcp_group.command(name="stdio")  # type: ignore[untyped-decorator]
+@click.option("--header", "header_values", multiple=True, help="Static HTTP header as 'Name: value'.")
+@click.option("--bearer-env", help="Environment variable containing the bearer token.")
+@click.option("--bearer-cmd", help="Command whose stdout returns the bearer token.")
+@click.option(
+    "--header-name", default=DEFAULT_AUTH_HEADER_NAME, show_default=True, help="Header used for bearer tokens."
+)
+@click.option(
+    "--token-prefix", default=BEARER_TOKEN_PREFIX, show_default=True, help="Prefix prepended to bearer token values."
+)
+@click.option(
+    "--sse-read-timeout",
+    default=300.0,
+    show_default=True,
+    type=float,
+    help="Subscription stream read timeout in seconds.",
+)
+@click.option(
+    "--max-message-size",
+    default=bridge_transport.DEFAULT_MAX_STDIN_MESSAGE_SIZE,
+    show_default=True,
+    type=int,
+    help="Maximum bytes for one stdin JSON-RPC message. Use -1 to disable the limit.",
+)
+def _stdio_command(
+    ctx: "click.Context",
+    header_values: "tuple[str, ...]",
+    bearer_env: "str | None",
+    bearer_cmd: "str | None",
+    header_name: "str",
+    token_prefix: "str",
+    sse_read_timeout: "float",
+    max_message_size: "int",
+) -> "None":
+    """Serve this Litestar app's MCP endpoint to a local stdio client in-process."""
+    _run_stdio_from_options(
+        app=_get_ctx_app(ctx),
+        header_values=header_values,
+        bearer_env=bearer_env,
+        bearer_cmd=bearer_cmd,
+        header_name=header_name,
+        token_prefix=token_prefix,
+        sse_read_timeout=sse_read_timeout,
+        max_message_size=max_message_size,
+    )
+
+
 class _BufferedByteSendStream(ByteSendStream):
     def __init__(self, buffer: "Any") -> "None":
         self._buffer = buffer
@@ -460,6 +508,17 @@ def _token_provider_from_cmd(command: str) -> Callable[[], str]:
     return provide_token
 
 
+def _resolve_token_provider(bearer_env: "str | None", bearer_cmd: "str | None") -> "TokenProvider | None":
+    if bearer_env and bearer_cmd:
+        msg = "--bearer-env and --bearer-cmd are mutually exclusive."
+        raise click.UsageError(msg)
+    if bearer_env:
+        return _token_provider_from_env(bearer_env)
+    if bearer_cmd:
+        return _token_provider_from_cmd(bearer_cmd)
+    return None
+
+
 def _run_bridge_from_options(
     *,
     endpoint: str,
@@ -472,16 +531,8 @@ def _run_bridge_from_options(
     sse_read_timeout: float,
     max_message_size: int,
 ) -> None:
-    if bearer_env and bearer_cmd:
-        msg = "--bearer-env and --bearer-cmd are mutually exclusive."
-        raise click.UsageError(msg)
-
     headers = _headers_from_options(header_values)
-    token_provider: TokenProvider | None = None
-    if bearer_env:
-        token_provider = _token_provider_from_env(bearer_env)
-    elif bearer_cmd:
-        token_provider = _token_provider_from_cmd(bearer_cmd)
+    token_provider = _resolve_token_provider(bearer_env, bearer_cmd)
 
     stdout = _BufferedByteSendStream(sys.stdout.buffer)
     try:
@@ -493,6 +544,38 @@ def _run_bridge_from_options(
                 header_name=header_name,
                 token_prefix=token_prefix,
                 timeout=timeout,
+                sse_read_timeout=sse_read_timeout,
+                max_message_size=max_message_size,
+                stdout=stdout,
+                stderr=sys.stderr,
+            )
+    except MissingDependencyError as exc:
+        raise click.ClickException(str(exc)) from exc
+    raise ClickExit(exit_code)
+
+
+def _run_stdio_from_options(
+    *,
+    app: "Litestar",
+    header_values: "tuple[str, ...]",
+    bearer_env: "str | None",
+    bearer_cmd: "str | None",
+    header_name: "str",
+    token_prefix: "str",
+    sse_read_timeout: "float",
+    max_message_size: "int",
+) -> "None":
+    token_provider = _resolve_token_provider(bearer_env, bearer_cmd)
+    headers = _headers_from_options(header_values)
+    stdout = _BufferedByteSendStream(sys.stdout.buffer)
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            exit_code = stdio_transport.run_stdio(
+                app,
+                headers=headers,
+                token_provider=token_provider,
+                header_name=header_name,
+                token_prefix=token_prefix,
                 sse_read_timeout=sse_read_timeout,
                 max_message_size=max_message_size,
                 stdout=stdout,
