@@ -10,9 +10,11 @@ from a2a.client.transports.jsonrpc import JsonRpcTransport
 from a2a.server.context import ServerCallContext
 from a2a.server.request_handlers import RequestHandler
 from a2a.types import (
+    AgentCapabilities,
     AgentCard,
     AgentExtension,
     AgentInterface,
+    AgentSkill,
     Message,
     Part,
     Role,
@@ -20,6 +22,7 @@ from a2a.types import (
     Task,
     TaskState,
     TaskStatus,
+    TaskStatusUpdateEvent,
 )
 from a2a.utils.errors import TaskNotFoundError
 from google.protobuf.json_format import MessageToDict  # type: ignore[import-untyped]
@@ -44,6 +47,10 @@ def make_card(path: str = "/a2a") -> AgentCard:
         name="Test agent",
         description="Test agent",
         version="1.0.0",
+        default_input_modes=["text/plain"],
+        default_output_modes=["text/plain"],
+        skills=[AgentSkill(id="test", name="Test", description="Test request handling", tags=["test"])],
+        capabilities=AgentCapabilities(streaming=True, extended_agent_card=True),
         supported_interfaces=[
             AgentInterface(
                 url=f"https://example.com{path}",
@@ -251,8 +258,10 @@ class StubHandler(RequestHandler):
     async def on_message_send_stream(
         self, params: Any, context: ServerCallContext | None = None
     ) -> AsyncGenerator[Any, None]:
-        yield Message(message_id="chunk", role=Role.ROLE_AGENT, parts=[Part(text="one")])
-        yield Task(id="task-1", context_id="ctx-1", status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED))
+        yield Task(id="task-1", context_id="ctx-1", status=TaskStatus(state=TaskState.TASK_STATE_WORKING))
+        yield TaskStatusUpdateEvent(
+            task_id="task-1", context_id="ctx-1", status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED)
+        )
 
     async def on_create_task_push_notification_config(
         self, params: Any, context: ServerCallContext | None = None
@@ -574,7 +583,7 @@ async def test_stream_errors_preserve_domain_codes_and_hide_unexpected_details(
             self, params: Any, context: ServerCallContext | None = None
         ) -> AsyncGenerator[Any, None]:
             if after_first:
-                yield Message(message_id="reply", role=Role.ROLE_AGENT)
+                yield Task(id="task-1", context_id="ctx-1", status=TaskStatus(state=TaskState.TASK_STATE_WORKING))
             raise failure
 
     app = Litestar(plugins=[LitestarA2A(make_card(), FailingHandler())], logging_config=None)
@@ -606,7 +615,7 @@ async def test_streaming_is_served_as_event_stream_to_official_client() -> None:
         ]
 
     assert raw.headers["content-type"].startswith("text/event-stream")
-    assert payloads == ["message", "task"]
+    assert payloads == ["task", "status_update"]
 
 
 class _AnonymousPrincipal:
@@ -751,7 +760,7 @@ async def test_invalid_stream_payload_is_validated_before_sending(after_first: b
             self, params: Any, context: ServerCallContext | None = None
         ) -> AsyncGenerator[Any, None]:
             if after_first:
-                yield Message(message_id="valid", role=Role.ROLE_AGENT, parts=[Part(text="valid")])
+                yield Task(id="task-1", context_id="ctx-1", status=TaskStatus(state=TaskState.TASK_STATE_WORKING))
             yield object()
 
     app = Litestar(plugins=[LitestarA2A(make_card(), Handler())])
@@ -808,9 +817,11 @@ async def test_extension_headers_freeze_before_producer_read_ahead() -> None:
             self, params: Any, context: ServerCallContext | None = None
         ) -> AsyncGenerator[Any, None]:
             assert context is not None
-            yield Message(message_id="first", role=Role.ROLE_AGENT, parts=[Part(text="first")])
+            yield Task(id="task-1", context_id="ctx-1", status=TaskStatus(state=TaskState.TASK_STATE_WORKING))
             context.state["a2a_activated_extensions"] = {uri}
-            yield Message(message_id="second", role=Role.ROLE_AGENT, parts=[Part(text="second")])
+            yield TaskStatusUpdateEvent(
+                task_id="task-1", context_id="ctx-1", status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED)
+            )
 
     app = Litestar(plugins=[LitestarA2A(card, Handler())])
     async with AsyncTestClient(app=app) as client:
@@ -820,7 +831,7 @@ async def test_extension_headers_freeze_before_producer_read_ahead() -> None:
 
     assert response.headers["content-type"].startswith("text/event-stream")
     assert "A2A-Extensions" not in response.headers
-    assert '"messageId":"second"' in response.text
+    assert '"state":"TASK_STATE_COMPLETED"' in response.text
 
 
 @pytest.mark.anyio

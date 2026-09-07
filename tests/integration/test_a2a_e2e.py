@@ -17,6 +17,7 @@ from a2a.types import (
     AgentCapabilities,
     AgentCard,
     AgentInterface,
+    AgentSkill,
     CancelTaskRequest,
     DeleteTaskPushNotificationConfigRequest,
     GetExtendedAgentCardRequest,
@@ -62,7 +63,10 @@ def make_card(path: str = "/a2a", name: str = "Test agent") -> AgentCard:
         name=name,
         description="Test agent",
         version="1.0.0",
-        capabilities=AgentCapabilities(extended_agent_card=True),
+        default_input_modes=["text/plain"],
+        default_output_modes=["text/plain"],
+        skills=[AgentSkill(id="test", name="Test", description="Test request handling", tags=["test"])],
+        capabilities=AgentCapabilities(streaming=True, push_notifications=True, extended_agent_card=True),
         supported_interfaces=[
             AgentInterface(url=f"https://example.com{path}", protocol_binding="JSONRPC", protocol_version="1.0")
         ],
@@ -340,7 +344,7 @@ async def test_stream_disconnect_closes_handler_generator() -> None:
             self, params: Any, context: ServerCallContext | None = None
         ) -> AsyncGenerator[Any, None]:
             try:
-                yield Message(message_id="chunk", role=Role.ROLE_AGENT, parts=[Part(text="one")])
+                yield Task(id="task-1", context_id="ctx-1", status=TaskStatus(state=TaskState.TASK_STATE_WORKING))
                 await release.wait()
             finally:
                 closed_generator.set()
@@ -475,7 +479,7 @@ async def test_disconnect_awaits_handler_finalization(position: str) -> None:
                 entered.set()
                 if position == "prefetch":
                     await asyncio.Event().wait()
-                yield Message(message_id="chunk", role=Role.ROLE_AGENT, parts=[Part(text="one")])
+                yield Task(id="task-1", context_id="ctx-1", status=TaskStatus(state=TaskState.TASK_STATE_WORKING))
                 tasks.append(asyncio.current_task())
                 next_started.set()
                 await asyncio.Event().wait()
@@ -533,7 +537,7 @@ async def test_prefetch_disconnect_wins_ready_first_event(
         ) -> AsyncGenerator[Any, None]:
             try:
                 yielded.set()
-                yield Message(message_id="first", role=Role.ROLE_AGENT, parts=[Part(text="first")])
+                yield Task(id="task-1", context_id="ctx-1", status=TaskStatus(state=TaskState.TASK_STATE_WORKING))
                 await asyncio.Event().wait()
             finally:
                 await anyio.lowlevel.checkpoint()
@@ -575,7 +579,7 @@ async def test_send_failure_completes_async_handler_cleanup() -> None:
             self, params: Any, context: ServerCallContext | None = None
         ) -> AsyncGenerator[Any, None]:
             try:
-                yield Message(message_id="first", role=Role.ROLE_AGENT, parts=[Part(text="first")])
+                yield Task(id="task-1", context_id="ctx-1", status=TaskStatus(state=TaskState.TASK_STATE_WORKING))
                 await asyncio.Event().wait()
             finally:
                 await anyio.lowlevel.checkpoint()
@@ -619,7 +623,7 @@ async def test_stream_cleanup_deadline_reports_incomplete_finalization(caplog: p
             assert current is not None
             producers.append(current)
             try:
-                yield Message(message_id="first", role=Role.ROLE_AGENT, parts=[Part(text="first")])
+                yield Task(id="task-1", context_id="ctx-1", status=TaskStatus(state=TaskState.TASK_STATE_WORKING))
                 await asyncio.Event().wait()
             finally:
                 while not release_cleanup.is_set():
@@ -717,7 +721,7 @@ async def test_prefetch_watcher_exits_before_native_sse_reads_disconnect() -> No
             self, params: Any, context: ServerCallContext | None = None
         ) -> AsyncGenerator[Any, None]:
             await watcher_entered.wait()
-            yield Message(message_id="first", role=Role.ROLE_AGENT, parts=[Part(text="first")])
+            yield Task(id="task-1", context_id="ctx-1", status=TaskStatus(state=TaskState.TASK_STATE_WORKING))
             await asyncio.Event().wait()
 
     app = Litestar(plugins=[LitestarA2A(make_card(), Handler())])
