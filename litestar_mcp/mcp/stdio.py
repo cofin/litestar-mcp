@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import logging
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar, cast
@@ -47,13 +48,13 @@ class MCPStdioContext:
 
 
 class _ASGIResponseState:
-    __slots__ = ("body", "body_complete", "disconnected", "headers", "started", "status_code")
+    __slots__ = ("closed", "disconnected", "headers", "receiver", "sender", "started", "status_code")
 
     def __init__(self) -> None:
         self.status_code: int | None = None
         self.headers: list[tuple[bytes, bytes]] = []
-        self.body: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=1)
-        self.body_complete = False
+        self.sender, self.receiver = anyio.create_memory_object_stream[bytes](1)
+        self.closed = False
         self.started = asyncio.Event()
         self.disconnected = asyncio.Event()
 
@@ -75,31 +76,62 @@ class _ASGIResponseStream(httpx.AsyncByteStream):
         task: "asyncio.Task[None]",
         *,
         read_timeout: "float | None",
+        shutdown_timeout: "float",
         request: "httpx.Request",
     ) -> None:
         self._state = state
         self._task = task
         self._read_timeout = read_timeout
+        self._shutdown_timeout = shutdown_timeout
         self._request = request
 
     async def __aiter__(self) -> "AsyncIterator[bytes]":
         while True:
-            chunk = await _wait(self._state.body.get(), self._read_timeout, self._request)
-            if chunk is None:
+            try:
+                chunk = await _wait(self._state.receiver.receive(), self._read_timeout, self._request)
+            except anyio.EndOfStream:
                 break
             yield chunk
-        await self._task
+        await asyncio.shield(self._task)
 
     async def aclose(self) -> None:
-        await _shutdown_app_task(self._state, self._task)
+        await _shutdown_app_task(self._state, self._task, self._shutdown_timeout)
 
 
-async def _shutdown_app_task(state: "_ASGIResponseState", task: "asyncio.Task[None]") -> None:
+def _retrieve_app_exception(task: "asyncio.Task[None]") -> None:
+    if not task.cancelled() and (error := task.exception()) is not None:
+        _logger.error("ASGI application failed after incomplete cleanup", exc_info=error)
+
+
+async def _shutdown_app_task(
+    state: "_ASGIResponseState", task: "asyncio.Task[None]", shutdown_timeout: "float"
+) -> None:
+    if state.closed:
+        return
+    state.closed = True
+    state.receiver.close()
     state.disconnected.set()
     if not task.done():
         task.cancel()
-    with anyio.CancelScope(shield=True), contextlib.suppress(asyncio.CancelledError):
-        await task
+    deadline = asyncio.get_running_loop().time() + shutdown_timeout
+    cancelled = False
+    with anyio.CancelScope(shield=True):
+        while not task.done():
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                _logger.warning("ASGI response cleanup incomplete after %s seconds", shutdown_timeout)
+                task.cancel()
+                task.add_done_callback(_retrieve_app_exception)
+                break
+            try:
+                await asyncio.wait({task}, timeout=remaining)
+            except asyncio.CancelledError:
+                cancelled = True
+        if task.done():
+            with contextlib.suppress(asyncio.CancelledError):
+                task.result()
+    if cancelled:
+        raise asyncio.CancelledError
 
 
 def _build_scope(request: "httpx.Request", client: "tuple[str, int]", root_path: "str") -> "dict[str, Any]":
@@ -138,6 +170,9 @@ class ASGIStreamingTransport(httpx.AsyncBaseTransport):
         app: The ASGI application to call for every request.
         client: The ``scope["client"]`` tuple presented to the application.
         root_path: The ``scope["root_path"]`` presented to the application.
+        shutdown_timeout: Positive finite seconds allowed for application cleanup.
+            Expiry is logged; cancellation-resistant application code may outlive
+            the response.
     """
 
     def __init__(
@@ -146,10 +181,15 @@ class ASGIStreamingTransport(httpx.AsyncBaseTransport):
         *,
         client: "tuple[str, int]" = _DEFAULT_CLIENT,
         root_path: "str" = "",
+        shutdown_timeout: "float" = 5.0,
     ) -> None:
+        if not math.isfinite(shutdown_timeout) or shutdown_timeout <= 0:
+            msg = "shutdown_timeout must be positive and finite"
+            raise ValueError(msg)
         self._app = app
         self._client = client
         self._root_path = root_path
+        self._shutdown_timeout = shutdown_timeout
 
     async def handle_async_request(self, request: "httpx.Request") -> "httpx.Response":
         """Dispatch ``request`` to the application and return a streaming response."""
@@ -180,25 +220,28 @@ class ASGIStreamingTransport(httpx.AsyncBaseTransport):
             elif message_type == "http.response.body":
                 body = message.get("body", b"")
                 if body:
-                    await state.body.put(body)
+                    try:
+                        await state.sender.send(body)
+                    except (anyio.BrokenResourceError, anyio.ClosedResourceError) as exc:
+                        if state.closed:
+                            raise asyncio.CancelledError from exc
+                        raise
                 if not message.get("more_body", False):
-                    state.body_complete = True
-                    await state.body.put(None)
+                    state.sender.close()
 
         async def run_app() -> None:
             try:
                 await self._app(cast("Any", scope), cast("Any", receive), cast("Any", send))
             finally:
                 state.started.set()
-                if not state.body_complete:
-                    await state.body.put(None)
+                state.sender.close()
 
         read_timeout = cast("float | None", request.extensions.get("timeout", {}).get("read"))
         task = asyncio.create_task(run_app())
         try:
             await _wait(state.started.wait(), read_timeout, request)
         except BaseException:
-            await _shutdown_app_task(state, task)
+            await _shutdown_app_task(state, task, self._shutdown_timeout)
             raise
         if state.status_code is None:
             await task
@@ -207,7 +250,9 @@ class ASGIStreamingTransport(httpx.AsyncBaseTransport):
         return httpx.Response(
             state.status_code,
             headers=state.headers,
-            stream=_ASGIResponseStream(state, task, read_timeout=read_timeout, request=request),
+            stream=_ASGIResponseStream(
+                state, task, read_timeout=read_timeout, shutdown_timeout=self._shutdown_timeout, request=request
+            ),
             request=request,
         )
 
@@ -316,7 +361,7 @@ async def run_stdio_async(
     async with app_lifespan(app, shutdown_timeout=shutdown_timeout):
         return await run_stdio_streamable_http_bridge(
             endpoint,
-            transport=ASGIStreamingTransport(asgi_app),
+            transport=ASGIStreamingTransport(asgi_app, shutdown_timeout=shutdown_timeout),
             client_info=client_info,
             headers=headers,
             token_provider=token_provider,

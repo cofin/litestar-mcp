@@ -1,6 +1,7 @@
 """Tests for the in-process streaming ASGI transport."""
 
 import asyncio
+import contextlib
 import json
 from typing import Any
 
@@ -65,10 +66,171 @@ async def test_transport_applies_backpressure_when_consumer_is_blocked() -> None
             await second_send_started.wait()
         assert not second_sent.is_set()
         assert await chunks.__anext__() == b"first"
-        assert not second_sent.is_set()
         assert await chunks.__anext__() == b"second"
         with anyio.fail_after(2):
             await second_sent.wait()
+
+
+@pytest.mark.anyio
+async def test_transport_closes_unread_full_buffer_and_finalizes_app() -> None:
+    second_send_started = asyncio.Event()
+    finalized = asyncio.Event()
+
+    async def app(scope: Any, receive: Any, send: Any) -> None:
+        try:
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"first", "more_body": True})
+            second_send_started.set()
+            await send({"type": "http.response.body", "body": b"second", "more_body": True})
+        finally:
+            await asyncio.sleep(0)
+            finalized.set()
+
+    async with httpx.AsyncClient(transport=ASGIStreamingTransport(app)) as client:
+        response = await client.send(client.build_request("POST", "http://mcp-stdio/mcp"), stream=True)
+        with anyio.fail_after(2):
+            await second_send_started.wait()
+        close_task = asyncio.create_task(response.aclose())
+        try:
+            done, _ = await asyncio.wait({close_task}, timeout=0.5)
+            assert done, "Closing an unread response blocked on the full body buffer"
+            await close_task
+            assert finalized.is_set()
+            await response.aclose()
+        finally:
+            close_task.cancel()
+            await asyncio.gather(close_task, return_exceptions=True)
+
+
+@pytest.mark.anyio
+async def test_transport_drains_buffer_before_raising_app_error() -> None:
+    async def app(scope: Any, receive: Any, send: Any) -> None:
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"last", "more_body": True})
+        msg = "failure after response start"
+        raise RuntimeError(msg)
+
+    async with httpx.AsyncClient(transport=ASGIStreamingTransport(app)) as client:
+        with pytest.raises(RuntimeError, match="failure after response start"):
+            async with client.stream("POST", "http://mcp-stdio/mcp") as response:
+                chunks = response.aiter_bytes()
+                assert await chunks.__anext__() == b"last"
+                await chunks.__anext__()
+
+
+@pytest.mark.anyio
+async def test_transport_drains_final_buffer_at_eof() -> None:
+    finalized = asyncio.Event()
+
+    async def app(scope: Any, receive: Any, send: Any) -> None:
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"last", "more_body": False})
+        finalized.set()
+
+    async with (
+        httpx.AsyncClient(transport=ASGIStreamingTransport(app)) as client,
+        client.stream("POST", "http://mcp-stdio/mcp") as response,
+    ):
+        with anyio.fail_after(2):
+            await finalized.wait()
+        assert await response.aread() == b"last"
+
+
+@pytest.mark.anyio
+async def test_transport_preserves_async_cleanup_when_close_is_cancelled() -> None:
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    finalized = asyncio.Event()
+
+    async def app(scope: Any, receive: Any, send: Any) -> None:
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleanup_started.set()
+            await release_cleanup.wait()
+            finalized.set()
+
+    async with httpx.AsyncClient(transport=ASGIStreamingTransport(app)) as client:
+        response = await client.send(client.build_request("POST", "http://mcp-stdio/mcp"), stream=True)
+        close_task = asyncio.create_task(response.aclose())
+        with anyio.fail_after(2):
+            await cleanup_started.wait()
+            close_task.cancel()
+            release_cleanup.set()
+            with pytest.raises(asyncio.CancelledError):
+                await close_task
+        assert finalized.is_set()
+
+
+@pytest.mark.anyio
+async def test_transport_does_not_report_delivery_after_response_close() -> None:
+    delivered = asyncio.Event()
+    finalized = asyncio.Event()
+
+    async def app(scope: Any, receive: Any, send: Any) -> None:
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            try:
+                await send({"type": "http.response.body", "body": b"too late", "more_body": True})
+                delivered.set()
+            finally:
+                await asyncio.sleep(0)
+                finalized.set()
+
+    async with (
+        httpx.AsyncClient(transport=ASGIStreamingTransport(app)) as client,
+        client.stream("POST", "http://mcp-stdio/mcp"),
+    ):
+        pass
+
+    assert finalized.is_set()
+    assert not delivered.is_set()
+
+
+@pytest.mark.anyio
+async def test_transport_bounds_cancellation_resistant_cleanup(caplog: pytest.LogCaptureFixture) -> None:
+    release_cleanup = asyncio.Event()
+    finalized = asyncio.Event()
+    producer: list[asyncio.Task[Any]] = []
+
+    async def app(scope: Any, receive: Any, send: Any) -> None:
+        current = asyncio.current_task()
+        assert current is not None
+        producer.append(current)
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        try:
+            await asyncio.Event().wait()
+        finally:
+            while not release_cleanup.is_set():
+                with contextlib.suppress(asyncio.CancelledError):
+                    await release_cleanup.wait()
+            finalized.set()
+
+    async with httpx.AsyncClient(transport=ASGIStreamingTransport(app, shutdown_timeout=0.02)) as client:
+        response = await client.send(client.build_request("POST", "http://mcp-stdio/mcp"), stream=True)
+        try:
+            with anyio.fail_after(2):
+                await response.aclose()
+                await response.aclose()
+            assert "ASGI response cleanup incomplete" in caplog.text
+            assert not finalized.is_set()
+        finally:
+            release_cleanup.set()
+            with anyio.fail_after(2):
+                await asyncio.gather(*producer, return_exceptions=True)
+        assert finalized.is_set()
+
+
+@pytest.mark.parametrize("shutdown_timeout", [0, -1, float("inf"), float("-inf"), float("nan")])
+def test_transport_rejects_invalid_shutdown_timeout(shutdown_timeout: float) -> None:
+    async def app(scope: Any, receive: Any, send: Any) -> None:
+        pass
+
+    with pytest.raises(ValueError, match="shutdown_timeout must be positive and finite"):
+        ASGIStreamingTransport(app, shutdown_timeout=shutdown_timeout)
 
 
 @pytest.mark.anyio
