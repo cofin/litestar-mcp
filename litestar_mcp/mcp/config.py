@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from litestar.stores.base import Store  # noqa: TC002
 
+from litestar_mcp.core._streaming import DEFAULT_STREAM_CLEANUP_TIMEOUT, validate_stream_cleanup_timeout
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable
 
@@ -179,6 +181,11 @@ class MCPConfig:
         after_tool_call: Optional callback invoked once after each
             ``tools/call`` dispatch with either the result or exception and
             elapsed dispatch duration in seconds.
+        stream_queue_capacity: Maximum queued notifications per stream. Request
+            progress waits for room without discarding reports.
+        stream_cleanup_timeout: Positive finite seconds allowed for cooperative
+            progress producer cleanup after its response ends. Expiry is logged
+            as incomplete cleanup; application finalizers must tolerate cancellation.
         max_blob_bytes: Maximum raw byte length for base64-embedded MCP blobs.
             Set to ``None`` to disable the library cap.
     """
@@ -200,6 +207,7 @@ class MCPConfig:
     subscription_max_streams: "int" = 10_000
     subscription_keepalive_seconds: "float" = 15.0
     stream_queue_capacity: "int" = 256
+    stream_cleanup_timeout: "float" = DEFAULT_STREAM_CLEANUP_TIMEOUT
     subscription_channels: "Any | None" = None
     list_page_size: "int" = 100
     before_tool_call: "BeforeToolCallHook | None" = None
@@ -208,6 +216,7 @@ class MCPConfig:
     route_opt: "dict[str, Any] | None" = None
 
     def __post_init__(self) -> "None":
+        validate_stream_cleanup_timeout(self.stream_cleanup_timeout)
         if self.list_page_size <= 0:
             msg = f"list_page_size must be a positive integer, got {self.list_page_size}"
             raise ValueError(msg)

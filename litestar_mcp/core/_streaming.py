@@ -138,7 +138,12 @@ async def prefetch_stream(scope: "Scope", receive: "Receive", owner: "StreamOwne
 
     async def watch_disconnect() -> None:
         while True:
-            message = await receive()
+            try:
+                message = await receive()
+            except Exception:
+                _logger.exception("ASGI receive failed during stream prefetch")
+                state.cancel_scope.cancel()
+                return
             if message["type"] == "http.request" and not message.get("body") and not message.get("more_body", False):
                 await checkpoint()
                 continue

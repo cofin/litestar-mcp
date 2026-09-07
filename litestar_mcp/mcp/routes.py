@@ -6,6 +6,7 @@ import base64
 import binascii
 from typing import TYPE_CHECKING, Any
 
+import anyio
 from litestar import Controller, Litestar, MediaType, Request, Response, post
 from litestar.di import NamedDependency  # noqa: TC002
 from litestar.exceptions import SerializationException
@@ -17,6 +18,7 @@ from litestar.status_codes import (
     HTTP_404_NOT_FOUND,
 )
 
+from litestar_mcp.core._streaming import StreamCleanupMiddleware, start_stream
 from litestar_mcp.core.jsonrpc import (
     INVALID_PARAMS,
     METHOD_NOT_FOUND,
@@ -36,6 +38,8 @@ from litestar_mcp.mcp.tasks import MCPTaskStore  # noqa: TC001
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable
+
+    from anyio.streams.memory import MemoryObjectSendStream
 
     from litestar_mcp.core.jsonrpc import JSONRPCRequest
 
@@ -67,7 +71,6 @@ _CACHEABLE_METHODS = {
 }
 _BASE64_PREFIX = "=?base64?"
 _BASE64_SUFFIX = "?="
-_DISPATCH_DONE = object()
 
 
 def _error(
@@ -368,34 +371,32 @@ def _progress_response(
     Progress notifications are delivered on the response stream of the request
     that supplied the token, followed by that request's JSON-RPC response.
     """
-    queue: asyncio.Queue[dict[str, Any] | object] = asyncio.Queue()
     app = request.app
 
-    async def report(params: "dict[str, Any]") -> "None":
-        await queue.put({"jsonrpc": "2.0", "method": "notifications/progress", "params": params})
+    async def run(sender: "MemoryObjectSendStream[dict[str, Any]]") -> "dict[str, Any] | None":
+        async def report(params: "dict[str, Any]") -> None:
+            try:
+                await sender.send({"jsonrpc": "2.0", "method": "notifications/progress", "params": params})
+            except (anyio.BrokenResourceError, anyio.ClosedResourceError) as exc:
+                raise asyncio.CancelledError from exc
 
-    async def run() -> "dict[str, Any] | None":
-        try:
-            return await router.dispatch(rpc_request, _build_request_context(request, rpc_request, report))
-        finally:
-            await queue.put(_DISPATCH_DONE)
+        return await router.dispatch(rpc_request, _build_request_context(request, rpc_request, report))
 
-    dispatch = asyncio.create_task(run())
+    owner = start_stream(
+        request.scope, run, capacity=config.stream_queue_capacity, cleanup_timeout=config.stream_cleanup_timeout
+    )
 
     async def event_stream() -> "AsyncGenerator[ServerSentEventMessage, None]":
         try:
-            while True:
-                message = await queue.get()
-                if message is _DISPATCH_DONE:
-                    break
+            async for message in owner.receiver:
                 yield ServerSentEventMessage(data=to_json(message))
-            result = await dispatch
+            result = await owner.result()
             if result is None:
                 result = _notification_unsupported(rpc_request.id)
             _finalize_result(result, method=rpc_request.method, app=app, config=config)
             yield ServerSentEventMessage(data=to_json(result))
         finally:
-            dispatch.cancel()
+            await owner.close()
 
     response = ServerSentEvent(event_stream())
     response.headers[MCP_PROTOCOL_VERSION_HEADER] = MCP_PROTOCOL_VERSION
@@ -460,7 +461,7 @@ async def _subscription_response(
 class MCPController(Controller):
     """POST-only MCP JSON-RPC controller."""
 
-    @post("/", name="mcp_jsonrpc", status_code=HTTP_200_OK)
+    @post("/", name="mcp_jsonrpc", status_code=HTTP_200_OK, middleware=[StreamCleanupMiddleware()])
     async def handle_jsonrpc(
         self,
         request: "Request[Any, Any, Any]",

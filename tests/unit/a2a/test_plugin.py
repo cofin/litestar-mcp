@@ -1,4 +1,5 @@
 import asyncio
+import json
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock
@@ -25,6 +26,7 @@ from a2a.types import (
     TaskStatusUpdateEvent,
 )
 from a2a.utils.errors import TaskNotFoundError
+from anyio.lowlevel import checkpoint
 from google.protobuf.json_format import MessageToDict  # type: ignore[import-untyped]
 from litestar import Litestar, Request, get
 from litestar.config.csrf import CSRFConfig
@@ -890,3 +892,58 @@ async def test_stream_owner_close_before_producer_runs_closes_channel() -> None:
         await owner.sender.send(1)
     with pytest.raises(anyio.ClosedResourceError):
         await owner.receiver.receive()
+
+
+@pytest.mark.anyio
+async def test_prefetch_receive_failure_aborts_and_awaits_producer_cleanup(caplog: pytest.LogCaptureFixture) -> None:
+    entered = asyncio.Event()
+    finalized = asyncio.Event()
+
+    class Handler(StubHandler):
+        async def on_message_send_stream(
+            self, params: Any, context: ServerCallContext | None = None
+        ) -> AsyncGenerator[Any, None]:
+            try:
+                entered.set()
+                await asyncio.Event().wait()
+                yield Message(message_id="reply", role=Role.ROLE_AGENT, parts=[Part(text="reply")])
+            finally:
+                await checkpoint()
+                await checkpoint()
+                finalized.set()
+
+    app = Litestar(plugins=[LitestarA2A(make_card(), Handler())], logging_config=None)
+    requested = False
+    sent: list[dict[str, Any]] = []
+    scope: Any = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.4"},
+        "http_version": "1.1",
+        "method": "POST",
+        "path": "/a2a",
+        "raw_path": b"/a2a",
+        "query_string": b"",
+        "root_path": "",
+        "scheme": "http",
+        "server": ("testserver", 80),
+        "client": ("testclient", 1),
+        "headers": [(b"host", b"testserver"), (b"content-type", b"application/json"), (b"a2a-version", b"1.0")],
+    }
+
+    async def receive() -> Any:
+        nonlocal requested
+        if not requested:
+            requested = True
+            return {"type": "http.request", "body": json.dumps(send_payload("SendStreamingMessage")).encode()}
+        await entered.wait()
+        msg = "socket receive failed"
+        raise OSError(msg)
+
+    async def send(message: Any) -> None:
+        sent.append(message)
+
+    with anyio.fail_after(1):
+        await app(scope, receive, send)
+    assert not sent
+    assert finalized.is_set()
+    assert "ASGI receive failed during stream prefetch" in caplog.text
