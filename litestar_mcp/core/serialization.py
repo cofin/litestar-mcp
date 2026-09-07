@@ -26,15 +26,15 @@ no-op for ``Struct`` types — the wire bytes never carry ``UNSET``. Pydantic's
 """
 
 from threading import RLock
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 import msgspec
-from litestar.serialization import get_serializer
+from litestar.serialization import decode_json as from_json
+from litestar.serialization import encode_json, get_serializer
+from litestar.serialization.msgspec_hooks import DEFAULT_TYPE_ENCODERS
+from litestar.types import TypeEncodersMap
 
 from litestar_mcp.core._typing import PYDANTIC_INSTALLED, BaseModel
-from litestar_mcp.utils._json import DEFAULT_TYPE_ENCODERS, TypeEncodersMap, get_default_serializer
-from litestar_mcp.utils._json import decode_json as from_json
-from litestar_mcp.utils._json import encode_json as to_json
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
@@ -45,7 +45,6 @@ __all__ = (
     "TypeEncodersMap",
     "from_json",
     "get_collection_serializer",
-    "get_default_serializer",
     "reset_serializer_cache",
     "schema_dump",
     "serialize_collection",
@@ -55,6 +54,31 @@ __all__ = (
 _PRIMITIVE_TYPES: "tuple[type[Any], ...]" = (str, bytes, int, float, bool)
 _SERIALIZER_LOCK: "RLock" = RLock()
 _SCHEMA_SERIALIZERS: "dict[tuple[type[Any] | None, bool, int | None], SchemaSerializer]" = {}
+
+
+@overload
+def to_json(data: "Any", *, as_bytes: "Literal[False]" = ...) -> "str": ...
+
+
+@overload
+def to_json(data: "Any", *, as_bytes: "Literal[True]") -> "bytes": ...
+
+
+def to_json(data: "Any", *, as_bytes: "bool" = False) -> "str | bytes":
+    """Encode data using Litestar's native JSON serializer.
+
+    Args:
+        data: Value to encode.
+        as_bytes: Return bytes instead of UTF-8 text.
+
+    Returns:
+        JSON bytes or text.
+
+    Raises:
+        SerializationException: If data cannot be encoded.
+    """
+    encoded = encode_json(data)
+    return encoded if as_bytes else encoded.decode("utf-8")
 
 
 def schema_dump(

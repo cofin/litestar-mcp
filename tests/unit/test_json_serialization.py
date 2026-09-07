@@ -9,9 +9,18 @@ from pathlib import PurePath
 
 import msgspec
 import pytest
+from litestar.exceptions import SerializationException
 
-from litestar_mcp.core.serialization import DEFAULT_TYPE_ENCODERS, from_json, to_json
-from litestar_mcp.utils._json import StandardLibSerializer
+from litestar_mcp.core.serialization import from_json, to_json
+
+
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity", "1e400"])
+@pytest.mark.parametrize("as_bytes", [False, True])
+def test_from_json_rejects_nonfinite_numbers(constant: str, as_bytes: bool) -> None:
+    payload = '{"value":' + constant + "}"
+
+    with pytest.raises(SerializationException):
+        from_json(payload.encode() if as_bytes else payload)
 
 
 class Colour(enum.Enum):
@@ -52,7 +61,6 @@ def test_to_json_normalises_common_python_types() -> None:
     }
 
     assert from_json(to_json(payload)) == expected
-    assert from_json(StandardLibSerializer().encode(payload)) == expected
 
 
 def test_to_json_encodes_dataclasses_and_structs_structurally() -> None:
@@ -60,11 +68,10 @@ def test_to_json_encodes_dataclasses_and_structs_structurally() -> None:
     expected = {"point": {"x": 1, "y": 2}, "struct": {"name": "n"}}
 
     assert from_json(to_json(payload)) == expected
-    assert from_json(StandardLibSerializer().encode(payload)) == expected
 
 
 def test_to_json_rejects_unsupported_values() -> None:
-    with pytest.raises(TypeError, match="unsupported JSON value"):
+    with pytest.raises(SerializationException, match="object"):
         to_json({"value": object()})
 
 
@@ -76,6 +83,23 @@ def test_to_json_returns_bytes_on_request_and_from_json_accepts_both() -> None:
     assert from_json('{"a": 1}') == {"a": 1}
 
 
-def test_default_type_encoders_is_a_mapping_of_types() -> None:
-    assert DEFAULT_TYPE_ENCODERS[uuid.UUID] is str
-    assert datetime.datetime in DEFAULT_TYPE_ENCODERS
+def test_to_json_preserves_struct_tags_and_wire_names() -> None:
+    class Tagged(msgspec.Struct, tag="event", rename="camel"):
+        event_name: str
+        source_id: str = msgspec.field(name="source")
+
+    assert from_json(to_json(Tagged("created", "one"))) == {
+        "type": "event",
+        "eventName": "created",
+        "source": "one",
+    }
+
+
+def test_to_json_encodes_attrs_models() -> None:
+    import attrs
+
+    @attrs.define
+    class AttrsPoint:
+        x: int
+
+    assert from_json(to_json(AttrsPoint(1))) == {"x": 1}

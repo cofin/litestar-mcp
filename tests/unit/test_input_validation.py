@@ -22,8 +22,51 @@ from litestar.params import (
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig
+from litestar_mcp.mcp.routes import MCP_PROTOCOL_VERSION
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity", "1e400"])
+def test_malformed_json_returns_parse_error_without_tool_invocation(constant: str) -> None:
+    calls: list[float] = []
+
+    @get("/number", mcp_tool="number", sync_to_thread=False)
+    def number(value: float) -> dict[str, bool]:
+        calls.append(value)
+        return {"called": True}
+
+    payload = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "number",
+                "arguments": {"value": "nonfinite-placeholder"},
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION,
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                },
+            },
+        }
+    ).replace('"nonfinite-placeholder"', constant)
+    app = Litestar(route_handlers=[number], plugins=[LitestarMCP(MCPConfig())])
+    with TestClient(app=app) as client:
+        response = client.post(
+            "/mcp",
+            content=payload,
+            headers={
+                "Content-Type": "application/json",
+                "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
+                "Mcp-Method": "tools/call",
+                "Mcp-Name": "number",
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == -32700
+    assert calls == []
 
 
 def _initialize(client: "TestClient[Any]") -> "str":
@@ -70,6 +113,25 @@ def _error_payload(result: "dict[str, Any]") -> "dict[str, Any]":
     assert result["result"]["isError"] is True
     text = result["result"]["content"][0]["text"]
     return json.loads(text)  # type: ignore[no-any-return]
+
+
+def test_pydantic_output_matches_http_and_mcp() -> None:
+    from pydantic import BaseModel
+
+    class Model(BaseModel):
+        source_id: str
+
+    @get("/model", mcp_tool="model", sync_to_thread=False)
+    def model() -> Model:
+        return Model(source_id="one")
+
+    app = Litestar(route_handlers=[model], plugins=[LitestarMCP(MCPConfig())])
+    with TestClient(app=app) as client:
+        http_result = client.get("/model")
+        mcp_result = _call(client, "model", {})
+
+    assert http_result.json() == {"source_id": "one"}
+    assert json.loads(mcp_result["result"]["content"][0]["text"]) == http_result.json()
 
 
 class Point(msgspec.Struct):
