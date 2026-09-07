@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from litestar import Litestar
     from litestar.types import ASGIApp
 
-__all__ = ("ASGIStreamingTransport", "MCPStdioContext", "app_lifespan", "run_stdio", "run_stdio_async")
+__all__ = ("ASGIStreamingTransport", "MCPStdioContext", "run_stdio", "run_stdio_async")
 
 _DEFAULT_CLIENT = ("mcp-stdio", 0)
 _T = TypeVar("_T")
@@ -272,60 +272,37 @@ def _seed_stdio_identity(app: "ASGIApp", context: "MCPStdioContext") -> "ASGIApp
 
 
 @contextlib.asynccontextmanager
-async def app_lifespan(app: "ASGIApp", *, shutdown_timeout: "float" = 5.0) -> "AsyncIterator[None]":
-    """Drive ASGI lifespan around the body of the context manager."""
-    receive_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-    startup_complete = asyncio.Event()
-    shutdown_complete = asyncio.Event()
-    startup_error: str | None = None
+async def _app_lifespan(app: "Litestar", *, shutdown_timeout: "float" = 5.0) -> "AsyncIterator[None]":
+    """Bound post-startup shutdown in the same task and preserve body failures.
 
-    async def receive() -> "dict[str, Any]":
-        return await receive_queue.get()
-
-    async def send(message: "Mapping[str, Any]") -> None:
-        nonlocal startup_error
-        message_type = message.get("type")
-        if message_type == "lifespan.startup.complete":
-            startup_complete.set()
-        elif message_type == "lifespan.startup.failed":
-            startup_error = str(message.get("message", "Unknown startup error"))
-            startup_complete.set()
-        elif message_type == "lifespan.shutdown.complete":
-            shutdown_complete.set()
-
-    scope = {"type": "lifespan", "asgi": {"version": "3.0", "spec_version": "2.0"}}
-
-    async def run_app() -> None:
-        nonlocal startup_error
+    Startup unwind retains Litestar's native exception and cancellation
+    semantics. Application hooks must bound and shield their own rollback
+    where needed; the cleanup deadline is armed only after lifespan entry.
+    """
+    if not math.isfinite(shutdown_timeout) or shutdown_timeout <= 0:
+        msg = "shutdown_timeout must be positive and finite"
+        raise ValueError(msg)
+    body_error: BaseException | None = None
+    with anyio.CancelScope() as cleanup_scope:
         try:
-            await app(cast("Any", scope), cast("Any", receive), cast("Any", send))
-        except Exception as exc:
-            if not startup_complete.is_set():
-                startup_error = str(exc)
-                startup_complete.set()
-            _logger.exception("Error in background ASGI application task")
+            async with app.lifespan():
+                try:
+                    yield
+                except BaseException as exc:
+                    body_error = exc
+                    raise
+                finally:
+                    cleanup_scope.shield = True
+                    cleanup_scope.deadline = anyio.current_time() + shutdown_timeout
+        except BaseException:
+            if body_error is not None:
+                raise body_error from None
             raise
-
-    app_task = asyncio.create_task(run_app())
-    await receive_queue.put({"type": "lifespan.startup"})
-    await startup_complete.wait()
-    if startup_error:
-        app_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await app_task
-        msg = f"Application startup failed: {startup_error}"
-        raise RuntimeError(msg)
-    try:
-        yield
-    finally:
-        await receive_queue.put({"type": "lifespan.shutdown"})
-        try:
-            await asyncio.wait_for(shutdown_complete.wait(), timeout=shutdown_timeout)
-        except asyncio.TimeoutError:
-            _logger.warning("Lifespan shutdown timed out after %s seconds", shutdown_timeout)
-        app_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await app_task
+        finally:
+            if cleanup_scope.cancel_called:
+                _logger.warning("Lifespan shutdown incomplete after %s seconds", shutdown_timeout)
+    if body_error is not None:
+        raise body_error
 
 
 def _resolve_plugin(app: "Litestar") -> "Any":
@@ -353,12 +330,21 @@ async def run_stdio_async(
     max_message_size: "int" = DEFAULT_MAX_STDIN_MESSAGE_SIZE,
     shutdown_timeout: "float" = 5.0,
 ) -> "int":
-    """Serve a Litestar MCP endpoint to a local stdio client without a socket."""
+    """Serve a Litestar MCP endpoint to a local stdio client without a socket.
+
+    ``shutdown_timeout`` bounds in-process request cleanup and application
+    shutdown after native lifespan entry succeeds. Bridge errors and body
+    cancellation are preserved if that shutdown fails or times out.
+
+    Startup and its unwind follow Litestar's native semantics, including
+    exception grouping and chaining. Application startup, lifespan, and
+    shutdown hooks must bound and shield their own cleanup where needed.
+    """
     plugin = _resolve_plugin(app)
     endpoint = f"http://mcp-stdio/{plugin.config.base_path.strip('/')}"
     asgi_app = app if stdio_context is None else _seed_stdio_identity(app, stdio_context)
     client_info = None if stdio_context is None else {"name": stdio_context.client_id, "version": __version__}
-    async with app_lifespan(app, shutdown_timeout=shutdown_timeout):
+    async with _app_lifespan(app, shutdown_timeout=shutdown_timeout):
         return await run_stdio_streamable_http_bridge(
             endpoint,
             transport=ASGIStreamingTransport(asgi_app, shutdown_timeout=shutdown_timeout),

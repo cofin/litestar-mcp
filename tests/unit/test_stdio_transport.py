@@ -3,22 +3,218 @@
 import asyncio
 import contextlib
 import json
+from collections.abc import AsyncIterator
 from typing import Any
 
 import anyio
 import httpx
 import pytest
 from litestar import Litestar, Request, get, post
+from litestar.events import listener
 
 from litestar_mcp import LitestarMCP, get_mcp_request_context
 from litestar_mcp.mcp.bridge import run_stdio_streamable_http_bridge
-from litestar_mcp.mcp.stdio import ASGIStreamingTransport
+from litestar_mcp.mcp.stdio import ASGIStreamingTransport, _app_lifespan, run_stdio_async
 from tests.conftest import BridgeBytesSink, BridgeQueuedBytesSource
 
 
 def _rpc_line(method: str, params: "dict[str, Any] | None" = None, *, msg_id: int = 1) -> bytes:
     payload: dict[str, Any] = {"jsonrpc": "2.0", "id": msg_id, "method": method, "params": params or {}}
     return json.dumps(payload).encode() + b"\n"
+
+
+@pytest.mark.anyio
+async def test_stdio_startup_cancellation_releases_lifespan_and_event_tasks() -> None:
+    startup_waiting = asyncio.Event()
+    listener_started = asyncio.Event()
+    listener_finished = asyncio.Event()
+    resource_closed = asyncio.Event()
+    lifecycle_tasks: list[asyncio.Task[Any]] = []
+
+    @listener("startup-probe")
+    async def event_listener() -> None:
+        listener_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            with anyio.CancelScope(shield=True):
+                await asyncio.sleep(0)
+                listener_finished.set()
+
+    @contextlib.asynccontextmanager
+    async def resource(app: Litestar) -> AsyncIterator[None]:
+        current = asyncio.current_task()
+        assert current is not None
+        lifecycle_tasks.append(current)
+        try:
+            yield
+        finally:
+            await asyncio.sleep(0)
+            resource_closed.set()
+
+    async def startup(app: Litestar) -> None:
+        app.emit("startup-probe")
+        await listener_started.wait()
+        startup_waiting.set()
+        await asyncio.Event().wait()
+
+    app = Litestar(plugins=[LitestarMCP()], lifespan=[resource], listeners=[event_listener], on_startup=[startup])
+    caller = asyncio.create_task(run_stdio_async(app, stdin=BridgeQueuedBytesSource(), stdout=BridgeBytesSink()))
+    try:
+        with anyio.fail_after(2):
+            await startup_waiting.wait()
+            caller.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await caller
+        assert resource_closed.is_set(), "Startup cancellation left the entered lifespan resource open"
+        assert listener_finished.is_set(), "Startup cancellation left the event listener running"
+    finally:
+        for task in lifecycle_tasks:
+            if not task.done():
+                task.cancel()
+        with anyio.fail_after(2):
+            await asyncio.gather(caller, *lifecycle_tasks, return_exceptions=True)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("cancellation", ["asyncio", "anyio"])
+async def test_stdio_body_cancellation_finishes_native_lifespan(cancellation: str) -> None:
+    body_started = asyncio.Event()
+    resource_closed = asyncio.Event()
+    shutdown_finished = asyncio.Event()
+    cancelled = asyncio.Event()
+    scope = anyio.CancelScope()
+
+    @contextlib.asynccontextmanager
+    async def resource(app: Litestar) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            await asyncio.sleep(0)
+            resource_closed.set()
+
+    async def shutdown() -> None:
+        await asyncio.sleep(0)
+        shutdown_finished.set()
+
+    app = Litestar(lifespan=[resource], on_shutdown=[shutdown], logging_config=None)
+
+    async def run() -> None:
+        with scope:
+            try:
+                async with _app_lifespan(app):
+                    body_started.set()
+                    await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+    caller = asyncio.create_task(run())
+    with anyio.fail_after(2):
+        await body_started.wait()
+        if cancellation == "asyncio":
+            caller.cancel()
+        else:
+            scope.cancel()
+        await asyncio.gather(caller, return_exceptions=True)
+
+    assert cancelled.is_set()
+    assert resource_closed.is_set()
+    assert shutdown_finished.is_set()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("shutdown_failure", ["timeout", "exception"])
+async def test_stdio_preserves_body_exception_when_shutdown_fails(
+    shutdown_failure: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    original = ValueError("bridge failed")
+    shutdown_started = asyncio.Event()
+    resource_closed = asyncio.Event()
+
+    async def bridge() -> None:
+        raise original
+
+    @contextlib.asynccontextmanager
+    async def resource(app: Litestar) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            await asyncio.sleep(0)
+            resource_closed.set()
+
+    async def shutdown() -> None:
+        shutdown_started.set()
+        if shutdown_failure == "exception":
+            msg = "shutdown failed"
+            raise RuntimeError(msg)
+        await asyncio.Event().wait()
+
+    app = Litestar(lifespan=[resource], on_shutdown=[shutdown], logging_config=None)
+    with pytest.raises(ValueError) as caught, anyio.fail_after(2):
+        async with _app_lifespan(app, shutdown_timeout=0.02):
+            await bridge()
+
+    assert caught.value is original
+    assert resource_closed.is_set()
+    assert shutdown_started.is_set()
+    if shutdown_failure == "timeout":
+        assert "Lifespan shutdown incomplete" in caplog.text
+
+
+@pytest.mark.anyio
+async def test_stdio_preserves_body_cancellation_when_shutdown_times_out(caplog: pytest.LogCaptureFixture) -> None:
+    original = asyncio.CancelledError("bridge cancelled")
+    shutdown_cancelled = asyncio.Event()
+
+    async def bridge() -> None:
+        raise original
+
+    async def shutdown() -> None:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            shutdown_cancelled.set()
+
+    with pytest.raises(asyncio.CancelledError) as caught, anyio.fail_after(2):
+        async with _app_lifespan(Litestar(on_shutdown=[shutdown], logging_config=None), shutdown_timeout=0.02):
+            await bridge()
+
+    assert caught.value is original
+    assert shutdown_cancelled.is_set()
+    assert "Lifespan shutdown incomplete" in caplog.text
+
+
+@pytest.mark.anyio
+async def test_stdio_shutdown_timeout_is_logged_and_releases_caller(caplog: pytest.LogCaptureFixture) -> None:
+    shutdown_cancelled = asyncio.Event()
+
+    async def shutdown() -> None:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            shutdown_cancelled.set()
+
+    with anyio.fail_after(2):
+        async with _app_lifespan(Litestar(on_shutdown=[shutdown], logging_config=None), shutdown_timeout=0.02):
+            pass
+
+    assert shutdown_cancelled.is_set()
+    assert "Lifespan shutdown incomplete" in caplog.text
+
+
+@pytest.mark.anyio
+async def test_stdio_shutdown_failure_is_propagated() -> None:
+    original = RuntimeError("shutdown failed")
+
+    async def shutdown() -> None:
+        raise original
+
+    with pytest.raises(RuntimeError) as caught:
+        async with _app_lifespan(Litestar(on_shutdown=[shutdown])):
+            pass
+
+    assert caught.value is original
 
 
 @pytest.mark.anyio

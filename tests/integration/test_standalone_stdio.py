@@ -372,16 +372,19 @@ async def test_standalone_stdio_lifespan_hooks() -> "None":
 
 @pytest.mark.anyio
 async def test_standalone_stdio_startup_failure_raises() -> "None":
+    original = RuntimeError("database unavailable")
+
     async def failing_startup() -> "None":
-        msg = "database unavailable"
-        raise RuntimeError(msg)
+        raise original
 
     mcp = MCP(name="startup-failure", on_startup=[failing_startup])
 
-    with pytest.raises(RuntimeError, match="Application startup failed"):
+    with pytest.raises(Exception) as caught:
         await run_stdio_async(
             mcp.app,
             stdio_context=MCPStdioContext(),
             stdin=BridgeQueuedBytesSource(),
             stdout=BridgeBytesSink(),
         )
+
+    assert original in getattr(caught.value, "exceptions", (caught.value,))
