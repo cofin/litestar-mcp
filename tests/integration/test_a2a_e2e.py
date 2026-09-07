@@ -1,11 +1,13 @@
 """End-to-end coverage of the A2A adapter through the official client, raw JSON-RPC, and raw ASGI."""
 
 import asyncio
+import contextlib
 import json
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterator
 from typing import Any, cast
 
 import anyio
+import anyio.lowlevel
 import pytest
 from a2a.client.transports.jsonrpc import JsonRpcTransport
 from a2a.server.context import ServerCallContext
@@ -43,12 +45,12 @@ from a2a.utils.errors import (
     TaskNotFoundError,
 )
 from litestar import Litestar
-from litestar.exceptions import ImproperlyConfiguredException
+from litestar.exceptions import ImproperlyConfiguredException, LitestarException
 from litestar.plugins import InitPluginProtocol
 from litestar.testing import AsyncTestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig
-from litestar_mcp.a2a import LitestarA2A
+from litestar_mcp.a2a import A2AConfig, LitestarA2A
 from litestar_mcp.mcp.routes import MCP_PROTOCOL_VERSION
 
 pytestmark = pytest.mark.integration
@@ -436,3 +438,315 @@ def test_mcp_route_does_not_collide_with_a2a_path(order: str) -> None:
     else:
         with pytest.raises(ImproperlyConfiguredException, match="Handler already registered"):
             Litestar(plugins=plugins)
+
+
+def _stream_scope() -> dict[str, Any]:
+    return {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.4"},
+        "http_version": "1.1",
+        "method": "POST",
+        "path": "/a2a",
+        "raw_path": b"/a2a",
+        "query_string": b"",
+        "root_path": "",
+        "scheme": "http",
+        "server": ("testserver", 80),
+        "client": ("testclient", 1),
+        "headers": [(b"host", b"testserver"), (b"content-type", b"application/json"), (b"a2a-version", b"1.0")],
+    }
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("position", ["prefetch", "next", "send"])
+async def test_disconnect_awaits_handler_finalization(position: str) -> None:
+    entered = asyncio.Event()
+    next_started = asyncio.Event()
+    first_sent = asyncio.Event()
+    finalized = asyncio.Event()
+    tasks: list[asyncio.Task[Any] | None] = []
+
+    class Handler(RecordingHandler):
+        async def on_message_send_stream(
+            self, params: Any, context: ServerCallContext | None = None
+        ) -> AsyncGenerator[Any, None]:
+            tasks.append(asyncio.current_task())
+            try:
+                entered.set()
+                if position == "prefetch":
+                    await asyncio.Event().wait()
+                yield Message(message_id="chunk", role=Role.ROLE_AGENT, parts=[Part(text="one")])
+                tasks.append(asyncio.current_task())
+                next_started.set()
+                await asyncio.Event().wait()
+            finally:
+                await anyio.lowlevel.checkpoint()
+                await anyio.lowlevel.checkpoint()
+                tasks.append(asyncio.current_task())
+                finalized.set()
+
+    app = Litestar(plugins=[LitestarA2A(make_card(), Handler())])
+    requested = False
+    messages: list[dict[str, Any]] = []
+
+    async def receive() -> dict[str, Any]:
+        nonlocal requested
+        if not requested:
+            requested = True
+            return {"type": "http.request", "body": json.dumps(send_payload("SendStreamingMessage")).encode()}
+        await {"prefetch": entered, "next": next_started, "send": first_sent}[position].wait()
+        if position == "next":
+            await first_sent.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict[str, Any]) -> None:
+        messages.append(message)
+        if message["type"] == "http.response.body" and message.get("body"):
+            first_sent.set()
+            if position == "send":
+                await asyncio.Event().wait()
+
+    with anyio.fail_after(1):
+        await app(cast("Any", _stream_scope()), cast("Any", receive), cast("Any", send))
+
+    assert finalized.is_set()
+    assert len(set(tasks)) == 1
+    assert all(task is not None and task.done() for task in tasks)
+    if position == "prefetch":
+        assert not messages
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "terminal_message",
+    [{"type": "http.disconnect"}, {"type": "http.request", "body": b"unexpected"}, {"type": "websocket.disconnect"}],
+)
+async def test_prefetch_disconnect_wins_ready_first_event(
+    terminal_message: dict[str, Any], caplog: pytest.LogCaptureFixture
+) -> None:
+    yielded = asyncio.Event()
+    finalized = asyncio.Event()
+
+    class Handler(RecordingHandler):
+        async def on_message_send_stream(
+            self, params: Any, context: ServerCallContext | None = None
+        ) -> AsyncGenerator[Any, None]:
+            try:
+                yielded.set()
+                yield Message(message_id="first", role=Role.ROLE_AGENT, parts=[Part(text="first")])
+                await asyncio.Event().wait()
+            finally:
+                await anyio.lowlevel.checkpoint()
+                await anyio.lowlevel.checkpoint()
+                finalized.set()
+
+    app = Litestar(plugins=[LitestarA2A(make_card(), Handler())], logging_config=None)
+    messages: Iterator[dict[str, Any]] = iter(
+        [
+            {"type": "http.request", "body": json.dumps(send_payload("SendStreamingMessage")).encode()},
+            {"type": "http.request", "body": b"", "more_body": False},
+            terminal_message,
+        ]
+    )
+    sent: list[dict[str, Any]] = []
+
+    async def receive() -> dict[str, Any]:
+        return next(messages)
+
+    async def send(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    with anyio.fail_after(1):
+        await app(cast("Any", _stream_scope()), cast("Any", receive), cast("Any", send))
+
+    assert yielded.is_set()
+    assert finalized.is_set()
+    assert not sent
+    if terminal_message["type"] != "http.disconnect":
+        assert "Unexpected ASGI message" in caplog.text
+
+
+@pytest.mark.anyio
+async def test_send_failure_completes_async_handler_cleanup() -> None:
+    finalized = asyncio.Event()
+
+    class Handler(RecordingHandler):
+        async def on_message_send_stream(
+            self, params: Any, context: ServerCallContext | None = None
+        ) -> AsyncGenerator[Any, None]:
+            try:
+                yield Message(message_id="first", role=Role.ROLE_AGENT, parts=[Part(text="first")])
+                await asyncio.Event().wait()
+            finally:
+                await anyio.lowlevel.checkpoint()
+                await anyio.lowlevel.checkpoint()
+                finalized.set()
+
+    app = Litestar(plugins=[LitestarA2A(make_card(), Handler())])
+    requested = False
+
+    async def receive() -> dict[str, Any]:
+        nonlocal requested
+        if not requested:
+            requested = True
+            return {"type": "http.request", "body": json.dumps(send_payload("SendStreamingMessage")).encode()}
+        await asyncio.Event().wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict[str, Any]) -> None:
+        if message["type"] == "http.response.body":
+            msg = "client write failed"
+            raise OSError(msg)
+
+    with anyio.fail_after(1), pytest.raises(LitestarException, match="Exception caught after response started"):
+        await app(cast("Any", _stream_scope()), cast("Any", receive), cast("Any", send))
+
+    assert finalized.is_set()
+
+
+@pytest.mark.anyio
+async def test_stream_cleanup_deadline_reports_incomplete_finalization(caplog: pytest.LogCaptureFixture) -> None:
+    first_sent = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    finalized = asyncio.Event()
+    producers: list[asyncio.Task[Any]] = []
+
+    class Handler(RecordingHandler):
+        async def on_message_send_stream(
+            self, params: Any, context: ServerCallContext | None = None
+        ) -> AsyncGenerator[Any, None]:
+            current = asyncio.current_task()
+            assert current is not None
+            producers.append(current)
+            try:
+                yield Message(message_id="first", role=Role.ROLE_AGENT, parts=[Part(text="first")])
+                await asyncio.Event().wait()
+            finally:
+                while not release_cleanup.is_set():
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await release_cleanup.wait()
+                finalized.set()
+
+    config = A2AConfig(stream_cleanup_timeout=0.01)
+    app = Litestar(plugins=[LitestarA2A(make_card(), Handler(), config)], logging_config=None)
+    requested = False
+
+    async def receive() -> dict[str, Any]:
+        nonlocal requested
+        if not requested:
+            requested = True
+            return {"type": "http.request", "body": json.dumps(send_payload("SendStreamingMessage")).encode()}
+        await first_sent.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict[str, Any]) -> None:
+        if message["type"] == "http.response.body" and message.get("body"):
+            first_sent.set()
+            await asyncio.Event().wait()
+
+    try:
+        with anyio.fail_after(1):
+            await app(cast("Any", _stream_scope()), cast("Any", receive), cast("Any", send))
+        assert "Stream producer cleanup incomplete" in caplog.text
+        assert not finalized.is_set()
+    finally:
+        release_cleanup.set()
+        with anyio.fail_after(1):
+            await asyncio.gather(*producers, return_exceptions=True)
+    assert finalized.is_set()
+
+
+@pytest.mark.anyio
+async def test_external_cancellation_during_prefetch_propagates_after_cleanup() -> None:
+    entered = asyncio.Event()
+    finalized = asyncio.Event()
+    watcher_finalized = asyncio.Event()
+
+    class Handler(RecordingHandler):
+        async def on_message_send_stream(
+            self, params: Any, context: ServerCallContext | None = None
+        ) -> AsyncGenerator[Any, None]:
+            try:
+                entered.set()
+                await asyncio.Event().wait()
+                yield
+            finally:
+                await anyio.lowlevel.checkpoint()
+                await anyio.lowlevel.checkpoint()
+                finalized.set()
+
+    app = Litestar(plugins=[LitestarA2A(make_card(), Handler())])
+    requested = False
+    sent: list[dict[str, Any]] = []
+
+    async def receive() -> dict[str, Any]:
+        nonlocal requested
+        if not requested:
+            requested = True
+            return {"type": "http.request", "body": json.dumps(send_payload("SendStreamingMessage")).encode()}
+        try:
+            await asyncio.Event().wait()
+            return {"type": "http.disconnect"}
+        finally:
+            watcher_finalized.set()
+
+    async def send(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    task = asyncio.create_task(app(cast("Any", _stream_scope()), cast("Any", receive), cast("Any", send)))
+    with anyio.fail_after(1):
+        await entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert finalized.is_set()
+    assert watcher_finalized.is_set()
+    assert not sent
+
+
+@pytest.mark.anyio
+async def test_prefetch_watcher_exits_before_native_sse_reads_disconnect() -> None:
+    watcher_entered = asyncio.Event()
+    watcher_exited = asyncio.Event()
+    first_sent = asyncio.Event()
+    calls = 0
+    active_reads = 0
+
+    class Handler(RecordingHandler):
+        async def on_message_send_stream(
+            self, params: Any, context: ServerCallContext | None = None
+        ) -> AsyncGenerator[Any, None]:
+            await watcher_entered.wait()
+            yield Message(message_id="first", role=Role.ROLE_AGENT, parts=[Part(text="first")])
+            await asyncio.Event().wait()
+
+    app = Litestar(plugins=[LitestarA2A(make_card(), Handler())])
+
+    async def receive() -> dict[str, Any]:
+        nonlocal calls, active_reads
+        active_reads += 1
+        assert active_reads == 1
+        calls += 1
+        try:
+            if calls == 1:
+                return {"type": "http.request", "body": json.dumps(send_payload("SendStreamingMessage")).encode()}
+            if calls == 2:
+                watcher_entered.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    watcher_exited.set()
+            assert watcher_exited.is_set()
+            await first_sent.wait()
+            return {"type": "http.disconnect"}
+        finally:
+            active_reads -= 1
+
+    async def send(message: dict[str, Any]) -> None:
+        if message["type"] == "http.response.body" and message.get("body"):
+            first_sent.set()
+
+    with anyio.fail_after(1):
+        await app(cast("Any", _stream_scope()), cast("Any", receive), cast("Any", send))
+    assert calls == 3
+    assert active_reads == 0

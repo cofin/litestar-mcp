@@ -4,10 +4,12 @@ import hashlib
 import logging
 import math
 import re
+from contextlib import aclosing
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
 
+import anyio
 from a2a.auth.user import User
 from a2a.extensions.common import HTTP_EXTENSION_HEADER, get_requested_extensions
 from a2a.server.context import ServerCallContext
@@ -51,12 +53,14 @@ from litestar.response import ServerSentEvent, ServerSentEventMessage
 from litestar.status_codes import HTTP_204_NO_CONTENT, HTTP_304_NOT_MODIFIED
 
 from litestar_mcp.a2a.config import A2AConfig
+from litestar_mcp.core._streaming import StreamCleanupMiddleware, prefetch_stream, start_stream
 from litestar_mcp.core.serialization import to_json
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
     from a2a.server.request_handlers import RequestHandler
+    from anyio.streams.memory import MemoryObjectSendStream
     from litestar.config.app import AppConfig
 
 logger = logging.getLogger(__name__)
@@ -304,41 +308,48 @@ class _JsonRpcTransport:
         context: "ServerCallContext",
         request_id: "str | int | float | None",
     ) -> "ServerSentEvent":
-        stream = (
-            self.handler.on_message_send_stream(params, context)
-            if method == "SendStreamingMessage"
-            else self.handler.on_subscribe_to_task(params, context)
-        )
+        headers: dict[str, str] | None = None
+
+        async def produce(sender: "MemoryObjectSendStream[ServerSentEventMessage]") -> None:
+            nonlocal headers
+            stream = (
+                self.handler.on_message_send_stream(params, context)
+                if method == "SendStreamingMessage"
+                else self.handler.on_subscribe_to_task(params, context)
+            )
+            async with aclosing(stream):
+                async for item in stream:
+                    if headers is None:
+                        headers = self._extension_headers(request, context)
+                    response = proto_utils.to_stream_response(item)
+                    if response.WhichOneof("payload") is None:
+                        msg = "A2A stream event has no supported payload"
+                        raise ValueError(msg)
+                    payload = _success_response(request_id, _message_to_dict(response))
+                    await sender.send(ServerSentEventMessage(data=_sse_data(payload)))
+                if headers is None:
+                    headers = self._extension_headers(request, context)
+
+        owner = start_stream(request.scope, produce, capacity=1, cleanup_timeout=self.config.stream_cleanup_timeout)
         try:
-            first = await anext(stream)
-        except StopAsyncIteration:
+            first = await prefetch_stream(request.scope, request.receive, owner)
+        except anyio.EndOfStream:
             first = None
-        except Exception:
-            await stream.aclose()
-            raise
-        try:
-            headers = self._extension_headers(request, context)
-        except ValueError:
-            await stream.aclose()
-            raise
 
         async def events() -> "AsyncGenerator[ServerSentEventMessage, None]":
-            def encode(item: "Any") -> "ServerSentEventMessage":
-                response = proto_utils.to_stream_response(item)
-                return ServerSentEventMessage(data=_sse_data(_success_response(request_id, _message_to_dict(response))))
-
             try:
                 if first is not None:
-                    yield encode(first)
-                async for item in stream:
-                    yield encode(item)
+                    yield first
+                async for item in owner.receiver:
+                    yield item
+                await owner.result()
             except A2AError as exc:
                 yield ServerSentEventMessage(data=_sse_data(self._error(request_id, exc)), event="error")
             except Exception as exc:
                 logger.exception("Unhandled A2A SSE stream error")
                 yield ServerSentEventMessage(data=_sse_data(self._error(request_id, exc)), event="error")
             finally:
-                await stream.aclose()
+                await owner.close()
 
         return ServerSentEvent(events(), headers=headers)
 
@@ -377,6 +388,7 @@ class LitestarA2A(InitPluginProtocol):
         @post(
             self.config.path,
             guards=self.config.guards,
+            middleware=[StreamCleanupMiddleware()],
             opt={"exclude_from_csrf": True, **self.config.route_opt},
             status_code=200,
             include_in_schema=self.config.include_in_schema,

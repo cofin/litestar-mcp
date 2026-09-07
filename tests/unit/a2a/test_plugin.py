@@ -1,7 +1,10 @@
+import asyncio
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock
 
+import anyio
+import anyio.lowlevel
 import pytest
 from a2a.client.transports.jsonrpc import JsonRpcTransport
 from a2a.server.context import ServerCallContext
@@ -732,3 +735,147 @@ async def test_agent_card_sends_cache_headers_and_honours_if_none_match() -> Non
 
     assert first.headers["cache-control"].startswith("public, max-age=")
     assert second.status_code == 304
+
+
+@pytest.mark.parametrize("timeout", [0, -1, float("inf"), float("-inf"), float("nan")])
+def test_cleanup_timeout_must_be_positive_and_finite(timeout: float) -> None:
+    with pytest.raises(ValueError, match="stream_cleanup_timeout must be positive and finite"):
+        A2AConfig(stream_cleanup_timeout=timeout)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("after_first", [False, True])
+async def test_invalid_stream_payload_is_validated_before_sending(after_first: bool) -> None:
+    class Handler(StubHandler):
+        async def on_message_send_stream(
+            self, params: Any, context: ServerCallContext | None = None
+        ) -> AsyncGenerator[Any, None]:
+            if after_first:
+                yield Message(message_id="valid", role=Role.ROLE_AGENT, parts=[Part(text="valid")])
+            yield object()
+
+    app = Litestar(plugins=[LitestarA2A(make_card(), Handler())])
+    async with AsyncTestClient(app=app) as client:
+        response = await client.post("/a2a", headers={"A2A-Version": "1.0"}, json=send_payload("SendStreamingMessage"))
+
+    assert '"code":-32603' in response.text
+    assert response.headers["content-type"].startswith("text/event-stream" if after_first else "application/json")
+
+
+@pytest.mark.anyio
+async def test_http_exception_during_stream_prefetch_uses_native_response() -> None:
+    class Handler(StubHandler):
+        async def on_message_send_stream(
+            self, params: Any, context: ServerCallContext | None = None
+        ) -> AsyncGenerator[Any, None]:
+            if context is not None:
+                raise PermissionDeniedException
+            yield Message(message_id="fallback", role=Role.ROLE_AGENT, parts=[Part(text="fallback")])
+
+    app = Litestar(plugins=[LitestarA2A(make_card(), Handler())])
+    async with AsyncTestClient(app=app) as client:
+        response = await client.post("/a2a", headers={"A2A-Version": "1.0"}, json=send_payload("SendStreamingMessage"))
+
+    assert response.status_code == 403
+    assert response.headers["content-type"].startswith("application/json")
+
+
+@pytest.mark.anyio
+async def test_empty_stream_finishes_without_an_event() -> None:
+    class Handler(StubHandler):
+        async def on_message_send_stream(
+            self, params: Any, context: ServerCallContext | None = None
+        ) -> AsyncGenerator[Any, None]:
+            return
+            yield
+
+    app = Litestar(plugins=[LitestarA2A(make_card(), Handler())])
+    async with AsyncTestClient(app=app) as client:
+        response = await client.post("/a2a", headers={"A2A-Version": "1.0"}, json=send_payload("SendStreamingMessage"))
+
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.content == b""
+
+
+@pytest.mark.anyio
+async def test_extension_headers_freeze_before_producer_read_ahead() -> None:
+    uri = "https://ext.example/late"
+    card = make_card()
+    card.capabilities.extensions.append(AgentExtension(uri=uri))
+
+    class Handler(StubHandler):
+        async def on_message_send_stream(
+            self, params: Any, context: ServerCallContext | None = None
+        ) -> AsyncGenerator[Any, None]:
+            assert context is not None
+            yield Message(message_id="first", role=Role.ROLE_AGENT, parts=[Part(text="first")])
+            context.state["a2a_activated_extensions"] = {uri}
+            yield Message(message_id="second", role=Role.ROLE_AGENT, parts=[Part(text="second")])
+
+    app = Litestar(plugins=[LitestarA2A(card, Handler())])
+    async with AsyncTestClient(app=app) as client:
+        response = await client.post(
+            "/a2a", headers={"A2A-Version": "1.0", "A2A-Extensions": uri}, json=send_payload("SendStreamingMessage")
+        )
+
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert "A2A-Extensions" not in response.headers
+    assert '"messageId":"second"' in response.text
+
+
+@pytest.mark.anyio
+async def test_stream_owner_concurrent_close_preserves_awaited_cleanup() -> None:
+    from litestar_mcp.core._streaming import StreamOwner
+
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    finalized = asyncio.Event()
+    owner: StreamOwner[int, None] = StreamOwner(1, 1)
+
+    async def produce(sender: Any) -> None:
+        try:
+            await sender.send(1)
+            await asyncio.Event().wait()
+        finally:
+            cleanup_started.set()
+            await release_cleanup.wait()
+            await anyio.lowlevel.checkpoint()
+            finalized.set()
+
+    owner.start(produce)
+    assert await owner.receiver.receive() == 1
+    first = asyncio.create_task(owner.close())
+    await cleanup_started.wait()
+    second = asyncio.create_task(owner.close())
+    await anyio.lowlevel.checkpoint()
+    assert not second.done()
+    first.cancel()
+    await anyio.lowlevel.checkpoint()
+    release_cleanup.set()
+    with anyio.fail_after(1):
+        results = await asyncio.gather(first, second, return_exceptions=True)
+    assert isinstance(results[0], asyncio.CancelledError)
+    assert results[1] is None
+    assert finalized.is_set()
+    await owner.close()
+
+
+@pytest.mark.anyio
+async def test_stream_owner_close_before_producer_runs_closes_channel() -> None:
+    from litestar_mcp.core._streaming import StreamOwner
+
+    called = False
+    owner: StreamOwner[int, None] = StreamOwner(1, 1)
+
+    async def produce(sender: Any) -> None:
+        nonlocal called
+        called = True
+        await sender.send(1)
+
+    owner.start(produce)
+    await owner.close()
+    assert not called
+    with pytest.raises(anyio.ClosedResourceError):
+        await owner.sender.send(1)
+    with pytest.raises(anyio.ClosedResourceError):
+        await owner.receiver.receive()

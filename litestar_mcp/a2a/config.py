@@ -3,6 +3,8 @@
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from litestar_mcp.core._streaming import DEFAULT_STREAM_CLEANUP_TIMEOUT, validate_stream_cleanup_timeout
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
 
@@ -24,6 +26,10 @@ class A2AConfig:
     ``a2a_activated_extensions`` set of requested, advertised URI strings. Set it
     before returning a result or yielding the first stream event: response
     headers cannot reflect later activation.
+
+    ``stream_cleanup_timeout`` bounds the wait for cooperative producer cleanup
+    after a response ends. It must be positive and finite; expiry is logged as
+    incomplete cleanup. Application finalizers must themselves tolerate cancellation.
     """
 
     path: str = "/a2a"
@@ -33,8 +39,10 @@ class A2AConfig:
     context_builder: "Callable[[Request[Any, Any, Any], ServerCallContext], ServerCallContext | Awaitable[ServerCallContext]] | None" = None
     include_in_schema: bool = False
     agent_card_max_age: int = 300
+    stream_cleanup_timeout: float = DEFAULT_STREAM_CLEANUP_TIMEOUT
 
     def __post_init__(self) -> None:
+        validate_stream_cleanup_timeout(self.stream_cleanup_timeout)
         for name, value in (("path", self.path), ("agent_card_path", self.agent_card_path)):
             if not value.startswith("/"):
                 msg = f"{name} must start with '/'"
