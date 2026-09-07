@@ -6,13 +6,24 @@ import pytest
 from a2a.client.transports.jsonrpc import JsonRpcTransport
 from a2a.server.context import ServerCallContext
 from a2a.server.request_handlers import RequestHandler
-from a2a.types import AgentCard, AgentInterface, Message, Part, Role, SendMessageRequest, Task, TaskState, TaskStatus
+from a2a.types import (
+    AgentCard,
+    AgentExtension,
+    AgentInterface,
+    Message,
+    Part,
+    Role,
+    SendMessageRequest,
+    Task,
+    TaskState,
+    TaskStatus,
+)
 from a2a.utils.errors import TaskNotFoundError
 from google.protobuf.json_format import MessageToDict  # type: ignore[import-untyped]
 from litestar import Litestar, Request, get
 from litestar.config.csrf import CSRFConfig
 from litestar.connection import ASGIConnection
-from litestar.exceptions import ImproperlyConfiguredException, PermissionDeniedException
+from litestar.exceptions import ImproperlyConfiguredException, NotAuthorizedException, PermissionDeniedException
 from litestar.handlers import BaseRouteHandler
 from litestar.middleware import AbstractAuthenticationMiddleware, AuthenticationResult, DefineMiddleware
 from litestar.plugins import InitPluginProtocol
@@ -171,30 +182,39 @@ async def test_official_jsonrpc_client_dispatches_through_litestar() -> None:
 
 
 @pytest.mark.anyio
-async def test_uses_litestar_context_builder() -> None:
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_uses_litestar_context_builder(asynchronous: bool) -> None:
     observed_request: Request[Any, Any, Any] | None = None
-    context = ServerCallContext()
+    context = ServerCallContext(tenant="authorized")
 
-    def build_context(request: Request[Any, Any, Any]) -> ServerCallContext:
+    def build_context(request: Request[Any, Any, Any], prepared: ServerCallContext) -> ServerCallContext:
         nonlocal observed_request
         observed_request = request
+        assert prepared.tenant == "requested"
+        assert prepared.state["method"] == "GetTask"
+        assert prepared.state["request_id"] == "x"
         context.state["headers"] = dict(request.headers)
         return context
 
+    async def build_context_async(request: Request[Any, Any, Any], prepared: ServerCallContext) -> ServerCallContext:
+        return build_context(request, prepared)
+
     handler = AsyncMock()
     handler.on_get_task.return_value = None
-    app = Litestar(plugins=[LitestarA2A(make_card(), handler, A2AConfig(context_builder=build_context))])
+    builder = build_context_async if asynchronous else build_context
+    app = Litestar(plugins=[LitestarA2A(make_card(), handler, A2AConfig(context_builder=builder))])
 
     async with AsyncTestClient(app=app) as client:
         response = await client.post(
             "/a2a",
             headers={"A2A-Version": "1.0"},
-            json={"jsonrpc": "2.0", "id": "x", "method": "GetTask", "params": {"id": "missing"}},
+            json={"jsonrpc": "2.0", "id": "x", "method": "GetTask", "params": {"id": "missing", "tenant": "requested"}},
         )
 
     assert response.status_code == 200
     assert observed_request is not None
-    handler.on_get_task.assert_awaited_once()
+    assert handler.on_get_task.await_args.args[1] is context
+    assert context.tenant == "authorized"
 
 
 @pytest.mark.anyio
@@ -344,6 +364,143 @@ async def test_omitted_params_default_to_empty_object() -> None:
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_activated_extensions_are_reported_after_handler_activation(streaming: bool) -> None:
+    extensions = {"https://ext.example/a", "https://ext.example/b"}
+    card = make_card()
+    card.capabilities.extensions.extend(AgentExtension(uri=uri, required=True) for uri in extensions)
+
+    class ActivatingHandler(StubHandler):
+        async def on_message_send(self, params: Any, context: ServerCallContext | None = None) -> Any:
+            assert context is not None
+            context.state["a2a_activated_extensions"] = extensions
+            return await super().on_message_send(params, context)
+
+        async def on_message_send_stream(
+            self, params: Any, context: ServerCallContext | None = None
+        ) -> AsyncGenerator[Any, None]:
+            yield await self.on_message_send(params, context)
+
+    app = Litestar(plugins=[LitestarA2A(card, ActivatingHandler())])
+    async with AsyncTestClient(app=app) as client:
+        response = await client.post(
+            "/a2a",
+            headers={
+                "A2A-Version": "1.0",
+                "A2A-Extensions": "https://ext.example/b,https://ext.example/a,https://unknown",
+            },
+            json=send_payload("SendStreamingMessage" if streaming else "SendMessage"),
+        )
+
+    assert response.headers["A2A-Extensions"] == "https://ext.example/a, https://ext.example/b"
+
+
+@pytest.mark.anyio
+async def test_missing_required_extension_never_invokes_handler() -> None:
+    card = make_card()
+    card.capabilities.extensions.append(AgentExtension(uri="https://ext.example/required", required=True))
+    handler = StubHandler()
+    app = Litestar(plugins=[LitestarA2A(card, handler)])
+
+    async with AsyncTestClient(app=app) as client:
+        response = await client.post("/a2a", headers={"A2A-Version": "1.0"}, json=send_payload())
+
+    assert response.json()["error"]["code"] == -32008
+    assert handler.contexts == []
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "activation",
+    [["https://ext.example/a"], "https://ext.example/a", {1}, {"https://unknown"}, {"https://ext.example/b"}],
+)
+async def test_invalid_extension_activation_returns_generic_error(activation: Any) -> None:
+    def activate(request: Request[Any, Any, Any], context: ServerCallContext) -> ServerCallContext:
+        context.state["a2a_activated_extensions"] = activation
+        return context
+
+    card = make_card()
+    card.capabilities.extensions.extend(
+        AgentExtension(uri=uri) for uri in ("https://ext.example/a", "https://ext.example/b")
+    )
+    handler = StubHandler()
+    app = Litestar(plugins=[LitestarA2A(card, handler, A2AConfig(context_builder=activate))])
+
+    async with AsyncTestClient(app=app) as client:
+        response = await client.post(
+            "/a2a", headers={"A2A-Version": "1.0", "A2A-Extensions": "https://ext.example/a"}, json=send_payload()
+        )
+
+    assert response.json()["error"]["code"] == -32603
+    assert response.json()["error"]["message"] == "Internal error"
+    assert "A2A-Extensions" not in response.headers
+    assert handler.contexts == []
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("uri", ["https://ext.example/a\r\nInjected: true", "https://ext.example/a,b"])
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_header_unsafe_extension_activation_is_rejected(uri: str, streaming: bool) -> None:
+    card = make_card()
+    card.capabilities.extensions.append(AgentExtension(uri=uri))
+
+    def activate(request: Request[Any, Any, Any], context: ServerCallContext) -> ServerCallContext:
+        if not streaming:
+            context.state["a2a_activated_extensions"] = {uri}
+        return context
+
+    class ActivatingHandler(StubHandler):
+        async def on_message_send_stream(
+            self, params: Any, context: ServerCallContext | None = None
+        ) -> AsyncGenerator[Any, None]:
+            assert context is not None
+            context.state["a2a_activated_extensions"] = {uri}
+            yield await self.on_message_send(params, context)
+
+    app = Litestar(plugins=[LitestarA2A(card, ActivatingHandler(), A2AConfig(context_builder=activate))])
+    async with AsyncTestClient(app=app) as client:
+        response = await client.post(
+            "/a2a",
+            headers={"A2A-Version": "1.0", "A2A-Extensions": uri},
+            json=send_payload("SendStreamingMessage" if streaming else "SendMessage"),
+        )
+
+    assert response.json()["error"]["code"] == -32603
+    assert "A2A-Extensions" not in response.headers
+    assert "Injected" not in response.headers
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_protocol_error_preserves_valid_extension_activation(streaming: bool) -> None:
+    uri = "https://ext.example/a"
+    card = make_card()
+    card.capabilities.extensions.append(AgentExtension(uri=uri))
+
+    class FailingHandler(StubHandler):
+        async def on_message_send(self, params: Any, context: ServerCallContext | None = None) -> Any:
+            assert context is not None
+            context.state["a2a_activated_extensions"] = {uri}
+            raise TaskNotFoundError
+
+        async def on_message_send_stream(
+            self, params: Any, context: ServerCallContext | None = None
+        ) -> AsyncGenerator[Any, None]:
+            yield await self.on_message_send(params, context)
+
+    app = Litestar(plugins=[LitestarA2A(card, FailingHandler())])
+    async with AsyncTestClient(app=app) as client:
+        response = await client.post(
+            "/a2a",
+            headers={"A2A-Version": "1.0", "A2A-Extensions": uri},
+            json=send_payload("SendStreamingMessage" if streaming else "SendMessage"),
+        )
+
+    assert response.json()["error"]["code"] == -32001
+    assert response.headers["A2A-Extensions"] == uri
+
+
+@pytest.mark.anyio
 async def test_non_ascii_version_is_rejected() -> None:
     handler = StubHandler()
     app = Litestar(plugins=[LitestarA2A(make_card(), handler)])
@@ -388,9 +545,10 @@ async def test_unsupported_versions_never_invoke_context_or_handler(version: str
 
 
 @pytest.mark.anyio
-async def test_context_http_exception_is_handled_by_litestar() -> None:
-    def deny(request: Request[Any, Any, Any]) -> ServerCallContext:
-        raise PermissionDeniedException(detail="workspace denied")
+@pytest.mark.parametrize("error_type", [NotAuthorizedException, PermissionDeniedException])
+async def test_context_http_exception_is_handled_by_litestar(error_type: type[Exception]) -> None:
+    async def deny(request: Request[Any, Any, Any], context: ServerCallContext) -> ServerCallContext:
+        raise error_type()
 
     handler = StubHandler()
     app = Litestar(plugins=[LitestarA2A(make_card(), handler, A2AConfig(context_builder=deny))])
@@ -398,7 +556,7 @@ async def test_context_http_exception_is_handled_by_litestar() -> None:
     async with AsyncTestClient(app=app) as client:
         response = await client.post("/a2a", headers={"A2A-Version": "1.0"}, json=send_payload())
 
-    assert response.status_code == 403
+    assert response.status_code == (401 if error_type is NotAuthorizedException else 403)
     assert handler.contexts == []
 
 
@@ -495,7 +653,7 @@ async def test_anonymous_mapping_principal_on_scope_is_not_authenticated() -> No
 
 @pytest.mark.anyio
 async def test_version_check_reads_the_request_header_with_a_bare_context_builder() -> None:
-    config = A2AConfig(context_builder=lambda _request: ServerCallContext())
+    config = A2AConfig(context_builder=lambda _request, _context: ServerCallContext())
     app = Litestar(plugins=[LitestarA2A(make_card(), StubHandler(), config)])
 
     async with AsyncTestClient(app=app) as client:

@@ -36,7 +36,13 @@ from a2a.types import (
     TaskPushNotificationConfig,
 )
 from a2a.utils import constants, proto_utils
-from a2a.utils.errors import A2AError, TaskNotFoundError, UnsupportedOperationError, VersionNotSupportedError
+from a2a.utils.errors import (
+    A2AError,
+    ExtensionSupportRequiredError,
+    TaskNotFoundError,
+    UnsupportedOperationError,
+    VersionNotSupportedError,
+)
 from google.protobuf.json_format import MessageToDict, ParseDict  # type: ignore[import-untyped]
 from litestar import Litestar, MediaType, Request, Response, Router, get, post
 from litestar.exceptions import HTTPException, SerializationException
@@ -102,11 +108,9 @@ def _default_context_builder(request: "Request[Any, Any, Any]") -> "ServerCallCo
     scope = request.scope
     headers = dict(request.headers)
     litestar_state = scope.get("state", {})
-    tenant = scope.get("tenant") or litestar_state.get("tenant", "")
     return ServerCallContext(
         state={"auth": scope.get("auth"), "headers": headers, "litestar_state": litestar_state},
         user=_LitestarUser(scope.get("user")),
-        tenant=str(tenant),
         requested_extensions=get_requested_extensions(_header_values(request, HTTP_EXTENSION_HEADER)),
     )
 
@@ -136,9 +140,56 @@ class _JsonRpcTransport:
         "GetExtendedAgentCard": GetExtendedAgentCardRequest,
     }
 
-    def __init__(self, handler: "RequestHandler", config: "A2AConfig") -> "None":
+    def __init__(self, handler: "RequestHandler", config: "A2AConfig", agent_card: "AgentCard") -> "None":
         self.handler = handler
         self.config = config
+        self.agent_card = agent_card
+
+    def _extension_headers(self, request: "Request[Any, Any, Any]", context: "ServerCallContext") -> "dict[str, str]":
+        activated = context.state.get("a2a_activated_extensions", set())
+        if not isinstance(activated, set) or any(not isinstance(uri, str) for uri in activated):
+            msg = "Activated extensions must be a set of URI strings"
+            raise ValueError(msg)
+        if any(not uri or any(char == "," or not "!" <= char <= "~" for char in uri) for uri in activated):
+            msg = "Activated extension URI is not safe for a response header"
+            raise ValueError(msg)
+        requested = get_requested_extensions(_header_values(request, HTTP_EXTENSION_HEADER))
+        advertised = {extension.uri for extension in self.agent_card.capabilities.extensions}
+        if not activated <= requested & advertised:
+            msg = "Activated extensions must be requested and advertised"
+            raise ValueError(msg)
+        return {HTTP_EXTENSION_HEADER: ", ".join(sorted(activated))} if activated else {}
+
+    async def _build_context(
+        self, request: "Request[Any, Any, Any]", params: "Any", method: "str", request_id: "str | int | float | None"
+    ) -> "ServerCallContext":
+        context = _default_context_builder(request)
+        context.tenant = getattr(params, "tenant", "")
+        context.state["method"] = method
+        context.state["request_id"] = request_id
+        requested = set(context.requested_extensions)
+        if self.config.context_builder is not None:
+            result = self.config.context_builder(request, context)
+            context = await result if isawaitable(result) else result
+        required = {extension.uri for extension in self.agent_card.capabilities.extensions if extension.required}
+        if not required <= requested:
+            raise ExtensionSupportRequiredError
+        self._extension_headers(request, context)
+        return context
+
+    def _response(
+        self,
+        request: "Request[Any, Any, Any]",
+        payload: "dict[str, Any]",
+        context: "ServerCallContext | None",
+    ) -> "Response[Any]":
+        try:
+            headers = self._extension_headers(request, context) if context is not None else {}
+        except ValueError:
+            logger.exception("Invalid A2A extension activation")
+            payload = self._error(payload["id"], InternalError())
+            headers = {}
+        return Response(content=payload, media_type=MediaType.JSON, headers=headers)
 
     @staticmethod
     def _error(
@@ -159,6 +210,7 @@ class _JsonRpcTransport:
 
     async def handle(self, request: "Request[Any, Any, Any]") -> "dict[str, Any] | Response[Any]":  # noqa: PLR0911
         request_id: str | int | float | None = None
+        context: ServerCallContext | None = None
         try:
             try:
                 body = await request.json()
@@ -194,21 +246,18 @@ class _JsonRpcTransport:
             except Exception as exc:  # noqa: BLE001
                 return self._error(request_id, InvalidParamsError(data=str(exc)))
 
-            context = (self.config.context_builder or _default_context_builder)(request)
-            context.tenant = getattr(params, "tenant", "") or context.tenant
-            context.state["method"] = method
-            context.state["request_id"] = request_id
+            context = await self._build_context(request, params, method, request_id)
             if method in ("SendStreamingMessage", "SubscribeToTask"):
-                return await self._stream(method, params, context, request_id)
+                return await self._stream(request, method, params, context, request_id)
             result = await self._dispatch(method, params, context)
-            return _success_response(request_id, result)
+            return self._response(request, _success_response(request_id, result), context)
         except A2AError as exc:
-            return self._error(request_id, exc)
+            return self._response(request, self._error(request_id, exc), context)
         except HTTPException:
             raise
         except Exception:
             logger.exception("Unhandled A2A JSON-RPC error")
-            return self._error(request_id, InternalError())
+            return self._response(request, self._error(request_id, InternalError()), context)
 
     async def _dispatch(  # noqa: PLR0911
         self, method: "str", params: "Any", context: "ServerCallContext"
@@ -248,7 +297,12 @@ class _JsonRpcTransport:
         raise UnsupportedOperationError(message=f"Method {method} is not supported.")
 
     async def _stream(
-        self, method: "str", params: "Any", context: "ServerCallContext", request_id: "str | int | float | None"
+        self,
+        request: "Request[Any, Any, Any]",
+        method: "str",
+        params: "Any",
+        context: "ServerCallContext",
+        request_id: "str | int | float | None",
     ) -> "ServerSentEvent":
         stream = (
             self.handler.on_message_send_stream(params, context)
@@ -260,6 +314,11 @@ class _JsonRpcTransport:
         except StopAsyncIteration:
             first = None
         except Exception:
+            await stream.aclose()
+            raise
+        try:
+            headers = self._extension_headers(request, context)
+        except ValueError:
             await stream.aclose()
             raise
 
@@ -281,7 +340,7 @@ class _JsonRpcTransport:
             finally:
                 await stream.aclose()
 
-        return ServerSentEvent(events())
+        return ServerSentEvent(events(), headers=headers)
 
 
 class LitestarA2A(InitPluginProtocol):
@@ -310,7 +369,7 @@ class LitestarA2A(InitPluginProtocol):
             msg = f"A2A route collision: {', '.join(sorted(collisions))}"
             raise ValueError(msg)
 
-        transport = _JsonRpcTransport(self.request_handler, self.config)
+        transport = _JsonRpcTransport(self.request_handler, self.config, self.agent_card)
         card_body = to_json(_message_to_dict(self.agent_card), as_bytes=True)
         card_etag = f'"{hashlib.sha256(card_body).hexdigest()}"'
         card_headers = {"ETag": card_etag, "Cache-Control": f"public, max-age={self.config.agent_card_max_age}"}
