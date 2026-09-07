@@ -20,7 +20,6 @@ class A2AConfig:
     guards: "Sequence[Guard]" = ()
     route_opt: dict[str, Any] = field(default_factory=dict)
     context_builder: "Callable[[Request[Any, Any, Any]], ServerCallContext] | None" = None
-    enable_v0_3_compat: bool = False
     include_in_schema: bool = False
     agent_card_max_age: int = 300
 

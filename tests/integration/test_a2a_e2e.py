@@ -322,7 +322,7 @@ async def test_handler_exception_maps_to_internal_error() -> None:
 
     envelope = response.json()
     assert envelope["error"]["code"] == build_error_response(1, InternalError())["error"]["code"]
-    assert "boom" in envelope["error"]["message"]
+    assert "boom" not in response.text
     assert "Traceback" not in response.text
 
 
