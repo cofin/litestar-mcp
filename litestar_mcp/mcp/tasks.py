@@ -282,10 +282,6 @@ class MCPTaskStore:
         return f"mcp-task:{task_id}"
 
 
-# Transitional source alias; the wire protocol has no legacy task surface.
-InMemoryTaskStore = MCPTaskStore
-
-
 def _encode_record(record: TaskRecord) -> bytes:
     payload = record.to_dict()
     payload["ownerId"] = record.owner_id

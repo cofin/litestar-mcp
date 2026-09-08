@@ -8,8 +8,8 @@ from litestar import Litestar, get
 from litestar_mcp.core.jsonrpc import INVALID_PARAMS, JSONRPCErrorException
 from litestar_mcp.mcp.config import MCPConfig
 from litestar_mcp.mcp.registry import PromptRegistration
-from litestar_mcp.mcp.service import MCPHandlerService, RequestContext
-from litestar_mcp.mcp.tasks import InMemoryTaskStore
+from litestar_mcp.mcp.service import MCPHandlerService, MCPRequestContext
+from litestar_mcp.mcp.tasks import MCPTaskStore
 
 # Using unit marker for these tests
 pytestmark = pytest.mark.unit
@@ -22,9 +22,9 @@ def dummy_app() -> "Litestar":
 
 
 @pytest.fixture
-def request_context() -> "RequestContext":
-    """Mock RequestContext."""
-    return RequestContext(
+def request_context() -> "MCPRequestContext":
+    """Mock MCPRequestContext."""
+    return MCPRequestContext(
         client_id="test-client-id",
         owner_id="test-owner-id",
         request=None,  # Or a Mock request if needed
@@ -38,7 +38,7 @@ def basic_config() -> "MCPConfig":
 
 @pytest.mark.asyncio
 async def test_server_discover_returns_capabilities(
-    dummy_app: "Litestar", request_context: "RequestContext", basic_config: "MCPConfig"
+    dummy_app: "Litestar", request_context: "MCPRequestContext", basic_config: "MCPConfig"
 ) -> "None":
     service = MCPHandlerService(
         config=basic_config,
@@ -58,7 +58,7 @@ async def test_server_discover_returns_capabilities(
 
 @pytest.mark.asyncio
 async def test_server_discover_returns_configured_instructions(
-    dummy_app: "Litestar", request_context: "RequestContext"
+    dummy_app: "Litestar", request_context: "MCPRequestContext"
 ) -> "None":
     service = MCPHandlerService(
         config=MCPConfig(name="Test Server", instructions="Use the audited workflow."),
@@ -76,7 +76,7 @@ async def test_server_discover_returns_configured_instructions(
 
 @pytest.mark.asyncio
 async def test_server_discover_with_prompts_and_tasks(
-    dummy_app: "Litestar", request_context: "RequestContext"
+    dummy_app: "Litestar", request_context: "MCPRequestContext"
 ) -> "None":
     config = MCPConfig(name="Test Server", tasks=True)
     prompt_reg = PromptRegistration(name="test_prompt", fn=lambda: "hello")
@@ -87,7 +87,7 @@ async def test_server_discover_with_prompts_and_tasks(
         discovered_prompts={"test_prompt": prompt_reg},
         app_ref=dummy_app,
         registry=None,
-        task_store=InMemoryTaskStore(),
+        task_store=MCPTaskStore(),
     )
 
     result = await service.server_discover({}, request_context)
@@ -97,7 +97,7 @@ async def test_server_discover_with_prompts_and_tasks(
 
 @pytest.mark.asyncio
 async def test_tools_list(
-    dummy_app: "Litestar", request_context: "RequestContext", basic_config: "MCPConfig"
+    dummy_app: "Litestar", request_context: "MCPRequestContext", basic_config: "MCPConfig"
 ) -> "None":
     # Set up a real handler for schema generation tests
     @get("/tool1", sync_to_thread=False)
@@ -127,7 +127,7 @@ async def test_tools_list(
 
 
 @pytest.mark.asyncio
-async def test_tools_list_pagination(dummy_app: "Litestar", request_context: "RequestContext") -> "None":
+async def test_tools_list_pagination(dummy_app: "Litestar", request_context: "MCPRequestContext") -> "None":
     @get("/t1", sync_to_thread=False)
     def t1() -> "str":
         return ""
@@ -170,7 +170,7 @@ async def test_tools_list_pagination(dummy_app: "Litestar", request_context: "Re
 
 @pytest.mark.asyncio
 async def test_tools_call_success(
-    dummy_app: "Litestar", request_context: "RequestContext", basic_config: "MCPConfig"
+    dummy_app: "Litestar", request_context: "MCPRequestContext", basic_config: "MCPConfig"
 ) -> "None":
     called_with: dict[str, Any] = {}
 
@@ -202,7 +202,7 @@ async def test_tools_call_success(
 
 @pytest.mark.asyncio
 async def test_tools_call_invalid_arguments(
-    dummy_app: "Litestar", request_context: "RequestContext", basic_config: "MCPConfig"
+    dummy_app: "Litestar", request_context: "MCPRequestContext", basic_config: "MCPConfig"
 ) -> "None":
     @get("/tool", sync_to_thread=False)
     def my_tool(x: "int") -> "str":
@@ -230,7 +230,7 @@ async def test_tools_call_invalid_arguments(
 
 @pytest.mark.asyncio
 async def test_tools_call_missing_name(
-    dummy_app: "Litestar", request_context: "RequestContext", basic_config: "MCPConfig"
+    dummy_app: "Litestar", request_context: "MCPRequestContext", basic_config: "MCPConfig"
 ) -> "None":
     service = MCPHandlerService(
         config=basic_config,
@@ -247,7 +247,7 @@ async def test_tools_call_missing_name(
 
 @pytest.mark.asyncio
 async def test_tools_call_tool_not_found(
-    dummy_app: "Litestar", request_context: "RequestContext", basic_config: "MCPConfig"
+    dummy_app: "Litestar", request_context: "MCPRequestContext", basic_config: "MCPConfig"
 ) -> "None":
     service = MCPHandlerService(
         config=basic_config,
@@ -264,7 +264,7 @@ async def test_tools_call_tool_not_found(
 
 @pytest.mark.asyncio
 async def test_prompts_list_and_get(
-    dummy_app: "Litestar", request_context: "RequestContext", basic_config: "MCPConfig"
+    dummy_app: "Litestar", request_context: "MCPRequestContext", basic_config: "MCPConfig"
 ) -> "None":
     def dummy_prompt_fn(arg1: "str") -> "str":
         return f"Prompt: {arg1}"
@@ -310,7 +310,7 @@ async def test_prompts_list_and_get(
 
 
 @pytest.mark.asyncio
-async def test_resources_list_and_read(request_context: "RequestContext", basic_config: "MCPConfig") -> "None":
+async def test_resources_list_and_read(request_context: "MCPRequestContext", basic_config: "MCPConfig") -> "None":
     @get("/resource1", sync_to_thread=False)
     def resource_one() -> "dict[str, str]":
         return {"data": "my-resource-data"}

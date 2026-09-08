@@ -21,6 +21,7 @@ from litestar.status_codes import (
 from litestar_mcp.core._streaming import StreamCleanupMiddleware, start_stream
 from litestar_mcp.core.jsonrpc import (
     INVALID_PARAMS,
+    INVALID_REQUEST,
     METHOD_NOT_FOUND,
     PARSE_ERROR,
     JSONRPCError,
@@ -480,6 +481,19 @@ class MCPController(Controller):
             raw = from_json(await request.body())
         except (SerializationException, ValueError):
             return _error(None, code=PARSE_ERROR, message="Parse error", status_code=HTTP_400_BAD_REQUEST)
+        if isinstance(raw, dict):
+            request_id = raw.get("id")
+            if not (
+                isinstance(request_id, str)
+                or type(request_id) is int
+                or (isinstance(request_id, float) and request_id.is_integer())
+            ):
+                return _error(
+                    None,
+                    code=INVALID_REQUEST,
+                    message="MCP request id must be a string or integer",
+                    status_code=HTTP_400_BAD_REQUEST,
+                )
         try:
             rpc_request = parse_request(raw)
         except JSONRPCErrorException as exc:

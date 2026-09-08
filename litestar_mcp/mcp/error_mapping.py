@@ -3,7 +3,7 @@
 Error contract. The JSON-RPC ``error.code`` reflects the *primitive-
 level* error class defined by the MCP spec, **not** the handler's HTTP status:
 
-* ``resources/read`` unknown URI -> ``-32002`` (spec-mandated "Resource not found").
+* ``resources/read`` unknown URI -> ``-32602`` Invalid params ("Resource not found").
 * ``resources/read`` handler error (any status) -> ``-32603`` Internal error.
 * ``prompts/get`` unknown name / missing / invalid args -> ``-32602`` Invalid params
   (raised pre-execution in ``routes.py``).
@@ -17,9 +17,8 @@ server minting non-standard JSON-RPC codes. MCP defines no codes for
 401/403/409/429, so none are invented here (this deliberately supersedes
 status->code mapping proposals).
 
-RESOURCE_NOT_FOUND is the Spec-mandated resources/read "Resource not found" code
-(MCP 2025-06-18, Resources §Error Handling). Note: future spec updates may migrate
-this to -32602 (Invalid params).
+RESOURCE_NOT_FOUND follows MCP 2026-07-28, Resources, Error Handling:
+https://modelcontextprotocol.io/specification/2026-07-28/server/resources#error-handling
 """
 
 from typing import Any

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from litestar_mcp.mcp.service import RequestContext
+    from litestar_mcp.mcp.service import MCPRequestContext
 
 _logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ class JSONRPCRequest:
 
 
 # Type alias for method handlers
-MethodHandler = Callable[[dict[str, Any], "RequestContext"], Coroutine[Any, Any, dict[str, Any]]]
+MethodHandler = Callable[[dict[str, Any], "MCPRequestContext"], Coroutine[Any, Any, dict[str, Any]]]
 
 
 class JSONRPCRouter:
@@ -90,7 +90,9 @@ class JSONRPCRouter:
         """
         self._methods[method] = handler
 
-    async def dispatch(self, request: "JSONRPCRequest", request_context: "RequestContext") -> "dict[str, Any] | None":
+    async def dispatch(
+        self, request: "JSONRPCRequest", request_context: "MCPRequestContext"
+    ) -> "dict[str, Any] | None":
         """Dispatch a JSON-RPC request to the appropriate handler.
 
         Args:

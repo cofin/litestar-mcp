@@ -550,25 +550,25 @@ class MCP:
 
     def run(
         self,
-        transport: "Literal['sse', 'stdio']" = "sse",
+        transport: "Literal['streamable-http', 'stdio']" = "streamable-http",
         **kwargs: "Any",
     ) -> "None":
         """Run the MCP server using the specified transport.
 
         Args:
-            transport: The transport to use ("sse" or "stdio").
+            transport: The transport to use ("streamable-http" or "stdio").
             **kwargs: Arguments passed to the runner.
         """
-        if transport == "sse":
-            self._run_sse(**kwargs)
+        if transport == "streamable-http":
+            self._run_streamable_http(**kwargs)
         elif transport == "stdio":
             self._run_stdio(**kwargs)
         else:
             msg = f"Unsupported transport: {transport}"  # type: ignore[unreachable]
             raise ValueError(msg)
 
-    def _run_sse(self, **kwargs: "Any") -> "None":
-        """Run the server using Server-Sent Events (SSE) transport."""
+    def _run_streamable_http(self, **kwargs: "Any") -> "None":
+        """Run the Streamable HTTP server through Litestar's CLI."""
         args = ["run", *_convert_kwargs_to_flags(kwargs)]
         self._execute_cli(args)
 

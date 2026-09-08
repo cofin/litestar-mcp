@@ -14,6 +14,5 @@ def add(a: "int", b: "int") -> "int":
 app = mcp.app
 
 if __name__ == "__main__":
-    # Boot the server using the default Server-Sent Events (SSE) transport
-    mcp.run(transport="sse", port=8000)
+    mcp.run(transport="streamable-http", port=8000)
 # [end-run]

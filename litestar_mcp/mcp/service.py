@@ -113,8 +113,6 @@ class MCPRequestContext:
         await self.progress_reporter(params)
 
 
-RequestContext = MCPRequestContext
-
 _request_context: contextvars.ContextVar[MCPRequestContext | None] = contextvars.ContextVar(
     "litestar_mcp_request_context", default=None
 )
@@ -419,7 +417,7 @@ class MCPHandlerService:
         tool_name: "str",
         handler: "BaseRouteHandler",
         tool_args: "dict[str, Any]",
-        context: "RequestContext",
+        context: "MCPRequestContext",
     ) -> "dict[str, Any]":
         validation_errors = _validate_tool_arguments(handler, tool_args)
         if validation_errors:
@@ -465,7 +463,7 @@ class MCPHandlerService:
         tool_name: "str",
         handler: "BaseRouteHandler",
         tool_args: "dict[str, Any]",
-        context: "RequestContext",
+        context: "MCPRequestContext",
     ) -> "None":
         if self.task_store is None:
             return
@@ -494,7 +492,7 @@ class MCPHandlerService:
                 status_message=str(exc),
             )
 
-    async def server_discover(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
+    async def server_discover(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
         """Describe the modern protocol versions, capabilities, and extensions."""
         capabilities: dict[str, Any] = {
             "tools": {"listChanged": True},
@@ -512,7 +510,7 @@ class MCPHandlerService:
             result["instructions"] = self.config.instructions
         return result
 
-    async def tools_list(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
+    async def tools_list(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
         tools = []
         for name, handler in sorted(self.discovered_tools.items()):
             handler_tags = set(getattr(handler, "tags", None) or [])
@@ -546,7 +544,7 @@ class MCPHandlerService:
             result["nextCursor"] = next_cursor
         return result
 
-    async def tools_call(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
+    async def tools_call(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
         tool_name = params.get("name")
         if not tool_name:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'name'"))
@@ -622,7 +620,7 @@ class MCPHandlerService:
         await task_store.attach_runner(record.task_id, background_task)
         return {"resultType": "task", **record.to_dict()}
 
-    async def resources_list(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
+    async def resources_list(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
         resources = [
             {
                 "uri": "litestar://openapi",
@@ -660,7 +658,9 @@ class MCPHandlerService:
             result["nextCursor"] = next_cursor
         return result
 
-    async def resources_templates_list(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
+    async def resources_templates_list(
+        self, params: "dict[str, Any]", context: "MCPRequestContext"
+    ) -> "dict[str, Any]":
         if self.registry is None:
             return {"resourceTemplates": []}
         templates = []
@@ -692,7 +692,7 @@ class MCPHandlerService:
             result["nextCursor"] = next_cursor
         return result
 
-    async def resources_read(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
+    async def resources_read(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
         uri = params.get("uri", "")
         if not isinstance(uri, str) or not uri:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=f"Invalid resource URI: {uri}"))
@@ -794,10 +794,10 @@ class MCPHandlerService:
 
         raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
 
-    async def completion_complete(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
+    async def completion_complete(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
         return {"completion": {"values": [], "total": 0, "hasMore": False}}
 
-    async def prompts_list(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
+    async def prompts_list(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
         prompts = [
             render_prompt_entry(registration, self.config)
             for registration in self.discovered_prompts.values()
@@ -812,7 +812,7 @@ class MCPHandlerService:
             result["nextCursor"] = next_cursor
         return result
 
-    async def prompts_get(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
+    async def prompts_get(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
         prompt_name = params.get("name")
         if not prompt_name:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'name'"))
@@ -935,7 +935,7 @@ class MCPHandlerService:
 
         raise JSONRPCErrorException(JSONRPCError(code=INTERNAL_ERROR, message=f"Prompt has no callable: {prompt_name}"))
 
-    async def tasks_get(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
+    async def tasks_get(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
         _require_tasks_capability(context)
         if self.task_store is None:
             raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message="Task store not configured"))
@@ -948,7 +948,7 @@ class MCPHandlerService:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
         return record.to_dict()
 
-    async def tasks_update(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
+    async def tasks_update(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
         _require_tasks_capability(context)
         if self.task_store is None:
             raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message="Task store not configured"))
@@ -966,7 +966,7 @@ class MCPHandlerService:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
         return {}
 
-    async def tasks_cancel(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
+    async def tasks_cancel(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
         _require_tasks_capability(context)
         if self.task_store is None:
             raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message="Task store not configured"))
@@ -980,7 +980,7 @@ class MCPHandlerService:
         return {}
 
 
-def _require_tasks_capability(context: "RequestContext") -> None:
+def _require_tasks_capability(context: "MCPRequestContext") -> None:
     extensions = (context.client_capabilities or {}).get("extensions")
     if not isinstance(extensions, dict) or TASKS_EXTENSION not in extensions:
         raise JSONRPCErrorException(
