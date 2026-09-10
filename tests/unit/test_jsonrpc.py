@@ -406,9 +406,16 @@ class TestErrorHandling:
 
 class TestNotifications:
     def test_notifications_initialized_is_removed(self, client: "TestClient[Any]") -> "None":
-        body = {"jsonrpc": "2.0", "method": "notifications/initialized"}
-        resp = client.post("/mcp", json=body)
+        resp = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "notifications/initialized"})
         assert resp.status_code == 404
+        assert resp.json()["error"]["code"] == METHOD_NOT_FOUND
+
+    def test_id_less_notification_envelope_is_rejected_before_dispatch(self, client: "TestClient[Any]") -> "None":
+        resp = client.post("/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"})
+        assert resp.status_code == 400
+        body = resp.json()
+        assert body["id"] is None
+        assert body["error"]["code"] == INVALID_REQUEST
 
 
 # ---------------------------------------------------------------------------

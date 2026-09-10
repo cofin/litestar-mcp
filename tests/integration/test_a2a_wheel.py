@@ -4,11 +4,23 @@ from pathlib import Path
 
 import pytest
 
-_BASE_PROBE = """import importlib.util
+_COMMON_PROBE = """import importlib.util
+from importlib.metadata import distributions
+from pathlib import Path
 import sys
 
 import litestar_mcp
 import litestar_mcp.mcp.bridge
+
+assert Path(litestar_mcp.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
+for name in ("starlette", "sse_starlette", "fastapi", "uvicorn"):
+    assert importlib.util.find_spec(name) is None, name
+    assert not any(module == name or module.startswith(name + ".") for module in sys.modules), name
+installed = {distribution.metadata["Name"].lower().replace("_", "-") for distribution in distributions()}
+assert not installed.intersection({"starlette", "sse-starlette", "fastapi", "uvicorn"}), installed
+"""
+
+_BASE_PROBE = """
 from litestar_mcp.core.exceptions import MissingDependencyError
 
 assert importlib.util.find_spec("a2a") is None
@@ -49,18 +61,14 @@ def test_clean_wheel_base_and_a2a_extra(tmp_path: Path) -> None:
     base_python = base_environment / "bin" / "python"
     _run(uv, "pip", "install", "--python", str(base_python), str(wheel), cwd=repository)
     probe = tmp_path / "probe_base.py"
-    probe.write_text(_BASE_PROBE)
-    _run(str(base_python), str(probe), cwd=repository)
+    probe.write_text(_COMMON_PROBE + _BASE_PROBE)
+    _run(str(base_python), "-I", str(probe), cwd=tmp_path)
 
     a2a_environment = tmp_path / "a2a"
     _run(uv, "venv", str(a2a_environment), cwd=repository)
     a2a_python = a2a_environment / "bin" / "python"
     _run(uv, "pip", "install", "--python", str(a2a_python), f"{wheel}[a2a]", cwd=repository)
-    _run(
-        str(a2a_python),
-        "-c",
-        "import importlib.util; from litestar_mcp.a2a import A2AConfig, LitestarA2A; "
-        'assert importlib.util.find_spec("starlette") is None; '
-        'assert importlib.util.find_spec("sse_starlette") is None',
-        cwd=repository,
-    )
+    snippet = repository / "docs" / "examples" / "snippets" / "a2a_plugin.py"
+    a2a_probe = tmp_path / "probe_a2a.py"
+    a2a_probe.write_text(snippet.read_text() + "\napp = build()\nassert isinstance(app, Litestar)\n" + _COMMON_PROBE)
+    _run(str(a2a_python), "-I", str(a2a_probe), cwd=tmp_path)

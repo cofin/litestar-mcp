@@ -76,7 +76,9 @@ Running the Server
 
 The ``MCP`` class provides a ``.run()`` method to programmatically start the server.
 
-By default, the server runs using the Server-Sent Events (SSE) transport by programmatically executing the standard Litestar CLI command.
+The default ``transport="streamable-http"`` starts the modern MCP HTTP
+endpoint through the standard Litestar CLI. The old ``"sse"`` selector is
+removed; SSE remains the response format for progress and subscriptions.
 
 .. literalinclude:: /examples/snippets/standalone_run.py
     :language: python
@@ -86,14 +88,18 @@ By default, the server runs using the Server-Sent Events (SSE) transport by prog
 Exposing the Application
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-Because the SSE server is executed via the Litestar CLI (which starts uvicorn in subprocesses for worker scaling and reload features), the application instance *must* be importable from disk.
+Because the HTTP server is executed via the Litestar CLI, the application
+instance must be importable from disk. Install and configure your chosen ASGI
+server separately; Uvicorn is not a required runtime dependency of this package.
 
 You **must** expose the underlying Litestar application instance globally (e.g. ``app = mcp.app``) so that the CLI and worker processes can discover it. If the import path cannot be resolved, a ``RuntimeError`` will be raised.
 
 Passing CLI Arguments
 ~~~~~~~~~~~~~~~~~~~~~
 
-Any keyword arguments passed to ``mcp.run()`` when using SSE transport are mapped and forwarded directly to the corresponding Litestar CLI options (e.g., ``port`` becomes ``--port``, ``reload`` becomes ``--reload``).
+Keyword arguments passed to ``mcp.run()`` with ``transport="streamable-http"``
+are forwarded to the corresponding Litestar CLI options (for example,
+``port`` becomes ``--port`` and ``reload`` becomes ``--reload``).
 
 Stdio Transport
 ~~~~~~~~~~~~~~~
@@ -105,7 +111,13 @@ To run the server over standard input/output (Stdio) for integration with local 
     :start-after: # [start-run-stdio]
     :end-before: # [end-run-stdio]
 
-When running over Stdio, the server manually drives the ASGI application's lifespan, ensuring that all dynamic startup and shutdown hooks registered by other plugins execute correctly.
+Stdio enters native ``Litestar.lifespan()`` so application and plugin lifecycle
+resources use Litestar's ordering. ``run_stdio_async(shutdown_timeout=5.0)``
+bounds in-process request cleanup and post-startup application shutdown.
+If that shutdown fails or times out, the original bridge/body error or
+cancellation is preserved. Native startup unwind is outside this timeout;
+application hooks must bound and shield their own rollback where needed.
+``sse_read_timeout`` remains a useful stream read timeout, independent of cleanup.
 
 Stdio does not have an HTTP header layer, so do not tunnel bearer headers through stdin. Resolve credentials from the host environment, operating-system profile, or another local mechanism, then pass the resulting identity with :class:`~litestar_mcp.MCPStdioContext`::
 
@@ -122,4 +134,10 @@ Stdio does not have an HTTP header layer, so do not tunnel bearer headers throug
 
     mcp.run(transport="stdio", stdio_context=stdio_context)
 
-Tools, resources, prompts, guards, and task execution receive these values through the synthetic Litestar request scope, so existing handler code can continue reading ``request.user``, ``request.scope["auth"]``, ``request.scope["session"]``, and ``request.scope["state"]``. Task ownership uses ``owner_id`` when set, then ``auth["sub"]``, then ``user.id`` / ``user.sub``, and otherwise falls back to ``"stdio"``.
+Tools, resources, prompts, guards, and task execution receive these values
+through the synthetic Litestar request scope. ``session`` is a Litestar
+application session, not MCP transport-session state. Task ownership uses an
+explicit ``owner_id`` when set, otherwise ``user:<subject>`` from
+``auth["sub"]`` or ``user.id`` / ``user.sub``. Anonymous requests have no
+owner ID; there is no shared ``"stdio"`` owner. Require authenticated identity
+for protected tasks instead of treating anonymous task handles as authorization.

@@ -58,6 +58,13 @@ Enable the opt-in ``io.modelcontextprotocol/tasks`` extension by passing an
 :class:`~litestar_mcp.mcp.config.MCPTaskConfig`. Task records use a Litestar
 Store; the default in-memory Store is intended for development.
 
+A shared Store persists records but does not distribute the task runner,
+input queue or cancellation queue. Applications must coordinate worker
+ownership and recovery for tasks that cross processes or survive restarts.
+Require authentication on every protected Tasks operation; an owner-aware
+Store does not authenticate anonymous callers. See :doc:`security` for the
+task-handle authorization boundary.
+
 .. literalinclude:: /examples/snippets/configuration_tasks.py
     :language: python
     :caption: ``docs/examples/snippets/configuration_tasks.py``
@@ -116,6 +123,14 @@ Configuration Options
     * - ``subscription_channels``
       - ``None``
       - Optional configured Litestar ``ChannelsPlugin`` for cross-worker fan-out.
+    * - ``stream_queue_capacity``
+      - ``256``
+      - Bounds subscription and request-progress queues. Progress applies
+        backpressure; slow subscription consumers are completed and disconnected.
+    * - ``stream_cleanup_timeout``
+      - ``5.0``
+      - Positive finite seconds allowed for cooperative response cleanup;
+        expiry is logged as incomplete cleanup.
     * - ``before_tool_call``
       - ``None``
       - Optional callback invoked once before each ``tools/call`` dispatch.

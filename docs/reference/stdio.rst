@@ -9,8 +9,6 @@ In-process stdio
 .. autoclass:: MCPStdioContext
    :members:
 
-.. autofunction:: app_lifespan
-
 .. autofunction:: run_stdio_async
 
 .. autofunction:: run_stdio

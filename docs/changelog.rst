@@ -11,6 +11,38 @@ Recent Updates
 
 .. changelog:: 0.14.0
 
+    .. change:: require modern MCP requests and canonical APIs
+        :type: breaking
+
+        ``MCP.run()`` now defaults to ``transport="streamable-http"`` and
+        rejects the removed ``"sse"`` selector. Use ``MCPRequestContext``
+        and ``MCPTaskStore`` instead of the removed MCP ``RequestContext``
+        and ``InMemoryTaskStore`` aliases. Missing, null, boolean, container
+        and fractional request IDs are rejected before tool dependency
+        resolution, execution or stream allocation. Current task,
+        subscription, cache and application-session settings remain available.
+
+    .. change:: make the A2A 1.0 and context contract explicit
+        :type: breaking
+
+        Require A2A 1.0 version headers and method/model shapes, with no 0.3
+        conversion fallback. ``A2AConfig.context_builder`` now receives
+        ``(request, context)`` and supports synchronous or asynchronous
+        authorization without overwriting the returned tenant or state.
+        Extension activation must precede the first result or stream event.
+        Notifications are declined with HTTP 204 without executing handlers;
+        explicit null IDs remain correlated A2A requests.
+
+    .. change:: close streamed work and use native stdio lifespan
+        :type: bugfix
+
+        Request progress and A2A responses use bounded channels with
+        backpressure and producer-owned iterator cleanup. Configurable
+        cleanup deadlines report incomplete cancellation. Stdio enters
+        native ``Litestar.lifespan()``; the public manual ``app_lifespan``
+        helper is removed. Its shutdown timeout applies after successful
+        startup; application hooks own bounded, shielded startup unwind.
+
     .. change:: add Litestar-native in-process stdio serving
         :type: feature
 
@@ -39,7 +71,7 @@ Recent Updates
         official A2A 1.0 SDK. Litestar owns HTTP, JSON, SSE, guards,
         middleware, and disconnect cleanup; the optional extra uses bare
         ``a2a-sdk``. The RPC route is exempt from CSRF, hidden from OpenAPI
-        unless ``A2AConfig.include_in_schema`` is set, honours the request's
+        unless ``A2AConfig.include_in_schema`` is set, validates the request's
         ``A2A-Version`` header regardless of the configured context builder,
         reports ``scope["user"]`` objects that carry ``is_authenticated`` as
         such, and serves the agent card with ``ETag`` and ``Cache-Control``.
