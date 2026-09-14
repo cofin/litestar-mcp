@@ -302,7 +302,7 @@ class _StreamableHTTPBridgeClient:
                             # authentication failure) is a transport error.
                             try:
                                 payload = from_json(await response.aread())
-                            except (SerializationException, ValueError):
+                            except SerializationException:
                                 response.raise_for_status()
                                 raise
                             if not (isinstance(payload, dict) and payload.get("jsonrpc") == "2.0"):

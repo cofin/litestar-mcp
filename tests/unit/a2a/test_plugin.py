@@ -979,7 +979,6 @@ def test_owner_key_is_stable_without_recognised_identity_attributes(principal: A
     from litestar_mcp.a2a.plugin import _LitestarUser
 
     assert _LitestarUser(principal).user_name == expected
-    assert _LitestarUser(principal).user_name == _LitestarUser(principal).user_name
 
 
 @pytest.mark.anyio

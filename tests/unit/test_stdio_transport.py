@@ -158,11 +158,13 @@ async def test_stdio_preserves_body_exception_when_shutdown_fails(
     assert caught.value is original
     assert resource_closed.is_set()
     assert shutdown_started.is_set()
+    warnings = [record for record in caplog.records if record.levelname == "WARNING"]
     if shutdown_failure == "timeout":
-        assert "Lifespan shutdown incomplete" in caplog.text
+        assert [record.getMessage() for record in warnings] == ["Lifespan shutdown incomplete after 0.02 seconds"]
     else:
-        assert "Lifespan shutdown failed after a body error" in caplog.text
-        assert "shutdown failed" in caplog.text
+        assert [record.getMessage() for record in warnings] == ["Lifespan shutdown failed after a body error"]
+        assert warnings[0].exc_info is not None
+        assert str(warnings[0].exc_info[1]) == "shutdown failed"
 
 
 @pytest.mark.anyio
