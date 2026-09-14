@@ -242,7 +242,7 @@ docs-serve: docs-clean                              ## Serve documentation local
 .PHONY: docs
 docs: docs-clean                                    ## Build documentation
 	@echo "${INFO} Building documentation... 📚"
-	@$(UV_RUN_PY310) sphinx-build -M html docs docs/_build/ -E -a -j auto -W --keep-going
+	@$(UV_RUN_PY310) sphinx-build -M html docs docs/_build/ -E -a -W --keep-going
 	@echo "${OK} Documentation built successfully"
 
 .PHONY: docs-linkcheck

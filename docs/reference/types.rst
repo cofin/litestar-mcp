@@ -9,9 +9,7 @@ This module contains type definitions for the Litestar MCP Plugin.
 MCPConfig
 ---------
 
-.. autoclass:: MCPConfig
-   :members:
-   :show-inheritance:
+:class:`MCPConfig` is documented in :doc:`config`.
 
 MCPTaskConfig
 -------------
