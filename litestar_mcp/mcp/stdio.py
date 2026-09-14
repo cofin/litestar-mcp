@@ -300,6 +300,7 @@ async def _app_lifespan(app: "Litestar", *, shutdown_timeout: "float" = 5.0) -> 
             # lifespan's wrapping group as implicit context.
             if body_error is None:
                 raise
+            _logger.warning("Lifespan shutdown failed after a body error", exc_info=True)
         finally:
             if cleanup_scope.cancel_called:
                 _logger.warning("Lifespan shutdown incomplete after %s seconds", shutdown_timeout)

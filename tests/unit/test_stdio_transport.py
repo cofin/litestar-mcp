@@ -160,6 +160,9 @@ async def test_stdio_preserves_body_exception_when_shutdown_fails(
     assert shutdown_started.is_set()
     if shutdown_failure == "timeout":
         assert "Lifespan shutdown incomplete" in caplog.text
+    else:
+        assert "Lifespan shutdown failed after a body error" in caplog.text
+        assert "shutdown failed" in caplog.text
 
 
 @pytest.mark.anyio

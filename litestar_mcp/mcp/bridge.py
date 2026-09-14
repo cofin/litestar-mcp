@@ -13,6 +13,7 @@ import httpx
 from anyio import EndOfStream, get_cancelled_exc_class
 from anyio.abc import ByteReceiveStream, ByteSendStream
 from anyio.to_thread import run_sync as run_sync_in_worker_thread
+from litestar.exceptions import SerializationException
 from litestar.status_codes import HTTP_202_ACCEPTED, HTTP_401_UNAUTHORIZED
 from typing_extensions import Self
 
@@ -301,7 +302,7 @@ class _StreamableHTTPBridgeClient:
                             # authentication failure) is a transport error.
                             try:
                                 payload = from_json(await response.aread())
-                            except ValueError:
+                            except (SerializationException, ValueError):
                                 response.raise_for_status()
                                 raise
                             if not (isinstance(payload, dict) and payload.get("jsonrpc") == "2.0"):

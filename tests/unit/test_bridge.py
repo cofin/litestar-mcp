@@ -601,3 +601,30 @@ async def test_bridge_json_http_error_without_envelope_is_fatal(monkeypatch: pyt
     lines = [json.loads(line) for line in stdout.buffer.splitlines() if line]
     assert lines[-1]["error"]["code"] == -32001
     assert "401" in lines[-1]["error"]["message"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("status", [401, 502])
+async def test_bridge_undecodable_json_error_body_reports_http_status(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    from litestar_mcp.mcp import bridge
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status, content=b"<html>not json</html>", headers={"content-type": "application/json"}, request=request
+        )
+
+    _patch_async_client(monkeypatch, handler)
+    stdout = BridgeBytesSink()
+    exit_code = await bridge.run_stdio_streamable_http_bridge(
+        ENDPOINT,
+        stdin=BridgeQueuedBytesSource(b'{"jsonrpc":"2.0","id":1,"method":"ping","params":{}}\n'),
+        stdout=stdout,
+        stderr=io.StringIO(),
+    )
+
+    assert exit_code == 1
+    lines = [json.loads(line) for line in stdout.buffer.splitlines() if line]
+    assert lines[-1]["error"]["code"] == -32001
+    assert str(status) in lines[-1]["error"]["message"]
