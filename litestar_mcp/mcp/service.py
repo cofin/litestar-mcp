@@ -113,6 +113,10 @@ class MCPRequestContext:
         await self.progress_reporter(params)
 
 
+async def _discard_progress(params: "dict[str, Any]") -> None:
+    """Drop progress reported by a tool after it was promoted to a task."""
+
+
 _request_context: contextvars.ContextVar[MCPRequestContext | None] = contextvars.ContextVar(
     "litestar_mcp_request_context", default=None
 )
@@ -617,9 +621,9 @@ class MCPHandlerService:
             return await self._execute_tool_call(tool_name, handler, tool_args, context)
         record = await task_store.create(context.owner_id)
         # The progress stream belongs to the request that returned the task record and
-        # closes with it; the background run must not report into a closed stream.
-        context.progress_token = None
-        context.progress_reporter = None
+        # closes with it; progress reported by the background run is discarded.
+        if context.progress_reporter is not None:
+            context.progress_reporter = _discard_progress
         background_task = asyncio.create_task(self._run_task(record, tool_name, handler, tool_args, context))
         await task_store.attach_runner(record.task_id, background_task)
         return {"resultType": "task", **record.to_dict()}

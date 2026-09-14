@@ -61,7 +61,7 @@ def _rpc(
 
 
 def _make_task_app(task_config: MCPTaskConfig | None = None) -> Litestar:
-    @get("/optional-task", sync_to_thread=False)
+    @get("/optional-task")
     @mcp_tool(name="optional_task", task_support="optional")
     async def optional_task(delay: float = 0.01) -> dict[str, str]:
         import asyncio
@@ -69,7 +69,7 @@ def _make_task_app(task_config: MCPTaskConfig | None = None) -> Litestar:
         await asyncio.sleep(delay)
         return {"status": "completed"}
 
-    @get("/required-task", sync_to_thread=False)
+    @get("/required-task")
     @mcp_tool(name="required_task", task_support="required")
     async def required_task(delay: float = 0.01) -> dict[str, str]:
         import asyncio
@@ -77,12 +77,12 @@ def _make_task_app(task_config: MCPTaskConfig | None = None) -> Litestar:
         await asyncio.sleep(delay)
         return {"status": "completed"}
 
-    @get("/forbidden-task", sync_to_thread=False)
+    @get("/forbidden-task")
     @mcp_tool(name="forbidden_task", task_support="forbidden")
     async def forbidden_task() -> dict[str, str]:
         return {"status": "sync"}
 
-    @get("/input-task", sync_to_thread=False)
+    @get("/input-task")
     @mcp_tool(name="input_task", task_support="optional")
     async def input_task() -> MCPInputRequiredResult | dict[str, str]:
         context = get_mcp_request_context()
@@ -256,7 +256,7 @@ def test_removed_legacy_task_methods_are_not_registered() -> None:
 
 
 def test_task_promoted_tool_ignores_request_progress_stream() -> None:
-    @get("/progress-task", sync_to_thread=False)
+    @get("/progress-task")
     @mcp_tool(name="progress_task", task_support="optional")
     async def progress_task() -> dict[str, str]:
         context = get_mcp_request_context()
@@ -295,3 +295,4 @@ def test_task_promoted_tool_ignores_request_progress_stream() -> None:
         result = _wait_for_status(client, task["taskId"], "completed")
 
     assert result["status"] == "completed"
+    assert result["result"]["isError"] is False
