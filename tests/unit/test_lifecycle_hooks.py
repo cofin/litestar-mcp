@@ -28,39 +28,23 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 
-def _ensure_session(client: "TestClient[Any]") -> "str":
-    sid = getattr(client, "_mcp_session", None)
-    if sid is not None:
-        return str(sid)
-    init = client.post(
-        "/mcp",
-        json={
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
-        },
-    )
-    sid_val = init.headers.get("mcp-session-id", "")
-    client.post(
-        "/mcp",
-        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        headers={"Mcp-Session-Id": sid_val},
-    )
-    client._mcp_session = sid_val  # type: ignore[attr-defined]
-    return str(sid_val)
+PROTOCOL_VERSION = "2026-07-28"
+_NAME_FIELDS = {"tools/call": "name", "resources/read": "uri", "prompts/get": "name"}
 
 
 def _rpc(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None) -> "dict[str, Any]":
-    body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
-    if params is not None:
-        body["params"] = params
-    headers: dict[str, str] = {}
-    if method != "initialize":
-        sid = _ensure_session(client)
-        if sid:
-            headers["Mcp-Session-Id"] = sid
-    return client.post("/mcp", json=body, headers=headers).json()  # type: ignore[no-any-return]
+    request_params = dict(params or {})
+    request_params["_meta"] = {
+        "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+        "io.modelcontextprotocol/clientCapabilities": {},
+    }
+    headers = {"MCP-Protocol-Version": PROTOCOL_VERSION, "Mcp-Method": method}
+    name_field = _NAME_FIELDS.get(method)
+    if name_field is not None:
+        headers["Mcp-Name"] = str(request_params.get(name_field, ""))
+    body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": request_params}
+    data: dict[str, Any] = client.post("/mcp", json=body, headers=headers).json()
+    return data
 
 
 def _call_tool(client: "TestClient[Any]", name: "str", args: "dict[str, Any] | None" = None) -> "dict[str, Any]":
@@ -392,11 +376,9 @@ def test_app_level_before_request_fires_via_outer_mcp_request_not_tool_dispatch(
     with TestClient(app=app) as client:
         _call_tool(client, "x")
 
-    # Hook fired at least once per /mcp HTTP request (init + tools/call +
-    # optionally notifications). No extra firings from the tool dispatch.
+    # Hook fired once for the single /mcp HTTP request, never for the tool dispatch.
     assert seen.count("app") >= 1
-    # Count must equal the number of /mcp HTTP POSTs, not 2x that.
-    mcp_request_count = 3  # initialize + notifications/initialized + tools/call
+    mcp_request_count = 1
     assert len(seen) <= mcp_request_count, f"expected ≤{mcp_request_count} firings, got {len(seen)}"
 
 
@@ -416,7 +398,7 @@ def test_app_level_after_response_fires_via_outer_mcp_request_not_tool_dispatch(
         _call_tool(client, "x")
 
     assert seen.count("app") >= 1
-    mcp_request_count = 3
+    mcp_request_count = 1
     assert len(seen) <= mcp_request_count, f"expected ≤{mcp_request_count} firings, got {len(seen)}"
 
 

@@ -9,6 +9,7 @@ from litestar.di import NamedDependency, Provide
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP
+from tests.unit.conftest import mcp_post
 
 
 def _make_app() -> "Litestar":
@@ -23,10 +24,7 @@ def test_valid_jsonrpc_body_is_decoded_via_litestar_serializer() -> "None":
     """A well-formed JSON-RPC body should decode and dispatch correctly."""
     app = _make_app()
     with TestClient(app=app) as client:
-        resp = client.post(
-            "/mcp",
-            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
-        )
+        resp = mcp_post(client, "tools/list")
     assert resp.status_code == 200
     payload = resp.json()
     assert payload["jsonrpc"] == "2.0"

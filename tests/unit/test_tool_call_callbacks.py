@@ -10,6 +10,7 @@ from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig, mcp_tool
 from litestar_mcp.mcp.executor import MCPToolErrorResult
+from tests.unit.conftest import NAME_FIELDS
 
 
 def _rpc(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None) -> "dict[str, Any]":
@@ -23,8 +24,9 @@ def _rpc(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | Non
     request_params["_meta"] = meta
     body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": request_params}
     headers = {"MCP-Protocol-Version": "2026-07-28", "Mcp-Method": method}
-    if method == "tools/call":
-        headers["Mcp-Name"] = str(request_params.get("name", ""))
+    name_field = NAME_FIELDS.get(method)
+    if name_field is not None:
+        headers["Mcp-Name"] = str(request_params.get(name_field, ""))
     return client.post("/mcp", json=body, headers=headers).json()  # type: ignore[no-any-return]
 
 

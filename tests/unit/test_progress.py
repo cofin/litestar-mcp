@@ -14,6 +14,7 @@ from litestar.testing import AsyncTestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig, get_mcp_request_context
 from litestar_mcp.core.sse import SubscriptionManager
+from tests.unit.conftest import mcp_post_async
 
 pytestmark = pytest.mark.anyio
 
@@ -33,14 +34,11 @@ async def test_progress_token_switches_the_response_to_a_stream() -> None:
     app = Litestar(route_handlers=[slow], plugins=[LitestarMCP()])
 
     async with AsyncTestClient(app=app) as client:
-        response = await client.post(
-            "/mcp",
-            json={
-                "jsonrpc": "2.0",
-                "id": 7,
-                "method": "tools/call",
-                "params": {"name": "slow", "arguments": {}, "_meta": {"progressToken": "tok-1"}},
-            },
+        response = await mcp_post_async(
+            client,
+            "tools/call",
+            {"name": "slow", "arguments": {}, "_meta": {"progressToken": "tok-1"}},
+            msg_id=7,
         )
 
     assert response.status_code == 200
@@ -60,10 +58,7 @@ async def test_without_progress_token_the_response_stays_json() -> None:
     app = Litestar(route_handlers=[plain], plugins=[LitestarMCP()])
 
     async with AsyncTestClient(app=app) as client:
-        response = await client.post(
-            "/mcp",
-            json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "plain", "arguments": {}}},
-        )
+        response = await mcp_post_async(client, "tools/call", {"name": "plain", "arguments": {}})
 
     assert response.headers["content-type"].startswith("application/json")
     assert response.json()["result"]["content"][0]["text"] == '{"ok":true}'
@@ -268,7 +263,8 @@ async def test_progress_token_without_reports_still_emits_one_final_result() -> 
 
     app = Litestar(route_handlers=[progress], plugins=[LitestarMCP()])
     async with AsyncTestClient(app=app) as client:
-        response = await client.post("/mcp", json=json.loads(_progress_body()))
+        body = json.loads(_progress_body())
+        response = await mcp_post_async(client, "tools/call", body["params"], msg_id=body["id"])
 
     assert response.headers["content-type"].startswith("text/event-stream")
     events = _events(response.text)

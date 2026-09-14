@@ -23,6 +23,7 @@ from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig
 from litestar_mcp.mcp.routes import MCP_PROTOCOL_VERSION
+from tests.unit.conftest import mcp_post
 
 pytestmark = pytest.mark.unit
 
@@ -69,42 +70,9 @@ def test_malformed_json_returns_parse_error_without_tool_invocation(constant: st
     assert calls == []
 
 
-def _initialize(client: "TestClient[Any]") -> "str":
-    init = client.post(
-        "/mcp",
-        json={
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2025-11-25",
-                "capabilities": {},
-                "clientInfo": {"name": "t"},
-            },
-        },
-    )
-    sid = init.headers.get("mcp-session-id", "")
-    client.post(
-        "/mcp",
-        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        headers={"Mcp-Session-Id": sid},
-    )
-    return str(sid)
-
-
 def _call(client: "TestClient[Any]", name: "str", arguments: "dict[str, Any]") -> "dict[str, Any]":
-    sid = _initialize(client)
-    resp = client.post(
-        "/mcp",
-        json={
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {"name": name, "arguments": arguments},
-        },
-        headers={"Mcp-Session-Id": sid},
-    )
-    return resp.json()  # type: ignore[no-any-return]
+    data: dict[str, Any] = mcp_post(client, "tools/call", {"name": name, "arguments": arguments}).json()
+    return data
 
 
 def _error_payload(result: "dict[str, Any]") -> "dict[str, Any]":

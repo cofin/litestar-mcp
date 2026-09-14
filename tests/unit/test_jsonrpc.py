@@ -17,6 +17,7 @@ from litestar_mcp.core.jsonrpc import (
     JSONRPCRequest,
     JSONRPCRouter,
 )
+from tests.unit.conftest import mcp_post
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -59,43 +60,25 @@ def client(jsonrpc_app: "Litestar") -> "TestClient[Any]":
 # ---------------------------------------------------------------------------
 
 
-def _ensure_session(client: "TestClient[Any]") -> "str":
-    sid = getattr(client, "_mcp_session", None)
-    if sid is not None:
-        return sid  # type: ignore[no-any-return]
-    init = client.post(
-        "/mcp",
-        json={
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
-        },
-    )
-    sid = init.headers.get("mcp-session-id", "")
-    client.post(
-        "/mcp",
-        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        headers={"Mcp-Session-Id": sid},
-    )
-    client._mcp_session = sid  # type: ignore[attr-defined]
-    return str(sid)
+PROTOCOL_VERSION = "2026-07-28"
+_NAME_FIELDS = {"tools/call": "name", "resources/read": "uri", "prompts/get": "name"}
 
 
 def _rpc(
     client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None, msg_id: "int" = 1
 ) -> "dict[str, Any]":
-    """Send a JSON-RPC request and return the response body."""
-    body: dict[str, Any] = {"jsonrpc": "2.0", "id": msg_id, "method": method}
-    if params is not None:
-        body["params"] = params
-    headers: dict[str, str] = {}
-    if method != "initialize":
-        sid = _ensure_session(client)
-        if sid:
-            headers["Mcp-Session-Id"] = sid
-    resp = client.post("/mcp", json=body, headers=headers)
-    return resp.json()  # type: ignore[no-any-return]
+    request_params = dict(params or {})
+    request_params["_meta"] = {
+        "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+        "io.modelcontextprotocol/clientCapabilities": {},
+    }
+    headers = {"MCP-Protocol-Version": PROTOCOL_VERSION, "Mcp-Method": method}
+    name_field = _NAME_FIELDS.get(method)
+    if name_field is not None:
+        headers["Mcp-Name"] = str(request_params.get(name_field, ""))
+    body = {"jsonrpc": "2.0", "id": msg_id, "method": method, "params": request_params}
+    data: dict[str, Any] = client.post("/mcp", json=body, headers=headers).json()
+    return data
 
 
 # ---------------------------------------------------------------------------
@@ -406,7 +389,7 @@ class TestErrorHandling:
 
 class TestNotifications:
     def test_notifications_initialized_is_removed(self, client: "TestClient[Any]") -> "None":
-        resp = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "notifications/initialized"})
+        resp = mcp_post(client, "notifications/initialized")
         assert resp.status_code == 404
         assert resp.json()["error"]["code"] == METHOD_NOT_FOUND
 

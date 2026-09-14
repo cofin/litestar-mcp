@@ -16,25 +16,16 @@ from litestar.testing import AsyncTestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig
 from litestar_mcp.utils import mcp_tool
+from tests.unit.conftest import mcp_post_async
 
 pytestmark = pytest.mark.unit
 
 
-async def _init_and_get_session(client: "AsyncTestClient[Any]") -> "str":
-    return ""
-
-
 async def _rpc(
-    client: "AsyncTestClient[Any]",
-    method: "str",
-    params: "dict[str, Any] | None" = None,
-    sid: "str | None" = None,
+    client: "AsyncTestClient[Any]", method: "str", params: "dict[str, Any] | None" = None
 ) -> "dict[str, Any]":
-    body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
-    if params is not None:
-        body["params"] = params
-    headers = {"Mcp-Session-Id": sid} if sid else {}
-    return (await client.post("/mcp", json=body, headers=headers)).json()  # type: ignore[no-any-return]
+    data: dict[str, Any] = (await mcp_post_async(client, method, params)).json()
+    return data
 
 
 @pytest.mark.anyio
@@ -48,8 +39,7 @@ async def test_scoped_tool_not_gated_by_inline_check() -> "None":
 
     app = Litestar(route_handlers=[handler], plugins=[LitestarMCP(MCPConfig())])
     async with AsyncTestClient(app=app) as client:
-        sid = await _init_and_get_session(client)
-        resp = await _rpc(client, "tools/call", {"name": "t", "arguments": {}}, sid=sid)
+        resp = await _rpc(client, "tools/call", {"name": "t", "arguments": {}})
         assert "result" in resp, f"expected success, got {resp}"
         assert resp["result"].get("isError") is not True, resp
 
@@ -65,8 +55,7 @@ async def test_scoped_tool_surfaces_annotations_scopes_on_tools_list() -> "None"
 
     app = Litestar(route_handlers=[handler], plugins=[LitestarMCP(MCPConfig())])
     async with AsyncTestClient(app=app) as client:
-        sid = await _init_and_get_session(client)
-        resp = await _rpc(client, "tools/list", sid=sid)
+        resp = await _rpc(client, "tools/list")
         tool = next(t for t in resp["result"]["tools"] if t["name"] == "t")
         assert tool["annotations"]["scopes"] == ["read:foo", "write:foo"]
 
@@ -86,8 +75,7 @@ async def test_explicit_annotations_scopes_wins_over_decorator_scopes() -> "None
 
     app = Litestar(route_handlers=[handler], plugins=[LitestarMCP(MCPConfig())])
     async with AsyncTestClient(app=app) as client:
-        sid = await _init_and_get_session(client)
-        resp = await _rpc(client, "tools/list", sid=sid)
+        resp = await _rpc(client, "tools/list")
         tool = next(t for t in resp["result"]["tools"] if t["name"] == "t")
         assert tool["annotations"]["scopes"] == ["write:foo"]  # explicit wins
         assert tool["annotations"]["audience"] == ["user"]

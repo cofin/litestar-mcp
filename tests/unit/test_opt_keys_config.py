@@ -9,14 +9,12 @@ from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP
 from litestar_mcp.mcp.config import MCPConfig, MCPOptKeys
+from tests.unit.conftest import mcp_post
 
 
 def _rpc(client: "TestClient[Any]", method: "str") -> "dict[str, Any]":
-    resp = client.post(
-        "/mcp",
-        json={"jsonrpc": "2.0", "id": 1, "method": method, "params": {}},
-    )
-    return resp.json()  # type: ignore[no-any-return]
+    data: dict[str, Any] = mcp_post(client, method).json()
+    return data
 
 
 def test_renamed_tool_and_resource_opt_keys_drive_discovery() -> "None":

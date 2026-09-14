@@ -14,64 +14,80 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.unit
 
-_PROTOCOL_VERSION = "2026-07-28"
+PROTOCOL_VERSION = "2026-07-28"
+NAME_FIELDS = {
+    "tools/call": "name",
+    "resources/read": "uri",
+    "prompts/get": "name",
+    "tasks/get": "taskId",
+    "tasks/update": "taskId",
+    "tasks/cancel": "taskId",
+}
 
 
-@pytest.fixture(autouse=True)
-def modern_mcp_requests(monkeypatch: "pytest.MonkeyPatch") -> "None":
-    """Upgrade unit-test MCP requests to the stateless 2026-07-28 envelope.
+def mcp_envelope(
+    method: "str",
+    params: "dict[str, Any] | None" = None,
+    *,
+    msg_id: "int" = 1,
+    headers: "dict[str, str] | None" = None,
+) -> "tuple[dict[str, Any], dict[str, str]]":
+    """Build the JSON body and headers for one stateless MCP request.
 
-    Individual tests still own the method and parameters they exercise. This
-    adapter centralizes transport boilerplate while legacy handshake-specific
-    assertions are migrated explicitly.
+    Args:
+        method: JSON-RPC method name.
+        params: Request parameters; envelope keys are merged under any ``_meta`` given.
+        msg_id: JSON-RPC request id.
+        headers: Extra headers merged under the MCP envelope headers.
+
+    Returns:
+        The ``(body, headers)`` pair to pass to ``client.post``.
     """
-    original_post = TestClient.post
-    original_async_post = AsyncTestClient.post
+    request_params = dict(params or {})
+    request_params["_meta"] = {
+        "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+        "io.modelcontextprotocol/clientCapabilities": {},
+        **dict(request_params.get("_meta") or {}),
+    }
+    request_headers = {
+        **(headers or {}),
+        "Accept": "application/json, text/event-stream",
+        "MCP-Protocol-Version": PROTOCOL_VERSION,
+        "Mcp-Method": method,
+    }
+    name_field = NAME_FIELDS.get(method)
+    if name_field is not None:
+        request_headers["Mcp-Name"] = str(request_params.get(name_field, ""))
+    body = {"jsonrpc": "2.0", "id": msg_id, "method": method, "params": request_params}
+    return body, request_headers
 
-    def enrich(url: "str", kwargs: "dict[str, Any]") -> "None":
-        if not url.rstrip("/").endswith("mcp"):
-            return
-        payload = kwargs.get("json")
-        if not isinstance(payload, dict):
-            return
-        method = payload.get("method")
-        params = payload.setdefault("params", {})
-        if not isinstance(method, str) or not isinstance(params, dict):
-            return
-        meta = params.setdefault("_meta", {})
-        if isinstance(meta, dict):
-            meta.setdefault("io.modelcontextprotocol/protocolVersion", _PROTOCOL_VERSION)
-            meta.setdefault("io.modelcontextprotocol/clientCapabilities", {})
-            meta.setdefault(
-                "io.modelcontextprotocol/clientInfo",
-                {"name": "unit-tests", "version": "1"},
-            )
-        headers = dict(kwargs.get("headers") or {})
-        headers.setdefault("Accept", "application/json, text/event-stream")
-        headers.setdefault("MCP-Protocol-Version", _PROTOCOL_VERSION)
-        headers.setdefault("Mcp-Method", method)
-        name_fields = {
-            "tools/call": "name",
-            "resources/read": "uri",
-            "prompts/get": "name",
-            "tasks/get": "taskId",
-            "tasks/update": "taskId",
-            "tasks/cancel": "taskId",
-        }
-        if method in name_fields:
-            headers.setdefault("Mcp-Name", str(params.get(name_fields[method], "")))
-        kwargs["headers"] = headers
 
-    def post(client: "TestClient[Any]", url: "str", *args: "Any", **kwargs: "Any") -> "Any":
-        enrich(url, kwargs)
-        return original_post(client, url, *args, **kwargs)
+def mcp_post(
+    client: "TestClient[Any]",
+    method: "str",
+    params: "dict[str, Any] | None" = None,
+    *,
+    msg_id: "int" = 1,
+    headers: "dict[str, str] | None" = None,
+    base: "str" = "/mcp",
+) -> "Any":
+    """POST one stateless MCP request and return the raw response."""
+    body, request_headers = mcp_envelope(method, params, msg_id=msg_id, headers=headers)
+    return client.post(base, json=body, headers=request_headers)
 
-    async def async_post(client: "AsyncTestClient[Any]", url: "str", *args: "Any", **kwargs: "Any") -> "Any":
-        enrich(url, kwargs)
-        return await original_async_post(client, url, *args, **kwargs)
 
-    monkeypatch.setattr(TestClient, "post", post)
-    monkeypatch.setattr(AsyncTestClient, "post", async_post)
+async def mcp_post_async(
+    client: "AsyncTestClient[Any]",
+    method: "str",
+    params: "dict[str, Any] | None" = None,
+    *,
+    msg_id: "int" = 1,
+    headers: "dict[str, str] | None" = None,
+    base: "str" = "/mcp",
+) -> "Any":
+    """Async variant of :func:`mcp_post`."""
+    body, request_headers = mcp_envelope(method, params, msg_id=msg_id, headers=headers)
+    return await client.post(base, json=body, headers=request_headers)
 
 
 @pytest.fixture

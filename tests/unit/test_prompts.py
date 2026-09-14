@@ -19,49 +19,27 @@ from litestar_mcp.utils import get_mcp_metadata
 from litestar_mcp.utils.handler_signature import _parse_docstring_args
 
 # ---------------------------------------------------------------------------
-# Helpers — mirrors _ensure_session / _rpc pattern from test_plugin.py
+# Helpers
 # ---------------------------------------------------------------------------
 
 
-def _ensure_session(client: "TestClient[Any]") -> "str":
-    key = "_mcp_session::/mcp"
-    sid = getattr(client, key, None)
-    if sid is not None:
-        return sid  # type: ignore[no-any-return]
-    init = client.post(
-        "/mcp",
-        json={
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
-        },
-    )
-    sid = init.headers.get("mcp-session-id", "")
-    client.post(
-        "/mcp",
-        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        headers={"Mcp-Session-Id": sid},
-    )
-    setattr(client, key, sid)
-    return str(sid)
+PROTOCOL_VERSION = "2026-07-28"
+_NAME_FIELDS = {"tools/call": "name", "resources/read": "uri", "prompts/get": "name"}
 
 
-def _rpc(
-    client: "TestClient[Any]",
-    method: "str",
-    params: "dict[str, Any] | None" = None,
-    msg_id: "int" = 1,
-) -> "dict[str, Any]":
-    body: dict[str, Any] = {"jsonrpc": "2.0", "id": msg_id, "method": method}
-    if params is not None:
-        body["params"] = params
-    headers: dict[str, str] = {}
-    if method != "initialize":
-        sid = _ensure_session(client)
-        if sid:
-            headers["Mcp-Session-Id"] = sid
-    return client.post("/mcp", json=body, headers=headers).json()  # type: ignore[no-any-return]
+def _rpc(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None) -> "dict[str, Any]":
+    request_params = dict(params or {})
+    request_params["_meta"] = {
+        "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+        "io.modelcontextprotocol/clientCapabilities": {},
+    }
+    headers = {"MCP-Protocol-Version": PROTOCOL_VERSION, "Mcp-Method": method}
+    name_field = _NAME_FIELDS.get(method)
+    if name_field is not None:
+        headers["Mcp-Name"] = str(request_params.get(name_field, ""))
+    body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": request_params}
+    data: dict[str, Any] = client.post("/mcp", json=body, headers=headers).json()
+    return data
 
 
 def _make_app_with_prompts(*prompt_fns: "Callable[..., Any]") -> "Litestar":
@@ -1112,7 +1090,7 @@ class TestPromptFiltering:
 
 # ---------------------------------------------------------------------------
 # Manifest (.well-known/mcp-server.json) capability + filter parity with
-# the JSON-RPC initialize/prompts/list responses.
+# the JSON-RPC prompts/list responses.
 # ---------------------------------------------------------------------------
 
 

@@ -25,36 +25,8 @@ except ImportError:
 JWT_AVAILABLE = _JWT_AVAILABLE
 
 
-def _ensure_session(
-    client: "TestClient[Any]",
-    base: "str" = "/mcp",
-    auth_headers: "dict[str, str] | None" = None,
-) -> "str":
-    auth_token = (auth_headers or {}).get("Authorization", "") or (auth_headers or {}).get("authorization", "")
-    key = f"_mcp_session::{base}::{auth_token}"
-    sid = getattr(client, key, None)
-    if sid:
-        return sid  # type: ignore[no-any-return]
-    init_headers = dict(auth_headers or {})
-    init = client.post(
-        base,
-        json={
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
-        },
-        headers=init_headers,
-    )
-    sid = init.headers.get("mcp-session-id", "")
-    if sid:
-        client.post(
-            base,
-            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-            headers={**init_headers, "Mcp-Session-Id": sid},
-        )
-    setattr(client, key, sid)
-    return str(sid)
+PROTOCOL_VERSION = "2026-07-28"
+_NAME_FIELDS = {"tools/call": "name", "resources/read": "uri", "prompts/get": "name"}
 
 
 def _rpc(
@@ -64,15 +36,17 @@ def _rpc(
     headers: "dict[str, str] | None" = None,
     base: "str" = "/mcp",
 ) -> "Any":
-    body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
-    if params is not None:
-        body["params"] = params
-    final_headers = dict(headers or {})
-    if method != "initialize" and "Mcp-Session-Id" not in final_headers and "mcp-session-id" not in final_headers:
-        sid = _ensure_session(client, base, headers)
-        if sid:
-            final_headers["Mcp-Session-Id"] = sid
-    return client.post(base, json=body, headers=final_headers)
+    request_params = dict(params or {})
+    request_params["_meta"] = {
+        "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+        "io.modelcontextprotocol/clientCapabilities": {},
+    }
+    request_headers = {**(headers or {}), "MCP-Protocol-Version": PROTOCOL_VERSION, "Mcp-Method": method}
+    name_field = _NAME_FIELDS.get(method)
+    if name_field is not None:
+        request_headers["Mcp-Name"] = str(request_params.get(name_field, ""))
+    body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": request_params}
+    return client.post(base, json=body, headers=request_headers)
 
 
 class TestSecurity:

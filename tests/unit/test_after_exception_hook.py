@@ -20,34 +20,22 @@ from litestar_mcp import LitestarMCP
 pytestmark = pytest.mark.unit
 
 
-def _ensure_session(client: "TestClient[Any]") -> "str":
-    sid = getattr(client, "_mcp_session", None)
-    if sid is not None:
-        return str(sid)
-    init = client.post(
-        "/mcp",
-        json={
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
-        },
-    )
-    sid_val = init.headers.get("mcp-session-id", "")
-    client.post(
-        "/mcp",
-        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        headers={"Mcp-Session-Id": sid_val},
-    )
-    client._mcp_session = sid_val  # type: ignore[attr-defined]
-    return str(sid_val)
+PROTOCOL_VERSION = "2026-07-28"
 
 
 def _call_tool(client: "TestClient[Any]", name: "str") -> "dict[str, Any]":
-    body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": {}}}
-    sid = _ensure_session(client)
-    headers = {"Mcp-Session-Id": sid} if sid else {}
-    return client.post("/mcp", json=body, headers=headers).json()  # type: ignore[no-any-return]
+    params = {
+        "name": name,
+        "arguments": {},
+        "_meta": {
+            "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+            "io.modelcontextprotocol/clientCapabilities": {},
+        },
+    }
+    headers = {"MCP-Protocol-Version": PROTOCOL_VERSION, "Mcp-Method": "tools/call", "Mcp-Name": name}
+    body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params}
+    data: dict[str, Any] = client.post("/mcp", json=body, headers=headers).json()
+    return data
 
 
 class _ObservedError(Exception):

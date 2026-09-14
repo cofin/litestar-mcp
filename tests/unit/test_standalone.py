@@ -16,6 +16,7 @@ from litestar.testing import TestClient
 from litestar_mcp import MCP, MCPStdioContext
 from litestar_mcp.mcp.config import MCPConfig
 from litestar_mcp.mcp.plugin import LitestarMCP
+from tests.unit.conftest import mcp_post
 
 
 def _rpc(
@@ -25,10 +26,8 @@ def _rpc(
     *,
     base_path: "str" = "/mcp",
 ) -> "dict[str, Any]":
-    body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
-    if params is not None:
-        body["params"] = params
-    return client.post(base_path, json=body).json()  # type: ignore[no-any-return]
+    data: dict[str, Any] = mcp_post(client, method, params, base=base_path).json()
+    return data
 
 
 def test_mcp_init_defaults() -> "None":

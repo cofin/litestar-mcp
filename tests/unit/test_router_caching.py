@@ -7,47 +7,23 @@ from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP
 
-
-def _ensure_session(client: "TestClient[Any]", base: "str" = "/mcp") -> "str":
-    key = f"_mcp_session::{base}"
-    sid = getattr(client, key, None)
-    if sid is not None:
-        return sid  # type: ignore[no-any-return]
-    init = client.post(
-        base,
-        json={
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
-        },
-    )
-    sid = init.headers.get("mcp-session-id", "")
-    client.post(
-        base,
-        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        headers={"Mcp-Session-Id": sid},
-    )
-    setattr(client, key, sid)
-    return str(sid)
+PROTOCOL_VERSION = "2026-07-28"
+_NAME_FIELDS = {"tools/call": "name", "resources/read": "uri", "prompts/get": "name"}
 
 
-def _rpc(
-    client: "TestClient[Any]",
-    method: "str",
-    params: "dict[str, Any] | None" = None,
-    msg_id: "int" = 1,
-    base: "str" = "/mcp",
-) -> "dict[str, Any]":
-    body: dict[str, Any] = {"jsonrpc": "2.0", "id": msg_id, "method": method}
-    if params is not None:
-        body["params"] = params
-    headers: dict[str, str] = {}
-    if method != "initialize":
-        sid = _ensure_session(client, base)
-        if sid:
-            headers["Mcp-Session-Id"] = sid
-    return client.post(base, json=body, headers=headers).json()  # type: ignore[no-any-return]
+def _rpc(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None) -> "dict[str, Any]":
+    request_params = dict(params or {})
+    request_params["_meta"] = {
+        "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+        "io.modelcontextprotocol/clientCapabilities": {},
+    }
+    headers = {"MCP-Protocol-Version": PROTOCOL_VERSION, "Mcp-Method": method}
+    name_field = _NAME_FIELDS.get(method)
+    if name_field is not None:
+        headers["Mcp-Name"] = str(request_params.get(name_field, ""))
+    body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": request_params}
+    data: dict[str, Any] = client.post("/mcp", json=body, headers=headers).json()
+    return data
 
 
 def test_router_caching_and_invalidation() -> "None":
@@ -62,17 +38,7 @@ def test_router_caching_and_invalidation() -> "None":
     plugin = LitestarMCP()
     app = Litestar(plugins=[plugin], route_handlers=[get_users])
     with TestClient(app=app) as client:
-        # 1. Initialize and send first request to build and cache the router
-        _rpc(
-            client,
-            "initialize",
-            {
-                "protocolVersion": "2025-11-25",
-                "capabilities": {},
-                "clientInfo": {"name": "test", "version": "1.0"},
-            },
-        )
-
+        # 1. First request builds and caches the router
         result = _rpc(client, "tools/list")
         assert len(result["result"]["tools"]) == 1
 
