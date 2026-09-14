@@ -1,5 +1,6 @@
 """MCP 2026-07-28 Tasks extension tests."""
 
+import json
 import time
 from typing import Any, cast
 
@@ -252,3 +253,45 @@ def test_removed_legacy_task_methods_are_not_registered() -> None:
         for method in ("tasks/list", "tasks/result"):
             response = _rpc(client, method, tasks_capable=True)
             assert response["error"]["code"] == -32601
+
+
+def test_task_promoted_tool_ignores_request_progress_stream() -> None:
+    @get("/progress-task", sync_to_thread=False)
+    @mcp_tool(name="progress_task", task_support="optional")
+    async def progress_task() -> dict[str, str]:
+        context = get_mcp_request_context()
+        await context.report_progress(1, total=2)
+        return {"status": "completed"}
+
+    app = Litestar(route_handlers=[progress_task], plugins=[LitestarMCP(MCPConfig(tasks=True))])
+    with TestClient(app=app) as client:
+        response = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "progress_task",
+                    "arguments": {},
+                    "_meta": {
+                        "progressToken": "tok",
+                        "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+                        "io.modelcontextprotocol/clientCapabilities": {"extensions": {TASKS_EXTENSION: {}}},
+                    },
+                },
+            },
+            headers={
+                "Accept": "application/json, text/event-stream",
+                "MCP-Protocol-Version": PROTOCOL_VERSION,
+                "Mcp-Method": "tools/call",
+                "Mcp-Name": "progress_task",
+            },
+        )
+        assert response.status_code == 200
+        frames = [line for line in response.text.splitlines() if line.startswith("data:")]
+        task = json.loads(frames[-1].removeprefix("data:"))["result"]
+        assert task["resultType"] == "task"
+        result = _wait_for_status(client, task["taskId"], "completed")
+
+    assert result["status"] == "completed"

@@ -616,6 +616,10 @@ class MCPHandlerService:
         if task_store is None:  # pragma: no cover - narrowed by task_enabled
             return await self._execute_tool_call(tool_name, handler, tool_args, context)
         record = await task_store.create(context.owner_id)
+        # The progress stream belongs to the request that returned the task record and
+        # closes with it; the background run must not report into a closed stream.
+        context.progress_token = None
+        context.progress_reporter = None
         background_task = asyncio.create_task(self._run_task(record, tool_name, handler, tool_args, context))
         await task_store.attach_runner(record.task_id, background_task)
         return {"resultType": "task", **record.to_dict()}
