@@ -63,18 +63,18 @@ jobs:
         run: uv python install "$PYTHON_VERSION"
 
       - name: Install dependencies
-        run: uv sync --group test --python "$PYTHON_VERSION"
+        run: uv sync --group test --extra a2a --python "$PYTHON_VERSION"
 
       - name: Set PYTHONPATH
         run: echo "PYTHONPATH=$PWD" >> $GITHUB_ENV
 
       - name: Test
         if: ${{ !inputs.coverage }}
-        run: uv run pytest --dist "loadgroup" -m "" tests -n 2
+        run: uv run pytest --dist "loadgroup" -m "" tests docs/examples -n 2
 
       - name: Test with coverage
         if: ${{ inputs.coverage }}
-        run: uv run pytest tests --dist "loadgroup" -m "" --cov=litestar_mcp --cov-branch --cov-report=xml -n 2
+        run: uv run pytest tests docs/examples --dist "loadgroup" -m "" --cov=litestar_mcp --cov-branch --cov-report=xml -n 2
 
       - name: Build and smoke-test installed wheel
         run: |

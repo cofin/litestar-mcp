@@ -151,7 +151,7 @@ clean:                                              ## Cleanup temporary build a
 .PHONY: test
 test:                                               ## Run the tests
 	@echo "${INFO} Running test cases... 🧪"
-	@$(UV_RUN_PY310) pytest tests
+	@$(UV_RUN_PY310) pytest tests docs/examples
 	@echo "${OK} Tests complete ✨"
 
 .PHONY: test-all

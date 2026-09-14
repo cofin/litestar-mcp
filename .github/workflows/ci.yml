@@ -30,7 +30,7 @@ jobs:
         run: uv python install 3.14
 
       - name: Create virtual environment
-        run: uv sync --all-groups --python 3.14
+        run: uv sync --all-groups --all-extras --python 3.14
 
       - name: Execute Pre-Commit
         run: uv run pre-commit run --show-diff-on-failure --color=always --all-files
@@ -50,7 +50,7 @@ jobs:
         run: uv python install 3.14
 
       - name: Install dependencies
-        run: uv sync --all-groups --python 3.14
+        run: uv sync --all-groups --all-extras --python 3.14
 
       - name: Run mypy
         run: uv run mypy litestar_mcp tests
@@ -71,7 +71,7 @@ jobs:
         run: uv python install 3.14
 
       - name: Install dependencies
-        run: uv sync --all-groups --python 3.14
+        run: uv sync --all-groups --all-extras --python 3.14
 
       - name: Run pyright
         run: uv run pyright litestar_mcp tests
@@ -94,7 +94,7 @@ jobs:
         run: uv python install 3.14
 
       - name: Install dependencies
-        run: uv sync --all-groups --python 3.14
+        run: uv sync --all-groups --all-extras --python 3.14
 
       - name: Run slotscheck
         run: uv run slotscheck -m litestar_mcp
