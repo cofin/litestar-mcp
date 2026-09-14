@@ -281,7 +281,7 @@ async def test_bridge_connection_error_is_clean_jsonrpc_error(monkeypatch: pytes
 
     exit_code = await bridge.run_stdio_streamable_http_bridge(
         ENDPOINT,
-        stdin=BridgeQueuedBytesSource(b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n'),
+        stdin=BridgeQueuedBytesSource(b'{"jsonrpc":"2.0","id":1,"method":"ping","params":{}}\n'),
         stdout=stdout,
         stderr=stderr,
     )
@@ -303,7 +303,7 @@ async def test_bridge_rejects_oversized_stdin_message() -> None:
 
     exit_code = await bridge.run_stdio_streamable_http_bridge(
         ENDPOINT,
-        stdin=BridgeQueuedBytesSource(b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n'),
+        stdin=BridgeQueuedBytesSource(b'{"jsonrpc":"2.0","id":1,"method":"ping","params":{}}\n'),
         stdout=stdout,
         stderr=stderr,
         max_message_size=8,
@@ -335,7 +335,7 @@ async def test_bridge_max_message_size_minus_one_disables_limit(monkeypatch: pyt
     exit_code = await bridge.run_stdio_streamable_http_bridge(
         ENDPOINT,
         stdin=BridgeQueuedBytesSource(
-            b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"payload":"larger-than-limit"}}\n',
+            b'{"jsonrpc":"2.0","id":1,"method":"ping","params":{"payload":"larger-than-limit"}}\n',
         ),
         stdout=stdout,
         stderr=io.StringIO(),

@@ -56,8 +56,8 @@ def mcp_envelope(
         "Mcp-Method": method,
     }
     name_field = NAME_FIELDS.get(method)
-    if name_field is not None:
-        request_headers["Mcp-Name"] = str(request_params.get(name_field, ""))
+    if name_field is not None and name_field in request_params:
+        request_headers["Mcp-Name"] = str(request_params[name_field])
     body = {"jsonrpc": "2.0", "id": msg_id, "method": method, "params": request_params}
     return body, request_headers
 

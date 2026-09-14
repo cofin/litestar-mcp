@@ -85,6 +85,13 @@ requested tenant and extensions, plus ``state["auth"]``, ``state["headers"]``,
 The returned context is authoritative: the adapter does not overwrite its
 authorized tenant or state with untrusted request parameters.
 
+The prepared user's ``user_name`` is taken from the first of ``id``, ``sub``,
+``username`` or ``display_name`` found on the Litestar principal. A principal
+that exposes none of them maps to the empty owner key the SDK uses for
+anonymous callers, so such applications must supply a ``context_builder``
+that sets the user themselves; otherwise the SDK's owner-scoped stores treat
+every such caller as one owner.
+
 Resolve tenant membership from authenticated application identity. A tenant
 parameter, task ID or context ID alone grants no access. Enforce the same
 principal/tenant boundary on task get/list/continue/cancel/subscribe and push
