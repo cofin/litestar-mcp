@@ -294,13 +294,16 @@ class _StreamableHTTPBridgeClient:
                     ) as response:
                         if response.status_code == HTTP_202_ACCEPTED:
                             return
-                        response.raise_for_status()
                         content_type = response.headers.get("content-type", "").lower()
                         if content_type.startswith("application/json"):
+                            # JSON-RPC error envelopes travel with 4xx statuses; forward them as
+                            # protocol responses instead of treating them as transport failures.
                             payload = from_json(await response.aread())
                             async with self._stdout_lock:
                                 await _write_json_line(self._stdout, payload)
-                        elif content_type.startswith("text/event-stream"):
+                            return
+                        response.raise_for_status()
+                        if content_type.startswith("text/event-stream"):
                             await self._consume_sse_response(response, expected_id=request_id)
                         else:
                             msg = f"Unexpected Streamable HTTP content type: {content_type or '<empty>'}"

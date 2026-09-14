@@ -503,3 +503,79 @@ async def test_bridge_stdin_eof_closes_open_subscription_streams(monkeypatch: py
     assert exit_code == 0
     assert closed.is_set()
     assert b"notifications/subscriptions/acknowledged" in stdout.buffer
+
+
+@pytest.mark.anyio
+async def test_bridge_forwards_jsonrpc_error_envelopes_and_keeps_serving(monkeypatch: pytest.MonkeyPatch) -> None:
+    from litestar_mcp.mcp import bridge
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        if payload["method"] == "tools/list":
+            return httpx.Response(
+                200, json={"jsonrpc": "2.0", "id": payload["id"], "result": {"tools": []}}, request=request
+            )
+        if payload["method"] == "nope":
+            return httpx.Response(
+                404,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": payload["id"],
+                    "error": {"code": -32601, "message": "Method not found: nope"},
+                },
+                request=request,
+            )
+        if payload["method"] == "tools/call":
+            return httpx.Response(
+                400,
+                json={"jsonrpc": "2.0", "id": payload["id"], "error": {"code": -32602, "message": "Unknown tool"}},
+                request=request,
+            )
+        return httpx.Response(
+            200, json={"jsonrpc": "2.0", "id": payload["id"], "result": {"ok": True}}, request=request
+        )
+
+    _patch_async_client(monkeypatch, handler)
+    stdout = BridgeBytesSink()
+    exit_code = await bridge.run_stdio_streamable_http_bridge(
+        ENDPOINT,
+        stdin=BridgeQueuedBytesSource(
+            b'{"jsonrpc":"2.0","id":1,"method":"nope","params":{}}\n',
+            b'{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"missing","arguments":{}}}\n',
+            b'{"jsonrpc":"2.0","id":3,"method":"ping","params":{}}\n',
+        ),
+        stdout=stdout,
+        stderr=io.StringIO(),
+    )
+
+    assert exit_code == 0
+    messages = {message["id"]: message for message in (json.loads(line) for line in stdout.buffer.splitlines() if line)}
+    assert messages[1]["error"]["code"] == -32601
+    assert messages[2]["error"]["code"] == -32602
+    assert messages[3]["result"] == {"ok": True}
+
+
+@pytest.mark.anyio
+async def test_bridge_non_json_http_error_is_still_fatal(monkeypatch: pytest.MonkeyPatch) -> None:
+    from litestar_mcp.mcp import bridge
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        if payload["method"] == "tools/list":
+            return httpx.Response(
+                200, json={"jsonrpc": "2.0", "id": payload["id"], "result": {"tools": []}}, request=request
+            )
+        return httpx.Response(502, text="bad gateway", headers={"content-type": "text/plain"}, request=request)
+
+    _patch_async_client(monkeypatch, handler)
+    stdout = BridgeBytesSink()
+    exit_code = await bridge.run_stdio_streamable_http_bridge(
+        ENDPOINT,
+        stdin=BridgeQueuedBytesSource(b'{"jsonrpc":"2.0","id":1,"method":"ping","params":{}}\n'),
+        stdout=stdout,
+        stderr=io.StringIO(),
+    )
+
+    assert exit_code == 1
+    lines = [json.loads(line) for line in stdout.buffer.splitlines() if line]
+    assert lines[-1]["error"]["code"] == -32001

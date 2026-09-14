@@ -388,3 +388,25 @@ async def test_standalone_stdio_startup_failure_raises() -> "None":
         )
 
     assert original in getattr(caught.value, "exceptions", (caught.value,))
+
+
+@pytest.mark.anyio
+async def test_standalone_stdio_forwards_jsonrpc_errors_and_keeps_serving() -> "None":
+    mcp = MCP(name="stdio-errors")
+
+    @mcp.tool(name="greet")
+    def greet(name: "str") -> "str":
+        return f"Hello {name}"
+
+    responses = await _run_stdio_exchange(
+        mcp,
+        [
+            _request("no/such-method", request_id=1),
+            _request("tools/call", request_id=2, params={"name": "missing", "arguments": {}}),
+            _request("tools/call", request_id=3, params={"name": "greet", "arguments": {"name": "World"}}),
+        ],
+    )
+
+    assert responses[0]["error"]["code"] == -32601
+    assert responses[1]["error"]["code"] == -32602
+    assert responses[2]["result"]["content"][0]["text"] == "Hello World"
