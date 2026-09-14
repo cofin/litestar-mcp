@@ -947,3 +947,52 @@ async def test_prefetch_receive_failure_aborts_and_awaits_producer_cleanup(caplo
     assert not sent
     assert finalized.is_set()
     assert "ASGI receive failed during stream prefetch" in caplog.text
+
+
+def test_trailing_slash_path_still_collides_with_application_route() -> None:
+    @get("/a2a")
+    async def owned() -> None: ...
+
+    with pytest.raises(ValueError, match="A2A route collision"):
+        Litestar(route_handlers=[owned], plugins=[LitestarA2A(make_card(), AsyncMock(), A2AConfig(path="/a2a/"))])
+
+
+def test_config_normalises_trailing_slashes() -> None:
+    config = A2AConfig(path="/agents/", agent_card_path="/card.json/")
+
+    assert config.path == "/agents"
+    assert config.agent_card_path == "/card.json"
+    assert A2AConfig(path="/").path == "/"
+
+
+@pytest.mark.parametrize(
+    ("principal", "expected"),
+    [
+        (None, ""),
+        ({"email": "a@example.com"}, ""),
+        (object(), ""),
+        ({"id": 7}, "7"),
+        ({"sub": "user-1"}, "user-1"),
+    ],
+)
+def test_owner_key_is_stable_without_recognised_identity_attributes(principal: Any, expected: str) -> None:
+    from litestar_mcp.a2a.plugin import _LitestarUser
+
+    assert _LitestarUser(principal).user_name == expected
+    assert _LitestarUser(principal).user_name == _LitestarUser(principal).user_name
+
+
+@pytest.mark.anyio
+async def test_missing_required_extension_never_invokes_context_builder() -> None:
+    card = make_card()
+    card.capabilities.extensions.append(AgentExtension(uri="https://ext.example/required", required=True))
+    context_builder = Mock(return_value=ServerCallContext())
+    handler = StubHandler()
+    app = Litestar(plugins=[LitestarA2A(card, handler, A2AConfig(context_builder=context_builder))])
+
+    async with AsyncTestClient(app=app) as client:
+        response = await client.post("/a2a", headers={"A2A-Version": "1.0"}, json=send_payload())
+
+    assert response.json()["error"]["code"] == -32008
+    context_builder.assert_not_called()
+    assert handler.contexts == []

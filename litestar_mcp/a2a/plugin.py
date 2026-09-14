@@ -101,7 +101,7 @@ class _LitestarUser(User):
             value = self.value.get(name) if isinstance(self.value, dict) else getattr(self.value, name, None)
             if value is not None:
                 return str(value)
-        return str(self.value)
+        return ""
 
 
 def _header_values(request: "Request[Any, Any, Any]", name: "str") -> "list[str]":
@@ -172,12 +172,12 @@ class _JsonRpcTransport:
         context.state["method"] = method
         context.state["request_id"] = request_id
         requested = set(context.requested_extensions)
-        if self.config.context_builder is not None:
-            result = self.config.context_builder(request, context)
-            context = await result if isawaitable(result) else result
         required = {extension.uri for extension in self.agent_card.capabilities.extensions if extension.required}
         if not required <= requested:
             raise ExtensionSupportRequiredError
+        if self.config.context_builder is not None:
+            result = self.config.context_builder(request, context)
+            context = await result if isawaitable(result) else result
         self._extension_headers(request, context)
         return context
 

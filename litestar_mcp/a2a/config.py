@@ -47,6 +47,8 @@ class A2AConfig:
             if not value.startswith("/"):
                 msg = f"{name} must start with '/'"
                 raise ValueError(msg)
+        object.__setattr__(self, "path", self.path.rstrip("/") or "/")
+        object.__setattr__(self, "agent_card_path", self.agent_card_path.rstrip("/") or "/")
         if self.agent_card_max_age < 0:
             msg = f"agent_card_max_age must not be negative, got {self.agent_card_max_age}"
             raise ValueError(msg)
