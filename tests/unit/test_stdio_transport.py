@@ -601,3 +601,20 @@ async def test_bridge_runs_over_injected_transport_with_client_info() -> None:
     assert "result" in messages[1]
     payload = json.loads(messages[2]["result"]["content"][0]["text"])
     assert payload == {"client_info": {"name": "unit-test", "version": "0"}}
+
+
+@pytest.mark.anyio
+async def test_stdio_body_exception_keeps_its_cause_chain() -> None:
+    async def bridge() -> None:
+        msg = "outer"
+        try:
+            int("inner")
+        except ValueError as exc:
+            raise RuntimeError(msg) from exc
+
+    app = Litestar(logging_config=None)
+    with pytest.raises(RuntimeError) as caught, anyio.fail_after(2):
+        async with _app_lifespan(app, shutdown_timeout=0.5):
+            await bridge()
+
+    assert isinstance(caught.value.__cause__, ValueError)

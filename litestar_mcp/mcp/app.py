@@ -104,6 +104,8 @@ def _build_standalone_route_kwargs(
     """Merge user route kwargs with standalone MCP internal route metadata."""
     route_kwargs = dict(handler_kwargs)
     route_kwargs.pop("path", None)
+    if route_kwargs.get("sync_to_thread") is None:
+        route_kwargs["sync_to_thread"] = False
 
     user_guards = route_kwargs.pop("guards", None)
     guards = [_require_internal_dispatch]
@@ -245,27 +247,29 @@ def _json_response_wrapper(fn: "Callable[..., Any]") -> "Callable[..., Any]":
 
         @wraps(fn)
         async def async_wrapped(*args: "Any", **kwargs: "Any") -> "Any":
-            res = await fn(*args, **kwargs)
-            if isinstance(res, Response):
-                return res
-            return Response(
-                content=encode_json(res),
-                media_type="application/json",
-            )
+            return _to_json_response(await fn(*args, **kwargs))
 
         return async_wrapped
 
     @wraps(fn)
     def sync_wrapped(*args: "Any", **kwargs: "Any") -> "Any":
-        res = fn(*args, **kwargs)
-        if isinstance(res, Response):
-            return res
-        return Response(
-            content=encode_json(res),
-            media_type="application/json",
-        )
+        return _to_json_response(fn(*args, **kwargs))
 
     return sync_wrapped
+
+
+def _to_json_response(res: "Any") -> "Response[Any]":
+    """Return ``res`` as a JSON response that still honours the handler's ``type_encoders``.
+
+    Strings, bytes and ``None`` are pre-encoded because Litestar would otherwise send
+    them verbatim; every other value is left for Litestar to serialize with the
+    resolved ``type_encoders`` of the route.
+    """
+    if isinstance(res, Response):
+        return res
+    if res is None or isinstance(res, (str, bytes, bytearray)):
+        return Response(content=encode_json(res), media_type="application/json")
+    return Response(content=res, media_type="application/json")
 
 
 class MCP:
@@ -595,7 +599,10 @@ class MCP:
         self,
         *,
         stdio_context: "MCPStdioContext | None" = None,
-        **_kwargs: "Any",
+        **kwargs: "Any",
     ) -> "None":
-        """Run the server over stdio through the in-process transport."""
-        run_stdio(self.app, stdio_context=stdio_context or MCPStdioContext())
+        """Run the server over stdio through the in-process transport.
+
+        Keyword arguments are forwarded to :func:`litestar_mcp.mcp.stdio.run_stdio`.
+        """
+        run_stdio(self.app, stdio_context=stdio_context or MCPStdioContext(), **kwargs)
