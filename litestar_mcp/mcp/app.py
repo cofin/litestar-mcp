@@ -98,13 +98,14 @@ def _require_internal_dispatch(connection: "Any", _route_handler: "Any") -> "Non
 def _build_standalone_route_kwargs(
     handler_kwargs: "dict[str, Any]",
     *,
+    fn: "Callable[..., Any]",
     forced_opt: "dict[str, Any]",
     default_opt: "dict[str, Any] | None" = None,
 ) -> "dict[str, Any]":
     """Merge user route kwargs with standalone MCP internal route metadata."""
     route_kwargs = dict(handler_kwargs)
     route_kwargs.pop("path", None)
-    if route_kwargs.get("sync_to_thread") is None:
+    if route_kwargs.get("sync_to_thread") is None and not inspect.iscoroutinefunction(fn):
         route_kwargs["sync_to_thread"] = False
 
     user_guards = route_kwargs.pop("guards", None)
@@ -392,6 +393,7 @@ class MCP:
                 path=path,
                 **_build_standalone_route_kwargs(
                     route_kwargs,
+                    fn=fn,
                     forced_opt={opt_keys.tool: tool_name},
                     default_opt={opt_keys.description: description or fn.__doc__ or ""},
                 ),
@@ -467,6 +469,7 @@ class MCP:
                 path=path,
                 **_build_standalone_route_kwargs(
                     route_kwargs,
+                    fn=fn,
                     forced_opt={
                         opt_keys.resource: resource_name,
                         opt_keys.resource_template: uri,
@@ -543,6 +546,7 @@ class MCP:
                 path=path,
                 **_build_standalone_route_kwargs(
                     route_kwargs,
+                    fn=fn,
                     forced_opt={opt_keys.prompt: prompt_name},
                     default_opt={opt_keys.prompt_description: description or fn.__doc__ or ""},
                 ),

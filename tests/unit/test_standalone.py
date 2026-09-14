@@ -395,3 +395,23 @@ def test_standalone_run_stdio_forwards_options(monkeypatch: "pytest.MonkeyPatch"
     assert captured["shutdown_timeout"] == 30.0
     assert captured["max_message_size"] == 1024
     assert isinstance(captured["stdio_context"], MCPStdioContext)
+
+
+def test_standalone_async_tool_registers_without_sync_to_thread_warning() -> "None":
+    import warnings
+
+    mcp = MCP(name="test-mcp")
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+
+        @mcp.tool(name="plain_async")
+        async def plain_async() -> "str":
+            return "ok"
+
+        _ = mcp.app
+
+    with TestClient(app=mcp.app) as client:
+        response = _rpc(client, "tools/call", {"name": "plain_async", "arguments": {}})
+
+    assert response["result"]["content"][0]["text"] == "ok"

@@ -295,10 +295,11 @@ async def _app_lifespan(app: "Litestar", *, shutdown_timeout: "float" = 5.0) -> 
                     cleanup_scope.shield = True
                     cleanup_scope.deadline = anyio.current_time() + shutdown_timeout
         except BaseException:
-            if body_error is not None:
-                # Re-raise the body error as-is so its original cause chain survives.
-                raise body_error  # noqa: B904
-            raise
+            # A body failure is re-raised below, outside this handler, so the
+            # exception keeps its own cause and context instead of gaining the
+            # lifespan's wrapping group as implicit context.
+            if body_error is None:
+                raise
         finally:
             if cleanup_scope.cancel_called:
                 _logger.warning("Lifespan shutdown incomplete after %s seconds", shutdown_timeout)

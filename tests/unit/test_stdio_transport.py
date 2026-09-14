@@ -618,3 +618,20 @@ async def test_stdio_body_exception_keeps_its_cause_chain() -> None:
             await bridge()
 
     assert isinstance(caught.value.__cause__, ValueError)
+
+
+@pytest.mark.anyio
+async def test_stdio_body_exception_without_cause_gains_no_lifespan_context() -> None:
+    original = RuntimeError("body")
+
+    async def bridge() -> None:
+        raise original
+
+    app = Litestar(logging_config=None)
+    with pytest.raises(RuntimeError) as caught, anyio.fail_after(2):
+        async with _app_lifespan(app, shutdown_timeout=0.5):
+            await bridge()
+
+    assert caught.value is original
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
