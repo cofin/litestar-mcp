@@ -624,7 +624,7 @@ async def test_stdio_body_exception_keeps_its_cause_chain() -> None:
 
 
 @pytest.mark.anyio
-async def test_stdio_body_exception_without_cause_gains_no_lifespan_context() -> None:
+async def test_stdio_body_exception_without_cause_gains_no_lifespan_context(caplog: pytest.LogCaptureFixture) -> None:
     original = RuntimeError("body")
 
     async def bridge() -> None:
@@ -638,3 +638,4 @@ async def test_stdio_body_exception_without_cause_gains_no_lifespan_context() ->
     assert caught.value is original
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
+    assert "Lifespan shutdown failed" not in caplog.text

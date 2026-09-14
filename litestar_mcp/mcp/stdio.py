@@ -271,6 +271,16 @@ def _seed_stdio_identity(app: "ASGIApp", context: "MCPStdioContext") -> "ASGIApp
     return asgi
 
 
+def _wraps_only(exc: "BaseException", target: "BaseException") -> "bool":
+    """Return whether ``exc`` is ``target`` or an exception group holding nothing else."""
+    if exc is target:
+        return True
+    members = getattr(exc, "exceptions", None)
+    if not isinstance(members, tuple):
+        return False
+    return all(_wraps_only(member, target) for member in members)
+
+
 @contextlib.asynccontextmanager
 async def _app_lifespan(app: "Litestar", *, shutdown_timeout: "float" = 5.0) -> "AsyncIterator[None]":
     """Bound post-startup shutdown in the same task and preserve body failures.
@@ -294,13 +304,14 @@ async def _app_lifespan(app: "Litestar", *, shutdown_timeout: "float" = 5.0) -> 
                 finally:
                     cleanup_scope.shield = True
                     cleanup_scope.deadline = anyio.current_time() + shutdown_timeout
-        except BaseException:
+        except BaseException as exc:
             # A body failure is re-raised below, outside this handler, so the
             # exception keeps its own cause and context instead of gaining the
             # lifespan's wrapping group as implicit context.
             if body_error is None:
                 raise
-            _logger.warning("Lifespan shutdown failed after a body error", exc_info=True)
+            if not _wraps_only(exc, body_error):
+                _logger.warning("Lifespan shutdown failed after a body error", exc_info=True)
         finally:
             if cleanup_scope.cancel_called:
                 _logger.warning("Lifespan shutdown incomplete after %s seconds", shutdown_timeout)
