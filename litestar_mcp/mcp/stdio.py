@@ -281,6 +281,16 @@ def _wraps_only(exc: "BaseException", target: "BaseException") -> "bool":
     return all(_wraps_only(member, target) for member in members)
 
 
+def _only_cancellations(exc: "BaseException") -> "bool":
+    """Return whether ``exc`` is a cancellation or a group holding only cancellations."""
+    if isinstance(exc, (asyncio.CancelledError, anyio.get_cancelled_exc_class())):
+        return True
+    members = getattr(exc, "exceptions", None)
+    if not isinstance(members, tuple):
+        return False
+    return all(_only_cancellations(member) for member in members)
+
+
 @contextlib.asynccontextmanager
 async def _app_lifespan(app: "Litestar", *, shutdown_timeout: "float" = 5.0) -> "AsyncIterator[None]":
     """Bound post-startup shutdown in the same task and preserve body failures.
@@ -310,7 +320,7 @@ async def _app_lifespan(app: "Litestar", *, shutdown_timeout: "float" = 5.0) -> 
             # lifespan's wrapping group as implicit context.
             if body_error is None:
                 raise
-            if not cleanup_scope.cancel_called and not _wraps_only(exc, body_error):
+            if not _wraps_only(exc, body_error) and not _only_cancellations(exc):
                 _logger.warning("Lifespan shutdown failed after a body error", exc_info=True)
         finally:
             if cleanup_scope.cancel_called:

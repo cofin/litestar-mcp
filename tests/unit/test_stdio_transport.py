@@ -158,7 +158,9 @@ async def test_stdio_preserves_body_exception_when_shutdown_fails(
     assert caught.value is original
     assert resource_closed.is_set()
     assert shutdown_started.is_set()
-    warnings = [record for record in caplog.records if record.levelname == "WARNING"]
+    warnings = [
+        record for record in caplog.records if record.levelname == "WARNING" and record.name == "litestar_mcp.mcp.stdio"
+    ]
     if shutdown_failure == "timeout":
         assert [record.getMessage() for record in warnings] == ["Lifespan shutdown incomplete after 0.02 seconds"]
     else:
@@ -641,3 +643,32 @@ async def test_stdio_body_exception_without_cause_gains_no_lifespan_context(capl
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
     assert "Lifespan shutdown failed" not in caplog.text
+
+
+@pytest.mark.anyio
+async def test_stdio_logs_hook_failure_raised_after_the_cleanup_deadline(caplog: pytest.LogCaptureFixture) -> None:
+    original = ValueError("bridge failed")
+
+    async def bridge() -> None:
+        raise original
+
+    async def shutdown() -> None:
+        msg = "hook exploded during cancellation"
+        try:
+            await asyncio.Event().wait()
+        except BaseException as exc:
+            raise RuntimeError(msg) from exc
+
+    app = Litestar(on_shutdown=[shutdown], logging_config=None)
+    with pytest.raises(ValueError) as caught, anyio.fail_after(2):
+        async with _app_lifespan(app, shutdown_timeout=0.02):
+            await bridge()
+
+    assert caught.value is original
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelname == "WARNING" and record.name == "litestar_mcp.mcp.stdio"
+    ]
+    assert "Lifespan shutdown failed after a body error" in messages
+    assert "Lifespan shutdown incomplete after 0.02 seconds" in messages
