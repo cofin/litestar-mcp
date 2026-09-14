@@ -57,14 +57,15 @@ examples drawn from :mod:`docs.examples`.
         :link: discovery
         :link-type: doc
 
-        The ``/.well-known/*`` manifests the plugin publishes automatically.
+        The ``server/discover`` request and why MCP publishes no
+        ``/.well-known/*`` documents.
 
     .. grid-item-card:: Authentication
         :link: auth
         :link-type: doc
 
-        Bearer-token validation, OIDC providers, and mapping claims to
-        users.
+        Application-owned authentication through Litestar middleware and
+        guards, and mapping the resulting identity to users.
 
     .. grid-item-card:: Security
         :link: security

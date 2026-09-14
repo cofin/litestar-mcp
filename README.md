@@ -223,6 +223,7 @@ config = MCPConfig()
 | `base_path` | `str` | `"/mcp"` | Base path for the MCP Streamable HTTP endpoint |
 | `include_in_schema` | `bool` | `False` | Whether to include MCP routes in OpenAPI schema |
 | `name` | `str \| None` | `None` | Override server name. If None, uses OpenAPI title |
+| `instructions` | `str \| None` | `None` | Server instructions returned to clients from `server/discover` |
 | `guards` | `list[Any] \| None` | `None` | Litestar guards applied to the MCP router |
 | `route_opt` | `dict[str, Any] \| None` | `None` | Route metadata merged onto the MCP handler, including litestar-security policies |
 | `allowed_origins` | `list[str] \| None` | `None` | Exact additional Origins; present Origins must be same-origin or allowlisted |
@@ -231,6 +232,8 @@ config = MCPConfig()
 | `include_tags` | `list[str] \| None` | `None` | Only expose routes with matching OpenAPI tags |
 | `exclude_tags` | `list[str] \| None` | `None` | Exclude routes with matching OpenAPI tags |
 | `tasks` | `bool \| MCPTaskConfig` | `False` | Enable the `io.modelcontextprotocol/tasks` extension |
+| `opt_keys` | `MCPOptKeys` | `MCPOptKeys()` | Rename the `handler.opt` keys the plugin reads (`mcp_tool`, `mcp_resource`, ...) |
+| `list_page_size` | `int` | `100` | Page size for `tools/list`, `resources/list`, `resources/templates/list`, and `prompts/list` |
 | `cache_ttl_ms` | `int` | `0` | Conservative cache lifetime for discovery/list/resource results |
 | `cache_scope` | `"private" \| "public"` | `"private"` | Cache sharing policy |
 | `subscription_max_streams` | `int` | `10000` | Maximum concurrent `subscriptions/listen` streams |
@@ -238,6 +241,7 @@ config = MCPConfig()
 | `subscription_channels` | `ChannelsPlugin \| None` | `None` | Optional cross-worker notification fan-out |
 | `stream_queue_capacity` | `int` | `256` | Bounded subscription and request-progress queues |
 | `stream_cleanup_timeout` | `float` | `5.0` | Deadline for cooperative response cleanup; expiry is logged |
+| `max_blob_bytes` | `int \| None` | `26214400` | Maximum raw byte length for base64-embedded blobs; `None` disables the cap |
 | `before_tool_call` | `BeforeToolCallHook \| None` | `None` | Observe each `tools/call` before dispatch |
 | `after_tool_call` | `AfterToolCallHook \| None` | `None` | Observe each `tools/call` result, exception, and duration |
 

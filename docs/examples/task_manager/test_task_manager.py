@@ -26,7 +26,14 @@ def _rpc(
     }
     body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method, "params": request_params}
     headers = {"MCP-Protocol-Version": "2026-07-28", "Mcp-Method": method}
-    name_field = {"tools/call": "name", "resources/read": "uri"}.get(method)
+    name_field = {
+        "tools/call": "name",
+        "resources/read": "uri",
+        "prompts/get": "name",
+        "tasks/get": "taskId",
+        "tasks/update": "taskId",
+        "tasks/cancel": "taskId",
+    }.get(method)
     if name_field is not None:
         headers["Mcp-Name"] = str(request_params[name_field])
     return client.post("/mcp", json=body, headers=headers).json()  # type: ignore[no-any-return]

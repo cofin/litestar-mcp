@@ -9,8 +9,8 @@ import pytest
 from litestar import get
 from litestar.datastructures import State  # noqa: TC002
 from litestar.di import NamedDependency  # noqa: TC002
-from litestar.handlers import BaseRouteHandler
 from litestar.params import FromQuery, Parameter, ParameterKwarg, QueryParameter, SkipValidation
+from pydantic import BaseModel
 
 from litestar_mcp.core.schema_builder import (
     _merge_parameter_meta,
@@ -25,6 +25,12 @@ from litestar_mcp.core.schema_builder import (
 )
 from litestar_mcp.utils.handler_signature import _unwrap_annotated
 from tests.unit.conftest import create_app_with_handler
+
+
+class UserModel(BaseModel):
+    name: "str"
+    age: "int"
+    email: "str | None" = None
 
 
 class Color(enum.Enum):
@@ -268,33 +274,22 @@ class TestSchemaBuilder:
         assert "description" in schema
         assert "undocumented_handler" in schema["description"]
 
-    @pytest.mark.skipif(True, reason="Pydantic not required dependency")
     def test_pydantic_model_integration(self) -> "None":
-        """Test integration with Pydantic models if available."""
-        try:
-            from pydantic import BaseModel
+        """A POST body declared as a Pydantic model is advertised with Pydantic's schema."""
 
-            class UserModel(BaseModel):
-                name: "str"
-                age: "int"
-                email: "str | None" = None
+        def pydantic_handler(data: "UserModel") -> "dict[str, Any]":
+            return {"user": data.model_dump()}
 
-            @get("/test")
-            def pydantic_handler(user: "UserModel") -> "dict[str, Any]":
-                return {"user": user.model_dump()}
+        _, handler = create_app_with_handler(pydantic_handler, route_path="/users", method="POST")
+        schema = generate_schema_for_handler(handler)
 
-            handler = BaseRouteHandler(fn=pydantic_handler, http_method="GET", path="/test")
-            schema = generate_schema_for_handler(handler)
-
-            # Should use Pydantic's schema generation
-            user_schema = schema["properties"]["user"]
-            assert "properties" in user_schema
-            assert "name" in user_schema["properties"]
-            assert "age" in user_schema["properties"]
-            assert "email" in user_schema["properties"]
-
-        except ImportError:
-            pytest.skip("Pydantic not available")
+        assert schema["required"] == ["data"]
+        user_schema = schema["properties"]["data"]
+        assert user_schema["type"] == "object"
+        assert user_schema["properties"]["name"]["type"] == "string"
+        assert user_schema["properties"]["age"]["type"] == "integer"
+        assert "email" in user_schema["properties"]
+        assert user_schema["required"] == ["name", "age"]
 
     def test_type_annotation_edge_cases(self) -> "None":
         """Test edge cases in type annotation handling."""
@@ -912,7 +907,7 @@ class TestDependencyProviderParameters:
 
     @staticmethod
     def _build_handler(handler_func: "Any", dependencies: "dict[str, Any]") -> "Any":
-        from litestar import Litestar, get
+        from litestar import Litestar
 
         from tests.unit.conftest import get_handler_from_app
 
@@ -1038,7 +1033,7 @@ class TestDependencyProviderParameters:
         own sig walk emits it first; the provider walk must be a no-op for
         that name rather than raising a wire-name collision.
         """
-        from litestar import Litestar, get
+        from litestar import Litestar
         from litestar.di import Provide
         from litestar.params import Dependency
 
@@ -1255,7 +1250,7 @@ class TestDependencyProviderParameters:
     def test_dishka_resolved_provider_param_does_not_appear_in_schema(self) -> "None":
         from dishka import Provider, Scope, make_async_container, provide
         from dishka.integrations.litestar import LitestarProvider, setup_dishka
-        from litestar import Litestar, get
+        from litestar import Litestar
         from litestar.di import Provide
 
         from tests.unit.conftest import get_handler_from_app

@@ -38,7 +38,7 @@ Task configuration, shared Stores, subscriptions/Channels, cache hints,
 guards, ``route_opt``, stream limits and stdio application-session injection
 remain supported. A shared task Store persists records but does not distribute
 local runners or input/cancel queues. Applications own worker coordination
-and recovery. ADK 2.8.0 with MCP SDK 1.29.1 still uses the old lifecycle and
+and recovery. ADK 2.9.0 with MCP SDK 1.30.0 still uses the old lifecycle and
 is unsupported; see :doc:`adk` for the test boundary.
 
 A2A 1.0 only

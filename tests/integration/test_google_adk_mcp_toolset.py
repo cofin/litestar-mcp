@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 google_adk = pytest.importorskip("google.adk")
 _ADK_STATEFUL_SKIP = pytest.mark.skip(
-    reason="Google ADK 2.8.0 with MCP SDK 1.29.1 sends initialize (2025-11-25); modern MCP 2026-07-28 is unsupported",
+    reason="Google ADK 2.9.0 with MCP SDK 1.30.0 sends initialize (2025-11-25); modern MCP 2026-07-28 is unsupported",
 )
 
 pytestmark = [

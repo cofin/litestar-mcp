@@ -2,7 +2,7 @@
 ADK Integration
 ===============
 
-Google ADK 2.8.0 with MCP Python SDK 1.29.1 cannot consume this package's
+Google ADK 2.9.0 with MCP Python SDK 1.30.0 cannot consume this package's
 modern-only MCP ``2026-07-28`` endpoint. That client still sends
 ``initialize`` for MCP ``2025-11-25``. There is no compatibility handshake
 or session mode to enable on this server.
@@ -68,7 +68,7 @@ connections. Close the toolset during application shutdown:
 Compatibility Matrix
 ====================
 
-The reviewed environment contains Google ADK 2.8.0, MCP SDK 1.29.1 and
+The reviewed environment contains Google ADK 2.9.0, MCP SDK 1.30.0 and
 A2A SDK 1.1.2. Four ADK MCP interoperability tests are explicitly skipped
 because of the lifecycle mismatch; the passing server-start harness is not
 an interoperability result. Reassess this boundary with real client calls
