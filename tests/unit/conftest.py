@@ -29,7 +29,7 @@ def mcp_envelope(
     method: "str",
     params: "dict[str, Any] | None" = None,
     *,
-    msg_id: "int" = 1,
+    msg_id: "int | str" = 1,
     headers: "dict[str, str] | None" = None,
 ) -> "tuple[dict[str, Any], dict[str, str]]":
     """Build the JSON body and headers for one stateless MCP request.
@@ -67,7 +67,7 @@ def mcp_post(
     method: "str",
     params: "dict[str, Any] | None" = None,
     *,
-    msg_id: "int" = 1,
+    msg_id: "int | str" = 1,
     headers: "dict[str, str] | None" = None,
     base: "str" = "/mcp",
 ) -> "Any":
@@ -81,7 +81,7 @@ async def mcp_post_async(
     method: "str",
     params: "dict[str, Any] | None" = None,
     *,
-    msg_id: "int" = 1,
+    msg_id: "int | str" = 1,
     headers: "dict[str, str] | None" = None,
     base: "str" = "/mcp",
 ) -> "Any":

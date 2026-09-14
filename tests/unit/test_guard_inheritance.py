@@ -14,6 +14,7 @@ from litestar.exceptions import NotAuthorizedException, PermissionDeniedExceptio
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP
+from tests.unit.conftest import mcp_post
 
 if TYPE_CHECKING:
     from litestar.connection import ASGIConnection
@@ -28,22 +29,8 @@ def _targets_mcp_tool(handler: "BaseRouteHandler") -> "bool":
     return "mcp_tool" in opt
 
 
-PROTOCOL_VERSION = "2026-07-28"
-_NAME_FIELDS = {"tools/call": "name", "resources/read": "uri", "prompts/get": "name"}
-
-
 def _rpc(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None) -> "dict[str, Any]":
-    request_params = dict(params or {})
-    request_params["_meta"] = {
-        "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
-        "io.modelcontextprotocol/clientCapabilities": {},
-    }
-    headers = {"MCP-Protocol-Version": PROTOCOL_VERSION, "Mcp-Method": method}
-    name_field = _NAME_FIELDS.get(method)
-    if name_field is not None:
-        headers["Mcp-Name"] = str(request_params.get(name_field, ""))
-    body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": request_params}
-    data: dict[str, Any] = client.post("/mcp", json=body, headers=headers).json()
+    data: dict[str, Any] = mcp_post(client, method, params).json()
     return data
 
 

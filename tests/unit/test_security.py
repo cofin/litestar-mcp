@@ -9,6 +9,7 @@ from litestar.openapi.config import OpenAPIConfig
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig
+from tests.unit.conftest import mcp_post
 
 if TYPE_CHECKING:
     from litestar.connection import ASGIConnection
@@ -25,10 +26,6 @@ except ImportError:
 JWT_AVAILABLE = _JWT_AVAILABLE
 
 
-PROTOCOL_VERSION = "2026-07-28"
-_NAME_FIELDS = {"tools/call": "name", "resources/read": "uri", "prompts/get": "name"}
-
-
 def _rpc(
     client: "TestClient[Any]",
     method: "str",
@@ -36,17 +33,7 @@ def _rpc(
     headers: "dict[str, str] | None" = None,
     base: "str" = "/mcp",
 ) -> "Any":
-    request_params = dict(params or {})
-    request_params["_meta"] = {
-        "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
-        "io.modelcontextprotocol/clientCapabilities": {},
-    }
-    request_headers = {**(headers or {}), "MCP-Protocol-Version": PROTOCOL_VERSION, "Mcp-Method": method}
-    name_field = _NAME_FIELDS.get(method)
-    if name_field is not None:
-        request_headers["Mcp-Name"] = str(request_params.get(name_field, ""))
-    body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": request_params}
-    return client.post(base, json=body, headers=request_headers)
+    return mcp_post(client, method, params, headers=headers, base=base)
 
 
 class TestSecurity:

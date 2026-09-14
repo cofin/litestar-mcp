@@ -15,10 +15,9 @@ from litestar_mcp import (
     MCPTaskConfig,
     get_mcp_request_context,
 )
+from litestar_mcp.mcp.service import TASKS_EXTENSION
 from litestar_mcp.utils import mcp_tool
-
-PROTOCOL_VERSION = "2026-07-28"
-TASKS_EXTENSION = "io.modelcontextprotocol/tasks"
+from tests.unit.conftest import mcp_post
 
 
 def _rpc(
@@ -29,35 +28,9 @@ def _rpc(
     tasks_capable: bool = False,
 ) -> dict[str, Any]:
     request_params = dict(params or {})
-    capabilities: dict[str, Any] = {}
     if tasks_capable:
-        capabilities["extensions"] = {TASKS_EXTENSION: {}}
-    request_params["_meta"] = {
-        "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
-        "io.modelcontextprotocol/clientCapabilities": capabilities,
-        "io.modelcontextprotocol/clientInfo": {"name": "tasks-tests", "version": "1"},
-    }
-    headers = {
-        "Accept": "application/json, text/event-stream",
-        "MCP-Protocol-Version": PROTOCOL_VERSION,
-        "Mcp-Method": method,
-    }
-    name_field = {
-        "tools/call": "name",
-        "tasks/get": "taskId",
-        "tasks/update": "taskId",
-        "tasks/cancel": "taskId",
-    }.get(method)
-    if name_field is not None:
-        headers["Mcp-Name"] = str(request_params.get(name_field, ""))
-    return cast(
-        "dict[str, Any]",
-        client.post(
-            "/mcp",
-            json={"jsonrpc": "2.0", "id": 1, "method": method, "params": request_params},
-            headers=headers,
-        ).json(),
-    )
+        request_params["_meta"] = {"io.modelcontextprotocol/clientCapabilities": {"extensions": {TASKS_EXTENSION: {}}}}
+    return cast("dict[str, Any]", mcp_post(client, method, request_params).json())
 
 
 def _make_task_app(task_config: MCPTaskConfig | None = None) -> Litestar:
@@ -265,27 +238,16 @@ def test_task_promoted_tool_ignores_request_progress_stream() -> None:
 
     app = Litestar(route_handlers=[progress_task], plugins=[LitestarMCP(MCPConfig(tasks=True))])
     with TestClient(app=app) as client:
-        response = client.post(
-            "/mcp",
-            json={
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/call",
-                "params": {
-                    "name": "progress_task",
-                    "arguments": {},
-                    "_meta": {
-                        "progressToken": "tok",
-                        "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
-                        "io.modelcontextprotocol/clientCapabilities": {"extensions": {TASKS_EXTENSION: {}}},
-                    },
+        response = mcp_post(
+            client,
+            "tools/call",
+            {
+                "name": "progress_task",
+                "arguments": {},
+                "_meta": {
+                    "progressToken": "tok",
+                    "io.modelcontextprotocol/clientCapabilities": {"extensions": {TASKS_EXTENSION: {}}},
                 },
-            },
-            headers={
-                "Accept": "application/json, text/event-stream",
-                "MCP-Protocol-Version": PROTOCOL_VERSION,
-                "Mcp-Method": "tools/call",
-                "Mcp-Name": "progress_task",
             },
         )
         assert response.status_code == 200

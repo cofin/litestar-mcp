@@ -25,6 +25,7 @@ from litestar.exceptions import PermissionDeniedException
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP
+from tests.unit.conftest import mcp_post
 
 if TYPE_CHECKING:
     from litestar.connection import ASGIConnection
@@ -33,21 +34,8 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 
-PROTOCOL_VERSION = "2026-07-28"
-
-
 def _call_tool(client: "TestClient[Any]", name: "str", args: "dict[str, Any] | None" = None) -> "dict[str, Any]":
-    params = {
-        "name": name,
-        "arguments": args or {},
-        "_meta": {
-            "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
-            "io.modelcontextprotocol/clientCapabilities": {},
-        },
-    }
-    headers = {"MCP-Protocol-Version": PROTOCOL_VERSION, "Mcp-Method": "tools/call", "Mcp-Name": name}
-    body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params}
-    data: dict[str, Any] = client.post("/mcp", json=body, headers=headers).json()
+    data: dict[str, Any] = mcp_post(client, "tools/call", {"name": name, "arguments": args or {}}).json()
     return data
 
 

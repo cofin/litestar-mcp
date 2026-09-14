@@ -60,24 +60,10 @@ def client(jsonrpc_app: "Litestar") -> "TestClient[Any]":
 # ---------------------------------------------------------------------------
 
 
-PROTOCOL_VERSION = "2026-07-28"
-_NAME_FIELDS = {"tools/call": "name", "resources/read": "uri", "prompts/get": "name"}
-
-
 def _rpc(
     client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None, msg_id: "int" = 1
 ) -> "dict[str, Any]":
-    request_params = dict(params or {})
-    request_params["_meta"] = {
-        "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
-        "io.modelcontextprotocol/clientCapabilities": {},
-    }
-    headers = {"MCP-Protocol-Version": PROTOCOL_VERSION, "Mcp-Method": method}
-    name_field = _NAME_FIELDS.get(method)
-    if name_field is not None:
-        headers["Mcp-Name"] = str(request_params.get(name_field, ""))
-    body = {"jsonrpc": "2.0", "id": msg_id, "method": method, "params": request_params}
-    data: dict[str, Any] = client.post("/mcp", json=body, headers=headers).json()
+    data: dict[str, Any] = mcp_post(client, method, params, msg_id=msg_id).json()
     return data
 
 

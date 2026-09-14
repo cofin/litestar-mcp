@@ -16,25 +16,13 @@ from litestar.response import Response
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP
+from tests.unit.conftest import mcp_post
 
 pytestmark = pytest.mark.unit
 
 
-PROTOCOL_VERSION = "2026-07-28"
-
-
 def _call_tool(client: "TestClient[Any]", name: "str") -> "dict[str, Any]":
-    params = {
-        "name": name,
-        "arguments": {},
-        "_meta": {
-            "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
-            "io.modelcontextprotocol/clientCapabilities": {},
-        },
-    }
-    headers = {"MCP-Protocol-Version": PROTOCOL_VERSION, "Mcp-Method": "tools/call", "Mcp-Name": name}
-    body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params}
-    data: dict[str, Any] = client.post("/mcp", json=body, headers=headers).json()
+    data: dict[str, Any] = mcp_post(client, "tools/call", {"name": name, "arguments": {}}).json()
     return data
 
 
