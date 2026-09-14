@@ -297,8 +297,11 @@ class _StreamableHTTPBridgeClient:
                         content_type = response.headers.get("content-type", "").lower()
                         if content_type.startswith("application/json"):
                             # JSON-RPC error envelopes travel with 4xx statuses; forward them as
-                            # protocol responses instead of treating them as transport failures.
+                            # protocol responses. Any other JSON body (for example an HTTP
+                            # authentication failure) is a transport error.
                             payload = from_json(await response.aread())
+                            if not (isinstance(payload, dict) and payload.get("jsonrpc") == "2.0"):
+                                response.raise_for_status()
                             async with self._stdout_lock:
                                 await _write_json_line(self._stdout, payload)
                             return
