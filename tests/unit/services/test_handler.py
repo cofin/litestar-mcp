@@ -353,8 +353,6 @@ async def test_resources_list_and_read(request_context: "MCPRequestContext", bas
 async def test_server_discover_advertises_skills_directory_read(
     dummy_app: "Litestar", request_context: "MCPRequestContext", tmp_path: "Path"
 ) -> "None":
-    catalog = SkillCatalog.from_config(MCPSkillsConfig(paths=[tmp_path]))
-
     enabled_service = MCPHandlerService(
         config=MCPConfig(skills=MCPSkillsConfig(paths=[tmp_path], directory_read=True)),
         discovered_tools={},
@@ -362,7 +360,7 @@ async def test_server_discover_advertises_skills_directory_read(
         discovered_prompts={},
         app_ref=dummy_app,
         registry=None,
-        skill_catalog=catalog,
+        skill_catalog=SkillCatalog.from_config(MCPSkillsConfig(paths=[tmp_path], directory_read=True)),
     )
     enabled_result = await enabled_service.server_discover({}, request_context)
     assert enabled_result["capabilities"]["extensions"] == {SKILLS_EXTENSION: {"directoryRead": True}}
@@ -374,10 +372,22 @@ async def test_server_discover_advertises_skills_directory_read(
         discovered_prompts={},
         app_ref=dummy_app,
         registry=None,
-        skill_catalog=catalog,
+        skill_catalog=SkillCatalog.from_config(MCPSkillsConfig(paths=[tmp_path], directory_read=False)),
     )
     disabled_result = await disabled_service.server_discover({}, request_context)
     assert disabled_result["capabilities"]["extensions"] == {SKILLS_EXTENSION: {"directoryRead": False}}
+
+    catalog_only_service = MCPHandlerService(
+        config=MCPConfig(skills=None),
+        discovered_tools={},
+        discovered_resources={},
+        discovered_prompts={},
+        app_ref=dummy_app,
+        registry=None,
+        skill_catalog=SkillCatalog.from_config(MCPSkillsConfig(paths=[tmp_path])),
+    )
+    catalog_only_result = await catalog_only_service.server_discover({}, request_context)
+    assert catalog_only_result["capabilities"]["extensions"] == {SKILLS_EXTENSION: {"directoryRead": True}}
 
 
 @pytest.mark.asyncio

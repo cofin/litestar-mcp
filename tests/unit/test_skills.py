@@ -22,24 +22,25 @@ def _write_skill(root: "Path", name: "str", description: "str", extra_files: "di
         file_path.write_text(content)
 
 
-def _make_skills_app(root: "Path", *, tasks: "bool" = False, **config_kwargs: "Any") -> "Litestar":
-    _write_skill(root, "alpha", "Alpha skill.", {"notes/todo.md": "- todo\n"})
-    _write_skill(root, "beta", "Beta skill.")
-    return Litestar(
-        plugins=[LitestarMCP(MCPConfig(tasks=tasks, skills=MCPSkillsConfig(paths=[root], **config_kwargs)))]
-    )
-
-
 _LOGO_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+_TODO_BYTES = b"- todo\n"
 
 
-def _make_skills_app_with_binary_asset(root: "Path", *, max_blob_bytes: "int | None" = None) -> "Litestar":
-    _write_skill(root, "alpha", "Alpha skill.", {"notes/todo.md": "- todo\n"})
-    assets_dir = root / "alpha" / "assets"
-    assets_dir.mkdir()
-    (assets_dir / "logo.png").write_bytes(_LOGO_BYTES)
+def _make_skills_app(
+    root: "Path",
+    *,
+    tasks: "bool" = False,
+    binary_asset: "bool" = False,
+    max_blob_bytes: "int | None" = None,
+    **skills_kwargs: "Any",
+) -> "Litestar":
+    _write_skill(root, "alpha", "Alpha skill.", {"notes/todo.md": _TODO_BYTES.decode()})
+    if binary_asset:
+        assets_dir = root / "alpha" / "assets"
+        assets_dir.mkdir()
+        (assets_dir / "logo.png").write_bytes(_LOGO_BYTES)
     _write_skill(root, "beta", "Beta skill.")
-    config_kwargs: dict[str, Any] = {"skills": MCPSkillsConfig(paths=[root])}
+    config_kwargs: dict[str, Any] = {"tasks": tasks, "skills": MCPSkillsConfig(paths=[root], **skills_kwargs)}
     if max_blob_bytes is not None:
         config_kwargs["max_blob_bytes"] = max_blob_bytes
     return Litestar(plugins=[LitestarMCP(MCPConfig(**config_kwargs))])
@@ -81,9 +82,11 @@ def test_skills_list_returns_entries_with_cache_fields(tmp_path: "Path") -> "Non
         "skill://alpha/SKILL.md",
         "skill://beta/SKILL.md",
     ]
-    alpha = result["skills"][0]
+    alpha, beta = result["skills"]
     assert set(alpha) == {"uri", "frontmatter", "resources"}
+    assert set(beta) == {"uri", "frontmatter", "resources"}
     assert len(alpha["resources"]) == 2
+    assert len(beta["resources"]) == 1
     assert result["resultType"] == "complete"
     assert result["ttlMs"] == 0
     assert result["cacheScope"] == "private"
@@ -130,7 +133,7 @@ def test_directory_read_lists_direct_children(tmp_path: "Path") -> "None":
     skill_md = root_entries["skill://alpha/SKILL.md"]
     assert skill_md["mimeType"] == "text/markdown"
     assert skill_md["name"] == "SKILL.md"
-    assert "size" in skill_md
+    assert skill_md["size"] == len((tmp_path / "alpha" / "SKILL.md").read_bytes())
     notes_dir = root_entries["skill://alpha/notes"]
     assert notes_dir["mimeType"] == "inode/directory"
     assert notes_dir["name"] == "notes"
@@ -196,7 +199,7 @@ def test_directory_read_requires_name_header(tmp_path: "Path") -> "None":
 
 
 def test_resources_list_includes_skill_files(tmp_path: "Path") -> "None":
-    with TestClient(app=_make_skills_app_with_binary_asset(tmp_path)) as client:
+    with TestClient(app=_make_skills_app(tmp_path, binary_asset=True)) as client:
         result = _rpc(client, "resources/list")["result"]
 
     assert result["resources"][0]["uri"] == "litestar://openapi"
@@ -206,13 +209,15 @@ def test_resources_list_includes_skill_files(tmp_path: "Path") -> "None":
     assert skill_md["name"] == "SKILL.md"
     assert skill_md["description"] == "Alpha skill."
     assert skill_md["mimeType"] == "text/markdown"
-    assert "size" in skill_md
+    assert skill_md["size"] == len((tmp_path / "alpha" / "SKILL.md").read_bytes())
 
     todo = resources["skill://alpha/notes/todo.md"]
     assert todo["name"] == "notes/todo.md"
+    assert todo["size"] == len(_TODO_BYTES)
 
     logo = resources["skill://alpha/assets/logo.png"]
     assert logo["mimeType"] == "image/png"
+    assert logo["size"] == len(_LOGO_BYTES)
 
     assert "skill://beta/SKILL.md" in resources
 
@@ -230,7 +235,7 @@ def test_resources_read_skill_markdown_as_text(tmp_path: "Path") -> "None":
 
 
 def test_resources_read_binary_skill_file_as_blob(tmp_path: "Path") -> "None":
-    with TestClient(app=_make_skills_app_with_binary_asset(tmp_path)) as client:
+    with TestClient(app=_make_skills_app(tmp_path, binary_asset=True)) as client:
         result = _rpc(client, "resources/read", {"uri": "skill://alpha/assets/logo.png"})["result"]
 
     content = result["contents"][0]
@@ -240,11 +245,29 @@ def test_resources_read_binary_skill_file_as_blob(tmp_path: "Path") -> "None":
 
 
 def test_resources_read_blob_over_max_blob_bytes_is_internal_error(tmp_path: "Path") -> "None":
-    with TestClient(app=_make_skills_app_with_binary_asset(tmp_path, max_blob_bytes=8)) as client:
+    with TestClient(app=_make_skills_app(tmp_path, binary_asset=True, max_blob_bytes=8)) as client:
         response = _rpc(client, "resources/read", {"uri": "skill://alpha/assets/logo.png"})
 
     assert response["error"]["code"] == -32603
     assert response["error"]["data"]["error"] == "ValueError"
+
+
+def test_resources_read_refuses_oversized_blob_before_reading_the_file(tmp_path: "Path") -> "None":
+    """The manifest size decides the refusal, so an oversized file is never read from disk."""
+    with TestClient(app=_make_skills_app(tmp_path, binary_asset=True, max_blob_bytes=8)) as client:
+        (tmp_path / "alpha" / "assets" / "logo.png").unlink()
+        response = _rpc(client, "resources/read", {"uri": "skill://alpha/assets/logo.png"})
+
+    assert response["error"]["code"] == -32603
+    assert response["error"]["data"]["error"] == "ValueError"
+
+
+def test_resources_read_serves_text_larger_than_max_blob_bytes(tmp_path: "Path") -> "None":
+    """A text media type is never capped up front; only a blob fallback is bounded."""
+    with TestClient(app=_make_skills_app(tmp_path, max_blob_bytes=1)) as client:
+        result = _rpc(client, "resources/read", {"uri": "skill://alpha/notes/todo.md"})["result"]
+
+    assert result["contents"][0]["text"] == _TODO_BYTES.decode()
 
 
 def test_resources_read_unknown_skill_file_is_resource_not_found(tmp_path: "Path") -> "None":
@@ -305,6 +328,21 @@ def test_resources_read_text_media_type_that_is_not_utf8_falls_back_to_blob(tmp_
     assert "blob" in content
     assert "text" not in content
     assert base64.b64decode(content["blob"]) == latin1_bytes
+
+
+def test_resources_read_non_utf8_text_over_max_blob_bytes_is_internal_error(tmp_path: "Path") -> "None":
+    """A text media type is capped only once the read proves it must fall back to blob."""
+    _write_skill(tmp_path, "alpha", "Alpha skill.")
+    notes_dir = tmp_path / "alpha" / "notes"
+    notes_dir.mkdir()
+    (notes_dir / "latin1.txt").write_bytes("\xe9\xe8\xea".encode("latin-1"))
+    app = Litestar(plugins=[LitestarMCP(MCPConfig(max_blob_bytes=1, skills=MCPSkillsConfig(paths=[tmp_path])))])
+
+    with TestClient(app=app) as client:
+        response = _rpc(client, "resources/read", {"uri": "skill://alpha/notes/latin1.txt"})
+
+    assert response["error"]["code"] == -32603
+    assert response["error"]["data"]["error"] == "ValueError"
 
 
 def test_resources_read_skill_file_wins_over_colliding_handler_uri(tmp_path: "Path") -> "None":

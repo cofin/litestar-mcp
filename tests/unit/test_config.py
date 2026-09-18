@@ -36,19 +36,20 @@ def test_skills_config_rejects_empty_paths() -> "None":
 
 
 @pytest.mark.parametrize(
-    "max_files_per_skill,max_bytes_per_skill",
+    "max_files_per_skill,max_bytes_per_skill,match",
     [
-        (0, 512),
-        (512, 0),
+        (0, 512, "max_files_per_skill must be positive"),
+        (512, 0, "max_bytes_per_skill must be positive"),
     ],
 )
 def test_skills_config_rejects_non_positive_limits(
     tmp_path: Path,
     max_files_per_skill: int,
     max_bytes_per_skill: int,
+    match: str,
 ) -> "None":
     """Test MCPSkillsConfig rejects non-positive limits."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=match):
         MCPSkillsConfig(
             paths=[tmp_path],
             max_files_per_skill=max_files_per_skill,
@@ -76,6 +77,12 @@ def test_skills_config_coerces_str_paths(tmp_path: Path) -> "None":
     assert config.paths == (tmp_path,)
 
 
+def test_skills_config_rejects_a_bare_string_for_paths(tmp_path: Path) -> "None":
+    """A bare string is not a sequence of paths; it must not be shredded per character."""
+    with pytest.raises(ValueError, match="paths must be a sequence of paths"):
+        MCPSkillsConfig(paths=str(tmp_path))  # type: ignore[arg-type]
+
+
 def test_mcp_endpoint_still_serves_with_skills_field(tmp_path: Path) -> "None":
     """Test MCP endpoint works with skills field (regression guard for msgspec)."""
     from litestar import Litestar
@@ -96,5 +103,4 @@ def test_root_exports_skills_config() -> "None":
     """Test MCPSkillsConfig is exported from litestar_mcp."""
     import litestar_mcp
 
-    assert MCPSkillsConfig is not None
     assert "MCPSkillsConfig" in litestar_mcp.__all__

@@ -43,12 +43,8 @@ def _write_skill(
 
 
 def test_compute_digest_is_prefixed_lowercase_sha256() -> "None":
-    """The digest is ``sha256:`` followed by 64 lowercase hex characters."""
-    digest = compute_digest(b"abc")
-    assert digest == "sha256:" + hashlib.sha256(b"abc").hexdigest()
-    hex_part = digest.split(":", 1)[1]
-    assert len(hex_part) == 64
-    assert hex_part == hex_part.lower()
+    """The digest is ``sha256:`` followed by the hex SHA-256 of the data."""
+    assert compute_digest(b"abc") == "sha256:" + hashlib.sha256(b"abc").hexdigest()
 
 
 def test_parse_frontmatter_returns_mapping_verbatim() -> "None":
@@ -168,6 +164,34 @@ def test_from_config_skips_hidden_and_symlinked_entries(tmp_path: "Path") -> "No
 
     relative_paths = {file.relative_path for file in skill.files}
     assert relative_paths == {"SKILL.md", "reference.md"}
+
+
+def test_from_config_rejects_symlinked_skill_md(tmp_path: "Path") -> "None":
+    """A symlinked ``SKILL.md`` is rejected rather than advertised as an unreadable file."""
+    target = tmp_path / "shared_skill.md"
+    target.write_bytes(_DEFAULT_FRONTMATTER.format(name="demo").encode())
+    skill_dir = tmp_path / "demo"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").symlink_to(target)
+
+    with pytest.raises(ImproperlyConfiguredException, match="demo"):
+        SkillCatalog.from_config(MCPSkillsConfig(paths=[tmp_path]))
+
+
+def test_to_entry_frontmatter_is_a_copy(tmp_path: "Path") -> "None":
+    """A caller mutating the returned frontmatter cannot corrupt the catalog."""
+    _write_skill(tmp_path, "demo", {})
+    catalog = SkillCatalog.from_config(MCPSkillsConfig(paths=[tmp_path]))
+    skill = catalog.get("skill://demo/SKILL.md")
+    assert skill is not None
+
+    entry = skill.to_entry()
+    entry["frontmatter"]["description"] = "tampered"
+    entry["frontmatter"]["injected"] = True
+
+    assert skill.frontmatter["description"] == "Test skill"
+    assert "injected" not in skill.frontmatter
+    assert skill.to_entry()["frontmatter"] == {"name": "demo", "description": "Test skill"}
 
 
 def test_from_config_rejects_name_mismatch(tmp_path: "Path") -> "None":
