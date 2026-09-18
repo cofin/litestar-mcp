@@ -160,7 +160,8 @@ class MCPSkillsConfig:
             normalized with :class:`~pathlib.Path`, so a plain string
             works at runtime; the annotation is ``Sequence[Path]``, so
             type-checked callers should pass :class:`~pathlib.Path`
-            objects.
+            objects. A bare ``str`` in place of the sequence is
+            rejected.
         directory_read: Advertise and serve ``resources/directory/read``.
         max_files_per_skill: Maximum files, including ``SKILL.md``, one
             skill may contain before it is rejected at startup.
@@ -174,6 +175,13 @@ class MCPSkillsConfig:
     max_bytes_per_skill: "int" = 16_777_216
 
     def __post_init__(self) -> "None":
+        # Widened to object because the annotation already excludes str, so type checkers
+        # call the branch unreachable. It guards untyped callers, for whom a bare string
+        # would iterate per character. ValueError, since a str is a valid Sequence.
+        configured_paths: object = self.paths
+        if isinstance(configured_paths, (str, bytes)):
+            msg = "paths must be a sequence of paths, not a single string; pass [path] instead"
+            raise ValueError(msg)  # noqa: TRY004
         self.paths = tuple(Path(path) for path in self.paths)
         if not self.paths:
             msg = "paths must contain at least one directory"

@@ -87,7 +87,7 @@ class Skill:
         """Return the ``skills/list`` entry for this skill."""
         return {
             "uri": self.uri,
-            "frontmatter": self.frontmatter,
+            "frontmatter": dict(self.frontmatter),
             "resources": [file.to_manifest_entry() for file in self.files],
         }
 
@@ -95,12 +95,15 @@ class Skill:
 class SkillCatalog:
     """Immutable, deterministic catalog of skills loaded from disk."""
 
-    def __init__(self, skills: "Sequence[Skill]") -> "None":
+    def __init__(self, skills: "Sequence[Skill]", *, directory_read: "bool" = True) -> "None":
         """Store ``skills`` sorted by name and build URI lookup indexes.
 
         Args:
             skills: Skills to include in the catalog.
+            directory_read: Whether ``resources/directory/read`` is advertised
+                and served for this catalog.
         """
+        self.directory_read = directory_read
         self._skills: tuple[Skill, ...] = tuple(sorted(skills, key=lambda skill: skill.name))
         self._by_uri: dict[str, Skill] = {skill.uri: skill for skill in self._skills}
         self._files_by_uri: dict[str, tuple[Skill, SkillFile]] = {
@@ -142,7 +145,7 @@ class SkillCatalog:
                     raise ImproperlyConfiguredException(msg)
                 seen_names[skill.name] = child
                 skills.append(skill)
-        return cls(skills)
+        return cls(skills, directory_read=config.directory_read)
 
     @property
     def skills(self) -> "tuple[Skill, ...]":
@@ -303,12 +306,16 @@ def load_skill(directory: "Path", *, max_files: "int", max_bytes: "int") -> "Ski
         The loaded skill.
 
     Raises:
-        ImproperlyConfiguredException: The frontmatter is invalid, the
-            ``name``/``description`` fields are missing or empty, the
-            frontmatter ``name`` does not match the folder name, or the
-            skill exceeds ``max_files``/``max_bytes``.
+        ImproperlyConfiguredException: ``SKILL.md`` is a symlink, the
+            frontmatter is invalid, the ``name``/``description`` fields
+            are missing or empty, the frontmatter ``name`` does not match
+            the folder name, or the skill exceeds
+            ``max_files``/``max_bytes``.
     """
     skill_md_path = directory / SKILL_FILE_NAME
+    if skill_md_path.is_symlink():
+        msg = f"Skill at {directory} must provide {SKILL_FILE_NAME} as a regular file, not a symlink"
+        raise ImproperlyConfiguredException(msg)
     skill_md_bytes = skill_md_path.read_bytes()
     frontmatter = parse_frontmatter(skill_md_bytes.decode())
 

@@ -335,7 +335,7 @@ def _build_cached_router(
     if skill_catalog is not None:
         router.register("skills/list", lambda params, ctx: service().skills_list(params, ctx))
         router.register("skills/get", lambda params, ctx: service().skills_get(params, ctx))
-        if config.skills is not None and config.skills.directory_read:
+        if skill_catalog.directory_read:
             router.register(
                 "resources/directory/read", lambda params, ctx: service().resources_directory_read(params, ctx)
             )

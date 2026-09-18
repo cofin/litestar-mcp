@@ -519,8 +519,8 @@ class MCPHandlerService:
         extensions: dict[str, Any] = {}
         if self.task_config is not None:
             extensions[TASKS_EXTENSION] = {}
-        if self.skill_catalog is not None and self.config.skills is not None:
-            extensions[SKILLS_EXTENSION] = {"directoryRead": self.config.skills.directory_read}
+        if self.skill_catalog is not None:
+            extensions[SKILLS_EXTENSION] = {"directoryRead": self.skill_catalog.directory_read}
         if extensions:
             capabilities["extensions"] = extensions
         result: dict[str, Any] = {
@@ -742,6 +742,14 @@ class MCPHandlerService:
             if match is None:
                 raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
             _skill, skill_file = match
+            if not _is_resource_text_media_type(skill_file.mime_type):
+                # A non-text media type always becomes a blob, so the manifest size is
+                # exactly what the cap will test; refuse before reading. Text types are
+                # excluded because only the read reveals the non-UTF-8 blob fallback.
+                try:
+                    enforce_blob_size(skill_file.size, max_blob_bytes=self.config.max_blob_bytes)
+                except ValueError as exc:
+                    raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
             try:
                 body = self.skill_catalog.read_file(skill_file)
             except (SkillIntegrityError, OSError) as exc:
