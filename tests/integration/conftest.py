@@ -117,6 +117,8 @@ def modern_direct_mcp_requests(monkeypatch: "pytest.MonkeyPatch") -> "None":
             "tasks/get": "taskId",
             "tasks/update": "taskId",
             "tasks/cancel": "taskId",
+            "skills/get": "uri",
+            "resources/directory/read": "uri",
         }.get(method)
         if name_field is not None:
             headers.setdefault("Mcp-Name", str(params.get(name_field, "")))
@@ -164,6 +166,8 @@ def _modern_headers(
         "tasks/get": "taskId",
         "tasks/update": "taskId",
         "tasks/cancel": "taskId",
+        "skills/get": "uri",
+        "resources/directory/read": "uri",
     }
     if method in name_fields:
         final_headers.setdefault("Mcp-Name", str(params.get(name_fields[method], "")))

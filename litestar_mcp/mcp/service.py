@@ -34,6 +34,7 @@ from litestar_mcp.mcp.error_mapping import (
     mcp_error_for_prompt_execution,
     mcp_error_for_resource_not_found,
     mcp_error_for_resource_read,
+    mcp_error_for_skill_not_found,
 )
 from litestar_mcp.mcp.executor import (
     MCPHandlerResponse,
@@ -71,11 +72,13 @@ if TYPE_CHECKING:
     from litestar.handlers import BaseRouteHandler
 
     from litestar_mcp.mcp.config import MCPConfig
+    from litestar_mcp.mcp.skills import SkillCatalog
 
 _logger = logging.getLogger(__name__)
 
 MCP_PROTOCOL_VERSION = "2026-07-28"
 TASKS_EXTENSION = "io.modelcontextprotocol/tasks"
+SKILLS_EXTENSION = "io.modelcontextprotocol/skills"
 MISSING_REQUIRED_CLIENT_CAPABILITY = -32021
 
 
@@ -406,6 +409,7 @@ class MCPHandlerService:
         app_ref: "Litestar",
         registry: "Registry | None",
         task_store: "MCPTaskStore | None" = None,
+        skill_catalog: "SkillCatalog | None" = None,
     ) -> "None":
         self.config = config
         self.discovered_tools = discovered_tools
@@ -415,6 +419,7 @@ class MCPHandlerService:
         self.registry = registry
         self.task_store = task_store
         self.task_config = config.task_config
+        self.skill_catalog = skill_catalog
 
     async def _execute_tool_call(
         self,
@@ -504,8 +509,13 @@ class MCPHandlerService:
         }
         if self.discovered_prompts:
             capabilities["prompts"] = {"listChanged": True}
+        extensions: dict[str, Any] = {}
         if self.task_config is not None:
-            capabilities["extensions"] = {TASKS_EXTENSION: {}}
+            extensions[TASKS_EXTENSION] = {}
+        if self.skill_catalog is not None and self.config.skills is not None:
+            extensions[SKILLS_EXTENSION] = {"directoryRead": self.config.skills.directory_read}
+        if extensions:
+            capabilities["extensions"] = extensions
         result: dict[str, Any] = {
             "supportedVersions": [MCP_PROTOCOL_VERSION],
             "capabilities": capabilities,
@@ -801,6 +811,47 @@ class MCPHandlerService:
             return {"contents": [content]}
 
         raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
+
+    async def skills_list(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
+        """List every skill in the catalog, one atomic entry per skill."""
+        if self.skill_catalog is None:
+            raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message="Skills are not configured"))
+        entries = [skill.to_entry() for skill in self.skill_catalog.skills]
+        page, next_cursor = _paginate_list(entries, params, self.config.list_page_size)
+        result: dict[str, Any] = {"skills": page}
+        if next_cursor is not None:
+            result["nextCursor"] = next_cursor
+        return result
+
+    async def skills_get(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
+        """Return one skill's manifest by its ``skill://`` URI."""
+        if self.skill_catalog is None:
+            raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message="Skills are not configured"))
+        uri = params.get("uri")
+        if not isinstance(uri, str) or not uri:
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'uri'"))
+        skill = self.skill_catalog.get(uri)
+        if skill is None:
+            raise JSONRPCErrorException(mcp_error_for_skill_not_found(uri))
+        return {"skill": skill.to_entry()}
+
+    async def resources_directory_read(
+        self, params: "dict[str, Any]", context: "MCPRequestContext"
+    ) -> "dict[str, Any]":
+        """List the files and subdirectories directly under a ``skill://`` directory URI."""
+        if self.skill_catalog is None:
+            raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message="Skills are not configured"))
+        uri = params.get("uri")
+        if not isinstance(uri, str) or not uri:
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'uri'"))
+        children = self.skill_catalog.list_directory(uri)
+        if children is None:
+            raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
+        page, next_cursor = _paginate_list(children, params, self.config.list_page_size)
+        result: dict[str, Any] = {"resources": page}
+        if next_cursor is not None:
+            result["nextCursor"] = next_cursor
+        return result
 
     async def completion_complete(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
         return {"completion": {"values": [], "total": 0, "hasMore": False}}

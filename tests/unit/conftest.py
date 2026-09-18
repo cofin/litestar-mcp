@@ -22,6 +22,8 @@ NAME_FIELDS = {
     "tasks/get": "taskId",
     "tasks/update": "taskId",
     "tasks/cancel": "taskId",
+    "skills/get": "uri",
+    "resources/directory/read": "uri",
 }
 
 

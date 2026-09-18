@@ -357,6 +357,8 @@ class _StreamableHTTPBridgeClient:
                 "tasks/get": "taskId",
                 "tasks/update": "taskId",
                 "tasks/cancel": "taskId",
+                "skills/get": "uri",
+                "resources/directory/read": "uri",
             }.get(method)
             if name_field is not None and isinstance(params.get(name_field), str):
                 headers[MCP_NAME_HEADER] = _encode_header_value(params[name_field])
