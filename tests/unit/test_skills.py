@@ -294,7 +294,8 @@ def test_resources_read_text_media_type_that_is_not_utf8_falls_back_to_blob(tmp_
     _write_skill(tmp_path, "alpha", "Alpha skill.")
     notes_dir = tmp_path / "alpha" / "notes"
     notes_dir.mkdir()
-    (notes_dir / "latin1.txt").write_bytes("caf\xe9".encode("latin-1"))
+    latin1_bytes = "\xe9\xe8\xea".encode("latin-1")
+    (notes_dir / "latin1.txt").write_bytes(latin1_bytes)
     app = Litestar(plugins=[LitestarMCP(MCPConfig(skills=MCPSkillsConfig(paths=[tmp_path])))])
 
     with TestClient(app=app) as client:
@@ -303,6 +304,7 @@ def test_resources_read_text_media_type_that_is_not_utf8_falls_back_to_blob(tmp_
     content = result["contents"][0]
     assert "blob" in content
     assert "text" not in content
+    assert base64.b64decode(content["blob"]) == latin1_bytes
 
 
 def test_resources_read_skill_file_wins_over_colliding_handler_uri(tmp_path: "Path") -> "None":
