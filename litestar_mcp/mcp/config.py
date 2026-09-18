@@ -1,6 +1,8 @@
 """Configuration for Litestar MCP Plugin."""
 
+from collections.abc import Sequence  # noqa: TC003
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from litestar.stores.base import Store  # noqa: TC002
@@ -149,6 +151,40 @@ def normalize_task_config(value: "bool | MCPTaskConfig") -> "MCPTaskConfig | Non
 
 
 @dataclass
+class MCPSkillsConfig:
+    """Configuration for the opt-in Skills over MCP extension.
+
+    Attributes:
+        paths: Directories whose immediate child folders containing a
+            ``SKILL.md`` file are served as MCP skills. Entries are
+            normalized to :class:`~pathlib.Path`, so plain strings are
+            accepted.
+        directory_read: Advertise and serve ``resources/directory/read``.
+        max_files_per_skill: Maximum files, including ``SKILL.md``, one
+            skill may contain before it is rejected at startup.
+        max_bytes_per_skill: Maximum total byte size of one skill's files
+            before it is rejected at startup.
+    """
+
+    paths: "Sequence[Path]"
+    directory_read: "bool" = True
+    max_files_per_skill: "int" = 512
+    max_bytes_per_skill: "int" = 16_777_216
+
+    def __post_init__(self) -> "None":
+        self.paths = tuple(Path(path) for path in self.paths)
+        if not self.paths:
+            msg = "paths must contain at least one directory"
+            raise ValueError(msg)
+        if self.max_files_per_skill <= 0:
+            msg = "max_files_per_skill must be positive"
+            raise ValueError(msg)
+        if self.max_bytes_per_skill <= 0:
+            msg = "max_bytes_per_skill must be positive"
+            raise ValueError(msg)
+
+
+@dataclass
 class MCPConfig:
     """Configuration for the Litestar MCP Plugin.
 
@@ -171,10 +207,11 @@ class MCPConfig:
         tasks: Optional task configuration or ``True`` to enable the default
             experimental in-memory task implementation.
         list_page_size: Page size for ``tools/list``, ``resources/list``,
-            ``resources/templates/list``, and ``prompts/list``. The MCP spec
-            lets servers choose the page size; clients cannot override it per
-            request — they page through results via the opaque ``cursor`` /
-            ``nextCursor`` round-trip. Must be a positive integer.
+            ``resources/templates/list``, ``skills/list``, ``prompts/list``,
+            and ``resources/directory/read``. The MCP spec lets servers choose
+            the page size; clients cannot override it per request — they page
+            through results via the opaque ``cursor`` / ``nextCursor``
+            round-trip. Must be a positive integer.
         before_tool_call: Optional callback invoked once before each
             ``tools/call`` dispatch, after the synthesized request is built
             and before guards run.
@@ -188,6 +225,8 @@ class MCPConfig:
             as incomplete cleanup; application finalizers must tolerate cancellation.
         max_blob_bytes: Maximum raw byte length for base64-embedded MCP blobs.
             Set to ``None`` to disable the library cap.
+        skills: Optional Skills over MCP configuration; ``None`` leaves the
+            extension disabled.
     """
 
     base_path: "str" = "/mcp"
@@ -201,6 +240,7 @@ class MCPConfig:
     include_tags: "list[str] | None" = None
     exclude_tags: "list[str] | None" = None
     tasks: "bool | MCPTaskConfig" = False
+    skills: "MCPSkillsConfig | None" = None
     opt_keys: "MCPOptKeys" = field(default_factory=MCPOptKeys)
     cache_ttl_ms: "int" = 0
     cache_scope: "Literal['private', 'public']" = "private"
