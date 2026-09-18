@@ -18,6 +18,13 @@ MCPTaskConfig
    :members:
    :show-inheritance:
 
+MCPSkillsConfig
+----------------
+
+.. autoclass:: MCPSkillsConfig
+   :members:
+   :show-inheritance:
+
 .. currentmodule:: litestar_mcp.mcp.app
 
 MCPStdioContext

@@ -1,6 +1,7 @@
 """Integration tests for the stdio to Streamable HTTP bridge."""
 
 import contextlib
+import hashlib
 import io
 import json
 import logging
@@ -17,13 +18,14 @@ from anyio import sleep_forever
 from anyio.to_thread import run_sync as run_sync_in_worker_thread
 from litestar import Litestar, get
 
-from litestar_mcp import LitestarMCP, MCPConfig
+from litestar_mcp import LitestarMCP, MCPConfig, MCPSkillsConfig
 from litestar_mcp.mcp.bridge import run_stdio_streamable_http_bridge
 from tests.conftest import BridgeBytesSink, BridgeQueuedBytesSource
 from tests.integration._auth import FORGED_TOKEN, build_oauth_backend, mint_access_token
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
     from litestar.connection import Request
 
@@ -78,6 +80,16 @@ def _build_app(*, base_path: "str" = "/mcp") -> "Litestar":
         return {"message": f"hello {name}"}
 
     return Litestar(route_handlers=[hello], plugins=[LitestarMCP(MCPConfig(base_path=base_path))])
+
+
+def _build_skills_app(tmp_path: "Path") -> "Litestar":
+    root = tmp_path / "skills"
+    skill_dir = root / "demo"
+    scripts_dir = skill_dir / "scripts"
+    scripts_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: demo\ndescription: Demo skill\nversion: 1\n---\n\n# Demo\n")
+    (scripts_dir / "run.py").write_text('print("hi")\n')
+    return Litestar(plugins=[LitestarMCP(MCPConfig(skills=MCPSkillsConfig(paths=[root])))])
 
 
 def _build_auth_app() -> "Litestar":
@@ -298,3 +310,39 @@ async def test_bridge_real_401_after_retry_exits_non_zero() -> "None":
     assert exit_code == 1
     assert messages[0]["error"]["code"] == -32001
     assert "401" in messages[0]["error"]["message"]
+
+
+@pytest.mark.anyio
+@pytest.mark.integration
+async def test_bridge_forwards_skill_methods_with_name_header(tmp_path: "Path") -> "None":
+    app = _build_skills_app(tmp_path)
+    with _run_app(app) as base_url:
+        stdout = BridgeBytesSink()
+        stdin = BridgeQueuedBytesSource(
+            _rpc_line("server/discover", msg_id=1),
+            _rpc_line("skills/list", msg_id=2),
+            _rpc_line("skills/get", {"uri": "skill://demo/SKILL.md"}, msg_id=3),
+            _rpc_line("resources/directory/read", {"uri": "skill://demo"}, msg_id=4),
+            _rpc_line("resources/read", {"uri": "skill://demo/SKILL.md"}, msg_id=5),
+        )
+
+        exit_code = await run_stdio_streamable_http_bridge(
+            f"{base_url}/mcp",
+            stdin=stdin,
+            stdout=stdout,
+            timeout=5,
+        )
+
+    messages = _parse_stdout(stdout)
+    by_id = {message.get("id"): message for message in messages}
+    assert exit_code == 0
+    assert set(by_id) == {1, 2, 3, 4, 5}
+    for msg_id in (1, 2, 3, 4, 5):
+        assert "result" in by_id[msg_id]
+        assert by_id[msg_id].get("error") is None
+    assert not any(message.get("error", {}).get("code") == -32020 for message in messages)
+
+    skill_entry = by_id[3]["result"]["skill"]
+    digest = next(entry["digest"] for entry in skill_entry["resources"] if entry["uri"] == "skill://demo/SKILL.md")
+    text = by_id[5]["result"]["contents"][0]["text"]
+    assert f"sha256:{hashlib.sha256(text.encode()).hexdigest()}" == digest

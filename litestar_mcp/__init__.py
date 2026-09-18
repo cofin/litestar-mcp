@@ -25,7 +25,14 @@ from litestar_mcp.core.exceptions import (
     MissingDependencyError,
 )
 from litestar_mcp.mcp.app import MCP
-from litestar_mcp.mcp.config import AfterToolCallHook, BeforeToolCallHook, MCPConfig, MCPOptKeys, MCPTaskConfig
+from litestar_mcp.mcp.config import (
+    AfterToolCallHook,
+    BeforeToolCallHook,
+    MCPConfig,
+    MCPOptKeys,
+    MCPSkillsConfig,
+    MCPTaskConfig,
+)
 from litestar_mcp.mcp.content import MCPBlobResource, MCPInputRequiredResult, MCPResourceLink, MCPToolResult
 from litestar_mcp.mcp.plugin import LitestarMCP
 from litestar_mcp.mcp.routes import MCPController
@@ -48,6 +55,7 @@ __all__ = (
     "MCPOptKeys",
     "MCPRequestContext",
     "MCPResourceLink",
+    "MCPSkillsConfig",
     "MCPStdioContext",
     "MCPTaskConfig",
     "MCPToolResult",

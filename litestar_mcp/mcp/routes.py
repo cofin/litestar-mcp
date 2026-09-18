@@ -35,6 +35,7 @@ from litestar_mcp.core.serialization import from_json, to_json
 from litestar_mcp.mcp.config import MCPConfig  # noqa: TC001
 from litestar_mcp.mcp.registry import PromptRegistration, Registry  # noqa: TC001
 from litestar_mcp.mcp.service import MCPHandlerService, MCPRequestContext
+from litestar_mcp.mcp.skills import SkillCatalog  # noqa: TC001
 from litestar_mcp.mcp.tasks import MCPTaskStore  # noqa: TC001
 
 if TYPE_CHECKING:
@@ -61,6 +62,8 @@ _NAME_FIELDS = {
     "tasks/get": "taskId",
     "tasks/update": "taskId",
     "tasks/cancel": "taskId",
+    "skills/get": "uri",
+    "resources/directory/read": "uri",
 }
 _CACHEABLE_METHODS = {
     "server/discover",
@@ -69,6 +72,8 @@ _CACHEABLE_METHODS = {
     "resources/templates/list",
     "resources/read",
     "prompts/list",
+    "skills/list",
+    "skills/get",
 }
 _BASE64_PREFIX = "=?base64?"
 _BASE64_SUFFIX = "?="
@@ -298,6 +303,7 @@ def _build_cached_router(
     discovered_prompts: "dict[str, PromptRegistration]",
     registry: "Registry",
     task_store: "MCPTaskStore | None",
+    skill_catalog: "SkillCatalog | None",
 ) -> "JSONRPCRouter":
     router = JSONRPCRouter()
 
@@ -310,6 +316,7 @@ def _build_cached_router(
             app_ref=app,
             registry=registry,
             task_store=task_store,
+            skill_catalog=skill_catalog,
         )
 
     router.register("server/discover", lambda params, ctx: service().server_discover(params, ctx))
@@ -325,6 +332,13 @@ def _build_cached_router(
         router.register("tasks/get", lambda params, ctx: service().tasks_get(params, ctx))
         router.register("tasks/update", lambda params, ctx: service().tasks_update(params, ctx))
         router.register("tasks/cancel", lambda params, ctx: service().tasks_cancel(params, ctx))
+    if skill_catalog is not None:
+        router.register("skills/list", lambda params, ctx: service().skills_list(params, ctx))
+        router.register("skills/get", lambda params, ctx: service().skills_get(params, ctx))
+        if skill_catalog.directory_read:
+            router.register(
+                "resources/directory/read", lambda params, ctx: service().resources_directory_read(params, ctx)
+            )
     return router
 
 
@@ -472,6 +486,7 @@ class MCPController(Controller):
         discovered_prompts: "NamedDependency[dict[str, PromptRegistration]]",
         registry: "NamedDependency[Registry]",
         task_store: "NamedDependency[MCPTaskStore | None]" = None,
+        skill_catalog: "NamedDependency[SkillCatalog | None]" = None,
     ) -> "Response[Any]":
         """Validate and dispatch one independent MCP request."""
         origin_error = _validate_origin(request, config)
@@ -520,6 +535,7 @@ class MCPController(Controller):
                 discovered_prompts,
                 registry,
                 task_store,
+                skill_catalog,
             )
         router: JSONRPCRouter = app.state.mcp_router
         if rpc_request.method not in router.methods:

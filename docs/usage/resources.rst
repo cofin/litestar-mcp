@@ -17,6 +17,13 @@ Marked resources appear in ``resources/list`` and are fetched via
 ``resources/read``. The plugin always ships one synthetic resource,
 ``litestar://openapi``, that returns the application's OpenAPI document.
 
+When the opt-in Agent Skills extension is configured, skill files also
+appear in ``resources/list`` and are fetched via ``resources/read`` under
+``skill://<name>/<relative-path>`` URIs. ``resources/read`` resolves
+``litestar://openapi`` first, then the skill catalog, then handler-declared
+resources — once skills are enabled, do not declare a handler resource URI
+starting with ``skill://``, since it becomes unreachable. See :doc:`skills`.
+
 Binary Resources
 ================
 

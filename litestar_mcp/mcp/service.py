@@ -34,6 +34,7 @@ from litestar_mcp.mcp.error_mapping import (
     mcp_error_for_prompt_execution,
     mcp_error_for_resource_not_found,
     mcp_error_for_resource_read,
+    mcp_error_for_skill_not_found,
 )
 from litestar_mcp.mcp.executor import (
     MCPHandlerResponse,
@@ -50,6 +51,7 @@ from litestar_mcp.mcp.registry import (
     resolve_prompt_description,
     should_include_prompt,
 )
+from litestar_mcp.mcp.skills import SKILL_URI_PREFIX, SkillIntegrityError
 from litestar_mcp.mcp.tasks import MCPTaskStore, TaskLookupError, TaskRecord
 from litestar_mcp.utils import (
     get_handler_function,
@@ -71,11 +73,13 @@ if TYPE_CHECKING:
     from litestar.handlers import BaseRouteHandler
 
     from litestar_mcp.mcp.config import MCPConfig
+    from litestar_mcp.mcp.skills import SkillCatalog
 
 _logger = logging.getLogger(__name__)
 
 MCP_PROTOCOL_VERSION = "2026-07-28"
 TASKS_EXTENSION = "io.modelcontextprotocol/tasks"
+SKILLS_EXTENSION = "io.modelcontextprotocol/skills"
 MISSING_REQUIRED_CLIENT_CAPABILITY = -32021
 
 
@@ -204,6 +208,23 @@ def _without_undefined_values(value: "Any") -> "Any":
     return value
 
 
+def _resource_content_from_bytes(
+    uri: "str", body: "bytes", *, mime_type: "str", max_blob_bytes: "int | None"
+) -> "dict[str, Any]":
+    """Build one MCP ResourceContents object from raw bytes."""
+    content: dict[str, Any] = {"uri": uri, "mimeType": mime_type}
+    if _is_resource_text_media_type(mime_type):
+        try:
+            content["text"] = body.decode("utf-8")
+        except UnicodeDecodeError:
+            pass
+        else:
+            return content
+    enforce_blob_size(len(body), max_blob_bytes=max_blob_bytes)
+    content["blob"] = base64.b64encode(body).decode("ascii")
+    return content
+
+
 def _resource_content_from_response(
     uri: "str",
     response: "MCPHandlerResponse",
@@ -212,20 +233,9 @@ def _resource_content_from_response(
     max_blob_bytes: "int | None",
 ) -> "dict[str, Any]":
     """Build one MCP ResourceContents object from a captured handler response."""
-    mime_type = response.media_type or fallback_mime_type
-    content: dict[str, Any] = {"uri": uri, "mimeType": mime_type}
-    body = response.body
-    if _is_resource_text_media_type(mime_type):
-        try:
-            content["text"] = body.decode("utf-8")
-        except UnicodeDecodeError:
-            pass
-        else:
-            return content
-
-    enforce_blob_size(len(body), max_blob_bytes=max_blob_bytes)
-    content["blob"] = base64.b64encode(body).decode("ascii")
-    return content
+    return _resource_content_from_bytes(
+        uri, response.body, mime_type=response.media_type or fallback_mime_type, max_blob_bytes=max_blob_bytes
+    )
 
 
 def _looks_like_tool_content(value: "Any") -> "bool":
@@ -406,6 +416,7 @@ class MCPHandlerService:
         app_ref: "Litestar",
         registry: "Registry | None",
         task_store: "MCPTaskStore | None" = None,
+        skill_catalog: "SkillCatalog | None" = None,
     ) -> "None":
         self.config = config
         self.discovered_tools = discovered_tools
@@ -415,6 +426,7 @@ class MCPHandlerService:
         self.registry = registry
         self.task_store = task_store
         self.task_config = config.task_config
+        self.skill_catalog = skill_catalog
 
     async def _execute_tool_call(
         self,
@@ -504,8 +516,13 @@ class MCPHandlerService:
         }
         if self.discovered_prompts:
             capabilities["prompts"] = {"listChanged": True}
+        extensions: dict[str, Any] = {}
         if self.task_config is not None:
-            capabilities["extensions"] = {TASKS_EXTENSION: {}}
+            extensions[TASKS_EXTENSION] = {}
+        if self.skill_catalog is not None:
+            extensions[SKILLS_EXTENSION] = {"directoryRead": self.skill_catalog.directory_read}
+        if extensions:
+            capabilities["extensions"] = extensions
         result: dict[str, Any] = {
             "supportedVersions": [MCP_PROTOCOL_VERSION],
             "capabilities": capabilities,
@@ -657,6 +674,8 @@ class MCPHandlerService:
                     "mimeType": _resource_mime_type(handler, self.config),
                 }
             )
+        if self.skill_catalog is not None:
+            resources.extend(self.skill_catalog.resource_entries())
         try:
             page, next_cursor = _paginate_list(resources, params, self.config.list_page_size)
         except ValueError as exc:
@@ -717,6 +736,31 @@ class MCPHandlerService:
                     }
                 ]
             }
+
+        if self.skill_catalog is not None and uri.startswith(SKILL_URI_PREFIX):
+            match = self.skill_catalog.get_file(uri)
+            if match is None:
+                raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
+            _skill, skill_file = match
+            if not _is_resource_text_media_type(skill_file.mime_type):
+                # A non-text media type always becomes a blob, so the manifest size is
+                # exactly what the cap will test; refuse before reading. Text types are
+                # excluded because only the read reveals the non-UTF-8 blob fallback.
+                try:
+                    enforce_blob_size(skill_file.size, max_blob_bytes=self.config.max_blob_bytes)
+                except ValueError as exc:
+                    raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
+            try:
+                body = self.skill_catalog.read_file(skill_file)
+            except (SkillIntegrityError, OSError) as exc:
+                raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
+            try:
+                content = _resource_content_from_bytes(
+                    uri, body, mime_type=skill_file.mime_type, max_blob_bytes=self.config.max_blob_bytes
+                )
+            except ValueError as exc:
+                raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
+            return {"contents": [content]}
 
         resource_match = next(
             (
@@ -801,6 +845,47 @@ class MCPHandlerService:
             return {"contents": [content]}
 
         raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
+
+    async def skills_list(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
+        """List every skill in the catalog, one atomic entry per skill."""
+        if self.skill_catalog is None:
+            raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message="Skills are not configured"))
+        entries = [skill.to_entry() for skill in self.skill_catalog.skills]
+        page, next_cursor = _paginate_list(entries, params, self.config.list_page_size)
+        result: dict[str, Any] = {"skills": page}
+        if next_cursor is not None:
+            result["nextCursor"] = next_cursor
+        return result
+
+    async def skills_get(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
+        """Return one skill's manifest by its ``skill://`` URI."""
+        if self.skill_catalog is None:
+            raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message="Skills are not configured"))
+        uri = params.get("uri")
+        if not isinstance(uri, str) or not uri:
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'uri'"))
+        skill = self.skill_catalog.get(uri)
+        if skill is None:
+            raise JSONRPCErrorException(mcp_error_for_skill_not_found(uri))
+        return {"skill": skill.to_entry()}
+
+    async def resources_directory_read(
+        self, params: "dict[str, Any]", context: "MCPRequestContext"
+    ) -> "dict[str, Any]":
+        """List the files and subdirectories directly under a ``skill://`` directory URI."""
+        if self.skill_catalog is None:
+            raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message="Skills are not configured"))
+        uri = params.get("uri")
+        if not isinstance(uri, str) or not uri:
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'uri'"))
+        children = self.skill_catalog.list_directory(uri)
+        if children is None:
+            raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
+        page, next_cursor = _paginate_list(children, params, self.config.list_page_size)
+        result: dict[str, Any] = {"resources": page}
+        if next_cursor is not None:
+            result["nextCursor"] = next_cursor
+        return result
 
     async def completion_complete(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
         return {"completion": {"values": [], "total": 0, "hasMore": False}}

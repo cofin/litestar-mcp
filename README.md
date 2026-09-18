@@ -22,6 +22,7 @@ This plugin automatically discovers Litestar routes marked for MCP and exposes t
 - **OpenAPI Integration** — server info derived from OpenAPI config.
 - **Bring Your Own Auth** — MCP inherits the app's Litestar authentication middleware, including litestar-security or a custom `AbstractAuthenticationMiddleware`.
 - **Optional Task Support** — the MCP Tasks extension with Litestar Store records; applications coordinate execution across workers.
+- **Optional MCP Skills** — serve Agent Skills folders through the io.modelcontextprotocol/skills extension with SHA-256 manifests.
 - **Optional A2A 1.0** — official SDK models and handlers on native Litestar JSON-RPC/SSE routes, without required Starlette, FastAPI or Uvicorn dependencies.
 
 ## Quick Start
@@ -232,8 +233,9 @@ config = MCPConfig()
 | `include_tags` | `list[str] \| None` | `None` | Only expose routes with matching OpenAPI tags |
 | `exclude_tags` | `list[str] \| None` | `None` | Exclude routes with matching OpenAPI tags |
 | `tasks` | `bool \| MCPTaskConfig` | `False` | Enable the `io.modelcontextprotocol/tasks` extension |
+| `skills` | `MCPSkillsConfig \| None` | `None` | Serve Agent Skills over MCP from the configured directories |
 | `opt_keys` | `MCPOptKeys` | `MCPOptKeys()` | Rename the `handler.opt` keys the plugin reads (`mcp_tool`, `mcp_resource`, ...) |
-| `list_page_size` | `int` | `100` | Page size for `tools/list`, `resources/list`, `resources/templates/list`, and `prompts/list` |
+| `list_page_size` | `int` | `100` | Page size for `tools/list`, `resources/list`, `resources/templates/list`, `skills/list`, `prompts/list`, and `resources/directory/read` |
 | `cache_ttl_ms` | `int` | `0` | Conservative cache lifetime for discovery/list/resource results |
 | `cache_scope` | `"private" \| "public"` | `"private"` | Cache sharing policy |
 | `subscription_max_streams` | `int` | `10000` | Maximum concurrent `subscriptions/listen` streams |

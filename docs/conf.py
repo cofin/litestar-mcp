@@ -69,7 +69,7 @@ extensions = [
     "sphinx_datatables",
 ]
 
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "examples/skills"]
 
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),

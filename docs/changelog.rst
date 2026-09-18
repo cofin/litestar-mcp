@@ -11,6 +11,20 @@ Recent Updates
 
 .. changelog:: 0.14.0
 
+    .. change:: serve Agent Skills over MCP
+        :type: feature
+
+        Added ``MCPSkillsConfig`` and the opt-in
+        ``io.modelcontextprotocol/skills`` extension, which loads a static
+        catalog of ``<path>/<name>/SKILL.md`` folders once at startup.
+        ``skills/list`` and ``skills/get`` return each skill's frontmatter and
+        a SHA-256 manifest of its files, and ``resources/directory/read``
+        lists the entries directly under a skill directory when
+        ``directory_read`` is enabled.
+        Skill files themselves are served through the existing
+        ``resources/read`` method under ``skill://<name>/<relative-path>``
+        URIs, alongside handler-declared resources.
+
     .. change:: require modern MCP requests and canonical APIs
         :type: breaking
 

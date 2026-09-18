@@ -51,6 +51,15 @@ def mcp_error_for_resource_not_found(uri: "str") -> "JSONRPCError":
     )
 
 
+def mcp_error_for_skill_not_found(uri: "str") -> "JSONRPCError":
+    """Return the MCP skills/get not-found error."""
+    return JSONRPCError(
+        code=RESOURCE_NOT_FOUND,
+        message="Skill not found",
+        data={"uri": uri},
+    )
+
+
 def mcp_error_for_resource_read(err: "MCPToolErrorResult | Exception") -> "JSONRPCError":
     """Map resource read failures to an internal JSON-RPC error."""
     if isinstance(err, MCPToolErrorResult):
