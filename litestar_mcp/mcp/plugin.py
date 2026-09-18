@@ -14,6 +14,7 @@ from litestar_mcp.mcp.cli import mcp_group
 from litestar_mcp.mcp.config import MCPConfig
 from litestar_mcp.mcp.registry import PromptRegistration, Registry
 from litestar_mcp.mcp.routes import MCPController
+from litestar_mcp.mcp.skills import SkillCatalog
 from litestar_mcp.mcp.tasks import MCPTaskStore, TaskRecord
 from litestar_mcp.utils import get_handler_function, get_mcp_metadata
 
@@ -74,6 +75,9 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                 max_ttl_ms=task_config.max_ttl_ms,
                 poll_interval_ms=task_config.poll_interval_ms,
             )
+        self._skill_catalog: SkillCatalog | None = (
+            SkillCatalog.from_config(self._config.skills) if self._config.skills is not None else None
+        )
 
     @property
     def config(self) -> "MCPConfig":
@@ -89,6 +93,11 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
     def task_store(self) -> "MCPTaskStore | None":
         """Get the task store."""
         return self._task_store
+
+    @property
+    def skill_catalog(self) -> "SkillCatalog | None":
+        """Get the skill catalog."""
+        return self._skill_catalog
 
     @property
     def discovered_tools(self) -> "dict[str, BaseRouteHandler]":
@@ -142,6 +151,9 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         def provide_task_store() -> "MCPTaskStore | None":
             return self._task_store
 
+        def provide_skill_catalog() -> "SkillCatalog | None":
+            return self._skill_catalog
+
         router_kwargs: dict[str, Any] = {
             "path": self._config.base_path,
             "route_handlers": [MCPController],
@@ -151,6 +163,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                 "config": Provide(provide_mcp_config, sync_to_thread=False),
                 "registry": Provide(provide_registry, sync_to_thread=False),
                 "task_store": Provide(provide_task_store, sync_to_thread=False),
+                "skill_catalog": Provide(provide_skill_catalog, sync_to_thread=False),
                 "discovered_tools": Provide(lambda: self._registry.tools, sync_to_thread=False),
                 "discovered_resources": Provide(lambda: self._registry.resources, sync_to_thread=False),
                 "discovered_prompts": Provide(lambda: self._registry.prompts, sync_to_thread=False),
