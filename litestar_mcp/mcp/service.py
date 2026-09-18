@@ -51,6 +51,7 @@ from litestar_mcp.mcp.registry import (
     resolve_prompt_description,
     should_include_prompt,
 )
+from litestar_mcp.mcp.skills import SKILL_URI_PREFIX, SkillIntegrityError
 from litestar_mcp.mcp.tasks import MCPTaskStore, TaskLookupError, TaskRecord
 from litestar_mcp.utils import (
     get_handler_function,
@@ -207,6 +208,23 @@ def _without_undefined_values(value: "Any") -> "Any":
     return value
 
 
+def _resource_content_from_bytes(
+    uri: "str", body: "bytes", *, mime_type: "str", max_blob_bytes: "int | None"
+) -> "dict[str, Any]":
+    """Build one MCP ResourceContents object from raw bytes."""
+    content: dict[str, Any] = {"uri": uri, "mimeType": mime_type}
+    if _is_resource_text_media_type(mime_type):
+        try:
+            content["text"] = body.decode("utf-8")
+        except UnicodeDecodeError:
+            pass
+        else:
+            return content
+    enforce_blob_size(len(body), max_blob_bytes=max_blob_bytes)
+    content["blob"] = base64.b64encode(body).decode("ascii")
+    return content
+
+
 def _resource_content_from_response(
     uri: "str",
     response: "MCPHandlerResponse",
@@ -215,20 +233,9 @@ def _resource_content_from_response(
     max_blob_bytes: "int | None",
 ) -> "dict[str, Any]":
     """Build one MCP ResourceContents object from a captured handler response."""
-    mime_type = response.media_type or fallback_mime_type
-    content: dict[str, Any] = {"uri": uri, "mimeType": mime_type}
-    body = response.body
-    if _is_resource_text_media_type(mime_type):
-        try:
-            content["text"] = body.decode("utf-8")
-        except UnicodeDecodeError:
-            pass
-        else:
-            return content
-
-    enforce_blob_size(len(body), max_blob_bytes=max_blob_bytes)
-    content["blob"] = base64.b64encode(body).decode("ascii")
-    return content
+    return _resource_content_from_bytes(
+        uri, response.body, mime_type=response.media_type or fallback_mime_type, max_blob_bytes=max_blob_bytes
+    )
 
 
 def _looks_like_tool_content(value: "Any") -> "bool":
@@ -667,6 +674,8 @@ class MCPHandlerService:
                     "mimeType": _resource_mime_type(handler, self.config),
                 }
             )
+        if self.skill_catalog is not None:
+            resources.extend(self.skill_catalog.resource_entries())
         try:
             page, next_cursor = _paginate_list(resources, params, self.config.list_page_size)
         except ValueError as exc:
@@ -727,6 +736,23 @@ class MCPHandlerService:
                     }
                 ]
             }
+
+        if self.skill_catalog is not None and uri.startswith(SKILL_URI_PREFIX):
+            match = self.skill_catalog.get_file(uri)
+            if match is None:
+                raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
+            _skill, skill_file = match
+            try:
+                body = self.skill_catalog.read_file(skill_file)
+            except (SkillIntegrityError, OSError) as exc:
+                raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
+            try:
+                content = _resource_content_from_bytes(
+                    uri, body, mime_type=skill_file.mime_type, max_blob_bytes=self.config.max_blob_bytes
+                )
+            except ValueError as exc:
+                raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
+            return {"contents": [content]}
 
         resource_match = next(
             (

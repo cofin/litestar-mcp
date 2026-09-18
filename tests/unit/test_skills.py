@@ -1,9 +1,10 @@
 """Skills over MCP extension tests: advertisement and wire methods."""
 
+import base64
 from pathlib import Path  # noqa: TC003
 from typing import Any, cast
 
-from litestar import Litestar
+from litestar import Litestar, get
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig, MCPSkillsConfig
@@ -27,6 +28,21 @@ def _make_skills_app(root: "Path", *, tasks: "bool" = False, **config_kwargs: "A
     return Litestar(
         plugins=[LitestarMCP(MCPConfig(tasks=tasks, skills=MCPSkillsConfig(paths=[root], **config_kwargs)))]
     )
+
+
+_LOGO_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+
+
+def _make_skills_app_with_binary_asset(root: "Path", *, max_blob_bytes: "int | None" = None) -> "Litestar":
+    _write_skill(root, "alpha", "Alpha skill.", {"notes/todo.md": "- todo\n"})
+    assets_dir = root / "alpha" / "assets"
+    assets_dir.mkdir()
+    (assets_dir / "logo.png").write_bytes(_LOGO_BYTES)
+    _write_skill(root, "beta", "Beta skill.")
+    config_kwargs: dict[str, Any] = {"skills": MCPSkillsConfig(paths=[root])}
+    if max_blob_bytes is not None:
+        config_kwargs["max_blob_bytes"] = max_blob_bytes
+    return Litestar(plugins=[LitestarMCP(MCPConfig(**config_kwargs))])
 
 
 def _rpc(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None) -> "dict[str, Any]":
@@ -177,3 +193,145 @@ def test_directory_read_requires_name_header(tmp_path: "Path") -> "None":
         response = client.post("/mcp", json=body, headers=headers)
 
     assert response.json()["error"]["code"] == -32020
+
+
+def test_resources_list_includes_skill_files(tmp_path: "Path") -> "None":
+    with TestClient(app=_make_skills_app_with_binary_asset(tmp_path)) as client:
+        result = _rpc(client, "resources/list")["result"]
+
+    assert result["resources"][0]["uri"] == "litestar://openapi"
+    resources = {resource["uri"]: resource for resource in result["resources"]}
+
+    skill_md = resources["skill://alpha/SKILL.md"]
+    assert skill_md["name"] == "SKILL.md"
+    assert skill_md["description"] == "Alpha skill."
+    assert skill_md["mimeType"] == "text/markdown"
+    assert "size" in skill_md
+
+    todo = resources["skill://alpha/notes/todo.md"]
+    assert todo["name"] == "notes/todo.md"
+
+    logo = resources["skill://alpha/assets/logo.png"]
+    assert logo["mimeType"] == "image/png"
+
+    assert "skill://beta/SKILL.md" in resources
+
+
+def test_resources_read_skill_markdown_as_text(tmp_path: "Path") -> "None":
+    with TestClient(app=_make_skills_app(tmp_path)) as client:
+        result = _rpc(client, "resources/read", {"uri": "skill://alpha/SKILL.md"})["result"]
+
+    content = result["contents"][0]
+    assert content["text"] == (tmp_path / "alpha" / "SKILL.md").read_text()
+    assert content["mimeType"] == "text/markdown"
+    assert "blob" not in content
+    assert result["ttlMs"] == 0
+    assert result["cacheScope"] == "private"
+
+
+def test_resources_read_binary_skill_file_as_blob(tmp_path: "Path") -> "None":
+    with TestClient(app=_make_skills_app_with_binary_asset(tmp_path)) as client:
+        result = _rpc(client, "resources/read", {"uri": "skill://alpha/assets/logo.png"})["result"]
+
+    content = result["contents"][0]
+    assert base64.b64decode(content["blob"]) == _LOGO_BYTES
+    assert content["mimeType"] == "image/png"
+    assert "text" not in content
+
+
+def test_resources_read_blob_over_max_blob_bytes_is_internal_error(tmp_path: "Path") -> "None":
+    with TestClient(app=_make_skills_app_with_binary_asset(tmp_path, max_blob_bytes=8)) as client:
+        response = _rpc(client, "resources/read", {"uri": "skill://alpha/assets/logo.png"})
+
+    assert response["error"]["code"] == -32603
+    assert response["error"]["data"]["error"] == "ValueError"
+
+
+def test_resources_read_unknown_skill_file_is_resource_not_found(tmp_path: "Path") -> "None":
+    with TestClient(app=_make_skills_app(tmp_path)) as client:
+        missing_file = _rpc(client, "resources/read", {"uri": "skill://alpha/missing.md"})
+        missing_skill = _rpc(client, "resources/read", {"uri": "skill://nope/SKILL.md"})
+
+    assert missing_file["error"]["code"] == -32602
+    assert missing_file["error"]["data"]["uri"] == "skill://alpha/missing.md"
+    assert missing_skill["error"]["code"] == -32602
+    assert missing_skill["error"]["data"]["uri"] == "skill://nope/SKILL.md"
+
+
+def test_resources_read_detects_modified_skill_file(tmp_path: "Path") -> "None":
+    with TestClient(app=_make_skills_app(tmp_path)) as client:
+        original_skill = _rpc(client, "skills/get", {"uri": "skill://alpha/SKILL.md"})["result"]["skill"]
+        original_digest = next(
+            entry for entry in original_skill["resources"] if entry["uri"] == "skill://alpha/notes/todo.md"
+        )["digest"]
+
+        first = _rpc(client, "resources/read", {"uri": "skill://alpha/notes/todo.md"})["result"]
+        assert first["contents"][0]["text"] == "- todo\n"
+
+        (tmp_path / "alpha" / "notes" / "todo.md").write_text("- changed\n")
+
+        second = _rpc(client, "resources/read", {"uri": "skill://alpha/notes/todo.md"})
+        assert second["error"]["code"] == -32603
+        assert second["error"]["data"]["error"] == "SkillIntegrityError"
+
+        after_skill = _rpc(client, "skills/get", {"uri": "skill://alpha/SKILL.md"})["result"]["skill"]
+        after_digest = next(
+            entry for entry in after_skill["resources"] if entry["uri"] == "skill://alpha/notes/todo.md"
+        )["digest"]
+        assert after_digest == original_digest
+
+
+def test_resources_read_missing_skill_file_is_internal_error(tmp_path: "Path") -> "None":
+    with TestClient(app=_make_skills_app(tmp_path)) as client:
+        (tmp_path / "alpha" / "notes" / "todo.md").unlink()
+        response = _rpc(client, "resources/read", {"uri": "skill://alpha/notes/todo.md"})
+
+    assert response["error"]["code"] == -32603
+    assert response["error"]["data"]["error"] == "FileNotFoundError"
+
+
+def test_resources_read_text_media_type_that_is_not_utf8_falls_back_to_blob(tmp_path: "Path") -> "None":
+    _write_skill(tmp_path, "alpha", "Alpha skill.")
+    notes_dir = tmp_path / "alpha" / "notes"
+    notes_dir.mkdir()
+    (notes_dir / "latin1.txt").write_bytes("caf\xe9".encode("latin-1"))
+    app = Litestar(plugins=[LitestarMCP(MCPConfig(skills=MCPSkillsConfig(paths=[tmp_path])))])
+
+    with TestClient(app=app) as client:
+        result = _rpc(client, "resources/read", {"uri": "skill://alpha/notes/latin1.txt"})["result"]
+
+    content = result["contents"][0]
+    assert "blob" in content
+    assert "text" not in content
+
+
+def test_resources_read_skill_file_wins_over_colliding_handler_uri(tmp_path: "Path") -> "None":
+    """A handler cannot shadow a catalog file by declaring the same skill:// mcp_resource_uri.
+
+    The skill-file branch must be checked before the discovered-resource match in
+    resources_read; this pins that ordering.
+    """
+
+    @get(
+        "/shadow",
+        mcp_resource="shadow",
+        mcp_resource_uri="skill://alpha/SKILL.md",
+        mcp_resource_mime_type="text/plain",
+        sync_to_thread=False,
+    )
+    def shadow() -> "str":
+        return "HANDLER OUTPUT"
+
+    _write_skill(tmp_path, "alpha", "Alpha skill.", {"notes/todo.md": "- todo\n"})
+    _write_skill(tmp_path, "beta", "Beta skill.")
+    app = Litestar(
+        route_handlers=[shadow],
+        plugins=[LitestarMCP(MCPConfig(skills=MCPSkillsConfig(paths=[tmp_path])))],
+    )
+
+    with TestClient(app=app) as client:
+        result = _rpc(client, "resources/read", {"uri": "skill://alpha/SKILL.md"})["result"]
+
+    content = result["contents"][0]
+    assert content["text"] == (tmp_path / "alpha" / "SKILL.md").read_text()
+    assert "HANDLER OUTPUT" not in content["text"]
