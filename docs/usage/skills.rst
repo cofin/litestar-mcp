@@ -37,7 +37,10 @@ Pass :class:`~litestar_mcp.mcp.config.MCPSkillsConfig` to
 objects, not strings — ``__post_init__`` coerces each entry with
 ``Path(...)`` so a plain string happens to work at runtime, but a
 type-checked caller passing ``str`` gets a mypy or pyright error against
-the declared annotation.
+the declared annotation. Passing a bare string in place of the sequence —
+``paths="/srv/skills"`` — is rejected with a :exc:`ValueError`, since a
+string is itself a sequence and would otherwise be read one character at
+a time.
 
 Other :class:`~litestar_mcp.mcp.config.MCPSkillsConfig` fields default to
 ``directory_read=True``, ``max_files_per_skill=512``, and
@@ -68,26 +71,37 @@ Once a folder is picked up because it has a ``SKILL.md``, the folder name
 must equal the frontmatter ``name`` field exactly. A skill's own files are
 then collected recursively — ``SKILL.md`` plus every other file nested
 under the folder, at any depth, such as ``scripts/run.py`` above.
-Dotfiles and symlinked files or directories are excluded from the
-manifest entirely.
+Within a skill folder, dotfiles and symlinked files or directories are
+excluded from the manifest entirely. The rule is scoped to a skill's own
+contents: a dot-prefixed folder sitting at a configured ``paths`` root is
+still scanned as a candidate skill, and is skipped only because it has no
+``SKILL.md``.
 
 ``SKILL.md`` requires non-empty string ``name`` and ``description``
 fields in its YAML frontmatter. Each of the following fails application
 startup — when ``LitestarMCP(config)`` builds the catalog — with
 :exc:`~litestar.exceptions.ImproperlyConfiguredException`:
 
+- ``SKILL.md`` is a symlink rather than a regular file. It is rejected
+  outright rather than loaded, because the manifest walk excludes
+  symlinks and the skill would otherwise advertise a ``SKILL.md`` URI
+  that ``resources/read`` cannot serve.
 - The frontmatter is missing, does not start with a ``---`` block, has no
   closing ``---``, or does not parse to a YAML mapping.
 - ``name`` or ``description`` missing, empty, or not a string.
 - The frontmatter ``name`` does not match the folder name.
 - The same skill ``name`` loaded from more than one configured path.
 - A skill's file count exceeds ``max_files_per_skill``, or its total byte
-  size exceeds ``max_bytes_per_skill``.
+  size exceeds ``max_bytes_per_skill``. The limit is checked against
+  :func:`os.stat` sizes while manifest sizes come from the bytes actually
+  hashed, so a file that grows between the two startup reads can push the
+  served total past the limit.
 - A configured entry in ``paths`` is not a directory.
 
-Two failures surface earlier still, from
+Three failures surface earlier still, from
 :class:`~litestar_mcp.mcp.config.MCPSkillsConfig.__post_init__` itself, as
-a plain :exc:`ValueError`: an empty ``paths`` sequence, or a non-positive
+a plain :exc:`ValueError`: a bare string passed as ``paths`` instead of a
+sequence, an empty ``paths`` sequence, or a non-positive
 ``max_files_per_skill`` / ``max_bytes_per_skill``.
 
 A ``SKILL.md`` that exists but cannot be read, or whose bytes are not
