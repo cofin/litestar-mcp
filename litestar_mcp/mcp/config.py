@@ -157,8 +157,10 @@ class MCPSkillsConfig:
     Attributes:
         paths: Directories whose immediate child folders containing a
             ``SKILL.md`` file are served as MCP skills. Entries are
-            normalized to :class:`~pathlib.Path`, so plain strings are
-            accepted.
+            normalized with :class:`~pathlib.Path`, so a plain string
+            works at runtime; the annotation is ``Sequence[Path]``, so
+            type-checked callers should pass :class:`~pathlib.Path`
+            objects.
         directory_read: Advertise and serve ``resources/directory/read``.
         max_files_per_skill: Maximum files, including ``SKILL.md``, one
             skill may contain before it is rejected at startup.

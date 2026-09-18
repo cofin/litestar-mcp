@@ -46,6 +46,13 @@ examples drawn from :mod:`docs.examples`.
         Read-only payloads served via ``resources/list`` and
         ``resources/read``, with RFC 6570 URI template support.
 
+    .. grid-item-card:: MCP Skills
+        :link: skills
+        :link-type: doc
+
+        Agent Skills served over MCP through ``skills/list``,
+        ``skills/get`` and ``resources/read``.
+
     .. grid-item-card:: Tools
         :link: tools
         :link-type: doc
@@ -129,6 +136,7 @@ examples drawn from :mod:`docs.examples`.
     marking_routes
     prompts
     resources
+    skills
     tools
     discovery
     auth

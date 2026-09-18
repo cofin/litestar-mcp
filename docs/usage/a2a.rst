@@ -25,12 +25,20 @@ Missing, malformed, 0.3, and unsupported major/minor versions are rejected.
 Only the 1.0 method names and protobuf JSON shapes are accepted. The card
 must advertise an absolute JSONRPC interface URL for protocol ``1.0`` whose
 path matches ``A2AConfig.path``. Cards should describe the actual supported
-input/output modes, skills and capabilities.
+input/output modes, :class:`a2a.types.AgentSkill` entries and capabilities.
+
+.. note::
+
+    A card's ``AgentSkill`` entries describe this agent's A2A task-handling
+    capabilities and are unrelated to MCP skills — the filesystem-backed
+    ``SKILL.md`` bundles served through ``skills/list`` / ``skills/get`` /
+    ``resources/read`` documented in :doc:`skills`. A2A and the MCP skills
+    extension are separate, independently configured features.
 
 The extra installs the transport-neutral SDK without requiring Starlette,
 FastAPI or Uvicorn. Choose an ASGI server separately for deployment. MCP
-routes and A2A skills are registered independently; share business services
-between executors and MCP tools explicitly.
+routes and the A2A agent card's skills are registered independently; share
+business services between executors and MCP tools explicitly.
 
 Support and ownership
 =====================
