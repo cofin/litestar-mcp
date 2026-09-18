@@ -4,7 +4,7 @@ Plugin API
 
 This module contains the main plugin class for the Litestar MCP Plugin.
 
-.. currentmodule:: litestar_mcp.plugin
+.. currentmodule:: litestar_mcp.mcp.plugin
 
 LitestarMCP
 -----------
@@ -20,7 +20,7 @@ LitestarMCP
    decorated with :func:`~litestar_mcp.mcp_prompt` can be passed via the
    ``prompts`` constructor argument.
 
-.. currentmodule:: litestar_mcp.app
+.. currentmodule:: litestar_mcp.mcp.app
 
 MCP
 ---
@@ -35,7 +35,7 @@ MCP
    :meth:`MCP.run`. Pass a :class:`~litestar_mcp.MCPStdioContext` to
    ``run(transport="stdio", stdio_context=...)`` to seed the caller identity.
 
-.. currentmodule:: litestar_mcp.registry
+.. currentmodule:: litestar_mcp.mcp.registry
 
 Registry
 --------
@@ -44,18 +44,11 @@ Registry
    :members:
    :show-inheritance:
 
-.. currentmodule:: litestar_mcp.sse
+.. currentmodule:: litestar_mcp.core.sse
 
-SSEManager
-----------
+SubscriptionManager
+-------------------
 
-.. autoclass:: SSEManager
-   :members:
-   :show-inheritance:
-
-SSEMessage
-----------
-
-.. autoclass:: SSEMessage
+.. autoclass:: SubscriptionManager
    :members:
    :show-inheritance:

@@ -1,18 +1,17 @@
 """Google IAP-authenticated SQLSpec reference notes example (BYO middleware pattern).
 
-Uses ``MCPAuthBackend`` with ``build_iap_token_validator`` as the ``token_validator``.
-The ``build_iap_header_alias_middleware`` aliases ``x-goog-iap-jwt-assertion``
-into ``Authorization: Bearer`` at the ASGI layer so the bearer-token auth
-path consumes the IAP assertion seamlessly.
+Installs ``IAPAuthenticationMiddleware`` from ``shared.auth``, a plain Litestar
+``AbstractAuthenticationMiddleware`` that reads the ``x-goog-iap-jwt-assertion``
+header, verifies the ES256 assertion against Google's JWKS, and populates
+``request.user`` / ``request.auth`` for HTTP and MCP tool handlers alike.
 """
 
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#   "litestar[standard]>=2.0",
+#   "litestar[standard,jwt]>=2.0",
 #   "litestar-mcp",
 #   "sqlspec[aiosqlite]>=0.43",
-#   "python-jose[cryptography]",
 #   "httpx",
 #   "uvicorn",
 # ]
@@ -34,7 +33,6 @@ from docs.examples.notes.shared.auth import (
     DEFAULT_IAP_JWKS_URL,
     AuthenticatedIdentity,
     build_iap_auth_middleware,
-    build_iap_header_alias_middleware,
     identity_from_claims,
 )
 from docs.examples.notes.shared.contracts import (
@@ -58,7 +56,6 @@ from docs.examples.notes.sqlspec.common import (
     provide_note_service,
 )
 from litestar_mcp import LitestarMCP, MCPConfig
-from litestar_mcp.auth import MCPAuthConfig
 
 
 def create_app(
@@ -126,14 +123,11 @@ def create_app(
     async def on_startup() -> "None":
         await bootstrap_schema(sqlspec, config)
 
-    mcp_config = MCPConfig(auth=MCPAuthConfig(issuer=issuer, audience=audience))
+    mcp_config = MCPConfig()
 
     return Litestar(
         route_handlers=[NoteController, notes_schema, get_api_info],
         on_startup=[on_startup],
         plugins=[SQLSpecPlugin(sqlspec), LitestarMCP(mcp_config)],
-        middleware=[
-            build_iap_header_alias_middleware,
-            build_iap_auth_middleware(audience=audience, issuer=issuer, jwks_url=jwks_url),
-        ],
+        middleware=[build_iap_auth_middleware(audience=audience, issuer=issuer, jwks_url=jwks_url)],
     )

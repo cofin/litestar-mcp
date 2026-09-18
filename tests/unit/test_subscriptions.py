@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from litestar_mcp.sse import StreamLimitExceeded, SubscriptionManager
+from litestar_mcp.core.sse import StreamLimitExceeded, SubscriptionManager
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator
@@ -117,3 +117,19 @@ async def test_channels_backend_fans_notifications_across_manager_instances() ->
     assert notification["method"] == "notifications/tools/list_changed"
     await publisher.close_all()
     await receiver.close_all()
+
+
+@pytest.mark.anyio
+async def test_slow_subscriber_receives_completion_before_close() -> None:
+    manager = SubscriptionManager(queue_capacity=1)
+    _stream_id, stream = await manager.open("sub-1", {"toolsListChanged": True})
+
+    await manager.publish("notifications/tools/list_changed", {})
+    messages = [message async for message in stream]
+
+    assert messages[-1] == {
+        "jsonrpc": "2.0",
+        "id": "sub-1",
+        "result": {"resultType": "complete", "_meta": {"io.modelcontextprotocol/subscriptionId": "sub-1"}},
+    }
+    assert "method" not in messages[-1]

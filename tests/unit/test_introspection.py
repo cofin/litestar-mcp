@@ -18,7 +18,7 @@ from litestar_mcp.utils.handler_signature import (
     extract_advertised_handler_arguments,
     parameter_aliases,
 )
-from tests.unit.conftest import create_app_with_handler
+from tests.unit.conftest import create_app_with_handler, mcp_post
 
 pytestmark = pytest.mark.unit
 
@@ -467,7 +467,7 @@ class TestCustomOptKeys:
     """Downstream apps can rename opt keys via ``MCPConfig.opt_keys``."""
 
     def test_renamed_tool_description_opt_key_is_honoured(self) -> "None":
-        from litestar_mcp.config import MCPOptKeys
+        from litestar_mcp.mcp.config import MCPOptKeys
 
         opt_keys = MCPOptKeys(description="x_mcp_description")
 
@@ -485,7 +485,7 @@ class TestCustomOptKeys:
         assert default_result == "Docstring."
 
     def test_renamed_resource_description_opt_key(self) -> "None":
-        from litestar_mcp.config import MCPOptKeys
+        from litestar_mcp.mcp.config import MCPOptKeys
 
         opt_keys = MCPOptKeys(resource_description="x_mcp_resource_description")
 
@@ -498,7 +498,7 @@ class TestCustomOptKeys:
         assert render_description(handler, fn, kind="resource", fallback_name="bar", opt_keys=opt_keys) == "opt-res"
 
     def test_renamed_structured_field_opt_keys(self) -> "None":
-        from litestar_mcp.config import MCPOptKeys
+        from litestar_mcp.mcp.config import MCPOptKeys
 
         opt_keys = MCPOptKeys(
             description="x_desc",
@@ -566,18 +566,9 @@ class TestDescriptionRenderingEndpoints:
         return Litestar(route_handlers=list(handlers), plugins=[LitestarMCP(MCPConfig())])
 
     @staticmethod
-    def _init_and_get_session(_client: "TestClient[Any]") -> "str":
-        return ""
-
-    @staticmethod
-    def _rpc(
-        client: "TestClient[Any]", method: "str", sid: "str", params: "dict[str, Any] | None" = None
-    ) -> "dict[str, Any]":
-        body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
-        if params is not None:
-            body["params"] = params
-        resp = client.post("/mcp", json=body, headers={"Mcp-Session-Id": sid})
-        return resp.json()  # type: ignore[no-any-return]
+    def _rpc(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None) -> "dict[str, Any]":
+        data: dict[str, Any] = mcp_post(client, method, params).json()
+        return data
 
     def test_tools_list_returns_decorator_description(self) -> "None":
         @mcp_tool("t", description="LLM prose", when_to_use="When asked")
@@ -586,8 +577,7 @@ class TestDescriptionRenderingEndpoints:
             return {}
 
         with TestClient(app=self._make_app(handler)) as client:
-            sid = self._init_and_get_session(client)
-            result = self._rpc(client, "tools/list", sid)
+            result = self._rpc(client, "tools/list")
             tools = result["result"]["tools"]
             descr = next(t["description"] for t in tools if t["name"] == "t")
             assert descr.startswith("LLM prose")
@@ -600,8 +590,7 @@ class TestDescriptionRenderingEndpoints:
             return {}
 
         with TestClient(app=self._make_app(handler)) as client:
-            sid = self._init_and_get_session(client)
-            result = self._rpc(client, "tools/list", sid)
+            result = self._rpc(client, "tools/list")
             tools = result["result"]["tools"]
             descr = next(t["description"] for t in tools if t["name"] == "t")
             assert descr == "opt-prose"
@@ -615,8 +604,7 @@ class TestDescriptionRenderingEndpoints:
             return {}
 
         with TestClient(app=self._make_app(handler)) as client:
-            sid = self._init_and_get_session(client)
-            result = self._rpc(client, "tools/list", sid)
+            result = self._rpc(client, "tools/list")
             tools = result["result"]["tools"]
             descr = next(t["description"] for t in tools if t["name"] == "t")
             assert descr == "plain-docstring."
@@ -629,8 +617,7 @@ class TestDescriptionRenderingEndpoints:
             return {}
 
         with TestClient(app=self._make_app(handler)) as client:
-            sid = self._init_and_get_session(client)
-            result = self._rpc(client, "resources/list", sid)
+            result = self._rpc(client, "resources/list")
             resources = result["result"]["resources"]
             descr = next(r["description"] for r in resources if r["name"] == "r")
             assert descr.startswith("res-prose")
@@ -647,27 +634,21 @@ class TestDescriptionRenderingEndpoints:
             return {}
 
         with TestClient(app=self._make_app(handler)) as client:
-            sid = self._init_and_get_session(client)
-            result = self._rpc(client, "resources/list", sid)
+            result = self._rpc(client, "resources/list")
             resources = result["result"]["resources"]
             descr = next(r["description"] for r in resources if r["name"] == "r")
             assert descr == "opt-res-prose"
 
-    def test_agent_card_matches_tools_list(self) -> "None":
+    def test_rendered_tool_description_contains_structured_sections(self) -> "None":
         @mcp_tool("t", description="primary", when_to_use="wtu", returns="r")
         @get("/x", sync_to_thread=False)
         def handler() -> "dict[str, Any]":
             return {}
 
         with TestClient(app=self._make_app(handler)) as client:
-            sid = self._init_and_get_session(client)
-            tl = self._rpc(client, "tools/list", sid)
+            tl = self._rpc(client, "tools/list")
             tl_descr = next(t["description"] for t in tl["result"]["tools"] if t["name"] == "t")
 
-            agent_card = client.get("/.well-known/agent-card.json").json()
-            ac_descr = next(s["description"] for s in agent_card["skills"] if s["id"] == "t")
-
-            assert tl_descr == ac_descr
             assert "## When to use\nwtu" in tl_descr
             assert "## Returns\nr" in tl_descr
 
@@ -689,8 +670,7 @@ class TestDescriptionRenderingEndpoints:
         handler.fn.__doc__ = doc
 
         with TestClient(app=self._make_app(handler)) as client:
-            sid = self._init_and_get_session(client)
-            result = self._rpc(client, "tools/list", sid)
+            result = self._rpc(client, "tools/list")
             tools = result["result"]["tools"]
             descr = next(t["description"] for t in tools if t["name"] == "t")
             assert descr == doc.strip()

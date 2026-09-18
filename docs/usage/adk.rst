@@ -2,7 +2,10 @@
 ADK Integration
 ===============
 
-Litestar MCP can be consumed by Google's Agent Development Kit (ADK) as a remote Streamable HTTP MCP server. The integration allows your ADK-based agent applications to discover and invoke tools, as well as read resources exposed by your Litestar application.
+Google ADK 2.9.0 with MCP Python SDK 1.30.0 cannot consume this package's
+modern-only MCP ``2026-07-28`` endpoint. That client still sends
+``initialize`` for MCP ``2025-11-25``. There is no compatibility handshake
+or session mode to enable on this server.
 
 .. note::
     Google ADK is an optional client integration. The ``google-adk`` package is not installed as a runtime dependency of ``litestar-mcp``.
@@ -26,7 +29,10 @@ For contributors running the compatibility test harness:
 Connecting from an ADK Agent
 ============================
 
-Google ADK connects to remote MCP servers using `McpToolset` combined with `StreamableHTTPConnectionParams`.
+ADK constructs remote MCP clients with ``McpToolset`` and
+``StreamableHTTPConnectionParams``. The following examples show client
+construction only. They do not establish a connection or demonstrate
+compatibility with this server; use them once ADK supports the modern protocol.
 
 Remote Connection Snippet
 -------------------------
@@ -62,9 +68,11 @@ connections. Close the toolset during application shutdown:
 Compatibility Matrix
 ====================
 
-Google ADK 2.3 still implements the initialize-era lifecycle and therefore
-cannot connect to the modern-only ``2026-07-28`` endpoint. The table records
-the compatibility boundary until ADK adds the stateless lifecycle:
+The reviewed environment contains Google ADK 2.9.0, MCP SDK 1.30.0 and
+A2A SDK 1.1.2. Four ADK MCP interoperability tests are explicitly skipped
+because of the lifecycle mismatch; the passing server-start harness is not
+an interoperability result. Reassess this boundary with real client calls
+when upgrading ADK.
 
 .. list-table::
     :widths: 30 20 50
@@ -81,7 +89,7 @@ the compatibility boundary until ADK adds the stateless lifecycle:
       - Blocked by the lifecycle mismatch
     * - Auth Propagation
       - No
-      - Header propagation works, but initialization is rejected
+      - Bearer headers alone cannot resolve the lifecycle mismatch
     * - Resource Listing
       - No
       - Blocked by the lifecycle mismatch
@@ -104,16 +112,13 @@ the compatibility boundary until ADK adds the stateless lifecycle:
 MCP vs A2A Protocol Boundary
 ============================
 
-The plugin's separate ``/.well-known/agent-card.json`` document is not MCP
-discovery and does not imply an A2A execution endpoint. MCP clients must call
-``server/discover``.
-
-Full Agent-to-Agent (A2A) protocol compatibility requires:
-- A separate A2A routing tree.
-- A dedicated A2A agent card endpoint.
-- Skill execution pipelines aligned with the A2A spec.
-
-Treating A2A as distinct from MCP prevents client-side handshake confusion.
+Modern MCP clients call ``server/discover``. Running an ADK agent locally
+behind an application service is independent of remote MCP interoperability;
+the application owns its runner, model credentials and session lifecycle.
+A2A is a separate optional integration backed by the official SDK; see
+:doc:`a2a` for configuring an ``AgentCard`` and ``RequestHandler``. The real
+official A2A SDK client is integration-tested. ADK ``RemoteA2aAgent`` support
+has not been established by a supported-client test and is not promised here.
 
 Production Persistence Hardening
 ================================
@@ -121,8 +126,10 @@ Production Persistence Hardening
 For high-availability or multi-replica production deployments of ADK and Litestar MCP:
 
 - MCP request processing itself needs no sticky routing.
-- Configure Tasks with a shared Litestar Store when task handles must survive
-  process restarts or move between replicas.
+- A shared Litestar Store can persist MCP task records. It does not distribute
+  the process-local task runner, input queue or cancellation queue, or resume
+  executions after restart. Applications must arrange worker ownership,
+  routing and recovery before using tasks across replicas.
 - Configure ``subscription_channels`` with a shared Channels backend when
   notifications must fan out across workers. Subscription streams have no
   replay.

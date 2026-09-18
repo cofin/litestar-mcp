@@ -6,48 +6,12 @@ from litestar import Litestar, get
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP
+from tests.unit.conftest import mcp_post
 
 
-def _ensure_session(client: "TestClient[Any]", base: "str" = "/mcp") -> "str":
-    key = f"_mcp_session::{base}"
-    sid = getattr(client, key, None)
-    if sid is not None:
-        return sid  # type: ignore[no-any-return]
-    init = client.post(
-        base,
-        json={
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
-        },
-    )
-    sid = init.headers.get("mcp-session-id", "")
-    client.post(
-        base,
-        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        headers={"Mcp-Session-Id": sid},
-    )
-    setattr(client, key, sid)
-    return str(sid)
-
-
-def _rpc(
-    client: "TestClient[Any]",
-    method: "str",
-    params: "dict[str, Any] | None" = None,
-    msg_id: "int" = 1,
-    base: "str" = "/mcp",
-) -> "dict[str, Any]":
-    body: dict[str, Any] = {"jsonrpc": "2.0", "id": msg_id, "method": method}
-    if params is not None:
-        body["params"] = params
-    headers: dict[str, str] = {}
-    if method != "initialize":
-        sid = _ensure_session(client, base)
-        if sid:
-            headers["Mcp-Session-Id"] = sid
-    return client.post(base, json=body, headers=headers).json()  # type: ignore[no-any-return]
+def _rpc(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None) -> "dict[str, Any]":
+    data: dict[str, Any] = mcp_post(client, method, params).json()
+    return data
 
 
 def test_router_caching_and_invalidation() -> "None":
@@ -62,17 +26,7 @@ def test_router_caching_and_invalidation() -> "None":
     plugin = LitestarMCP()
     app = Litestar(plugins=[plugin], route_handlers=[get_users])
     with TestClient(app=app) as client:
-        # 1. Initialize and send first request to build and cache the router
-        _rpc(
-            client,
-            "initialize",
-            {
-                "protocolVersion": "2025-11-25",
-                "capabilities": {},
-                "clientInfo": {"name": "test", "version": "1.0"},
-            },
-        )
-
+        # 1. First request builds and caches the router
         result = _rpc(client, "tools/list")
         assert len(result["result"]["tools"]) == 1
 

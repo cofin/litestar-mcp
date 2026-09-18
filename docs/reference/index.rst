@@ -9,7 +9,7 @@ API Reference
     plugin
     handlers
     types
-    auth
     bridge
+    stdio
 
 This section provides detailed API documentation for all public interfaces.

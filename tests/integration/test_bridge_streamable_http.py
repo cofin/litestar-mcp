@@ -16,19 +16,11 @@ import uvicorn
 from anyio import sleep_forever
 from anyio.to_thread import run_sync as run_sync_in_worker_thread
 from litestar import Litestar, get
-from litestar.middleware import DefineMiddleware
 
 from litestar_mcp import LitestarMCP, MCPConfig
-from litestar_mcp.auth import MCPAuthBackend
-from litestar_mcp.bridge import run_stdio_streamable_http_bridge
+from litestar_mcp.mcp.bridge import run_stdio_streamable_http_bridge
 from tests.conftest import BridgeBytesSink, BridgeQueuedBytesSource
-from tests.integration._auth import (
-    FORGED_TOKEN,
-    AuthenticatedUser,
-    bearer_token_validator,
-    build_mcp_auth_config,
-    mint_access_token,
-)
+from tests.integration._auth import FORGED_TOKEN, build_oauth_backend, mint_access_token
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -89,19 +81,15 @@ def _build_app(*, base_path: "str" = "/mcp") -> "Litestar":
 
 
 def _build_auth_app() -> "Litestar":
-    async def resolve_user(claims: "dict[str, Any]", _app: "Any") -> "AuthenticatedUser":
-        return AuthenticatedUser(sub=str(claims.get("sub", "")))
-
     @get("/session", mcp_tool="session", sync_to_thread=False)
     def session_tool(request: "Request[Any, Any, Any]") -> "dict[str, str]":
-        user = request.user
-        return {"user": getattr(user, "sub", "")}
+        return {"user": request.user.sub}
 
-    middleware = [DefineMiddleware(MCPAuthBackend, token_validator=bearer_token_validator, user_resolver=resolve_user)]
+    backend = build_oauth_backend()
     return Litestar(
         route_handlers=[session_tool],
-        middleware=middleware,
-        plugins=[LitestarMCP(MCPConfig(auth=build_mcp_auth_config()))],
+        on_app_init=[backend.on_app_init],
+        plugins=[LitestarMCP(MCPConfig())],
     )
 
 

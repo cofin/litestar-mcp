@@ -1,7 +1,8 @@
 """Smoke test runnable snippet modules.
 
 Runnable app snippets expose ``build() -> Litestar`` or a module-level ``app`` variable.
-Client-only snippets are import-smoked separately.
+Client-only snippets, configuration snippets exposing a module-level ``config``, and
+handler-only fragments are import-smoked separately.
 """
 
 import importlib
@@ -11,9 +12,12 @@ import pytest
 from litestar import Litestar
 
 import docs.examples.snippets as snippets_pkg
+from litestar_mcp import MCPConfig
 
 CLIENT_ONLY_SNIPPET_MODULES = {"adk_snippets"}
-NON_APP_SNIPPET_MODULES = CLIENT_ONLY_SNIPPET_MODULES | {"jwks_cache_shared"}
+CONFIG_SNIPPET_MODULES = {"configuration_stateless"}
+HANDLER_ONLY_SNIPPET_MODULES = {"tool_explicit_input_schema", "tool_task_input_before_start"}
+NON_APP_SNIPPET_MODULES = CLIENT_ONLY_SNIPPET_MODULES | CONFIG_SNIPPET_MODULES | HANDLER_ONLY_SNIPPET_MODULES
 
 SNIPPET_MODULES = [
     name
@@ -37,7 +41,14 @@ def test_snippet_build_returns_litestar(module_name: "str") -> "None":
     assert isinstance(app, Litestar)
 
 
-@pytest.mark.parametrize("module_name", sorted(CLIENT_ONLY_SNIPPET_MODULES))
-def test_client_only_snippet_imports(module_name: "str") -> "None":
-    """Import client-only snippets that do not define a Litestar application."""
+@pytest.mark.parametrize("module_name", sorted(CLIENT_ONLY_SNIPPET_MODULES | HANDLER_ONLY_SNIPPET_MODULES))
+def test_non_app_snippet_imports(module_name: "str") -> "None":
+    """Import client-only and handler-only snippets that do not define a Litestar application."""
     importlib.import_module(f"docs.examples.snippets.{module_name}")
+
+
+@pytest.mark.parametrize("module_name", sorted(CONFIG_SNIPPET_MODULES))
+def test_config_snippet_exposes_mcp_config(module_name: "str") -> "None":
+    """Import configuration snippets and verify they define a module-level ``MCPConfig``."""
+    mod = importlib.import_module(f"docs.examples.snippets.{module_name}")
+    assert isinstance(mod.config, MCPConfig)

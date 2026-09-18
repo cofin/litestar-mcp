@@ -5,7 +5,7 @@ Handlers and Decorators
 This module contains the MCP route controller and the decorator markers
 used to attach MCP metadata to handlers and standalone callables.
 
-.. currentmodule:: litestar_mcp.routes
+.. currentmodule:: litestar_mcp.mcp.routes
 
 MCPController
 -------------

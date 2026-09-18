@@ -13,8 +13,8 @@
 Litestar MCP integrates Litestar web applications with the Model Context
 Protocol: mark routes with simple kwargs to expose them as MCP tools,
 resources, and prompts that AI models can discover and call over MCP
-Streamable HTTP and JSON-RPC — with automatic OpenAPI exposure and optional
-bearer-token authentication.
+Streamable HTTP and JSON-RPC — with automatic OpenAPI exposure and
+authentication owned by the application's Litestar guards and middleware.
 
 .. toctree::
    :hidden:

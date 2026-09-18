@@ -10,58 +10,23 @@ from litestar.testing import TestClient
 from litestar.types import HTTPRequestEvent, HTTPScope, Receive
 
 from litestar_mcp import LitestarMCP, MCPConfig, mcp_prompt
-from litestar_mcp.registry import (
+from litestar_mcp.mcp.registry import (
     PromptRegistration,
     Registry,
     _normalize_prompt_result,
 )
 from litestar_mcp.utils import get_mcp_metadata
 from litestar_mcp.utils.handler_signature import _parse_docstring_args
+from tests.unit.conftest import mcp_post
 
 # ---------------------------------------------------------------------------
-# Helpers — mirrors _ensure_session / _rpc pattern from test_plugin.py
+# Helpers
 # ---------------------------------------------------------------------------
 
 
-def _ensure_session(client: "TestClient[Any]") -> "str":
-    key = "_mcp_session::/mcp"
-    sid = getattr(client, key, None)
-    if sid is not None:
-        return sid  # type: ignore[no-any-return]
-    init = client.post(
-        "/mcp",
-        json={
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
-        },
-    )
-    sid = init.headers.get("mcp-session-id", "")
-    client.post(
-        "/mcp",
-        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        headers={"Mcp-Session-Id": sid},
-    )
-    setattr(client, key, sid)
-    return str(sid)
-
-
-def _rpc(
-    client: "TestClient[Any]",
-    method: "str",
-    params: "dict[str, Any] | None" = None,
-    msg_id: "int" = 1,
-) -> "dict[str, Any]":
-    body: dict[str, Any] = {"jsonrpc": "2.0", "id": msg_id, "method": method}
-    if params is not None:
-        body["params"] = params
-    headers: dict[str, str] = {}
-    if method != "initialize":
-        sid = _ensure_session(client)
-        if sid:
-            headers["Mcp-Session-Id"] = sid
-    return client.post("/mcp", json=body, headers=headers).json()  # type: ignore[no-any-return]
+def _rpc(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None) -> "dict[str, Any]":
+    data: dict[str, Any] = mcp_post(client, method, params).json()
+    return data
 
 
 def _make_app_with_prompts(*prompt_fns: "Callable[..., Any]") -> "Litestar":
@@ -278,7 +243,7 @@ class TestPromptRegistration:
         """
         from types import SimpleNamespace
 
-        from litestar_mcp.registry import _introspect_handler_arguments
+        from litestar_mcp.mcp.registry import _introspect_handler_arguments
 
         # Stub handler whose resolve_dependencies blows up. We still want
         # introspection to succeed against a None signature_model.
@@ -479,7 +444,7 @@ class TestRegistryPrompts:
 
     @pytest.mark.asyncio
     async def test_notify_prompts_list_changed(self, registry: "Registry") -> "None":
-        from litestar_mcp.sse import SubscriptionManager
+        from litestar_mcp.core.sse import SubscriptionManager
 
         subscription_manager = SubscriptionManager()
         registry.set_subscription_manager(subscription_manager)
@@ -1112,7 +1077,7 @@ class TestPromptFiltering:
 
 # ---------------------------------------------------------------------------
 # Manifest (.well-known/mcp-server.json) capability + filter parity with
-# the JSON-RPC initialize/prompts/list responses.
+# the JSON-RPC prompts/list responses.
 # ---------------------------------------------------------------------------
 
 
@@ -1161,7 +1126,7 @@ class TestCaptureAsgiResponseStatusZero:
 
     @pytest.mark.asyncio
     async def test_asgi_app_without_response_start_classified_as_500(self) -> "None":
-        from litestar_mcp.executor import _NON_JSON_STATUS, _capture_asgi_response
+        from litestar_mcp.mcp.executor import _NON_JSON_STATUS, _capture_asgi_response
 
         async def silent_asgi_app(scope: "Any", receive: "Any", send: "Any") -> "None":
             return  # never calls send → no http.response.start

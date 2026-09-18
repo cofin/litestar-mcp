@@ -14,31 +14,11 @@ from litestar_mcp import (
     mcp_resource,
     mcp_tool,
 )
+from tests.unit.conftest import mcp_post
 
 
 def _rpc(client: TestClient[Any], method: str, params: dict[str, Any]) -> dict[str, Any]:
-    request_params = dict(params)
-    request_params["_meta"] = {
-        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-        "io.modelcontextprotocol/clientCapabilities": {},
-        "io.modelcontextprotocol/clientInfo": {"name": "mrtr-tests", "version": "1"},
-    }
-    headers = {
-        "MCP-Protocol-Version": "2026-07-28",
-        "Mcp-Method": method,
-        "Accept": "application/json, text/event-stream",
-    }
-    name_field = {"tools/call": "name", "resources/read": "uri", "prompts/get": "name"}.get(method)
-    if name_field is not None:
-        headers["Mcp-Name"] = str(request_params[name_field])
-    return cast(
-        "dict[str, Any]",
-        client.post(
-            "/mcp",
-            json={"jsonrpc": "2.0", "id": 1, "method": method, "params": request_params},
-            headers=headers,
-        ).json(),
-    )
+    return cast("dict[str, Any]", mcp_post(client, method, params).json())
 
 
 @pytest.mark.parametrize(

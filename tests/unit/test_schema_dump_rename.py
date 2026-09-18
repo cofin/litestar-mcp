@@ -1,4 +1,4 @@
-"""Red-phase tests for :func:`litestar_mcp.typing.schema_dump` rename fidelity.
+"""Red-phase tests for :func:`litestar_mcp.core.typing.schema_dump` rename fidelity.
 
 Pins the msgspec ``rename`` contract and regression-pins the no-rename path.
 Part of the executor-parity flow (closes GH #42).
@@ -13,7 +13,8 @@ from litestar.testing import TestClient
 from msgspec import UNSET, Struct, UnsetType
 
 from litestar_mcp import LitestarMCP
-from litestar_mcp.typing import schema_dump
+from litestar_mcp.core.typing import schema_dump
+from tests.unit.conftest import mcp_post
 
 pytestmark = pytest.mark.unit
 
@@ -153,38 +154,8 @@ def camel_roundtrip_app() -> "Litestar":
 
 
 def _rpc(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None) -> "dict[str, Any]":
-    body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
-    if params is not None:
-        body["params"] = params
-    headers: dict[str, str] = {}
-    if method != "initialize":
-        sid = _ensure_session(client)
-        if sid:
-            headers["Mcp-Session-Id"] = sid
-    return client.post("/mcp", json=body, headers=headers).json()  # type: ignore[no-any-return]
-
-
-def _ensure_session(client: "TestClient[Any]") -> "str":
-    existing = getattr(client, "_mcp_session", None)
-    if existing is not None:
-        return str(existing)
-    init = client.post(
-        "/mcp",
-        json={
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
-        },
-    )
-    sid = init.headers.get("mcp-session-id", "")
-    client.post(
-        "/mcp",
-        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        headers={"Mcp-Session-Id": sid},
-    )
-    client._mcp_session = sid  # type: ignore[attr-defined]
-    return str(sid)
+    data: dict[str, Any] = mcp_post(client, method, params).json()
+    return data
 
 
 def test_mcp_tool_emits_camel_case_for_renamed_struct(camel_roundtrip_app: "Litestar") -> "None":

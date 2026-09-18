@@ -1,5 +1,5 @@
 """End-to-end tests for :class:`MCPOptKeys` — renamed opt keys work across
-discovery (``plugin.py``) and description rendering (routes + manifests).
+discovery (``plugin.py``) and description rendering (routes).
 """
 
 from typing import Any
@@ -8,15 +8,13 @@ from litestar import Litestar, get
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP
-from litestar_mcp.config import MCPConfig, MCPOptKeys
+from litestar_mcp.mcp.config import MCPConfig, MCPOptKeys
+from tests.unit.conftest import mcp_post
 
 
 def _rpc(client: "TestClient[Any]", method: "str") -> "dict[str, Any]":
-    resp = client.post(
-        "/mcp",
-        json={"jsonrpc": "2.0", "id": 1, "method": method, "params": {}},
-    )
-    return resp.json()  # type: ignore[no-any-return]
+    data: dict[str, Any] = mcp_post(client, method).json()
+    return data
 
 
 def test_renamed_tool_and_resource_opt_keys_drive_discovery() -> "None":
@@ -87,11 +85,6 @@ def test_renamed_description_opt_keys_render_through_endpoints() -> "None":
         assert descr.startswith("LLM prose for users.")
         assert "## When to use\nAsked for users." in descr
         assert "ignored-docstring" not in descr
-
-        # The separate A2A card mirrors the rendered description.
-        agent_card = client.get("/.well-known/agent-card.json").json()
-        ac_descr = next(s["description"] for s in agent_card["skills"] if s["id"] == "list_users")
-        assert ac_descr == descr
 
 
 def test_default_opt_keys_unchanged_when_config_omits_opt_keys() -> "None":

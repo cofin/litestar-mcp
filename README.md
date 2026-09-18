@@ -20,8 +20,9 @@ This plugin automatically discovers Litestar routes marked for MCP and exposes t
 - **Type Safe** — full type hints with dataclasses; `msgspec`-powered tool-argument validation.
 - **Automatic Discovery** — routes are discovered at app initialization.
 - **OpenAPI Integration** — server info derived from OpenAPI config.
-- **OIDC Auth Baked In** — bearer-token validation via `MCPAuthBackend` or a composable `create_oidc_validator()` factory; injectable `JWKSCache` protocol for shared document caches.
-- **Optional Task Support** — experimental in-memory MCP task lifecycle endpoints.
+- **Bring Your Own Auth** — MCP inherits the app's Litestar authentication middleware, including litestar-security or a custom `AbstractAuthenticationMiddleware`.
+- **Optional Task Support** — the MCP Tasks extension with Litestar Store records; applications coordinate execution across workers.
+- **Optional A2A 1.0** — official SDK models and handlers on native Litestar JSON-RPC/SSE routes, without required Starlette, FastAPI or Uvicorn dependencies.
 
 ## Quick Start
 
@@ -84,8 +85,8 @@ def add(a: int, b: int) -> int:
 app = mcp.app
 
 if __name__ == "__main__":
-    # 4. Boot the server using Server-Sent Events (SSE)
-    mcp.run(port=8000)
+    # 4. Boot the modern Streamable HTTP server
+    mcp.run(transport="streamable-http", port=8000)
 ```
 
 The standalone decorators accept Litestar route-handler keyword arguments such as `dependencies`, `guards`, `response_headers`, `responses`, `summary`, `tags`, DTO options, hooks, and arbitrary extra kwargs stored in `handler.opt`. The `name` keyword names the MCP primitive; use `route_name` to set Litestar's route-handler name separately.
@@ -166,8 +167,15 @@ async def search(query: str, limit: int = 10) -> dict:
 Once configured, your application exposes these MCP-compatible endpoints:
 
 - `POST /mcp` - stateless MCP `2026-07-28` JSON-RPC and subscription streams
-- `GET /.well-known/agent-card.json` - Agent metadata card
-- `GET /.well-known/oauth-protected-resource` - OAuth protected resource metadata when auth is configured
+- `litestar --app my_app:app mcp stdio` - in-process stdio for desktop clients
+- `litestar mcp bridge` - stdio proxy to a running Streamable HTTP server
+
+Install `litestar-mcp[a2a]` to mount an official A2A SDK request handler and
+agent card independently of MCP. The adapter accepts A2A 1.0 JSON-RPC requests
+with `A2A-Version: 1.0`; it rejects missing/legacy versions and offers no 0.3
+conversion, gRPC or REST binding. Applications supply authentication, durable
+stores, executor resource scopes, worker coordination and push delivery policy.
+See the [A2A guide](https://cofin.github.io/litestar-mcp/latest/usage/a2a.html).
 
 Use `server/discover` instead of an initialize handshake:
 
@@ -181,6 +189,18 @@ curl -X POST http://127.0.0.1:8000/mcp \
 
 Every request is independent. There are no protocol sessions, sticky-routing
 headers, GET/DELETE transport handlers, or SSE replay.
+
+MCP IDs must be strings or finite integer-valued numbers. Missing, null,
+boolean, container or fractional IDs fail before tool execution or stream
+allocation. Progress streams apply bounded backpressure; slow subscription
+consumers are completed and disconnected. Shared task Stores persist records
+but do not distribute task execution or local input/cancel queues.
+
+Google ADK 2.8.0 with MCP SDK 1.29.1 still sends the initialize-era lifecycle
+and cannot consume this endpoint. ADK `RemoteA2aAgent` interoperability has
+not been verified; local ADK agents and the tested official A2A SDK client are
+separate integration paths. See the [0.14 migration guide](https://cofin.github.io/litestar-mcp/latest/usage/migration_0_14.html)
+for removed aliases and configuration.
 
 **Built-in Resources:**
 
@@ -203,19 +223,25 @@ config = MCPConfig()
 | `base_path` | `str` | `"/mcp"` | Base path for the MCP Streamable HTTP endpoint |
 | `include_in_schema` | `bool` | `False` | Whether to include MCP routes in OpenAPI schema |
 | `name` | `str \| None` | `None` | Override server name. If None, uses OpenAPI title |
+| `instructions` | `str \| None` | `None` | Server instructions returned to clients from `server/discover` |
 | `guards` | `list[Any] \| None` | `None` | Litestar guards applied to the MCP router |
+| `route_opt` | `dict[str, Any] \| None` | `None` | Route metadata merged onto the MCP handler, including litestar-security policies |
 | `allowed_origins` | `list[str] \| None` | `None` | Exact additional Origins; present Origins must be same-origin or allowlisted |
 | `include_operations` | `list[str] \| None` | `None` | Only expose matching operation names |
 | `exclude_operations` | `list[str] \| None` | `None` | Exclude matching operation names |
 | `include_tags` | `list[str] \| None` | `None` | Only expose routes with matching OpenAPI tags |
 | `exclude_tags` | `list[str] \| None` | `None` | Exclude routes with matching OpenAPI tags |
-| `auth` | `MCPAuthConfig \| None` | `None` | Metadata for `/.well-known/oauth-protected-resource` discovery |
 | `tasks` | `bool \| MCPTaskConfig` | `False` | Enable the `io.modelcontextprotocol/tasks` extension |
+| `opt_keys` | `MCPOptKeys` | `MCPOptKeys()` | Rename the `handler.opt` keys the plugin reads (`mcp_tool`, `mcp_resource`, ...) |
+| `list_page_size` | `int` | `100` | Page size for `tools/list`, `resources/list`, `resources/templates/list`, and `prompts/list` |
 | `cache_ttl_ms` | `int` | `0` | Conservative cache lifetime for discovery/list/resource results |
 | `cache_scope` | `"private" \| "public"` | `"private"` | Cache sharing policy |
 | `subscription_max_streams` | `int` | `10000` | Maximum concurrent `subscriptions/listen` streams |
 | `subscription_keepalive_seconds` | `float` | `15.0` | Subscription keepalive interval |
 | `subscription_channels` | `ChannelsPlugin \| None` | `None` | Optional cross-worker notification fan-out |
+| `stream_queue_capacity` | `int` | `256` | Bounded subscription and request-progress queues |
+| `stream_cleanup_timeout` | `float` | `5.0` | Deadline for cooperative response cleanup; expiry is logged |
+| `max_blob_bytes` | `int \| None` | `26214400` | Maximum raw byte length for base64-embedded blobs; `None` disables the cap |
 | `before_tool_call` | `BeforeToolCallHook \| None` | `None` | Observe each `tools/call` before dispatch |
 | `after_tool_call` | `AfterToolCallHook \| None` | `None` | Observe each `tools/call` result, exception, and duration |
 
@@ -318,51 +344,19 @@ app = Litestar(
 
 See `docs/examples/notes/sqlspec/google_iap.py` for a runnable example.
 
-### Path B — Built-in MCPAuthBackend
+### litestar-security
 
-For OIDC workloads, install the built-in `MCPAuthBackend`:
+Use litestar-security for policy evaluation and RFC 9728 protected-resource metadata. Pass route policy metadata with `MCPConfig(route_opt={"auth": required("api-key")})`; evaluator failures can emit the required `WWW-Authenticate` resource metadata.
 
-```python
-from litestar import Litestar
-from litestar.middleware import DefineMiddleware
-from litestar_mcp import LitestarMCP, MCPAuthBackend, MCPConfig, OIDCProviderConfig
-from litestar_mcp.auth import MCPAuthConfig
+### In-process stdio
 
-app = Litestar(
-    route_handlers=[...],
-    plugins=[LitestarMCP(MCPConfig(auth=MCPAuthConfig(
-        issuer="https://company.okta.com",
-        audience="api://mcp-tools",
-    )))],
-    middleware=[DefineMiddleware(
-        MCPAuthBackend,
-        providers=[OIDCProviderConfig(
-            issuer="https://company.okta.com",
-            audience="api://mcp-tools",
-        )],
-        user_resolver=lambda claims, app: MyUser(sub=claims["sub"]),
-    )],
-)
-```
+Run `litestar --app my_app:app mcp stdio` to serve the application in-process to a desktop MCP client. Use `mcp bridge` when the MCP server is already running over Streamable HTTP.
 
-JWKS auto-discovery, caching, and `clock_skew` tolerance are built in.
-See `docs/examples/notes/sqlspec/cloud_run_jwt.py` for the full pattern.
-
-### Path C — Composable OIDC Factory
-
-`create_oidc_validator()` returns an async callable for use as
-`MCPAuthBackend(token_validator=...)` or inside your own middleware:
-
-```python
-from litestar_mcp import create_oidc_validator
-
-validator = create_oidc_validator(
-    "https://cloud.google.com/iap",
-    "/projects/PROJECT_NUMBER/global/backendServices/SERVICE_ID",
-    algorithms=("ES256",),
-    jwks_cache_ttl=1800,
-)
-```
+Stdio uses native `Litestar.lifespan()`. Its `shutdown_timeout` bounds request
+cleanup and shutdown after startup completes; application hooks own bounded,
+cancellation-safe startup rollback. `MCPStdioContext.session` remains an
+application session. Provide a verified identity for protected tasks;
+anonymous stdio requests have no owner ID.
 
 ## Development
 
@@ -393,6 +387,11 @@ Makefile. When [nodenv](https://github.com/nodenv/nodenv) is available, the
 target selects that version with `NODENV_VERSION`; otherwise it uses the
 active `node`/`npm` installation. A local `.node-version` is ignored so
 contributors can use nodenv without changing repository state.
+
+The conformance runner reports passed, waived and failed scenarios separately.
+Its pinned alpha validator has documented task-extension schema waivers in
+`tools/ci/run_mcp_conformance.py`; `MCP_CONFORMANCE_STRICT=1` disables those
+waivers. A waived check is not a protocol pass.
 
 ## License
 

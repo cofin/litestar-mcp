@@ -5,7 +5,7 @@ import inspect
 import pytest
 from dishka.integrations.litestar import FromDishka, inject
 
-from litestar_mcp._cursor import decode_cursor, encode_cursor
+from litestar_mcp.core._cursor import decode_cursor, encode_cursor
 from litestar_mcp.utils import (
     expand_template,
     get_handler_function,

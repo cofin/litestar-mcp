@@ -7,6 +7,7 @@ from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig
 from litestar_mcp.utils import should_include_handler
+from tests.unit.conftest import mcp_post
 
 # ---------------------------------------------------------------------------
 # Unit tests for should_include_handler
@@ -70,39 +71,9 @@ class TestShouldIncludeHandler:
 # ---------------------------------------------------------------------------
 
 
-def _ensure_session(client: "TestClient[Any]") -> "str":
-    sid = getattr(client, "_mcp_session", None)
-    if sid is not None:
-        return sid  # type: ignore[no-any-return]
-    init = client.post(
-        "/mcp",
-        json={
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
-        },
-    )
-    sid = init.headers.get("mcp-session-id", "")
-    client.post(
-        "/mcp",
-        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        headers={"Mcp-Session-Id": sid},
-    )
-    client._mcp_session = sid  # type: ignore[attr-defined]
-    return str(sid)
-
-
 def _rpc(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None) -> "dict[str, Any]":
-    body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
-    if params is not None:
-        body["params"] = params
-    headers: dict[str, str] = {}
-    if method != "initialize":
-        sid = _ensure_session(client)
-        if sid:
-            headers["Mcp-Session-Id"] = sid
-    return client.post("/mcp", json=body, headers=headers).json()  # type: ignore[no-any-return]
+    data: dict[str, Any] = mcp_post(client, method, params).json()
+    return data
 
 
 class TestFilteringIntegration:

@@ -9,6 +9,7 @@ from litestar.openapi.config import OpenAPIConfig
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig
+from tests.unit.conftest import mcp_post
 
 if TYPE_CHECKING:
     from litestar.connection import ASGIConnection
@@ -25,38 +26,6 @@ except ImportError:
 JWT_AVAILABLE = _JWT_AVAILABLE
 
 
-def _ensure_session(
-    client: "TestClient[Any]",
-    base: "str" = "/mcp",
-    auth_headers: "dict[str, str] | None" = None,
-) -> "str":
-    auth_token = (auth_headers or {}).get("Authorization", "") or (auth_headers or {}).get("authorization", "")
-    key = f"_mcp_session::{base}::{auth_token}"
-    sid = getattr(client, key, None)
-    if sid:
-        return sid  # type: ignore[no-any-return]
-    init_headers = dict(auth_headers or {})
-    init = client.post(
-        base,
-        json={
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
-        },
-        headers=init_headers,
-    )
-    sid = init.headers.get("mcp-session-id", "")
-    if sid:
-        client.post(
-            base,
-            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-            headers={**init_headers, "Mcp-Session-Id": sid},
-        )
-    setattr(client, key, sid)
-    return str(sid)
-
-
 def _rpc(
     client: "TestClient[Any]",
     method: "str",
@@ -64,15 +33,7 @@ def _rpc(
     headers: "dict[str, str] | None" = None,
     base: "str" = "/mcp",
 ) -> "Any":
-    body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
-    if params is not None:
-        body["params"] = params
-    final_headers = dict(headers or {})
-    if method != "initialize" and "Mcp-Session-Id" not in final_headers and "mcp-session-id" not in final_headers:
-        sid = _ensure_session(client, base, headers)
-        if sid:
-            final_headers["Mcp-Session-Id"] = sid
-    return client.post(base, json=body, headers=final_headers)
+    return mcp_post(client, method, params, headers=headers, base=base)
 
 
 class TestSecurity:

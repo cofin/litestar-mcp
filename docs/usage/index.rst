@@ -57,14 +57,15 @@ examples drawn from :mod:`docs.examples`.
         :link: discovery
         :link-type: doc
 
-        The ``/.well-known/*`` manifests the plugin publishes automatically.
+        The ``server/discover`` request and why MCP publishes no
+        ``/.well-known/*`` documents.
 
     .. grid-item-card:: Authentication
         :link: auth
         :link-type: doc
 
-        Bearer-token validation, OIDC providers, and mapping claims to
-        users.
+        Application-owned authentication through Litestar middleware and
+        guards, and mapping the resulting identity to users.
 
     .. grid-item-card:: Security
         :link: security
@@ -113,6 +114,12 @@ examples drawn from :mod:`docs.examples`.
 
         Connect Google ADK clients to your remote Litestar MCP server.
 
+    .. grid-item-card:: A2A Integration
+        :link: a2a
+        :link-type: doc
+
+        Mount an official A2A SDK handler alongside MCP.
+
 .. toctree::
     :hidden:
     :maxdepth: 1
@@ -133,3 +140,5 @@ examples drawn from :mod:`docs.examples`.
     deployment
     migration_0_12
     adk
+    a2a
+    migration_0_14

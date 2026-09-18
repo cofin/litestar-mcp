@@ -3,11 +3,10 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#   "litestar[standard]>=2.0",
+#   "litestar[standard,jwt]>=2.0",
 #   "litestar-mcp",
 #   "sqlspec[aiosqlite]>=0.43",
 #   "dishka",
-#   "python-jose[cryptography]",
 #   "uvicorn",
 # ]
 # ///
@@ -32,7 +31,6 @@ from docs.examples.notes.shared.auth import (
     DEFAULT_ISSUER,
     AuthenticatedIdentity,
     build_login_controller,
-    build_mcp_auth_metadata,
     build_oauth_backend,
     mint_hs256_token,
 )
@@ -150,7 +148,7 @@ def create_app(
     async def on_startup() -> "None":
         await bootstrap_schema(sqlspec, config)
 
-    mcp_config = MCPConfig(auth=build_mcp_auth_metadata(issuer=issuer, audience=audience))
+    mcp_config = MCPConfig()
 
     app = Litestar(
         route_handlers=[

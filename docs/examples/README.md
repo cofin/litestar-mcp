@@ -173,8 +173,7 @@ uv add litestar uvicorn
 
 1. **Check the transport**: Use `POST http://127.0.0.1:8000/mcp` for MCP JSON-RPC requests
 2. **Check discovery**: Send `server/discover` to `POST http://127.0.0.1:8000/mcp`
-3. **Check agent metadata**: Visit `http://127.0.0.1:8000/.well-known/agent-card.json`
-4. **Main documentation**: See the main README.md in the repository root
+3. **Main documentation**: See the main README.md in the repository root
 
 ## Configuration Options
 

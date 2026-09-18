@@ -7,38 +7,13 @@ from litestar import Litestar, Response, get
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig
+from tests.unit.conftest import mcp_post
 
 pytestmark = pytest.mark.unit
 
 
-def _ensure_session(client: "TestClient[Any]") -> "str":
-    init = client.post(
-        "/mcp",
-        json={
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
-        },
-    )
-    sid = init.headers.get("mcp-session-id", "")
-    client.post(
-        "/mcp",
-        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        headers={"Mcp-Session-Id": sid},
-    )
-    return str(sid)
-
-
-def _rpc(
-    client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None, *, sid: "str"
-) -> "dict[str, Any]":
-    response = client.post(
-        "/mcp",
-        json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}},
-        headers={"Mcp-Session-Id": sid},
-    )
-    data: dict[str, Any] = response.json()
+def _rpc(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None) -> "dict[str, Any]":
+    data: dict[str, Any] = mcp_post(client, method, params).json()
     return data
 
 
@@ -49,8 +24,7 @@ def test_tool_execution_error_stays_in_tool_result_envelope() -> "None":
 
     app = Litestar(route_handlers=[tool_error], plugins=[LitestarMCP(MCPConfig())])
     with TestClient(app=app) as client:
-        sid = _ensure_session(client)
-        response = _rpc(client, "tools/call", {"name": "tool_error", "arguments": {}}, sid=sid)
+        response = _rpc(client, "tools/call", {"name": "tool_error", "arguments": {}})
         assert "error" not in response
         assert response["result"]["isError"] is True
         assert "bad input" in response["result"]["content"][0]["text"]
@@ -63,8 +37,7 @@ def test_prompt_handler_execution_error_maps_to_internal_error_with_data() -> "N
 
     app = Litestar(route_handlers=[prompt_error], plugins=[LitestarMCP(MCPConfig())])
     with TestClient(app=app) as client:
-        sid = _ensure_session(client)
-        response = _rpc(client, "prompts/get", {"name": "prompt_error"}, sid=sid)
+        response = _rpc(client, "prompts/get", {"name": "prompt_error"})
         assert response["error"]["code"] == -32603
         assert response["error"]["message"] == "Prompt execution failed"
         assert response["error"]["data"] == {"statusCode": 400, "content": {"error": "bad input"}}
@@ -73,8 +46,7 @@ def test_prompt_handler_execution_error_maps_to_internal_error_with_data() -> "N
 def test_resource_not_found_uses_mcp_resource_code_with_uri_data() -> "None":
     app = Litestar(route_handlers=[], plugins=[LitestarMCP(MCPConfig())])
     with TestClient(app=app) as client:
-        sid = _ensure_session(client)
-        response = _rpc(client, "resources/read", {"uri": "litestar://missing"}, sid=sid)
+        response = _rpc(client, "resources/read", {"uri": "litestar://missing"})
         assert response["error"]["code"] == -32602
         assert response["error"]["message"] == "Resource not found"
         assert response["error"]["data"] == {"uri": "litestar://missing"}
@@ -87,8 +59,7 @@ def test_resource_read_failure_maps_to_internal_error_with_data() -> "None":
 
     app = Litestar(route_handlers=[resource_error], plugins=[LitestarMCP(MCPConfig())])
     with TestClient(app=app) as client:
-        sid = _ensure_session(client)
-        response = _rpc(client, "resources/read", {"uri": "litestar://resource_error"}, sid=sid)
+        response = _rpc(client, "resources/read", {"uri": "litestar://resource_error"})
         assert response["error"]["code"] == -32603
         assert response["error"]["message"] == "Resource read failed"
         assert response["error"]["data"] == {"statusCode": 503, "content": {"error": "failed read"}}
@@ -111,8 +82,7 @@ def test_resource_read_error_maps_to_internal_error_for_all_statuses(status_code
 
     app = Litestar(route_handlers=[resource_error], plugins=[LitestarMCP(MCPConfig())])
     with TestClient(app=app) as client:
-        sid = _ensure_session(client)
-        response = _rpc(client, "resources/read", {"uri": f"litestar://res_{status_code}"}, sid=sid)
+        response = _rpc(client, "resources/read", {"uri": f"litestar://res_{status_code}"})
         assert response["error"]["code"] == -32603, f"{status_code} must map to INTERNAL_ERROR"
         assert response["error"]["data"] == {"statusCode": status_code, "content": {"error": "boom"}}
 
@@ -123,7 +93,6 @@ def test_resource_not_found_keeps_spec_code_not_internal_error() -> "None":
     """
     app = Litestar(route_handlers=[], plugins=[LitestarMCP(MCPConfig())])
     with TestClient(app=app) as client:
-        sid = _ensure_session(client)
-        response = _rpc(client, "resources/read", {"uri": "litestar://nope"}, sid=sid)
+        response = _rpc(client, "resources/read", {"uri": "litestar://nope"})
         assert response["error"]["code"] == -32602
         assert response["error"]["data"] == {"uri": "litestar://nope"}

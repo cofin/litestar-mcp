@@ -20,7 +20,7 @@ from sqlspec.adapters.duckdb import DuckDBConfig, DuckDBDriver
 from sqlspec.extensions.litestar import SQLSpecPlugin
 
 from litestar_mcp import LitestarMCP, MCPConfig
-from tests.integration._auth import build_mcp_auth_config, build_mcp_auth_middleware, build_oauth_backend
+from tests.integration._auth import build_oauth_backend
 
 AuthMode = Literal["none", "bearer"]
 
@@ -38,23 +38,14 @@ POSTGRES_TEST_TABLES = (
 )
 
 
-def _mcp_plugin(*, auth_mode: "AuthMode" = "none") -> "LitestarMCP":
-    config = MCPConfig()
-    if auth_mode == "bearer":
-        config.auth = build_mcp_auth_config()
-    return LitestarMCP(config)
+def _mcp_plugin() -> "LitestarMCP":
+    return LitestarMCP(MCPConfig())
 
 
 def _auth_on_app_init(auth_mode: "AuthMode") -> "list[Any]":
     if auth_mode == "bearer":
         backend = build_oauth_backend()
         return [backend.on_app_init]
-    return []
-
-
-def _auth_middleware(auth_mode: "AuthMode") -> "list[Any]":
-    if auth_mode == "bearer":
-        return [build_mcp_auth_middleware()]
     return []
 
 
@@ -195,9 +186,8 @@ def build_advanced_alchemy_app(
 
     return Litestar(
         route_handlers=[AlchemyWidgetController],
-        plugins=[SQLAlchemyPlugin(config=alchemy_config), _mcp_plugin(auth_mode=auth_mode)],
+        plugins=[SQLAlchemyPlugin(config=alchemy_config), _mcp_plugin()],
         on_app_init=_auth_on_app_init(auth_mode),
-        middleware=_auth_middleware(auth_mode),
     )
 
 
@@ -234,9 +224,8 @@ def build_sqlspec_asyncpg_app(
     return Litestar(
         route_handlers=[create_report],
         on_startup=[on_startup],
-        plugins=[SQLSpecPlugin(sqlspec), _mcp_plugin(auth_mode=auth_mode)],
+        plugins=[SQLSpecPlugin(sqlspec), _mcp_plugin()],
         on_app_init=_auth_on_app_init(auth_mode),
-        middleware=_auth_middleware(auth_mode),
     )
 
 
@@ -278,9 +267,8 @@ def build_advanced_alchemy_dishka_app(
     app = Litestar(
         route_handlers=[create_widget],
         on_shutdown=[container.close],
-        plugins=[SQLAlchemyPlugin(config=alchemy_config), _mcp_plugin(auth_mode=auth_mode)],
+        plugins=[SQLAlchemyPlugin(config=alchemy_config), _mcp_plugin()],
         on_app_init=_auth_on_app_init(auth_mode),
-        middleware=_auth_middleware(auth_mode),
     )
     setup_dishka(container, app)
     return app
@@ -330,9 +318,8 @@ def build_sqlspec_dishka_app(
         route_handlers=[create_report],
         on_startup=[on_startup],
         on_shutdown=[container.close],
-        plugins=[SQLSpecPlugin(sqlspec), _mcp_plugin(auth_mode=auth_mode)],
+        plugins=[SQLSpecPlugin(sqlspec), _mcp_plugin()],
         on_app_init=_auth_on_app_init(auth_mode),
-        middleware=_auth_middleware(auth_mode),
     )
     setup_dishka(container, app)
     return app
@@ -372,7 +359,6 @@ def build_sqlspec_duckdb_app(
     return Litestar(
         route_handlers=[create_report],
         on_startup=[on_startup],
-        plugins=[SQLSpecPlugin(sqlspec), _mcp_plugin(auth_mode=auth_mode)],
+        plugins=[SQLSpecPlugin(sqlspec), _mcp_plugin()],
         on_app_init=_auth_on_app_init(auth_mode),
-        middleware=_auth_middleware(auth_mode),
     )

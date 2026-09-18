@@ -6,7 +6,7 @@ from litestar import Litestar, get
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP
-from litestar_mcp.registry import Registry
+from litestar_mcp.mcp.registry import Registry
 
 pytestmark = pytest.mark.unit
 
@@ -25,12 +25,12 @@ def test_plugin_startup_and_shutdown_lifecycle_logs_are_not_warnings(
         return {"ok": True}
 
     app = Litestar(route_handlers=[ping], plugins=[LitestarMCP()], logging_config=None)
-    caplog.set_level(logging.WARNING, logger="litestar_mcp.plugin")
+    caplog.set_level(logging.WARNING, logger="litestar_mcp.mcp.plugin")
 
     with TestClient(app=app):
         pass
 
-    assert _warning_records(caplog, "litestar_mcp.plugin") == []
+    assert _warning_records(caplog, "litestar_mcp.mcp.plugin") == []
 
 
 def test_registry_change_callback_invalidation_logs_are_not_warnings(
@@ -42,8 +42,8 @@ def test_registry_change_callback_invalidation_logs_are_not_warnings(
 
     plugin = LitestarMCP()
     app = Litestar(route_handlers=[ping], plugins=[plugin], logging_config=None)
-    caplog.set_level(logging.WARNING, logger="litestar_mcp.plugin")
-    caplog.set_level(logging.WARNING, logger="litestar_mcp.registry")
+    caplog.set_level(logging.WARNING, logger="litestar_mcp.mcp.plugin")
+    caplog.set_level(logging.WARNING, logger="litestar_mcp.mcp.registry")
 
     @get("/dynamic", mcp_tool="dynamic", sync_to_thread=False)
     def dynamic() -> "dict[str, bool]":
@@ -56,7 +56,7 @@ def test_registry_change_callback_invalidation_logs_are_not_warnings(
 
         assert not hasattr(app.state, "mcp_router")
 
-    assert _warning_records(caplog, "litestar_mcp.plugin", "litestar_mcp.registry") == []
+    assert _warning_records(caplog, "litestar_mcp.mcp.plugin", "litestar_mcp.mcp.registry") == []
 
 
 def test_registry_overwrite_still_warns(caplog: "pytest.LogCaptureFixture") -> "None":
@@ -69,12 +69,12 @@ def test_registry_overwrite_still_warns(caplog: "pytest.LogCaptureFixture") -> "
         return {"ok": True}
 
     registry = Registry()
-    caplog.set_level(logging.WARNING, logger="litestar_mcp.registry")
+    caplog.set_level(logging.WARNING, logger="litestar_mcp.mcp.registry")
 
     registry.register_tool("ping", ping)
     registry.register_tool("ping", replacement)
 
-    messages = [record.getMessage() for record in _warning_records(caplog, "litestar_mcp.registry")]
+    messages = [record.getMessage() for record in _warning_records(caplog, "litestar_mcp.mcp.registry")]
     assert any("Overwriting existing tool registration: ping" in message for message in messages)
 
 
@@ -84,9 +84,9 @@ def test_registry_copied_handler_registration_is_idempotent(caplog: "pytest.LogC
         return {"ok": True}
 
     registry = Registry()
-    caplog.set_level(logging.WARNING, logger="litestar_mcp.registry")
+    caplog.set_level(logging.WARNING, logger="litestar_mcp.mcp.registry")
 
     registry.register_tool("ping", ping)
     registry.register_tool("ping", copy(ping))
 
-    assert _warning_records(caplog, "litestar_mcp.registry") == []
+    assert _warning_records(caplog, "litestar_mcp.mcp.registry") == []

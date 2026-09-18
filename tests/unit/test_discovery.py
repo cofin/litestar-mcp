@@ -4,7 +4,7 @@ from litestar import Litestar, get
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP
-from litestar_mcp.config import MCPConfig
+from litestar_mcp.mcp.config import MCPConfig
 from litestar_mcp.utils import mcp_tool
 
 
@@ -31,17 +31,11 @@ def _make_custom_base_path_discovery_app() -> "Litestar":
     )
 
 
-def test_agent_card_endpoint_generated() -> "None":
+def test_mcp_does_not_own_agent_card_endpoint() -> "None":
     app = _make_discovery_app()
     with TestClient(app=app) as client:
         response = client.get("/.well-known/agent-card.json")
-        assert response.status_code == 200
-        payload = response.json()
-
-        assert payload["name"]
-        assert payload["url"].endswith("/mcp")
-        assert payload["defaultInputModes"] == ["application/json"]
-        assert any(skill["id"] == "check_health" for skill in payload["skills"])
+        assert response.status_code == 404
 
 
 def test_experimental_mcp_server_manifest_removed() -> "None":
@@ -61,12 +55,11 @@ def test_custom_base_path_does_not_restore_removed_manifest() -> "None":
     assert nested_response.status_code in (404, 405)
 
 
-def test_custom_base_path_agent_card_reports_mcp_url() -> "None":
+def test_custom_base_path_does_not_register_agent_card() -> "None":
     app = _make_custom_base_path_discovery_app()
     with TestClient(app=app) as client:
         response = client.get("/.well-known/agent-card.json")
         nested_response = client.get("/api/mcp/.well-known/agent-card.json")
 
-    assert response.status_code == 200
-    assert response.json()["url"].endswith("/api/mcp")
+    assert response.status_code == 404
     assert nested_response.status_code in (404, 405)

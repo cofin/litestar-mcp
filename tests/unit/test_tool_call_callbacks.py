@@ -9,23 +9,18 @@ from litestar.exceptions import NotAuthorizedException
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig, mcp_tool
-from litestar_mcp.executor import MCPToolErrorResult
+from litestar_mcp.mcp.executor import MCPToolErrorResult
+from litestar_mcp.mcp.service import TASKS_EXTENSION
+from tests.unit.conftest import mcp_post
 
 
 def _rpc(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None) -> "dict[str, Any]":
     request_params = dict(params or {})
-    meta = dict(request_params.get("_meta") or {})
-    capabilities = dict(meta.get("io.modelcontextprotocol/clientCapabilities") or {})
     if method.startswith("tasks/"):
-        capabilities["extensions"] = {"io.modelcontextprotocol/tasks": {}}
-    meta.setdefault("io.modelcontextprotocol/protocolVersion", "2026-07-28")
-    meta["io.modelcontextprotocol/clientCapabilities"] = capabilities
-    request_params["_meta"] = meta
-    body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": request_params}
-    headers = {"MCP-Protocol-Version": "2026-07-28", "Mcp-Method": method}
-    if method == "tools/call":
-        headers["Mcp-Name"] = str(request_params.get("name", ""))
-    return client.post("/mcp", json=body, headers=headers).json()  # type: ignore[no-any-return]
+        meta = dict(request_params.get("_meta") or {})
+        meta["io.modelcontextprotocol/clientCapabilities"] = {"extensions": {TASKS_EXTENSION: {}}}
+        request_params["_meta"] = meta
+    return mcp_post(client, method, request_params).json()  # type: ignore[no-any-return]
 
 
 def _call_tool(client: "TestClient[Any]", name: "str", arguments: "dict[str, Any] | None" = None) -> "dict[str, Any]":
@@ -212,7 +207,7 @@ def test_tool_call_callback_failures_are_logged_and_swallowed(caplog: "Any") -> 
         response = _call_tool(client, "x")
 
     assert response["result"]["isError"] is False
-    records = [record for record in caplog.records if record.name == "litestar_mcp.executor"]
+    records = [record for record in caplog.records if record.name == "litestar_mcp.mcp.executor"]
     assert len(records) == 2
     assert all(record.exc_info is not None for record in records)
 
@@ -259,11 +254,7 @@ def test_task_tool_calls_run_callbacks() -> "None":
             {
                 "name": "tasked",
                 "arguments": {"delay": 0.01},
-                "_meta": {
-                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-                    "io.modelcontextprotocol/clientCapabilities": {"extensions": {"io.modelcontextprotocol/tasks": {}}},
-                    "io.modelcontextprotocol/clientInfo": {"name": "tests", "version": "1"},
-                },
+                "_meta": {"io.modelcontextprotocol/clientCapabilities": {"extensions": {TASKS_EXTENSION: {}}}},
             },
         )
         task_id = response["result"]["taskId"]

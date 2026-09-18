@@ -4,7 +4,7 @@ import builtins
 import io
 import json
 import threading
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from types import TracebackType
 from typing import Any
 
@@ -30,7 +30,7 @@ def _patch_async_client(monkeypatch: pytest.MonkeyPatch, handler: Callable[[http
             follow_redirects=kwargs.get("follow_redirects", False),
         )
 
-    monkeypatch.setattr("litestar_mcp.bridge.httpx.AsyncClient", fake_async_client)
+    monkeypatch.setattr("litestar_mcp.mcp.bridge.httpx.AsyncClient", fake_async_client)
 
 
 def _assert_bridge_jsonrpc_error(stdout: BridgeBytesSink, message: str) -> None:
@@ -43,8 +43,8 @@ def _assert_bridge_jsonrpc_error(stdout: BridgeBytesSink, message: str) -> None:
 
 @pytest.mark.anyio
 async def test_missing_bridge_extra_error_names_install_extra(monkeypatch: pytest.MonkeyPatch) -> None:
-    from litestar_mcp.bridge import MissingDependencyError, run_stdio_streamable_http_bridge
-    from litestar_mcp.exceptions import MissingDependencyError as SharedMissingDependencyError
+    from litestar_mcp.core.exceptions import MissingDependencyError as SharedMissingDependencyError
+    from litestar_mcp.mcp.bridge import MissingDependencyError, run_stdio_streamable_http_bridge
 
     assert MissingDependencyError is SharedMissingDependencyError
 
@@ -68,7 +68,7 @@ async def test_missing_bridge_extra_error_names_install_extra(monkeypatch: pytes
 
 @pytest.mark.anyio
 async def test_token_provider_auth_resolves_fresh_token_and_retries_one_401() -> None:
-    from litestar_mcp.bridge import _TokenProviderAuth
+    from litestar_mcp.mcp.bridge import _TokenProviderAuth
 
     tokens = iter(["first", "second", "third", "fourth"])
     seen_auth: list[str] = []
@@ -100,7 +100,7 @@ async def test_token_provider_auth_resolves_fresh_token_and_retries_one_401() ->
 
 @pytest.mark.anyio
 async def test_token_provider_auth_offloads_sync_provider_from_event_loop() -> None:
-    from litestar_mcp.bridge import _TokenProviderAuth
+    from litestar_mcp.mcp.bridge import _TokenProviderAuth
 
     event_loop_thread = threading.get_ident()
     provider_threads: list[int] = []
@@ -125,7 +125,7 @@ async def test_token_provider_auth_offloads_sync_provider_from_event_loop() -> N
 
 @pytest.mark.anyio
 async def test_bridge_never_uses_legacy_get_or_delete(monkeypatch: pytest.MonkeyPatch) -> None:
-    from litestar_mcp import bridge
+    from litestar_mcp.mcp import bridge
 
     requests: list[tuple[str, str]] = []
 
@@ -160,7 +160,7 @@ async def test_bridge_never_uses_legacy_get_or_delete(monkeypatch: pytest.Monkey
 
 @pytest.mark.anyio
 async def test_bridge_uses_exact_custom_endpoint_for_all_requests(monkeypatch: pytest.MonkeyPatch) -> None:
-    from litestar_mcp import bridge
+    from litestar_mcp.mcp import bridge
 
     requests: list[tuple[str, str]] = []
 
@@ -188,7 +188,7 @@ async def test_bridge_uses_exact_custom_endpoint_for_all_requests(monkeypatch: p
 
 @pytest.mark.anyio
 async def test_bridge_adds_modern_metadata_and_lazy_custom_headers(monkeypatch: pytest.MonkeyPatch) -> None:
-    from litestar_mcp import bridge
+    from litestar_mcp.mcp import bridge
 
     requests: list[httpx.Request] = []
 
@@ -238,7 +238,7 @@ async def test_bridge_adds_modern_metadata_and_lazy_custom_headers(monkeypatch: 
 
 @pytest.mark.anyio
 async def test_bridge_forwards_independent_requests_concurrently(monkeypatch: pytest.MonkeyPatch) -> None:
-    from litestar_mcp import bridge
+    from litestar_mcp.mcp import bridge
 
     async def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
@@ -268,8 +268,8 @@ async def test_bridge_forwards_independent_requests_concurrently(monkeypatch: py
 
 @pytest.mark.anyio
 async def test_bridge_connection_error_is_clean_jsonrpc_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    from litestar_mcp import bridge
-    from litestar_mcp.exceptions import BridgeConnectionError
+    from litestar_mcp.core.exceptions import BridgeConnectionError
+    from litestar_mcp.mcp import bridge
 
     async def handler(request: httpx.Request) -> httpx.Response:
         message = "connection refused"
@@ -281,7 +281,7 @@ async def test_bridge_connection_error_is_clean_jsonrpc_error(monkeypatch: pytes
 
     exit_code = await bridge.run_stdio_streamable_http_bridge(
         ENDPOINT,
-        stdin=BridgeQueuedBytesSource(b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n'),
+        stdin=BridgeQueuedBytesSource(b'{"jsonrpc":"2.0","id":1,"method":"ping","params":{}}\n'),
         stdout=stdout,
         stderr=stderr,
     )
@@ -295,15 +295,15 @@ async def test_bridge_connection_error_is_clean_jsonrpc_error(monkeypatch: pytes
 
 @pytest.mark.anyio
 async def test_bridge_rejects_oversized_stdin_message() -> None:
-    from litestar_mcp import bridge
-    from litestar_mcp.exceptions import BridgeMessageTooLargeError
+    from litestar_mcp.core.exceptions import BridgeMessageTooLargeError
+    from litestar_mcp.mcp import bridge
 
     stdout = BridgeBytesSink()
     stderr = io.StringIO()
 
     exit_code = await bridge.run_stdio_streamable_http_bridge(
         ENDPOINT,
-        stdin=BridgeQueuedBytesSource(b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n'),
+        stdin=BridgeQueuedBytesSource(b'{"jsonrpc":"2.0","id":1,"method":"ping","params":{}}\n'),
         stdout=stdout,
         stderr=stderr,
         max_message_size=8,
@@ -317,7 +317,7 @@ async def test_bridge_rejects_oversized_stdin_message() -> None:
 
 @pytest.mark.anyio
 async def test_bridge_max_message_size_minus_one_disables_limit(monkeypatch: pytest.MonkeyPatch) -> None:
-    from litestar_mcp import bridge
+    from litestar_mcp.mcp import bridge
 
     requests: list[dict[str, Any]] = []
 
@@ -335,7 +335,7 @@ async def test_bridge_max_message_size_minus_one_disables_limit(monkeypatch: pyt
     exit_code = await bridge.run_stdio_streamable_http_bridge(
         ENDPOINT,
         stdin=BridgeQueuedBytesSource(
-            b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"payload":"larger-than-limit"}}\n',
+            b'{"jsonrpc":"2.0","id":1,"method":"ping","params":{"payload":"larger-than-limit"}}\n',
         ),
         stdout=stdout,
         stderr=io.StringIO(),
@@ -349,7 +349,7 @@ async def test_bridge_max_message_size_minus_one_disables_limit(monkeypatch: pyt
 
 @pytest.mark.anyio
 async def test_bridge_clean_eof_exits_zero_without_error() -> None:
-    from litestar_mcp.bridge import run_stdio_streamable_http_bridge
+    from litestar_mcp.mcp.bridge import run_stdio_streamable_http_bridge
 
     stdout = BridgeBytesSink()
     stderr = io.StringIO()
@@ -369,7 +369,7 @@ async def test_bridge_clean_eof_exits_zero_without_error() -> None:
 
 @pytest.mark.anyio
 async def test_bridge_close_does_not_issue_http_request(monkeypatch: pytest.MonkeyPatch) -> None:
-    from litestar_mcp import bridge
+    from litestar_mcp.mcp import bridge
 
     requests: list[httpx.Request] = []
 
@@ -396,7 +396,7 @@ async def test_bridge_close_does_not_issue_http_request(monkeypatch: pytest.Monk
 async def test_bridge_reports_post_exception_and_cancels_stdin_pump(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from litestar_mcp import bridge
+    from litestar_mcp.mcp import bridge
 
     stdin = BridgeQueuedBytesSource(
         b'{"jsonrpc":"2.0","id":1,"method":"server/discover"}\n',
@@ -441,3 +441,190 @@ async def test_bridge_reports_post_exception_and_cancels_stdin_pump(
     assert stdin.receive_started.is_set()
     assert "remote transport failed" in stderr.getvalue()
     _assert_bridge_jsonrpc_error(stdout, "remote transport failed")
+
+
+class _AckGatedSource(BridgeQueuedBytesSource):
+    """Yield the queued lines, then hold EOF until the acknowledgement has been written."""
+
+    def __init__(self, *chunks: bytes, gate: anyio.Event) -> None:
+        super().__init__(*chunks)
+        self._gate = gate
+
+    async def receive(self, max_bytes: int = 65536) -> bytes:
+        chunk = await super().receive(max_bytes)
+        if chunk:
+            return chunk
+        await self._gate.wait()
+        return b""
+
+
+class _AckSink(BridgeBytesSink):
+    """Byte sink that flags the subscription acknowledgement line."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.acknowledged = anyio.Event()
+
+    async def send(self, item: bytes) -> None:
+        await super().send(item)
+        if b"notifications/subscriptions/acknowledged" in item:
+            self.acknowledged.set()
+
+
+@pytest.mark.anyio
+async def test_bridge_stdin_eof_closes_open_subscription_streams(monkeypatch: pytest.MonkeyPatch) -> None:
+    from litestar_mcp.mcp.bridge import run_stdio_streamable_http_bridge
+
+    closed = anyio.Event()
+
+    class NeverEndingSSE(httpx.AsyncByteStream):
+        async def __aiter__(self) -> "AsyncIterator[bytes]":
+            yield b'data: {"jsonrpc":"2.0","method":"notifications/subscriptions/acknowledged","params":{}}\n\n'
+            await anyio.sleep_forever()
+
+        async def aclose(self) -> None:
+            closed.set()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, headers={"content-type": "text/event-stream"}, stream=NeverEndingSSE(), request=request
+        )
+
+    _patch_async_client(monkeypatch, handler)
+    stdout = _AckSink()
+    stdin = _AckGatedSource(
+        b'{"jsonrpc":"2.0","id":1,"method":"subscriptions/listen","params":{"notifications":{"toolsListChanged":true}}}\n',
+        gate=stdout.acknowledged,
+    )
+
+    with anyio.fail_after(2):
+        exit_code = await run_stdio_streamable_http_bridge(ENDPOINT, stdin=stdin, stdout=stdout)
+
+    assert exit_code == 0
+    assert closed.is_set()
+    assert b"notifications/subscriptions/acknowledged" in stdout.buffer
+
+
+@pytest.mark.anyio
+async def test_bridge_forwards_jsonrpc_error_envelopes_and_keeps_serving(monkeypatch: pytest.MonkeyPatch) -> None:
+    from litestar_mcp.mcp import bridge
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        if payload["method"] == "tools/list":
+            return httpx.Response(
+                200, json={"jsonrpc": "2.0", "id": payload["id"], "result": {"tools": []}}, request=request
+            )
+        if payload["method"] == "nope":
+            return httpx.Response(
+                404,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": payload["id"],
+                    "error": {"code": -32601, "message": "Method not found: nope"},
+                },
+                request=request,
+            )
+        if payload["method"] == "tools/call":
+            return httpx.Response(
+                400,
+                json={"jsonrpc": "2.0", "id": payload["id"], "error": {"code": -32602, "message": "Unknown tool"}},
+                request=request,
+            )
+        return httpx.Response(
+            200, json={"jsonrpc": "2.0", "id": payload["id"], "result": {"ok": True}}, request=request
+        )
+
+    _patch_async_client(monkeypatch, handler)
+    stdout = BridgeBytesSink()
+    exit_code = await bridge.run_stdio_streamable_http_bridge(
+        ENDPOINT,
+        stdin=BridgeQueuedBytesSource(
+            b'{"jsonrpc":"2.0","id":1,"method":"nope","params":{}}\n',
+            b'{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"missing","arguments":{}}}\n',
+            b'{"jsonrpc":"2.0","id":3,"method":"ping","params":{}}\n',
+        ),
+        stdout=stdout,
+        stderr=io.StringIO(),
+    )
+
+    assert exit_code == 0
+    messages = {message["id"]: message for message in (json.loads(line) for line in stdout.buffer.splitlines() if line)}
+    assert messages[1]["error"]["code"] == -32601
+    assert messages[2]["error"]["code"] == -32602
+    assert messages[3]["result"] == {"ok": True}
+
+
+@pytest.mark.anyio
+async def test_bridge_non_json_http_error_is_still_fatal(monkeypatch: pytest.MonkeyPatch) -> None:
+    from litestar_mcp.mcp import bridge
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        if payload["method"] == "tools/list":
+            return httpx.Response(
+                200, json={"jsonrpc": "2.0", "id": payload["id"], "result": {"tools": []}}, request=request
+            )
+        return httpx.Response(502, text="bad gateway", headers={"content-type": "text/plain"}, request=request)
+
+    _patch_async_client(monkeypatch, handler)
+    stdout = BridgeBytesSink()
+    exit_code = await bridge.run_stdio_streamable_http_bridge(
+        ENDPOINT,
+        stdin=BridgeQueuedBytesSource(b'{"jsonrpc":"2.0","id":1,"method":"ping","params":{}}\n'),
+        stdout=stdout,
+        stderr=io.StringIO(),
+    )
+
+    assert exit_code == 1
+    lines = [json.loads(line) for line in stdout.buffer.splitlines() if line]
+    assert lines[-1]["error"]["code"] == -32001
+
+
+@pytest.mark.anyio
+async def test_bridge_json_http_error_without_envelope_is_fatal(monkeypatch: pytest.MonkeyPatch) -> None:
+    from litestar_mcp.mcp import bridge
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"status_code": 401, "detail": "Unauthorized"}, request=request)
+
+    _patch_async_client(monkeypatch, handler)
+    stdout = BridgeBytesSink()
+    exit_code = await bridge.run_stdio_streamable_http_bridge(
+        ENDPOINT,
+        stdin=BridgeQueuedBytesSource(b'{"jsonrpc":"2.0","id":1,"method":"ping","params":{}}\n'),
+        stdout=stdout,
+        stderr=io.StringIO(),
+    )
+
+    assert exit_code == 1
+    lines = [json.loads(line) for line in stdout.buffer.splitlines() if line]
+    assert lines[-1]["error"]["code"] == -32001
+    assert "401" in lines[-1]["error"]["message"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("status", [401, 502])
+async def test_bridge_undecodable_json_error_body_reports_http_status(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    from litestar_mcp.mcp import bridge
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status, content=b"<html>not json</html>", headers={"content-type": "application/json"}, request=request
+        )
+
+    _patch_async_client(monkeypatch, handler)
+    stdout = BridgeBytesSink()
+    exit_code = await bridge.run_stdio_streamable_http_bridge(
+        ENDPOINT,
+        stdin=BridgeQueuedBytesSource(b'{"jsonrpc":"2.0","id":1,"method":"ping","params":{}}\n'),
+        stdout=stdout,
+        stderr=io.StringIO(),
+    )
+
+    assert exit_code == 1
+    lines = [json.loads(line) for line in stdout.buffer.splitlines() if line]
+    assert lines[-1]["error"]["code"] == -32001
+    assert str(status) in lines[-1]["error"]["message"]

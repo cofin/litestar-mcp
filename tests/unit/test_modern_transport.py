@@ -7,8 +7,7 @@ from litestar.params import Parameter
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig, MCPToolResult
-
-PROTOCOL_VERSION = "2026-07-28"
+from tests.unit.conftest import PROTOCOL_VERSION, mcp_envelope
 
 
 def _app(config: MCPConfig | None = None) -> Litestar:
@@ -32,26 +31,11 @@ def _request(
     headers: dict[str, str] | None = None,
     meta_version: str = PROTOCOL_VERSION,
 ) -> Any:
-    request_params = dict(params or {})
-    request_params["_meta"] = {
-        "io.modelcontextprotocol/protocolVersion": meta_version,
-        "io.modelcontextprotocol/clientCapabilities": {},
-        "io.modelcontextprotocol/clientInfo": {"name": "tests", "version": "1"},
-    }
-    request_headers = {
-        "Accept": "application/json, text/event-stream",
-        "MCP-Protocol-Version": PROTOCOL_VERSION,
-        "Mcp-Method": method,
-    }
-    if method == "tools/call":
-        request_headers["Mcp-Name"] = str(request_params.get("name", ""))
-    if headers:
-        request_headers.update(headers)
-    return client.post(
-        "/mcp",
-        json={"jsonrpc": "2.0", "id": id_, "method": method, "params": request_params},
-        headers=request_headers,
-    )
+    """POST one request; ``headers`` and ``meta_version`` deliberately override the shared envelope."""
+    body, request_headers = mcp_envelope(method, params, msg_id=id_)
+    body["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"] = meta_version
+    request_headers.update(headers or {})
+    return client.post("/mcp", json=body, headers=request_headers)
 
 
 def test_server_discover_is_stateless_and_self_describing() -> None:
@@ -221,23 +205,10 @@ def test_subscriptions_listen_streams_acknowledgement_first() -> None:
 
     plugin.registry.set_subscription_manager(FiniteSubscriptions())  # type: ignore[arg-type]
     with TestClient(app=app) as client:
-        params = {
-            "notifications": {"toolsListChanged": True},
-            "_meta": {
-                "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
-                "io.modelcontextprotocol/clientCapabilities": {},
-            },
-        }
-        with client.stream(
-            "POST",
-            "/mcp",
-            json={"jsonrpc": "2.0", "id": "sub-1", "method": "subscriptions/listen", "params": params},
-            headers={
-                "Accept": "application/json, text/event-stream",
-                "MCP-Protocol-Version": PROTOCOL_VERSION,
-                "Mcp-Method": "subscriptions/listen",
-            },
-        ) as response:
+        body, headers = mcp_envelope(
+            "subscriptions/listen", {"notifications": {"toolsListChanged": True}}, msg_id="sub-1"
+        )
+        with client.stream("POST", "/mcp", json=body, headers=headers) as response:
             lines = response.iter_lines()
             data_line = next(line for line in lines if line.startswith("data: "))
 

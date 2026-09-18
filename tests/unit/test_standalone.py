@@ -3,6 +3,7 @@ import json
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
+    import pytest
     from litestar.config.app import AppConfig
 
 from litestar import Litestar, get
@@ -12,9 +13,10 @@ from litestar.openapi.datastructures import ResponseSpec
 from litestar.plugins import InitPluginProtocol
 from litestar.testing import TestClient
 
-from litestar_mcp import MCP
-from litestar_mcp.config import MCPConfig
-from litestar_mcp.plugin import LitestarMCP
+from litestar_mcp import MCP, MCPStdioContext
+from litestar_mcp.mcp.config import MCPConfig
+from litestar_mcp.mcp.plugin import LitestarMCP
+from tests.unit.conftest import mcp_post
 
 
 def _rpc(
@@ -24,10 +26,8 @@ def _rpc(
     *,
     base_path: "str" = "/mcp",
 ) -> "dict[str, Any]":
-    body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
-    if params is not None:
-        body["params"] = params
-    return client.post(base_path, json=body).json()  # type: ignore[no-any-return]
+    data: dict[str, Any] = mcp_post(client, method, params, base=base_path).json()
+    return data
 
 
 def test_mcp_init_defaults() -> "None":
@@ -338,3 +338,80 @@ def test_standalone_plugin_coexistence() -> "None":
 
     assert "dummy-tag" in app.tags
     assert any(isinstance(p, LitestarMCP) for p in app.plugins)
+
+
+class _Money:
+    def __init__(self, cents: "int") -> "None":
+        self.cents = cents
+
+
+def test_standalone_tool_honours_type_encoders_on_the_wire() -> "None":
+    mcp = MCP(name="test-mcp")
+
+    @mcp.tool(name="price", type_encoders={_Money: lambda money: f"${money.cents / 100:.2f}"})
+    def price() -> "dict[str, Any]":
+        return {"amount": _Money(500)}
+
+    with TestClient(app=mcp.app) as client:
+        response = _rpc(client, "tools/call", {"name": "price", "arguments": {}})
+
+    assert response["result"]["isError"] is False
+    assert json.loads(response["result"]["content"][0]["text"]) == {"amount": "$5.00"}
+
+
+def test_standalone_sync_tool_registers_without_sync_to_thread_warning() -> "None":
+    import warnings
+
+    mcp = MCP(name="test-mcp")
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+
+        @mcp.tool(name="plain")
+        def plain() -> "str":
+            return "ok"
+
+        _ = mcp.app
+
+    with TestClient(app=mcp.app) as client:
+        response = _rpc(client, "tools/call", {"name": "plain", "arguments": {}})
+
+    assert response["result"]["content"][0]["text"] == "ok"
+
+
+def test_standalone_run_stdio_forwards_options(monkeypatch: "pytest.MonkeyPatch") -> "None":
+    import litestar_mcp.mcp.app as app_module
+
+    captured: dict[str, Any] = {}
+
+    def fake_run_stdio(app: "Litestar", **kwargs: "Any") -> "int":
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(app_module, "run_stdio", fake_run_stdio)
+    mcp = MCP(name="test-mcp")
+    mcp.run(transport="stdio", shutdown_timeout=30.0, max_message_size=1024)
+
+    assert captured["shutdown_timeout"] == 30.0
+    assert captured["max_message_size"] == 1024
+    assert isinstance(captured["stdio_context"], MCPStdioContext)
+
+
+def test_standalone_async_tool_registers_without_sync_to_thread_warning() -> "None":
+    import warnings
+
+    mcp = MCP(name="test-mcp")
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+
+        @mcp.tool(name="plain_async")
+        async def plain_async() -> "str":
+            return "ok"
+
+        _ = mcp.app
+
+    with TestClient(app=mcp.app) as client:
+        response = _rpc(client, "tools/call", {"name": "plain_async", "arguments": {}})
+
+    assert response["result"]["content"][0]["text"] == "ok"

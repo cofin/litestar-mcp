@@ -1,11 +1,11 @@
-"""Snippets for Google ADK client integration."""
+"""ADK client construction examples; ADK 2.8.0 cannot call the modern MCP endpoint."""
 
 from google.adk.tools.mcp_tool import McpToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
 
 
 def connect_simple() -> "McpToolset":
-    """Connect to the Litestar MCP server without authentication."""
+    """Construct a toolset without connecting; requires a compatible MCP server."""
     toolset = McpToolset(
         connection_params=StreamableHTTPConnectionParams(
             url="https://api.example.com/mcp",
@@ -16,7 +16,7 @@ def connect_simple() -> "McpToolset":
 
 
 def connect_with_auth() -> "McpToolset":
-    """Connect to the Litestar MCP server with bearer token authentication."""
+    """Construct a toolset with bearer headers; does not verify protocol compatibility."""
     toolset = McpToolset(
         connection_params=StreamableHTTPConnectionParams(
             url="https://api.example.com/mcp",

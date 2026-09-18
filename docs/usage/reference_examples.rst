@@ -124,8 +124,8 @@ JWT (HS256)
     Ordinary application-managed bearer auth. The app owns the
     ``/auth/login`` endpoint, signs its own tokens, and scopes notes
     by the token ``sub`` claim. Backed by
-    :class:`litestar.security.jwt.OAuth2PasswordBearerAuth` and
-    :class:`~litestar_mcp.auth.MCPAuthConfig`.
+    :class:`litestar.security.jwt.OAuth2PasswordBearerAuth`, the app's own
+    Litestar authentication middleware.
 
 Cloud Run JWT
     Same auth model as the plain JWT variant, but with env-driven
@@ -154,7 +154,7 @@ in :doc:`uvx_guide`.
 
 .. seealso::
 
-    - :doc:`auth` — full reference for :class:`~litestar_mcp.auth.MCPAuthConfig`,
-      OIDC providers, and bearer validators.
+    - :doc:`auth` — authenticating MCP with the app's own Litestar
+      middleware and the ``MCPConfig.route_opt`` policy.
     - :doc:`uvx_guide` — ``uvx`` templates, required ``--with`` extras
       per variant, and MCP client config snippets.

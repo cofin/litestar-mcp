@@ -22,46 +22,57 @@ from litestar.params import (
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig
+from litestar_mcp.mcp.routes import MCP_PROTOCOL_VERSION
+from tests.unit.conftest import mcp_post
 
 pytestmark = pytest.mark.unit
 
 
-def _initialize(client: "TestClient[Any]") -> "str":
-    init = client.post(
-        "/mcp",
-        json={
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2025-11-25",
-                "capabilities": {},
-                "clientInfo": {"name": "t"},
-            },
-        },
-    )
-    sid = init.headers.get("mcp-session-id", "")
-    client.post(
-        "/mcp",
-        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        headers={"Mcp-Session-Id": sid},
-    )
-    return str(sid)
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity", "1e400"])
+def test_malformed_json_returns_parse_error_without_tool_invocation(constant: str) -> None:
+    calls: list[float] = []
 
+    @get("/number", mcp_tool="number", sync_to_thread=False)
+    def number(value: float) -> dict[str, bool]:
+        calls.append(value)
+        return {"called": True}
 
-def _call(client: "TestClient[Any]", name: "str", arguments: "dict[str, Any]") -> "dict[str, Any]":
-    sid = _initialize(client)
-    resp = client.post(
-        "/mcp",
-        json={
+    payload = json.dumps(
+        {
             "jsonrpc": "2.0",
             "id": 1,
             "method": "tools/call",
-            "params": {"name": name, "arguments": arguments},
-        },
-        headers={"Mcp-Session-Id": sid},
-    )
-    return resp.json()  # type: ignore[no-any-return]
+            "params": {
+                "name": "number",
+                "arguments": {"value": "nonfinite-placeholder"},
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION,
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                },
+            },
+        }
+    ).replace('"nonfinite-placeholder"', constant)
+    app = Litestar(route_handlers=[number], plugins=[LitestarMCP(MCPConfig())])
+    with TestClient(app=app) as client:
+        response = client.post(
+            "/mcp",
+            content=payload,
+            headers={
+                "Content-Type": "application/json",
+                "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
+                "Mcp-Method": "tools/call",
+                "Mcp-Name": "number",
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == -32700
+    assert calls == []
+
+
+def _call(client: "TestClient[Any]", name: "str", arguments: "dict[str, Any]") -> "dict[str, Any]":
+    data: dict[str, Any] = mcp_post(client, "tools/call", {"name": name, "arguments": arguments}).json()
+    return data
 
 
 def _error_payload(result: "dict[str, Any]") -> "dict[str, Any]":
@@ -70,6 +81,25 @@ def _error_payload(result: "dict[str, Any]") -> "dict[str, Any]":
     assert result["result"]["isError"] is True
     text = result["result"]["content"][0]["text"]
     return json.loads(text)  # type: ignore[no-any-return]
+
+
+def test_pydantic_output_matches_http_and_mcp() -> None:
+    from pydantic import BaseModel
+
+    class Model(BaseModel):
+        source_id: str
+
+    @get("/model", mcp_tool="model", sync_to_thread=False)
+    def model() -> Model:
+        return Model(source_id="one")
+
+    app = Litestar(route_handlers=[model], plugins=[LitestarMCP(MCPConfig())])
+    with TestClient(app=app) as client:
+        http_result = client.get("/model")
+        mcp_result = _call(client, "model", {})
+
+    assert http_result.json() == {"source_id": "one"}
+    assert json.loads(mcp_result["result"]["content"][0]["text"]) == http_result.json()
 
 
 class Point(msgspec.Struct):
@@ -236,7 +266,7 @@ class TestInputValidation:
         """
         from litestar.params import Dependency
 
-        from litestar_mcp.services.handler import _validate_tool_arguments
+        from litestar_mcp.mcp.service import _validate_tool_arguments
 
         async def provide_pagination(limit: "int" = 20, offset: "int" = 0) -> "dict[str, int]":
             return {"limit": limit, "offset": offset}
@@ -403,7 +433,7 @@ class TestInputValidation:
                 self.records.append(record)
 
         handler = RecordHandler()
-        executor_logger = logging.getLogger("litestar_mcp.executor")
+        executor_logger = logging.getLogger("litestar_mcp.mcp.executor")
         executor_logger.addHandler(handler)
 
         app = Litestar(route_handlers=[list_things], plugins=[LitestarMCP(MCPConfig())])

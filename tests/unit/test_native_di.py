@@ -38,8 +38,8 @@ from litestar.status_codes import (
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP
-from litestar_mcp.executor import MCPToolErrorResult, execute_tool
-from tests.unit.conftest import get_handler_from_app
+from litestar_mcp.mcp.executor import MCPToolErrorResult, execute_tool
+from tests.unit.conftest import get_handler_from_app, mcp_post
 
 if TYPE_CHECKING:
     from litestar import Request
@@ -53,39 +53,9 @@ pytestmark = pytest.mark.unit
 # --- JSON-RPC helpers -------------------------------------------------------
 
 
-def _ensure_session(client: "TestClient[Any]") -> "str":
-    sid = getattr(client, "_mcp_session", None)
-    if sid is not None:
-        return sid  # type: ignore[no-any-return]
-    init = client.post(
-        "/mcp",
-        json={
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
-        },
-    )
-    sid = init.headers.get("mcp-session-id", "")
-    client.post(
-        "/mcp",
-        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        headers={"Mcp-Session-Id": sid},
-    )
-    client._mcp_session = sid  # type: ignore[attr-defined]
-    return str(sid)
-
-
 def _rpc(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None) -> "dict[str, Any]":
-    body: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
-    if params is not None:
-        body["params"] = params
-    headers: dict[str, str] = {}
-    if method != "initialize":
-        sid = _ensure_session(client)
-        if sid:
-            headers["Mcp-Session-Id"] = sid
-    return client.post("/mcp", json=body, headers=headers).json()  # type: ignore[no-any-return]
+    data: dict[str, Any] = mcp_post(client, method, params).json()
+    return data
 
 
 def _call_tool(client: "TestClient[Any]", name: "str", arguments: "dict[str, Any]") -> "dict[str, Any]":
@@ -506,31 +476,6 @@ def test_stdio_mode_synthesizes_request() -> "None":
     assert result == {"ok": "yes"}
     assert seen["method"] == "GET"
     assert seen["path"] == "/probe"
-
-
-def test_stdio_mode_opens_dishka_child_container() -> "None":
-    """Stdio invocation of a Dishka-injected handler resolves ``FromDishka[T]``."""
-    app = _build_dishka_app()
-    handler = get_handler_from_app(app, "/svc")
-
-    r1 = asyncio.run(execute_tool(handler, app, {}, request=None))
-    r2 = asyncio.run(execute_tool(handler, app, {}, request=None))
-
-    # Each stdio call opens a fresh child container → different uuid tokens.
-    assert r1["token"] != r2["token"]
-
-
-def test_stdio_mode_cleans_up_dishka_child_container() -> "None":
-    """Child container closes after the call — verified via an instrumented provider."""
-    _CLEANUP_LOG.clear()
-
-    app = Litestar(route_handlers=[_use_resource], plugins=[LitestarMCP()])
-    container = make_async_container(_InstrumentedProvider())
-    setup_dishka(container=container, app=app)
-    handler = get_handler_from_app(app, "/res")
-
-    asyncio.run(execute_tool(handler, app, {}, request=None))
-    assert _CLEANUP_LOG == [True]
 
 
 def test_guards_run_in_stdio_mode() -> "None":

@@ -2,6 +2,6 @@
   "name": "litestar-mcp-development",
   "private": true,
   "devDependencies": {
-    "@modelcontextprotocol/conformance": "0.2.0-alpha.10"
+    "@modelcontextprotocol/conformance": "^0.2.0-alpha.11"
   }
 }

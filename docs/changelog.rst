@@ -9,6 +9,104 @@ notes, and important protocol fixes.
 Recent Updates
 ==============
 
+.. changelog:: 0.14.0
+
+    .. change:: require modern MCP requests and canonical APIs
+        :type: breaking
+
+        ``MCP.run()`` now defaults to ``transport="streamable-http"`` and
+        rejects the removed ``"sse"`` selector. Use ``MCPRequestContext``
+        and ``MCPTaskStore`` instead of the removed MCP ``RequestContext``
+        and ``InMemoryTaskStore`` aliases. Missing, null, boolean, container
+        and fractional request IDs are rejected before tool dependency
+        resolution, execution or stream allocation. Current task,
+        subscription, cache and application-session settings remain available.
+
+    .. change:: make the A2A 1.0 and context contract explicit
+        :type: breaking
+
+        Require A2A 1.0 version headers and method/model shapes, with no 0.3
+        conversion fallback. ``A2AConfig.context_builder`` now receives
+        ``(request, context)`` and supports synchronous or asynchronous
+        authorization without overwriting the returned tenant or state.
+        Extension activation must precede the first result or stream event.
+        Notifications are declined with HTTP 204 without executing handlers;
+        explicit null IDs remain correlated A2A requests.
+
+    .. change:: close streamed work and use native stdio lifespan
+        :type: bugfix
+
+        Request progress and A2A responses use bounded channels with
+        backpressure and producer-owned iterator cleanup. Configurable
+        cleanup deadlines report incomplete cancellation. Stdio enters
+        native ``Litestar.lifespan()``; the public manual ``app_lifespan``
+        helper is removed. Its shutdown timeout applies after successful
+        startup; application hooks own bounded, shielded startup unwind.
+
+    .. change:: add Litestar-native in-process stdio serving
+        :type: feature
+
+        Added ``litestar mcp stdio``, ``run_stdio_async``, and a streaming
+        ASGI transport. Standalone stdio now runs through the application's
+        real MCP route, lifespan, middleware, guards, and dependency system;
+        the HTTP bridge remains available for already-running servers.
+
+    .. change:: remove the built-in OIDC auth backend and protected-resource manifest
+        :type: breaking
+
+        Removed ``litestar_mcp.auth``, ``litestar_mcp.manifests``,
+        ``MCPConfig.auth``, ``MCPConfig.register_oauth_protected_resource``,
+        and ``/.well-known/oauth-protected-resource``. Authentication is the
+        app's Litestar middleware (litestar-security or a custom
+        ``AbstractAuthenticationMiddleware``); declare an opt-based policy
+        with ``MCPConfig.route_opt`` and publish RFC 9728 metadata from the
+        security plugin. The runtime dependency is ``litestar`` instead of
+        ``litestar[jwt]``.
+
+    .. change:: add standards-backed optional A2A support
+        :type: feature
+
+        Added ``litestar-mcp[a2a]`` and the narrow
+        ``litestar_mcp.a2a.A2AConfig`` / ``LitestarA2A`` adapter around the
+        official A2A 1.0 SDK. Litestar owns HTTP, JSON, SSE, guards,
+        middleware, and disconnect cleanup; the optional extra uses bare
+        ``a2a-sdk``. The RPC route is exempt from CSRF, hidden from OpenAPI
+        unless ``A2AConfig.include_in_schema`` is set, validates the request's
+        ``A2A-Version`` header regardless of the configured context builder,
+        reports ``scope["user"]`` objects that carry ``is_authenticated`` as
+        such, and serves the agent card with ``ETag`` and ``Cache-Control``.
+
+    .. change:: stream progress on the requesting response
+        :type: feature
+
+        A request carrying ``_meta.progressToken`` is answered on its own
+        ``text/event-stream`` response: ``MCPRequestContext.report_progress``
+        emits ``notifications/progress`` there, followed by the JSON-RPC
+        response. Progress is never fanned out to ``subscriptions/listen``
+        streams.
+
+    .. change:: bound subscription queues
+        :type: breaking
+
+        ``MCPConfig.stream_queue_capacity`` (default ``256``) bounds each
+        ``subscriptions/listen`` queue. A subscriber that falls behind receives
+        the ``resultType: "complete"`` response for its subscription and is
+        then closed instead of growing memory without limit.
+
+    .. change:: group the package into core, mcp, a2a, and utils
+        :type: breaking
+
+        ``litestar_mcp.core`` holds the protocol-agnostic primitives
+        (JSON-RPC, subscription streams, schema building, serialization,
+        typing, exceptions); ``litestar_mcp.mcp`` holds the MCP plugin,
+        configuration, routes, executor, registry, tasks, bridge, and CLI;
+        ``litestar_mcp.a2a`` is unchanged; ``litestar_mcp.utils`` keeps the
+        decorators and signature helpers. Root imports are unchanged and
+        ``litestar_mcp.A2AConfig`` / ``litestar_mcp.LitestarA2A`` resolve
+        lazily without importing ``a2a-sdk`` at package import time. Deep
+        module paths moved without compatibility aliases; see
+        :doc:`/usage/migration_0_14`.
+
 .. changelog:: 0.13.2
 
     .. change:: resolve tool wire names from ``Parameter(name=...)``

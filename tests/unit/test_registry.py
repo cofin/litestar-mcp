@@ -3,7 +3,7 @@
 import pytest
 from litestar.handlers import get
 
-from litestar_mcp.registry import Registry
+from litestar_mcp.mcp.registry import Registry
 
 
 @pytest.fixture
@@ -38,7 +38,7 @@ def test_registry_subscription_manager_property_requires_configuration(registry:
 
 @pytest.mark.asyncio
 async def test_registry_notifications(registry: "Registry") -> "None":
-    from litestar_mcp.sse import SubscriptionManager
+    from litestar_mcp.core.sse import SubscriptionManager
 
     subscription_manager = SubscriptionManager()
     registry.set_subscription_manager(subscription_manager)

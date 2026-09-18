@@ -63,40 +63,56 @@ jobs:
         run: uv python install "$PYTHON_VERSION"
 
       - name: Install dependencies
-        run: uv sync --group test --python "$PYTHON_VERSION"
+        run: uv sync --group test --extra a2a --python "$PYTHON_VERSION"
 
       - name: Set PYTHONPATH
         run: echo "PYTHONPATH=$PWD" >> $GITHUB_ENV
 
       - name: Test
         if: ${{ !inputs.coverage }}
-        run: uv run pytest --dist "loadgroup" -m "" tests -n 2
+        run: uv run pytest --dist "loadgroup" -m "" tests docs/examples -n 2
 
       - name: Test with coverage
         if: ${{ inputs.coverage }}
-        run: uv run pytest tests --dist "loadgroup" -m "" --cov=litestar_mcp --cov-branch --cov-report=xml -n 2
+        run: uv run pytest tests docs/examples --dist "loadgroup" -m "" --cov=litestar_mcp --cov-branch --cov-report=xml -n 2
 
       - name: Build and smoke-test installed wheel
         run: |
           uv build --wheel --out-dir /tmp/litestar-mcp-dist
           uv venv --python "$PYTHON_VERSION" /tmp/litestar-mcp-wheel
-          uv pip install --python /tmp/litestar-mcp-wheel/bin/python "/tmp/litestar-mcp-dist/litestar_mcp-"*.whl
+          WHEEL=$(ls /tmp/litestar-mcp-dist/litestar_mcp-*.whl)
+          uv pip install --python /tmp/litestar-mcp-wheel/bin/python "$WHEEL"
           cd /tmp
-          /tmp/litestar-mcp-wheel/bin/python -I - <<'PY'
+          cat > /tmp/smoke.py <<'PY'
           from importlib.resources import files
           from pkgutil import walk_packages
           import importlib
           import sys
 
           import litestar_mcp
+          from litestar_mcp.core.exceptions import MissingDependencyError
 
+          with_a2a = sys.argv[1] == "a2a"
           for module in walk_packages(litestar_mcp.__path__, "litestar_mcp."):
-              if not any(part.startswith("_") for part in module.name.split(".")):
+              if any(part.startswith("_") for part in module.name.split(".")):
+                  continue
+              optional = module.name.startswith("litestar_mcp.a2a")
+              if optional and not with_a2a:
+                  try:
+                      importlib.import_module(module.name)
+                  except MissingDependencyError as exc:
+                      assert "a2a-sdk" in str(exc), exc
+                  else:
+                      raise AssertionError(f"{module.name} imported without the a2a extra")
+              else:
                   importlib.import_module(module.name)
 
           assert files("litestar_mcp").joinpath("py.typed").is_file()
           assert "pytest" not in sys.modules
           PY
+          /tmp/litestar-mcp-wheel/bin/python -I /tmp/smoke.py base
+          uv pip install --python /tmp/litestar-mcp-wheel/bin/python "${WHEEL}[a2a]"
+          /tmp/litestar-mcp-wheel/bin/python -I /tmp/smoke.py a2a
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: ${{ inputs.coverage }}

@@ -82,9 +82,9 @@ note.
 The msgspec structs in `shared/contracts.py` (`Note`, `AppInfo`, and
 friends) are the canonical shapes exchanged by every variant. The
 matching auth helpers (`mint_hs256_token`, `build_oauth_backend`,
-`build_login_controller`, `build_mcp_auth_metadata`,
-`build_iap_token_validator`, `build_iap_auth_middleware`, and the IAP
-header-alias middleware) live in `shared/auth.py`. Treat both modules
+`build_login_controller`, `build_iap_token_validator`,
+`IAPAuthenticationMiddleware`, and `build_iap_auth_middleware`) live in
+`shared/auth.py`. Treat both modules
 as read-only reference — new integrations should reuse them, not
 re-implement them.
 

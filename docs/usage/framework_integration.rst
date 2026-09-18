@@ -38,14 +38,9 @@ OpenAPI Integration
 ===================
 
 Marked routes appear in the OpenAPI schema just like any other handler.
-The MCP routes themselves (``/mcp`` and ``/.well-known/*``) are hidden by
+The MCP route itself (``/mcp``) is hidden by
 default - pass ``include_in_schema=True`` on
 :class:`~litestar_mcp.MCPConfig` to expose them.
-
-The plugin also uses your OpenAPI ``security`` declarations to populate
-``/.well-known/oauth-protected-resource`` automatically: if your app uses
-``OAuth2PasswordBearerAuth`` or publishes an ``OAuth2`` security scheme,
-the RFC 9728 metadata picks up the scopes without additional config.
 
 Guards on MCP Routes
 ====================
@@ -57,9 +52,11 @@ Attach Litestar guards to the MCP router by passing them through
 
     MCPConfig(guards=[my_guard])
 
-Guards run on ``/mcp`` exactly as they do for any other handler. The
-well-known discovery endpoints intentionally bypass guards so clients can
-negotiate authentication before presenting a token (see :doc:`discovery`).
+Guards run on ``/mcp`` exactly as they do for any other handler, including
+``server/discover``. MCP publishes no ``/.well-known/*`` documents, so there
+is no unguarded discovery surface to exclude; OAuth protected-resource
+metadata belongs to the application's security integration (see
+:doc:`discovery` and :doc:`auth`).
 
 Custom Base Path
 ================
@@ -68,10 +65,10 @@ By default the transport is served at ``/mcp``. Override this with
 ``base_path`` on :class:`~litestar_mcp.MCPConfig` when mounting the plugin
 under an API prefix:
 
-- ``MCPConfig(base_path="/api/mcp")`` publishes the transport at
-  ``/api/mcp`` and emits discovery documents that advertise the same URL.
-- Well-known documents always live under ``/.well-known/*`` regardless of
-  ``base_path``; that is part of the RFC.
+- ``MCPConfig(base_path="/api/mcp")`` serves the single ``POST`` transport
+  at ``/api/mcp``; ``server/discover`` is answered at that same URL.
+- No other MCP routes are registered, so ``base_path`` is the only path the
+  plugin owns.
 
 Filtering Exposure
 ==================

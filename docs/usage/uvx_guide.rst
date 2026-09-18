@@ -116,11 +116,9 @@ like:
       }
     }
 
-An agent framework using a streamable-HTTP MCP client needs only the
-same URL; the plugin publishes RFC 9728 discovery at
-``http://127.0.0.1:8000/.well-known/oauth-protected-resource`` when an
-auth config is attached, so clients can negotiate the bearer flow
-automatically.
+An agent framework using a streamable-HTTP MCP client needs only the same URL.
+Authentication and OAuth discovery are owned by the application's Litestar
+security integration.
 
 A bare ``curl`` probe confirms the transport is live:
 
@@ -149,5 +147,6 @@ environment:
 
     - :doc:`reference_examples` — the family chooser and variant matrix.
     - :doc:`bridge` — Litestar CLI stdio bridge usage.
-    - :doc:`auth` — :class:`~litestar_mcp.auth.MCPAuthConfig` reference.
+    - :doc:`auth` — Litestar authentication middleware and the
+      ``MCPConfig.route_opt`` policy for MCP.
     - :doc:`deployment` — stateless scaling and multi-replica subscriptions.

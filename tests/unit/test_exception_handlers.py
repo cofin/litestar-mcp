@@ -15,6 +15,7 @@ from litestar.response import Response
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP
+from tests.unit.conftest import mcp_post
 
 pytestmark = pytest.mark.unit
 
@@ -27,34 +28,9 @@ class DomainChildError(DomainError):
     """Sub-type used for MRO-matching tests."""
 
 
-def _ensure_session(client: "TestClient[Any]") -> "str":
-    sid = getattr(client, "_mcp_session", None)
-    if sid is not None:
-        return str(sid)
-    init = client.post(
-        "/mcp",
-        json={
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t"}},
-        },
-    )
-    sid_val = init.headers.get("mcp-session-id", "")
-    client.post(
-        "/mcp",
-        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        headers={"Mcp-Session-Id": sid_val},
-    )
-    client._mcp_session = sid_val  # type: ignore[attr-defined]
-    return str(sid_val)
-
-
 def _call_tool(client: "TestClient[Any]", name: "str") -> "dict[str, Any]":
-    body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": {}}}
-    sid = _ensure_session(client)
-    headers = {"Mcp-Session-Id": sid} if sid else {}
-    return client.post("/mcp", json=body, headers=headers).json()  # type: ignore[no-any-return]
+    data: dict[str, Any] = mcp_post(client, "tools/call", {"name": name, "arguments": {}}).json()
+    return data
 
 
 def _handler_returns_4xx(_request: "Request[Any, Any, Any]", exc: "DomainError") -> "Response[Any]":

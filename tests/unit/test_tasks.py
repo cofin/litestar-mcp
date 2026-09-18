@@ -1,5 +1,6 @@
 """MCP 2026-07-28 Tasks extension tests."""
 
+import json
 import time
 from typing import Any, cast
 
@@ -14,10 +15,9 @@ from litestar_mcp import (
     MCPTaskConfig,
     get_mcp_request_context,
 )
+from litestar_mcp.mcp.service import TASKS_EXTENSION
 from litestar_mcp.utils import mcp_tool
-
-PROTOCOL_VERSION = "2026-07-28"
-TASKS_EXTENSION = "io.modelcontextprotocol/tasks"
+from tests.unit.conftest import mcp_post
 
 
 def _rpc(
@@ -28,39 +28,13 @@ def _rpc(
     tasks_capable: bool = False,
 ) -> dict[str, Any]:
     request_params = dict(params or {})
-    capabilities: dict[str, Any] = {}
     if tasks_capable:
-        capabilities["extensions"] = {TASKS_EXTENSION: {}}
-    request_params["_meta"] = {
-        "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
-        "io.modelcontextprotocol/clientCapabilities": capabilities,
-        "io.modelcontextprotocol/clientInfo": {"name": "tasks-tests", "version": "1"},
-    }
-    headers = {
-        "Accept": "application/json, text/event-stream",
-        "MCP-Protocol-Version": PROTOCOL_VERSION,
-        "Mcp-Method": method,
-    }
-    name_field = {
-        "tools/call": "name",
-        "tasks/get": "taskId",
-        "tasks/update": "taskId",
-        "tasks/cancel": "taskId",
-    }.get(method)
-    if name_field is not None:
-        headers["Mcp-Name"] = str(request_params.get(name_field, ""))
-    return cast(
-        "dict[str, Any]",
-        client.post(
-            "/mcp",
-            json={"jsonrpc": "2.0", "id": 1, "method": method, "params": request_params},
-            headers=headers,
-        ).json(),
-    )
+        request_params["_meta"] = {"io.modelcontextprotocol/clientCapabilities": {"extensions": {TASKS_EXTENSION: {}}}}
+    return cast("dict[str, Any]", mcp_post(client, method, request_params).json())
 
 
 def _make_task_app(task_config: MCPTaskConfig | None = None) -> Litestar:
-    @get("/optional-task", sync_to_thread=False)
+    @get("/optional-task")
     @mcp_tool(name="optional_task", task_support="optional")
     async def optional_task(delay: float = 0.01) -> dict[str, str]:
         import asyncio
@@ -68,7 +42,7 @@ def _make_task_app(task_config: MCPTaskConfig | None = None) -> Litestar:
         await asyncio.sleep(delay)
         return {"status": "completed"}
 
-    @get("/required-task", sync_to_thread=False)
+    @get("/required-task")
     @mcp_tool(name="required_task", task_support="required")
     async def required_task(delay: float = 0.01) -> dict[str, str]:
         import asyncio
@@ -76,12 +50,12 @@ def _make_task_app(task_config: MCPTaskConfig | None = None) -> Litestar:
         await asyncio.sleep(delay)
         return {"status": "completed"}
 
-    @get("/forbidden-task", sync_to_thread=False)
+    @get("/forbidden-task")
     @mcp_tool(name="forbidden_task", task_support="forbidden")
     async def forbidden_task() -> dict[str, str]:
         return {"status": "sync"}
 
-    @get("/input-task", sync_to_thread=False)
+    @get("/input-task")
     @mcp_tool(name="input_task", task_support="optional")
     async def input_task() -> MCPInputRequiredResult | dict[str, str]:
         context = get_mcp_request_context()
@@ -252,3 +226,35 @@ def test_removed_legacy_task_methods_are_not_registered() -> None:
         for method in ("tasks/list", "tasks/result"):
             response = _rpc(client, method, tasks_capable=True)
             assert response["error"]["code"] == -32601
+
+
+def test_task_promoted_tool_ignores_request_progress_stream() -> None:
+    @get("/progress-task")
+    @mcp_tool(name="progress_task", task_support="optional")
+    async def progress_task() -> dict[str, str]:
+        context = get_mcp_request_context()
+        await context.report_progress(1, total=2)
+        return {"status": "completed"}
+
+    app = Litestar(route_handlers=[progress_task], plugins=[LitestarMCP(MCPConfig(tasks=True))])
+    with TestClient(app=app) as client:
+        response = mcp_post(
+            client,
+            "tools/call",
+            {
+                "name": "progress_task",
+                "arguments": {},
+                "_meta": {
+                    "progressToken": "tok",
+                    "io.modelcontextprotocol/clientCapabilities": {"extensions": {TASKS_EXTENSION: {}}},
+                },
+            },
+        )
+        assert response.status_code == 200
+        frames = [line for line in response.text.splitlines() if line.startswith("data:")]
+        task = json.loads(frames[-1].removeprefix("data:"))["result"]
+        assert task["resultType"] == "task"
+        result = _wait_for_status(client, task["taskId"], "completed")
+
+    assert result["status"] == "completed"
+    assert result["result"]["isError"] is False

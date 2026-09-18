@@ -15,7 +15,7 @@ from litestar import Litestar
 from litestar.cli._utils import LitestarEnv
 
 from litestar_mcp import LitestarMCP, MCPConfig
-from litestar_mcp.cli import mcp_group
+from litestar_mcp.mcp.cli import mcp_group
 
 
 @pytest.fixture(scope="session")
@@ -45,7 +45,20 @@ def captured_bridge(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         captured.update(kwargs)
         return 0
 
-    monkeypatch.setattr("litestar_mcp.bridge.run_bridge", fake_run_bridge)
+    monkeypatch.setattr("litestar_mcp.mcp.bridge.run_bridge", fake_run_bridge)
+    return captured
+
+
+@pytest.fixture
+def captured_stdio(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    captured: dict[str, Any] = {}
+
+    def fake_run_stdio(app: Litestar, **kwargs: Any) -> int:
+        captured["app"] = app
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr("litestar_mcp.mcp.stdio.run_stdio", fake_run_stdio)
     return captured
 
 
@@ -58,6 +71,58 @@ def test_mcp_group_help_command(cli_runner: CliRunner) -> None:
     assert "list-resources" in result.output
     assert "run" in result.output
     assert "bridge" in result.output
+    assert "stdio" in result.output
+
+
+def test_mcp_stdio_passes_app_and_options(
+    cli_runner: CliRunner,
+    make_env: Callable[..., LitestarEnv],
+    captured_stdio: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MCP_TOKEN", "whole-token")
+    env = make_env()
+    result = cli_runner.invoke(
+        mcp_group,
+        [
+            "stdio",
+            "--header",
+            "X-Trace: abc",
+            "--bearer-env",
+            "MCP_TOKEN",
+            "--header-name",
+            "X-Goog-IAP-JWT-Assertion",
+            "--token-prefix",
+            "",
+            "--sse-read-timeout",
+            "45",
+            "--max-message-size",
+            "-1",
+        ],
+        obj=env,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured_stdio["app"] is env.app
+    assert captured_stdio["headers"] == {"X-Trace": "abc"}
+    assert captured_stdio["header_name"] == "X-Goog-IAP-JWT-Assertion"
+    assert captured_stdio["token_prefix"] == ""
+    assert captured_stdio["sse_read_timeout"] == 45
+    assert captured_stdio["max_message_size"] == -1
+    assert captured_stdio["token_provider"]() == "whole-token"
+
+
+@pytest.mark.parametrize("option", ["--endpoint", "--base-url", "--timeout"])
+def test_mcp_stdio_has_no_remote_options(
+    cli_runner: CliRunner,
+    make_env: Callable[..., LitestarEnv],
+    captured_stdio: dict[str, Any],
+    option: str,
+) -> None:
+    result = cli_runner.invoke(mcp_group, ["stdio", option, "x"], obj=make_env())
+
+    assert result.exit_code == 2
+    assert "No such option" in result.output
 
 
 def test_litestar_mcp_registers_mcp_group() -> None:
@@ -229,7 +294,7 @@ def test_mcp_bridge_redirects_runtime_stdout_pollution(
         asyncio.run(kwargs["stdout"].send(b'{"jsonrpc":"2.0","id":1,"result":{}}\n'))
         return 0
 
-    monkeypatch.setattr("litestar_mcp.bridge.run_bridge", fake_run_bridge)
+    monkeypatch.setattr("litestar_mcp.mcp.bridge.run_bridge", fake_run_bridge)
 
     result = cli_runner.invoke(mcp_group, ["bridge"], obj=make_env())
 

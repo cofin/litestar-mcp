@@ -4,14 +4,12 @@ Types
 
 This module contains type definitions for the Litestar MCP Plugin.
 
-.. currentmodule:: litestar_mcp.config
+.. currentmodule:: litestar_mcp.mcp.config
 
 MCPConfig
 ---------
 
-.. autoclass:: MCPConfig
-   :members:
-   :show-inheritance:
+:class:`MCPConfig` is documented in :doc:`config`.
 
 MCPTaskConfig
 -------------
@@ -20,7 +18,7 @@ MCPTaskConfig
    :members:
    :show-inheritance:
 
-.. currentmodule:: litestar_mcp.app
+.. currentmodule:: litestar_mcp.mcp.app
 
 MCPStdioContext
 ---------------
@@ -34,7 +32,7 @@ usual ``request.user`` / ``request.scope["auth"]`` / session / state. See
    :members:
    :show-inheritance:
 
-.. currentmodule:: litestar_mcp.content
+.. currentmodule:: litestar_mcp.mcp.content
 
 MCPResourceLink
 ---------------
@@ -57,31 +55,15 @@ MCPToolResult
    :members:
    :show-inheritance:
 
-.. currentmodule:: litestar_mcp.registry
+.. currentmodule:: litestar_mcp.mcp.registry
 
 PromptRegistration
 ------------------
 
-See also :class:`~litestar_mcp.config.MCPOptKeys` (documented under
+See also :class:`~litestar_mcp.mcp.config.MCPOptKeys` (documented under
 :doc:`config`) for the opt-key field names that drive handler-based
 prompt discovery.
 
 .. autoclass:: PromptRegistration
-   :members:
-   :show-inheritance:
-
-.. currentmodule:: litestar_mcp.auth
-
-MCPAuthConfig
--------------
-
-.. autoclass:: MCPAuthConfig
-   :members:
-   :show-inheritance:
-
-OIDCProviderConfig
-------------------
-
-.. autoclass:: OIDCProviderConfig
    :members:
    :show-inheritance:

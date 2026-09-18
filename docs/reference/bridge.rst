@@ -7,7 +7,7 @@ HTTP endpoint. Most users should run it through Litestar's app-bound CLI:
 ``litestar --app my_app:app mcp bridge``. The functions below are available
 for tests and embedded launchers.
 
-.. currentmodule:: litestar_mcp.bridge
+.. currentmodule:: litestar_mcp.mcp.bridge
 
 run_stdio_streamable_http_bridge
 --------------------------------
