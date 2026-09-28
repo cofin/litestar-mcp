@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from time import monotonic
 from typing import Any, Final, cast
 
-import httpx
+import httpx2
 import jwt
 import msgspec
 from litestar import Controller, post
@@ -175,7 +175,7 @@ async def fetch_jwks(url: "str", *, ttl: "int" = IAP_JWKS_CACHE_TTL) -> "dict[st
     cached = _JWKS_CACHE.get(url)
     if cached is not None and cached[0] > monotonic():
         return cached[1]
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx2.AsyncClient(timeout=10.0) as client:
         response = await client.get(url)
         response.raise_for_status()
         document = cast("dict[str, Any]", response.json())

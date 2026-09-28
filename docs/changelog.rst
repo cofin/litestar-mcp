@@ -11,6 +11,15 @@ Recent Updates
 
 .. changelog:: 0.14.0
 
+    .. change:: move the HTTP client to httpx2 and drop the bridge extra
+        :type: breaking
+
+        The runtime dependency on ``httpx`` is replaced by ``httpx2``. The
+        stdio bridge reads server-sent events with ``httpx2``'s built-in
+        ``EventSource``, so the ``bridge`` extra and ``httpx-sse`` are gone,
+        and ``max_message_size`` now bounds each incoming event as well as
+        each stdin message.
+
     .. change:: serve Agent Skills over MCP
         :type: feature
 

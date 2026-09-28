@@ -137,3 +137,15 @@ is not installed. Deep module paths moved without compatibility aliases:
 - ``litestar_mcp.typing`` -> ``litestar_mcp.core.typing``
 - ``litestar_mcp.exceptions`` -> ``litestar_mcp.core.exceptions``
 - ``litestar_mcp.utils.serialization`` -> ``litestar_mcp.core.serialization``
+
+HTTP client
+-----------
+
+The runtime HTTP client dependency is now ``httpx2`` instead of ``httpx``.
+The stdio bridge uses ``httpx2``'s built-in server-sent events support, so
+the ``bridge`` extra and its ``httpx-sse`` dependency are removed; install
+plain ``litestar-mcp``. Code that passes a custom ``transport`` to
+``run_stdio_streamable_http_bridge`` must pass an
+``httpx2.AsyncBaseTransport``. ``--max-message-size`` (and
+``max_message_size``) now also caps each server-sent event the bridge reads
+from the endpoint, not only stdin messages.

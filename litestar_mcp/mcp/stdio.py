@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import anyio
-import httpx
+import httpx2
 
 from litestar_mcp.__metadata__ import __version__
 from litestar_mcp.mcp.bridge import (
@@ -59,17 +59,17 @@ class _ASGIResponseState:
         self.disconnected = asyncio.Event()
 
 
-async def _wait(awaitable: "Awaitable[_T]", read_timeout: "float | None", request: "httpx.Request") -> "_T":
+async def _wait(awaitable: "Awaitable[_T]", read_timeout: "float | None", request: "httpx2.Request") -> "_T":
     if read_timeout is None:
         return await awaitable
     try:
         return await asyncio.wait_for(awaitable, read_timeout)
     except asyncio.TimeoutError as exc:
         msg = "In-process ASGI response timed out"
-        raise httpx.ReadTimeout(msg, request=request) from exc
+        raise httpx2.ReadTimeout(msg, request=request) from exc
 
 
-class _ASGIResponseStream(httpx.AsyncByteStream):
+class _ASGIResponseStream(httpx2.AsyncByteStream):
     def __init__(
         self,
         state: "_ASGIResponseState",
@@ -77,7 +77,7 @@ class _ASGIResponseStream(httpx.AsyncByteStream):
         *,
         read_timeout: "float | None",
         shutdown_timeout: "float",
-        request: "httpx.Request",
+        request: "httpx2.Request",
     ) -> None:
         self._state = state
         self._task = task
@@ -134,7 +134,7 @@ async def _shutdown_app_task(
         raise asyncio.CancelledError
 
 
-def _build_scope(request: "httpx.Request", client: "tuple[str, int]", root_path: "str") -> "dict[str, Any]":
+def _build_scope(request: "httpx2.Request", client: "tuple[str, int]", root_path: "str") -> "dict[str, Any]":
     server_port = request.url.port or {"http": 80, "https": 443}.get(request.url.scheme)
     return {
         "type": "http",
@@ -153,18 +153,18 @@ def _build_scope(request: "httpx.Request", client: "tuple[str, int]", root_path:
     }
 
 
-class ASGIStreamingTransport(httpx.AsyncBaseTransport):
-    """Run an ASGI application in-process and stream its response body to httpx.
+class ASGIStreamingTransport(httpx2.AsyncBaseTransport):
+    """Run an ASGI application in-process and stream its response body to httpx2.
 
-    ``httpx.ASGITransport`` buffers every ``http.response.body`` chunk until
+    ``httpx2.ASGITransport`` buffers every ``http.response.body`` chunk until
     the application returns, so Server-Sent Events never reach the client
     while the stream is open. This transport returns the response as soon as
     ``http.response.start`` arrives, hands each body chunk to the response
     stream as it is sent, and cancels the application task when the response
     is closed, or when the caller is cancelled before ``http.response.start``
     arrives, so an aborted request observes ``http.disconnect`` and task
-    cancellation. The httpx ``read`` timeout bounds the wait for
-    ``http.response.start`` and for each body chunk (``httpx.ReadTimeout``).
+    cancellation. The httpx2 ``read`` timeout bounds the wait for
+    ``http.response.start`` and for each body chunk (``httpx2.ReadTimeout``).
 
     Args:
         app: The ASGI application to call for every request.
@@ -191,9 +191,9 @@ class ASGIStreamingTransport(httpx.AsyncBaseTransport):
         self._root_path = root_path
         self._shutdown_timeout = shutdown_timeout
 
-    async def handle_async_request(self, request: "httpx.Request") -> "httpx.Response":
+    async def handle_async_request(self, request: "httpx2.Request") -> "httpx2.Response":
         """Dispatch ``request`` to the application and return a streaming response."""
-        request_stream = cast("httpx.AsyncByteStream", request.stream)
+        request_stream = cast("httpx2.AsyncByteStream", request.stream)
         scope = _build_scope(request, self._client, self._root_path)
         state = _ASGIResponseState()
         request_chunks = request_stream.__aiter__()
@@ -247,7 +247,7 @@ class ASGIStreamingTransport(httpx.AsyncBaseTransport):
             await task
             msg = "ASGI application completed without sending http.response.start"
             raise RuntimeError(msg)
-        return httpx.Response(
+        return httpx2.Response(
             state.status_code,
             headers=state.headers,
             stream=_ASGIResponseStream(

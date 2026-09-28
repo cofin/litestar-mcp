@@ -25,24 +25,9 @@ The bridge is a thin transport adapter:
 - maps stdio cancellation to closure of the matching HTTP response stream;
 - lazily caches tool schemas used for ``Mcp-Param-*`` headers.
 
-It does not depend on the official ``mcp`` Python SDK. The base package
-already depends on ``httpx``; installing the bridge extra adds only
-``httpx-sse``.
-
-Install
-=======
-
-Install the bridge extra in the same environment as your Litestar app:
-
-.. code-block:: bash
-
-    pip install "litestar-mcp[bridge]"
-
-or:
-
-.. code-block:: bash
-
-    uv add "litestar-mcp[bridge]"
+It does not depend on the official ``mcp`` Python SDK. It is built on
+``httpx2``, which the base package already installs, so the bridge needs no
+extra.
 
 Default Endpoint
 ================
@@ -89,7 +74,7 @@ Client Configuration
 
 For stdio-only clients, configure the Litestar CLI command as the MCP server.
 Run it from an environment where your application package and
-``litestar-mcp[bridge]`` are installed:
+``litestar-mcp`` are installed:
 
 .. code-block:: json
 
@@ -166,14 +151,17 @@ JSON or SSE events.
 
 To prevent a malformed client from growing memory indefinitely by sending a
 message without a newline, the bridge caps each stdin JSON-RPC message at
-16 MiB by default:
+16 MiB by default. The same cap applies to each server-sent event read from
+the endpoint, so a runaway server stream cannot grow memory without bound
+either:
 
 .. code-block:: bash
 
     litestar --app my_app:app mcp bridge \
         --max-message-size 16777216
 
-Set ``--max-message-size -1`` to disable this per-message cap.
+Set ``--max-message-size -1`` to disable this per-message cap in both
+directions.
 
 Identity Boundary
 =================
@@ -193,9 +181,6 @@ pass it with ``--bearer-cmd``.
 
 Troubleshooting
 ===============
-
-``MissingDependencyError`` at startup
-    Install ``litestar-mcp[bridge]`` so ``httpx-sse`` is available.
 
 ``Unexpected Streamable HTTP content type``
     The server returned neither JSON nor ``text/event-stream``. Check the

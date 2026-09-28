@@ -1,7 +1,6 @@
 """Tests for the CLI module."""
 
 import asyncio
-import builtins
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -260,28 +259,6 @@ def test_mcp_bridge_discover_option_is_removed(
     assert invalid_result.exit_code == 2
     assert help_result.exit_code == 0
     assert "--discover" not in help_result.output
-
-
-def test_mcp_bridge_missing_bridge_extra_is_clean_click_error(
-    cli_runner: CliRunner,
-    make_env: Callable[..., LitestarEnv],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    real_import = builtins.__import__
-
-    def guarded_import(name: str, *args: Any, **kwargs: Any) -> Any:
-        if name == "httpx_sse":
-            msg = "No module named 'httpx_sse'"
-            raise ImportError(msg)
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", guarded_import)
-
-    result = cli_runner.invoke(mcp_group, ["bridge"], obj=make_env())
-
-    assert result.exit_code == 1
-    assert "litestar-mcp[bridge]" in result.output
-    assert "Traceback" not in result.output
 
 
 def test_mcp_bridge_redirects_runtime_stdout_pollution(
