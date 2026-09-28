@@ -310,7 +310,8 @@ def test_resources_read_missing_skill_file_is_internal_error(tmp_path: "Path") -
         response = _rpc(client, "resources/read", {"uri": "skill://alpha/notes/todo.md"})
 
     assert response["error"]["code"] == -32603
-    assert response["error"]["data"]["error"] == "FileNotFoundError"
+    assert response["error"]["data"] == {"uri": "skill://alpha/notes/todo.md"}
+    assert str(tmp_path) not in str(response["error"])
 
 
 def test_resources_read_text_media_type_that_is_not_utf8_falls_back_to_blob(tmp_path: "Path") -> "None":

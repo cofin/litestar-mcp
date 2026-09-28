@@ -166,6 +166,20 @@ def test_from_config_skips_hidden_and_symlinked_entries(tmp_path: "Path") -> "No
     assert relative_paths == {"SKILL.md", "reference.md"}
 
 
+def test_from_config_skips_symlinked_skill_folder(tmp_path: "Path") -> "None":
+    """A skill folder that is itself a symlink is never loaded."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    _write_skill(outside, "demo", {"reference.md": b"# Reference\n"})
+    skills_root = tmp_path / "skills"
+    skills_root.mkdir()
+    (skills_root / "demo").symlink_to(outside / "demo", target_is_directory=True)
+
+    catalog = SkillCatalog.from_config(MCPSkillsConfig(paths=[skills_root]))
+
+    assert catalog.skills == ()
+
+
 def test_from_config_rejects_symlinked_skill_md(tmp_path: "Path") -> "None":
     """A symlinked ``SKILL.md`` is rejected rather than advertised as an unreadable file."""
     target = tmp_path / "shared_skill.md"
@@ -318,7 +332,8 @@ def test_list_directory_root_and_nested(tmp_path: "Path") -> "None":
     assert catalog.list_directory("skill://demo/SKILL.md") is None
 
 
-def test_read_file_verifies_digest(tmp_path: "Path") -> "None":
+@pytest.mark.anyio
+async def test_read_file_verifies_digest(tmp_path: "Path") -> "None":
     """``read_file`` returns bytes matching the manifest digest, else raises."""
     reference_bytes = b"# Reference\n"
     _write_skill(tmp_path, "demo", {"reference.md": reference_bytes})
@@ -327,11 +342,11 @@ def test_read_file_verifies_digest(tmp_path: "Path") -> "None":
     assert skill is not None
     reference_file = next(file for file in skill.files if file.relative_path == "reference.md")
 
-    assert catalog.read_file(reference_file) == reference_bytes
+    assert await catalog.read_file(reference_file) == reference_bytes
 
     reference_file.path.write_bytes(b"tampered")
     with pytest.raises(SkillIntegrityError):
-        catalog.read_file(reference_file)
+        await catalog.read_file(reference_file)
 
 
 def test_manifest_and_catalog_ordering_is_deterministic(

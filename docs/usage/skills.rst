@@ -65,7 +65,9 @@ Only an immediate child folder that contains a ``SKILL.md`` file is
 treated as a skill; a folder without one is silently ignored rather than
 reported. This is the most common first mistake — the wrong nesting
 depth, a case mismatch such as ``Skill.md``, or a file that was never
-committed all produce the same silent skip, not an error.
+committed all produce the same silent skip, not an error. A child folder
+that is itself a symlink is skipped the same way, even when its target
+holds a valid skill.
 
 Once a folder is picked up because it has a ``SKILL.md``, the folder name
 must equal the frontmatter ``name`` field exactly. A skill's own files are
@@ -222,8 +224,14 @@ the plugin, and is never rescanned afterward. Editing a skill file on
 disk after that point does not update ``skills/list`` or ``skills/get`` —
 both keep reporting the manifest captured at construction time — and a
 subsequent ``resources/read`` for that file fails with ``-32603``
-because its bytes no longer match the digest captured then. Restart the
-application to pick up filesystem changes.
+because its bytes no longer match the digest captured then. A file that
+was deleted or can no longer be read also fails with ``-32603``; the
+error data carries only the ``skill://`` URI, and the underlying
+:exc:`OSError` is logged on the server rather than sent to the client.
+Restart the application to pick up filesystem changes.
+
+Each ``resources/read`` for a skill file reads and hashes the file in a
+worker thread, so large skill files do not block the event loop.
 
 ``MCPConfig.include_operations`` / ``exclude_operations`` /
 ``include_tags`` / ``exclude_tags`` do not filter skills. Those filters

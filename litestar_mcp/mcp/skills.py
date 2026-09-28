@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml  # type: ignore[import-untyped]
+from anyio.to_thread import run_sync as run_sync_in_worker_thread
 from litestar.exceptions import ImproperlyConfiguredException
 
 from litestar_mcp.core.exceptions import LitestarMCPError
@@ -133,7 +134,7 @@ class SkillCatalog:
                 msg = f"Skills path {root} is not a directory"
                 raise ImproperlyConfiguredException(msg)
             for child in sorted(root.iterdir(), key=lambda path: path.name):
-                if not child.is_dir() or not (child / SKILL_FILE_NAME).is_file():
+                if child.is_symlink() or not child.is_dir() or not (child / SKILL_FILE_NAME).is_file():
                     continue
                 skill = load_skill(
                     child,
@@ -208,8 +209,8 @@ class SkillCatalog:
         """Return every file of every skill as an MCP Resource object."""
         return [file.to_resource(skill) for skill in self._skills for file in skill.files]
 
-    def read_file(self, file: "SkillFile") -> "bytes":
-        """Read ``file`` from disk and verify it still matches its digest.
+    async def read_file(self, file: "SkillFile") -> "bytes":
+        """Read ``file`` from disk in a worker thread and verify its digest.
 
         Args:
             file: The file to read.
@@ -221,11 +222,15 @@ class SkillCatalog:
             SkillIntegrityError: The file's contents no longer match the
                 digest captured when the catalog was built.
         """
-        data = file.path.read_bytes()
-        if compute_digest(data) != file.digest:
-            msg = f"{file.uri} changed on disk since startup"
-            raise SkillIntegrityError(msg)
-        return data
+        return await run_sync_in_worker_thread(_read_verified, file)
+
+
+def _read_verified(file: "SkillFile") -> "bytes":
+    data = file.path.read_bytes()
+    if compute_digest(data) != file.digest:
+        msg = f"{file.uri} changed on disk since startup"
+        raise SkillIntegrityError(msg)
+    return data
 
 
 def compute_digest(data: "bytes") -> "str":

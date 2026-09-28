@@ -60,6 +60,19 @@ def mcp_error_for_skill_not_found(uri: "str") -> "JSONRPCError":
     )
 
 
+def mcp_error_for_skill_file_unreadable(uri: "str") -> "JSONRPCError":
+    """Return the resources/read error for a skill file the server cannot read.
+
+    The underlying ``OSError`` is not forwarded because its text carries the
+    server's filesystem path.
+    """
+    return JSONRPCError(
+        code=INTERNAL_ERROR,
+        message="Resource read failed",
+        data={"uri": uri},
+    )
+
+
 def mcp_error_for_resource_read(err: "MCPToolErrorResult | Exception") -> "JSONRPCError":
     """Map resource read failures to an internal JSON-RPC error."""
     if isinstance(err, MCPToolErrorResult):

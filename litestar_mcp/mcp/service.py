@@ -34,6 +34,7 @@ from litestar_mcp.mcp.error_mapping import (
     mcp_error_for_prompt_execution,
     mcp_error_for_resource_not_found,
     mcp_error_for_resource_read,
+    mcp_error_for_skill_file_unreadable,
     mcp_error_for_skill_not_found,
 )
 from litestar_mcp.mcp.executor import (
@@ -751,9 +752,12 @@ class MCPHandlerService:
                 except ValueError as exc:
                     raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
             try:
-                body = self.skill_catalog.read_file(skill_file)
-            except (SkillIntegrityError, OSError) as exc:
+                body = await self.skill_catalog.read_file(skill_file)
+            except SkillIntegrityError as exc:
                 raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
+            except OSError as exc:
+                _logger.exception("Skill file read failed: %s", uri)
+                raise JSONRPCErrorException(mcp_error_for_skill_file_unreadable(uri)) from exc
             try:
                 content = _resource_content_from_bytes(
                     uri, body, mime_type=skill_file.mime_type, max_blob_bytes=self.config.max_blob_bytes
