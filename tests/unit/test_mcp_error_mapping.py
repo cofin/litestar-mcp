@@ -1,12 +1,13 @@
 """Primitive-specific MCP error mapping coverage."""
 
+from pathlib import Path  # noqa: TC003
 from typing import Any
 
 import pytest
 from litestar import Litestar, Response, get
 from litestar.testing import TestClient
 
-from litestar_mcp import LitestarMCP, MCPConfig
+from litestar_mcp import LitestarMCP, MCPConfig, MCPSkillsConfig
 from tests.unit.conftest import mcp_post
 
 pytestmark = pytest.mark.unit
@@ -96,3 +97,21 @@ def test_resource_not_found_keeps_spec_code_not_internal_error() -> "None":
         response = _rpc(client, "resources/read", {"uri": "litestar://nope"})
         assert response["error"]["code"] == -32602
         assert response["error"]["data"] == {"uri": "litestar://nope"}
+
+
+def test_skill_resource_errors_keep_spec_codes(tmp_path: "Path") -> "None":
+    """Skill-file resources/read reuses the same core codes as handler-backed resources:
+    an unknown file is -32602, and a digest mismatch is -32603.
+    """
+    skill_dir = tmp_path / "alpha"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("---\nname: alpha\ndescription: Alpha skill.\n---\n\n# alpha\n")
+    app = Litestar(plugins=[LitestarMCP(MCPConfig(skills=MCPSkillsConfig(paths=[tmp_path])))])
+
+    with TestClient(app=app) as client:
+        missing = _rpc(client, "resources/read", {"uri": "skill://alpha/missing.md"})
+        assert missing["error"]["code"] == -32602
+
+        (skill_dir / "SKILL.md").write_text("---\nname: alpha\ndescription: Alpha skill (changed).\n---\n\n# alpha\n")
+        mismatched = _rpc(client, "resources/read", {"uri": "skill://alpha/SKILL.md"})
+        assert mismatched["error"]["code"] == -32603

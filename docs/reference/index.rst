@@ -11,5 +11,6 @@ API Reference
     types
     bridge
     stdio
+    a2a
 
 This section provides detailed API documentation for all public interfaces.

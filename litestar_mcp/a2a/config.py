@@ -30,6 +30,24 @@ class A2AConfig:
     ``stream_cleanup_timeout`` bounds the wait for cooperative producer cleanup
     after a response ends. It must be positive and finite; expiry is logged as
     incomplete cleanup. Application finalizers must themselves tolerate cancellation.
+
+    Attributes:
+        path: Mount path of the A2A JSON-RPC route. Must start with ``/``; a
+            trailing slash is removed.
+        agent_card_path: Path that serves the agent card. Must start with
+            ``/``; a trailing slash is removed.
+        guards: Litestar guards applied to the JSON-RPC route. The agent card
+            route is public.
+        route_opt: Extra ``opt`` entries merged into the JSON-RPC route, for
+            example an authentication policy.
+        context_builder: Optional ``(request, context)`` callback that
+            authorizes the prepared SDK call context and returns it, directly
+            or as an awaitable.
+        include_in_schema: Include both routes in the OpenAPI schema.
+        agent_card_max_age: ``Cache-Control`` ``max-age`` for the agent card,
+            in seconds. Must not be negative.
+        stream_cleanup_timeout: Seconds to wait for producer cleanup after a
+            response ends.
     """
 
     path: str = "/a2a"

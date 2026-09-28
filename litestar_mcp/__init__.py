@@ -15,7 +15,7 @@ also be registered via ``LitestarMCP(prompts=[...])`` after decoration with
 ``litestar_mcp.a2a`` so importing ``litestar_mcp`` never imports ``a2a-sdk``.
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from litestar_mcp.__metadata__ import __version__
 from litestar_mcp.core.exceptions import (
@@ -25,7 +25,14 @@ from litestar_mcp.core.exceptions import (
     MissingDependencyError,
 )
 from litestar_mcp.mcp.app import MCP
-from litestar_mcp.mcp.config import AfterToolCallHook, BeforeToolCallHook, MCPConfig, MCPOptKeys, MCPTaskConfig
+from litestar_mcp.mcp.config import (
+    AfterToolCallHook,
+    BeforeToolCallHook,
+    MCPConfig,
+    MCPOptKeys,
+    MCPSkillsConfig,
+    MCPTaskConfig,
+)
 from litestar_mcp.mcp.content import MCPBlobResource, MCPInputRequiredResult, MCPResourceLink, MCPToolResult
 from litestar_mcp.mcp.plugin import LitestarMCP
 from litestar_mcp.mcp.routes import MCPController
@@ -48,6 +55,7 @@ __all__ = (
     "MCPOptKeys",
     "MCPRequestContext",
     "MCPResourceLink",
+    "MCPSkillsConfig",
     "MCPStdioContext",
     "MCPTaskConfig",
     "MCPToolResult",
@@ -58,6 +66,10 @@ __all__ = (
     "mcp_resource",
     "mcp_tool",
 )
+
+if TYPE_CHECKING:
+    from litestar_mcp.a2a import A2AConfig as A2AConfig
+    from litestar_mcp.a2a import LitestarA2A as LitestarA2A
 
 _A2A_EXPORTS = frozenset({"A2AConfig", "LitestarA2A"})
 

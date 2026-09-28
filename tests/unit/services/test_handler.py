@@ -1,15 +1,19 @@
 """Unit tests for MCPHandlerService in isolation."""
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from litestar import Litestar, get
 
 from litestar_mcp.core.jsonrpc import INVALID_PARAMS, JSONRPCErrorException
-from litestar_mcp.mcp.config import MCPConfig
+from litestar_mcp.mcp.config import MCPConfig, MCPSkillsConfig
 from litestar_mcp.mcp.registry import PromptRegistration
-from litestar_mcp.mcp.service import MCPHandlerService, MCPRequestContext
+from litestar_mcp.mcp.service import SKILLS_EXTENSION, MCPHandlerService, MCPRequestContext
+from litestar_mcp.mcp.skills import SkillCatalog
 from litestar_mcp.mcp.tasks import MCPTaskStore
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # Using unit marker for these tests
 pytestmark = pytest.mark.unit
@@ -343,3 +347,68 @@ async def test_resources_list_and_read(request_context: "MCPRequestContext", bas
     with pytest.raises(JSONRPCErrorException) as exc_info:
         await service.resources_read({"uri": "litestar://unknown"}, request_context)
     assert exc_info.value.error.code == -32602
+
+
+@pytest.mark.asyncio
+async def test_server_discover_advertises_skills_directory_read(
+    dummy_app: "Litestar", request_context: "MCPRequestContext", tmp_path: "Path"
+) -> "None":
+    enabled_service = MCPHandlerService(
+        config=MCPConfig(skills=MCPSkillsConfig(paths=[tmp_path], directory_read=True)),
+        discovered_tools={},
+        discovered_resources={},
+        discovered_prompts={},
+        app_ref=dummy_app,
+        registry=None,
+        skill_catalog=SkillCatalog.from_config(MCPSkillsConfig(paths=[tmp_path], directory_read=True)),
+    )
+    enabled_result = await enabled_service.server_discover({}, request_context)
+    assert enabled_result["capabilities"]["extensions"] == {SKILLS_EXTENSION: {"directoryRead": True}}
+
+    disabled_service = MCPHandlerService(
+        config=MCPConfig(skills=MCPSkillsConfig(paths=[tmp_path], directory_read=False)),
+        discovered_tools={},
+        discovered_resources={},
+        discovered_prompts={},
+        app_ref=dummy_app,
+        registry=None,
+        skill_catalog=SkillCatalog.from_config(MCPSkillsConfig(paths=[tmp_path], directory_read=False)),
+    )
+    disabled_result = await disabled_service.server_discover({}, request_context)
+    assert disabled_result["capabilities"]["extensions"] == {SKILLS_EXTENSION: {"directoryRead": False}}
+
+    catalog_only_service = MCPHandlerService(
+        config=MCPConfig(skills=None),
+        discovered_tools={},
+        discovered_resources={},
+        discovered_prompts={},
+        app_ref=dummy_app,
+        registry=None,
+        skill_catalog=SkillCatalog.from_config(MCPSkillsConfig(paths=[tmp_path])),
+    )
+    catalog_only_result = await catalog_only_service.server_discover({}, request_context)
+    assert catalog_only_result["capabilities"]["extensions"] == {SKILLS_EXTENSION: {"directoryRead": True}}
+
+
+@pytest.mark.asyncio
+async def test_skills_get_and_directory_read_reject_missing_uri(
+    dummy_app: "Litestar", request_context: "MCPRequestContext", tmp_path: "Path"
+) -> "None":
+    catalog = SkillCatalog.from_config(MCPSkillsConfig(paths=[tmp_path]))
+    service = MCPHandlerService(
+        config=MCPConfig(skills=MCPSkillsConfig(paths=[tmp_path])),
+        discovered_tools={},
+        discovered_resources={},
+        discovered_prompts={},
+        app_ref=dummy_app,
+        registry=None,
+        skill_catalog=catalog,
+    )
+
+    with pytest.raises(JSONRPCErrorException) as skills_get_exc:
+        await service.skills_get({}, request_context)
+    assert skills_get_exc.value.error.code == INVALID_PARAMS
+
+    with pytest.raises(JSONRPCErrorException) as directory_read_exc:
+        await service.resources_directory_read({}, request_context)
+    assert directory_read_exc.value.error.code == INVALID_PARAMS

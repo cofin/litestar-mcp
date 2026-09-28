@@ -12,7 +12,7 @@ header, verifies the ES256 assertion against Google's JWKS, and populates
 #   "litestar[standard,jwt]>=2.0",
 #   "litestar-mcp",
 #   "sqlspec[aiosqlite]>=0.43",
-#   "httpx",
+#   "httpx2",
 #   "uvicorn",
 # ]
 # ///

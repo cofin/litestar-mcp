@@ -316,7 +316,6 @@ def send_payload(method: str = "SendMessage") -> dict[str, Any]:
         {"jsonrpc": 2},
         {"method": ""},
         {"method": 1},
-        {"params": []},
         {"params": None},
         {"params": "bad"},
     ],
@@ -329,6 +328,30 @@ async def test_invalid_envelopes_never_invoke_handler(changes: dict[str, Any]) -
         response = await client.post("/a2a", headers={"A2A-Version": "1.0"}, json={**send_payload(), **changes})
 
     assert response.json()["error"]["code"] == -32600
+    assert handler.contexts == []
+
+
+@pytest.mark.anyio
+async def test_by_position_params_are_invalid_params() -> None:
+    handler = StubHandler()
+    app = Litestar(plugins=[LitestarA2A(make_card(), handler)])
+
+    async with AsyncTestClient(app=app) as client:
+        response = await client.post("/a2a", headers={"A2A-Version": "1.0"}, json={**send_payload(), "params": []})
+
+    assert response.json()["error"]["code"] == -32602
+    assert handler.contexts == []
+
+
+@pytest.mark.anyio
+async def test_empty_body_is_a_parse_error() -> None:
+    handler = StubHandler()
+    app = Litestar(plugins=[LitestarA2A(make_card(), handler)])
+
+    async with AsyncTestClient(app=app) as client:
+        response = await client.post("/a2a", headers={"A2A-Version": "1.0"}, content=b"")
+
+    assert response.json()["error"]["code"] == -32700
     assert handler.contexts == []
 
 
@@ -452,7 +475,7 @@ async def test_invalid_extension_activation_returns_generic_error(activation: An
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("uri", ["https://ext.example/a\r\nInjected: true", "https://ext.example/a,b"])
+@pytest.mark.parametrize("uri", ["https://ext.example/a\r\nInjected: true", "https://ext.example/a b"])
 @pytest.mark.parametrize("streaming", [False, True])
 async def test_header_unsafe_extension_activation_is_rejected(uri: str, streaming: bool) -> None:
     card = make_card()
@@ -995,3 +1018,205 @@ async def test_missing_required_extension_never_invokes_context_builder() -> Non
     assert response.json()["error"]["code"] == -32008
     context_builder.assert_not_called()
     assert handler.contexts == []
+
+
+class _EmailOnlyPrincipalMiddleware(AbstractAuthenticationMiddleware):
+    async def authenticate_request(self, connection: ASGIConnection[Any, Any, Any, Any]) -> AuthenticationResult:
+        return AuthenticationResult(user={"email": "a@example.com", "is_authenticated": True}, auth=None)
+
+
+@pytest.mark.anyio
+async def test_authenticated_principal_without_owner_key_fails_closed() -> None:
+    handler = StubHandler()
+    app = Litestar(
+        middleware=[DefineMiddleware(_EmailOnlyPrincipalMiddleware)],
+        plugins=[LitestarA2A(make_card(), handler)],
+    )
+
+    async with AsyncTestClient(app=app) as client:
+        response = await client.post("/a2a", headers={"A2A-Version": "1.0"}, json=send_payload())
+
+    assert response.json()["error"] == {"code": -32603, "message": "Internal error"}
+    assert handler.contexts == []
+
+
+@pytest.mark.anyio
+async def test_context_builder_can_supply_the_owner_for_such_a_principal() -> None:
+    from a2a.auth.user import User
+
+    class EmailUser(User):
+        @property
+        def is_authenticated(self) -> bool:
+            return True
+
+        @property
+        def user_name(self) -> str:
+            return "a@example.com"
+
+    def set_user(request: Request[Any, Any, Any], context: ServerCallContext) -> ServerCallContext:
+        context.user = EmailUser()
+        return context
+
+    handler = StubHandler()
+    app = Litestar(
+        middleware=[DefineMiddleware(_EmailOnlyPrincipalMiddleware)],
+        plugins=[LitestarA2A(make_card(), handler, A2AConfig(context_builder=set_user))],
+    )
+
+    async with AsyncTestClient(app=app) as client:
+        response = await client.post("/a2a", headers={"A2A-Version": "1.0"}, json=send_payload())
+
+    assert "result" in response.json()
+    assert handler.contexts[0].user.user_name == "a@example.com"
+
+
+def test_display_name_is_not_an_owner_key() -> None:
+    from litestar_mcp.a2a.plugin import _LitestarUser
+
+    assert _LitestarUser({"display_name": "Alice"}).user_name == ""
+
+
+@pytest.mark.anyio
+async def test_default_context_exposes_litestar_request_state() -> None:
+    handler = StubHandler()
+    app = Litestar(
+        middleware=[DefineMiddleware(_MappingPrincipalMiddleware)],
+        plugins=[LitestarA2A(make_card(), handler)],
+    )
+
+    async with AsyncTestClient(app=app) as client:
+        await client.post(
+            "/a2a",
+            headers={"A2A-Version": "1.0", "A2A-Extensions": "https://ext.example/a", "X-Trace": "t-1"},
+            json=send_payload(),
+        )
+
+    context = handler.contexts[0]
+    assert context.user.is_authenticated is False
+    assert context.requested_extensions == {"https://ext.example/a"}
+    assert context.state["auth"] is None
+    assert context.state["headers"]["x-trace"] == "t-1"
+    assert isinstance(context.state["litestar_state"], dict)
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["https://example.com/a2a", "https://example.com/agents/a2a", "https://example.com/agents/a2a/"],
+)
+def test_card_interface_may_include_a_mount_prefix(url: str) -> None:
+    card = make_card()
+    card.supported_interfaces[0].url = url
+
+    LitestarA2A(card, AsyncMock())
+
+
+def test_card_interface_path_must_end_with_the_mount() -> None:
+    card = make_card()
+    card.supported_interfaces[0].url = "https://example.com/xa2a"
+
+    with pytest.raises(ValueError, match="matching the A2A path"):
+        LitestarA2A(card, AsyncMock())
+
+
+def test_card_interface_accepts_a_1_0_patch_version() -> None:
+    card = make_card()
+    card.supported_interfaces[0].protocol_version = "1.0.2"
+
+    LitestarA2A(card, AsyncMock())
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("include_artifacts", [False, True])
+async def test_list_tasks_omits_artifacts_unless_requested(include_artifacts: bool) -> None:
+    from a2a.types import Artifact, ListTasksResponse
+
+    task = Task(
+        id="task-1",
+        context_id="ctx-1",
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
+        artifacts=[Artifact(artifact_id="a", parts=[Part(text="secret")])],
+    )
+    handler = AsyncMock()
+    handler.on_list_tasks.return_value = ListTasksResponse(tasks=[task])
+    app = Litestar(plugins=[LitestarA2A(make_card(), handler)])
+
+    async with AsyncTestClient(app=app) as client:
+        response = await client.post(
+            "/a2a",
+            headers={"A2A-Version": "1.0"},
+            json={"jsonrpc": "2.0", "id": 1, "method": "ListTasks", "params": {"includeArtifacts": include_artifacts}},
+        )
+
+    listed = response.json()["result"]["tasks"][0]
+    assert ("artifacts" in listed) is include_artifacts
+
+
+@pytest.mark.anyio
+async def test_missing_version_header_names_the_header() -> None:
+    app = Litestar(plugins=[LitestarA2A(make_card(), StubHandler())])
+
+    async with AsyncTestClient(app=app) as client:
+        response = await client.post("/a2a", json=send_payload())
+
+    error = response.json()["error"]
+    assert error["code"] == -32009
+    assert "A2A-Version header is required" in error["message"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("headers", [{}, {"A2A-Version": "0.3"}])
+async def test_notifications_are_declined_before_the_version_check(headers: dict[str, str]) -> None:
+    handler = StubHandler()
+    payload = send_payload()
+    del payload["id"]
+    app = Litestar(plugins=[LitestarA2A(make_card(), handler)])
+
+    async with AsyncTestClient(app=app) as client:
+        response = await client.post("/a2a", headers=headers, json=payload)
+
+    assert response.status_code == 204
+    assert handler.contexts == []
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("header", ["W/{etag}", '"other", {etag}', "*"])
+async def test_agent_card_if_none_match_uses_weak_comparison(header: str) -> None:
+    app = Litestar(plugins=[LitestarA2A(make_card(), StubHandler())])
+
+    async with AsyncTestClient(app=app) as client:
+        etag = (await client.get("/.well-known/agent-card.json")).headers["etag"]
+        response = await client.get("/.well-known/agent-card.json", headers={"If-None-Match": header.format(etag=etag)})
+
+    assert response.status_code == 304
+
+
+@pytest.mark.anyio
+async def test_agent_card_uses_custom_path_and_max_age() -> None:
+    config = A2AConfig(agent_card_path="/cards/agent.json", agent_card_max_age=60)
+    app = Litestar(plugins=[LitestarA2A(make_card(), StubHandler(), config)])
+
+    async with AsyncTestClient(app=app) as client:
+        response = await client.get("/cards/agent.json")
+        default = await client.get("/.well-known/agent-card.json")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "public, max-age=60"
+    assert default.status_code == 404
+
+
+def test_agent_card_max_age_must_not_be_negative() -> None:
+    with pytest.raises(ValueError, match="agent_card_max_age"):
+        A2AConfig(agent_card_max_age=-1)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("close", ["sync", "missing"])
+async def test_shutdown_tolerates_sync_or_missing_aclose(close: str) -> None:
+    handler = Mock(spec=[] if close == "missing" else ["aclose"])
+    app = Litestar(plugins=[LitestarA2A(make_card(), handler)])
+
+    async with AsyncTestClient(app=app):
+        pass
+
+    if close == "sync":
+        handler.aclose.assert_called_once_with()

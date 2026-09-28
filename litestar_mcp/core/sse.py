@@ -15,6 +15,9 @@ if TYPE_CHECKING:
 __all__ = ("StreamLimitExceeded", "SubscriptionManager")
 
 _CLOSED = object()
+_BROKER_CHANNEL = "litestar-mcp-subscriptions"
+_BROKER_RETRY_INITIAL = 0.5
+_BROKER_RETRY_MAX = 30.0
 _logger = logging.getLogger(__name__)
 _METHOD_FILTERS = {
     "notifications/tools/list_changed": "toolsListChanged",
@@ -92,10 +95,7 @@ class SubscriptionManager:
     async def publish(self, method: "str", params: "dict[str, Any]") -> "None":
         """Publish a notification only to subscriptions whose filter matches."""
         if self._channels is not None:
-            self._channels.publish(
-                {"method": method, "params": params},
-                channels="litestar-mcp-subscriptions",
-            )
+            self._channels.publish({"method": method, "params": params}, channels=_BROKER_CHANNEL)
             return
         await self._publish_local(method, params)
 
@@ -115,11 +115,7 @@ class SubscriptionManager:
                 async with self._lock:
                     self._streams.pop(state.stream_id, None)
                 _logger.warning("Closing slow MCP subscriber %s after queue overflow", state.stream_id)
-                state.closed = True
-                while not state.queue.empty():
-                    state.queue.get_nowait()
-                state.queue.put_nowait(self._completion(state))
-                self._close(state)
+                self._complete(state)
 
     async def disconnect(self, stream_id: "str") -> "None":
         """Remove one stream and wake its consumer."""
@@ -138,7 +134,19 @@ class SubscriptionManager:
             states = tuple(self._streams.values())
             self._streams.clear()
         for state in states:
-            self._close(state)
+            self._complete(state)
+
+    @classmethod
+    def _complete(cls, state: "_Subscription") -> "None":
+        """End a stream with its terminal response, dropping undelivered notifications if the queue is full."""
+        state.closed = True
+        try:
+            state.queue.put_nowait(cls._completion(state))
+        except asyncio.QueueFull:
+            while not state.queue.empty():
+                state.queue.get_nowait()
+            state.queue.put_nowait(cls._completion(state))
+        cls._close(state)
 
     @staticmethod
     def _close(state: "_Subscription") -> "None":
@@ -150,13 +158,32 @@ class SubscriptionManager:
         channels = self._channels
         if channels is None:
             return
-        async with channels.start_subscription("litestar-mcp-subscriptions") as subscriber:
-            async for event in subscriber.iter_events():
-                payload = from_json(event)
-                if isinstance(payload, dict) and isinstance(payload.get("method"), str):
-                    params = payload.get("params")
-                    if isinstance(params, dict):
-                        await self._publish_local(payload["method"], params)
+        delay = _BROKER_RETRY_INITIAL
+        while True:
+            try:
+                async with channels.start_subscription(_BROKER_CHANNEL) as subscriber:
+                    delay = _BROKER_RETRY_INITIAL
+                    async for event in subscriber.iter_events():
+                        await self._publish_broker_event(event)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _logger.exception("MCP subscription broker failed; resubscribing in %.1fs", delay)
+            else:
+                _logger.warning("MCP subscription broker stream ended; resubscribing in %.1fs", delay)
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, _BROKER_RETRY_MAX)
+
+    async def _publish_broker_event(self, event: "Any") -> "None":
+        try:
+            payload = from_json(event)
+        except Exception:  # noqa: BLE001
+            _logger.warning("Ignoring undecodable MCP subscription broker event")
+            return
+        if isinstance(payload, dict) and isinstance(payload.get("method"), str):
+            params = payload.get("params")
+            if isinstance(params, dict):
+                await self._publish_local(payload["method"], params)
 
     @staticmethod
     def _normalize_filter(notifications: "dict[str, Any]") -> "dict[str, Any]":

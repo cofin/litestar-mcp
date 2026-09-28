@@ -19,7 +19,6 @@ from litestar.serialization import decode_json
 from rich.console import Console
 from rich.json import JSON
 
-from litestar_mcp.core.exceptions import MissingDependencyError
 from litestar_mcp.mcp import bridge as bridge_transport
 from litestar_mcp.mcp import stdio as stdio_transport
 from litestar_mcp.mcp.bridge import BEARER_TOKEN_PREFIX, DEFAULT_AUTH_HEADER_NAME
@@ -260,7 +259,7 @@ mcp_group.add_command(ToolExecutor(name="run", help="Run a discovered MCP tool b
     default=bridge_transport.DEFAULT_MAX_STDIN_MESSAGE_SIZE,
     show_default=True,
     type=int,
-    help="Maximum bytes for one stdin JSON-RPC message. Use -1 to disable the limit.",
+    help="Maximum bytes for one JSON-RPC message, from stdin or from the server. Use -1 to disable the limit.",
 )
 def _bridge_command(
     ctx: "click.Context",
@@ -318,7 +317,7 @@ def _bridge_command(
     default=bridge_transport.DEFAULT_MAX_STDIN_MESSAGE_SIZE,
     show_default=True,
     type=int,
-    help="Maximum bytes for one stdin JSON-RPC message. Use -1 to disable the limit.",
+    help="Maximum bytes for one JSON-RPC message, from stdin or from the server. Use -1 to disable the limit.",
 )
 def _stdio_command(
     ctx: "click.Context",
@@ -535,22 +534,19 @@ def _run_bridge_from_options(
     token_provider = _resolve_token_provider(bearer_env, bearer_cmd)
 
     stdout = _BufferedByteSendStream(sys.stdout.buffer)
-    try:
-        with contextlib.redirect_stdout(sys.stderr):
-            exit_code = bridge_transport.run_bridge(
-                endpoint=endpoint,
-                headers=headers,
-                token_provider=token_provider,
-                header_name=header_name,
-                token_prefix=token_prefix,
-                timeout=timeout,
-                sse_read_timeout=sse_read_timeout,
-                max_message_size=max_message_size,
-                stdout=stdout,
-                stderr=sys.stderr,
-            )
-    except MissingDependencyError as exc:
-        raise click.ClickException(str(exc)) from exc
+    with contextlib.redirect_stdout(sys.stderr):
+        exit_code = bridge_transport.run_bridge(
+            endpoint=endpoint,
+            headers=headers,
+            token_provider=token_provider,
+            header_name=header_name,
+            token_prefix=token_prefix,
+            timeout=timeout,
+            sse_read_timeout=sse_read_timeout,
+            max_message_size=max_message_size,
+            stdout=stdout,
+            stderr=sys.stderr,
+        )
     raise ClickExit(exit_code)
 
 
@@ -568,19 +564,16 @@ def _run_stdio_from_options(
     token_provider = _resolve_token_provider(bearer_env, bearer_cmd)
     headers = _headers_from_options(header_values)
     stdout = _BufferedByteSendStream(sys.stdout.buffer)
-    try:
-        with contextlib.redirect_stdout(sys.stderr):
-            exit_code = stdio_transport.run_stdio(
-                app,
-                headers=headers,
-                token_provider=token_provider,
-                header_name=header_name,
-                token_prefix=token_prefix,
-                sse_read_timeout=sse_read_timeout,
-                max_message_size=max_message_size,
-                stdout=stdout,
-                stderr=sys.stderr,
-            )
-    except MissingDependencyError as exc:
-        raise click.ClickException(str(exc)) from exc
+    with contextlib.redirect_stdout(sys.stderr):
+        exit_code = stdio_transport.run_stdio(
+            app,
+            headers=headers,
+            token_provider=token_provider,
+            header_name=header_name,
+            token_prefix=token_prefix,
+            sse_read_timeout=sse_read_timeout,
+            max_message_size=max_message_size,
+            stdout=stdout,
+            stderr=sys.stderr,
+        )
     raise ClickExit(exit_code)

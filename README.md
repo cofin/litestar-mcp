@@ -22,6 +22,7 @@ This plugin automatically discovers Litestar routes marked for MCP and exposes t
 - **OpenAPI Integration** — server info derived from OpenAPI config.
 - **Bring Your Own Auth** — MCP inherits the app's Litestar authentication middleware, including litestar-security or a custom `AbstractAuthenticationMiddleware`.
 - **Optional Task Support** — the MCP Tasks extension with Litestar Store records; applications coordinate execution across workers.
+- **Optional MCP Skills** — serve Agent Skills folders through the io.modelcontextprotocol/skills extension with SHA-256 manifests.
 - **Optional A2A 1.0** — official SDK models and handlers on native Litestar JSON-RPC/SSE routes, without required Starlette, FastAPI or Uvicorn dependencies.
 
 ## Quick Start
@@ -196,10 +197,7 @@ allocation. Progress streams apply bounded backpressure; slow subscription
 consumers are completed and disconnected. Shared task Stores persist records
 but do not distribute task execution or local input/cancel queues.
 
-Google ADK 2.8.0 with MCP SDK 1.29.1 still sends the initialize-era lifecycle
-and cannot consume this endpoint. ADK `RemoteA2aAgent` interoperability has
-not been verified; local ADK agents and the tested official A2A SDK client are
-separate integration paths. See the [0.14 migration guide](https://cofin.github.io/litestar-mcp/latest/usage/migration_0_14.html)
+See the [0.14 migration guide](https://cofin.github.io/litestar-mcp/latest/usage/migration_0_14.html)
 for removed aliases and configuration.
 
 **Built-in Resources:**
@@ -232,8 +230,9 @@ config = MCPConfig()
 | `include_tags` | `list[str] \| None` | `None` | Only expose routes with matching OpenAPI tags |
 | `exclude_tags` | `list[str] \| None` | `None` | Exclude routes with matching OpenAPI tags |
 | `tasks` | `bool \| MCPTaskConfig` | `False` | Enable the `io.modelcontextprotocol/tasks` extension |
+| `skills` | `MCPSkillsConfig \| None` | `None` | Serve Agent Skills over MCP from the configured directories |
 | `opt_keys` | `MCPOptKeys` | `MCPOptKeys()` | Rename the `handler.opt` keys the plugin reads (`mcp_tool`, `mcp_resource`, ...) |
-| `list_page_size` | `int` | `100` | Page size for `tools/list`, `resources/list`, `resources/templates/list`, and `prompts/list` |
+| `list_page_size` | `int` | `100` | Page size for `tools/list`, `resources/list`, `resources/templates/list`, `skills/list`, `prompts/list`, and `resources/directory/read` |
 | `cache_ttl_ms` | `int` | `0` | Conservative cache lifetime for discovery/list/resource results |
 | `cache_scope` | `"private" \| "public"` | `"private"` | Cache sharing policy |
 | `subscription_max_streams` | `int` | `10000` | Maximum concurrent `subscriptions/listen` streams |

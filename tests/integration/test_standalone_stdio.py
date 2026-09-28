@@ -1,7 +1,9 @@
 import asyncio
+import base64
+import hashlib
 import json
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import anyio
 import pytest
@@ -10,10 +12,13 @@ from litestar.di import Provide
 from litestar.exceptions import NotAuthorizedException
 
 import litestar_mcp
-from litestar_mcp import MCP, MCPConfig
+from litestar_mcp import MCP, MCPConfig, MCPSkillsConfig
 from litestar_mcp.mcp.stdio import MCPStdioContext, run_stdio_async
 from litestar_mcp.utils import mcp_tool
 from tests.conftest import BridgeBytesSink, BridgeQueuedBytesSource
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = pytest.mark.integration
 
@@ -48,6 +53,21 @@ def _request(
 
 def _discover_request(request_id: int = 1) -> "dict[str, Any]":
     return _request("server/discover", request_id=request_id)
+
+
+def _write_skill_root(tmp_path: "Path") -> "Path":
+    root = tmp_path / "skills"
+    skill_dir = root / "demo"
+    scripts_dir = skill_dir / "scripts"
+    scripts_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: demo\ndescription: Demo skill\nversion: 1\n---\n\n# Demo\n")
+    (scripts_dir / "run.py").write_text('print("hi")\n')
+    return root
+
+
+def _skills_mcp(tmp_path: "Path") -> "MCP":
+    root = _write_skill_root(tmp_path)
+    return MCP(name="stdio-skills", config=MCPConfig(skills=MCPSkillsConfig(paths=[root])))
 
 
 async def _run_stdio_exchange(
@@ -410,3 +430,88 @@ async def test_standalone_stdio_forwards_jsonrpc_errors_and_keeps_serving() -> "
     assert responses[0]["error"]["code"] == -32601
     assert responses[1]["error"]["code"] == -32602
     assert responses[2]["result"]["content"][0]["text"] == "Hello World"
+
+
+@pytest.mark.anyio
+async def test_standalone_stdio_serves_skills_end_to_end(tmp_path: "Path") -> "None":
+    mcp = _skills_mcp(tmp_path)
+
+    responses = await _run_stdio_exchange(
+        mcp,
+        [
+            _discover_request(1),
+            _request("skills/list", request_id=2),
+            _request("skills/get", request_id=3, params={"uri": "skill://demo/SKILL.md"}),
+            _request("resources/directory/read", request_id=4, params={"uri": "skill://demo"}),
+            _request("resources/read", request_id=5, params={"uri": "skill://demo/SKILL.md"}),
+            _request("resources/read", request_id=6, params={"uri": "skill://demo/scripts/run.py"}),
+        ],
+    )
+    by_id = {response["id"]: response for response in responses}
+
+    discover_result = by_id[1]["result"]
+    assert discover_result["capabilities"]["extensions"] == {"io.modelcontextprotocol/skills": {"directoryRead": True}}
+    assert "resources" in discover_result["capabilities"]
+
+    list_result = by_id[2]["result"]
+    assert len(list_result["skills"]) == 1
+    skill_entry = list_result["skills"][0]
+    assert skill_entry["uri"] == "skill://demo/SKILL.md"
+    assert len(skill_entry["resources"]) == 2
+    assert list_result["ttlMs"] == 0
+    assert list_result["cacheScope"] == "private"
+
+    get_result = by_id[3]["result"]
+    assert get_result["skill"] == skill_entry
+    assert get_result["ttlMs"] == 0
+    assert get_result["cacheScope"] == "private"
+
+    directory_result = by_id[4]["result"]
+    assert "ttlMs" not in directory_result
+    assert "cacheScope" not in directory_result
+    directory_entries = {entry["uri"]: entry for entry in directory_result["resources"]}
+    assert directory_entries["skill://demo/SKILL.md"]["mimeType"] == "text/markdown"
+    assert directory_entries["skill://demo/scripts"]["mimeType"] == "inode/directory"
+
+    read_by_uri = {"skill://demo/SKILL.md": by_id[5], "skill://demo/scripts/run.py": by_id[6]}
+    for manifest_entry in skill_entry["resources"]:
+        content = read_by_uri[manifest_entry["uri"]]["result"]["contents"][0]
+        data = content["text"].encode() if "text" in content else base64.b64decode(content["blob"])
+        assert len(data) == manifest_entry["size"]
+        assert f"sha256:{hashlib.sha256(data).hexdigest()}" == manifest_entry["digest"]
+
+
+@pytest.mark.anyio
+async def test_standalone_stdio_skill_errors(tmp_path: "Path") -> "None":
+    mcp = _skills_mcp(tmp_path)
+
+    responses = await _run_stdio_exchange(
+        mcp,
+        [
+            _request("skills/get", request_id=1, params={"uri": "skill://missing/SKILL.md"}),
+            _request("resources/read", request_id=2, params={"uri": "skill://demo/nope.md"}),
+            _request("resources/directory/read", request_id=3, params={"uri": "skill://demo/"}),
+        ],
+    )
+    by_id = {response["id"]: response for response in responses}
+
+    assert by_id[1]["error"]["code"] == -32602
+    assert by_id[2]["error"]["code"] == -32602
+    assert by_id[3]["error"]["code"] == -32602
+
+
+@pytest.mark.anyio
+async def test_standalone_stdio_skills_disabled_is_method_not_found() -> "None":
+    mcp = MCP(name="no-skills")
+
+    responses = await _run_stdio_exchange(
+        mcp,
+        [
+            _request("skills/list", request_id=1),
+            _request("resources/directory/read", request_id=2, params={"uri": "skill://demo"}),
+        ],
+    )
+    by_id = {response["id"]: response for response in responses}
+
+    assert by_id[1]["error"]["code"] == -32601
+    assert by_id[2]["error"]["code"] == -32601

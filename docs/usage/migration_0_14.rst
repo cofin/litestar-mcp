@@ -38,8 +38,7 @@ Task configuration, shared Stores, subscriptions/Channels, cache hints,
 guards, ``route_opt``, stream limits and stdio application-session injection
 remain supported. A shared task Store persists records but does not distribute
 local runners or input/cancel queues. Applications own worker coordination
-and recovery. ADK 2.9.0 with MCP SDK 1.30.0 still uses the old lifecycle and
-is unsupported; see :doc:`adk` for the test boundary.
+and recovery.
 
 A2A 1.0 only
 ------------
@@ -51,18 +50,19 @@ version headers and 0.3 methods are rejected; there is no conversion fallback.
 Advertise a valid absolute JSONRPC 1.0 interface matching the configured
 mount in the AgentCard.
 
-Replace a one-argument ``context_builder(request)`` callback with
-``context_builder(request, context)``. The second argument is the prepared
-SDK call context with the requested tenant and protocol metadata. Return
-the authorized context directly or asynchronously; the adapter preserves
-its tenant and state. Activate requested, advertised extensions before the
+``A2AConfig.context_builder`` is called as ``context_builder(request,
+context)``, where the second argument is the prepared SDK call context with
+the requested tenant and protocol metadata. Return the authorized context
+directly or asynchronously; the adapter preserves its tenant and state. Activate requested, advertised extensions before the
 first result/event so response headers reflect actual activation.
 
 JSON-RPC notifications with an omitted ID receive HTTP 204 without handler
 execution; explicit null A2A IDs still receive responses. Long-running
 executors own their service lifetime beyond the HTTP request. See :doc:`a2a`
 for the authorization, SDK handler, callback and distributed-execution
-boundaries, including the example-local SDK 1.1.2 live-task access correction.
+boundaries. The ``a2a`` extra requires a2a-sdk 1.1.4 or later, the first
+release whose request handler checks task ownership before cancelling or
+subscribing to a live task.
 
 Streaming and stdio cleanup
 --------------------------
@@ -137,3 +137,15 @@ is not installed. Deep module paths moved without compatibility aliases:
 - ``litestar_mcp.typing`` -> ``litestar_mcp.core.typing``
 - ``litestar_mcp.exceptions`` -> ``litestar_mcp.core.exceptions``
 - ``litestar_mcp.utils.serialization`` -> ``litestar_mcp.core.serialization``
+
+HTTP client
+-----------
+
+The runtime HTTP client dependency is now ``httpx2`` instead of ``httpx``.
+The stdio bridge uses ``httpx2``'s built-in server-sent events support, so
+the ``bridge`` extra and its ``httpx-sse`` dependency are removed; install
+plain ``litestar-mcp``. Code that passes a custom ``transport`` to
+``run_stdio_streamable_http_bridge`` must pass an
+``httpx2.AsyncBaseTransport``. ``--max-message-size`` (and
+``max_message_size``) now also caps each server-sent event the bridge reads
+from the endpoint, not only stdin messages.

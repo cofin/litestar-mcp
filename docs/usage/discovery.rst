@@ -30,7 +30,10 @@ and routing headers as every other request:
 
 The result reports supported protocol versions and implemented capabilities.
 Developer-enabled extensions appear under ``capabilities.extensions``; the
-server never echoes arbitrary extension declarations.
+server never echoes arbitrary extension declarations. The two shipped
+extensions are ``io.modelcontextprotocol/tasks`` when ``MCPConfig.tasks`` is
+set, and ``io.modelcontextprotocol/skills`` (with a ``directoryRead`` flag)
+when ``MCPConfig.skills`` is set — see :doc:`skills`.
 
 Separate metadata endpoints
 ===========================

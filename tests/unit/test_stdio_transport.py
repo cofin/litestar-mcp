@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import anyio
-import httpx
+import httpx2
 import pytest
 from litestar import Litestar, Request, get, post
 from litestar.events import listener
@@ -235,7 +235,7 @@ async def test_transport_streams_chunks_before_app_completes() -> None:
         await send({"type": "http.response.body", "body": b"second", "more_body": False})
 
     async with (
-        httpx.AsyncClient(transport=ASGIStreamingTransport(app)) as client,
+        httpx2.AsyncClient(transport=ASGIStreamingTransport(app)) as client,
         client.stream("POST", "http://mcp-stdio/mcp", content=b"{}") as response,
     ):
         chunks = response.aiter_bytes()
@@ -261,7 +261,7 @@ async def test_transport_applies_backpressure_when_consumer_is_blocked() -> None
         second_sent.set()
 
     async with (
-        httpx.AsyncClient(transport=ASGIStreamingTransport(app)) as client,
+        httpx2.AsyncClient(transport=ASGIStreamingTransport(app)) as client,
         client.stream("POST", "http://mcp-stdio/mcp", content=b"{}") as response,
     ):
         chunks = response.aiter_bytes()
@@ -289,7 +289,7 @@ async def test_transport_closes_unread_full_buffer_and_finalizes_app() -> None:
             await asyncio.sleep(0)
             finalized.set()
 
-    async with httpx.AsyncClient(transport=ASGIStreamingTransport(app)) as client:
+    async with httpx2.AsyncClient(transport=ASGIStreamingTransport(app)) as client:
         response = await client.send(client.build_request("POST", "http://mcp-stdio/mcp"), stream=True)
         with anyio.fail_after(2):
             await second_send_started.wait()
@@ -313,7 +313,7 @@ async def test_transport_drains_buffer_before_raising_app_error() -> None:
         msg = "failure after response start"
         raise RuntimeError(msg)
 
-    async with httpx.AsyncClient(transport=ASGIStreamingTransport(app)) as client:
+    async with httpx2.AsyncClient(transport=ASGIStreamingTransport(app)) as client:
         with pytest.raises(RuntimeError, match="failure after response start"):
             async with client.stream("POST", "http://mcp-stdio/mcp") as response:
                 chunks = response.aiter_bytes()
@@ -331,7 +331,7 @@ async def test_transport_drains_final_buffer_at_eof() -> None:
         finalized.set()
 
     async with (
-        httpx.AsyncClient(transport=ASGIStreamingTransport(app)) as client,
+        httpx2.AsyncClient(transport=ASGIStreamingTransport(app)) as client,
         client.stream("POST", "http://mcp-stdio/mcp") as response,
     ):
         with anyio.fail_after(2):
@@ -354,7 +354,7 @@ async def test_transport_preserves_async_cleanup_when_close_is_cancelled() -> No
             await release_cleanup.wait()
             finalized.set()
 
-    async with httpx.AsyncClient(transport=ASGIStreamingTransport(app)) as client:
+    async with httpx2.AsyncClient(transport=ASGIStreamingTransport(app)) as client:
         response = await client.send(client.build_request("POST", "http://mcp-stdio/mcp"), stream=True)
         close_task = asyncio.create_task(response.aclose())
         with anyio.fail_after(2):
@@ -384,7 +384,7 @@ async def test_transport_does_not_report_delivery_after_response_close() -> None
                 finalized.set()
 
     async with (
-        httpx.AsyncClient(transport=ASGIStreamingTransport(app)) as client,
+        httpx2.AsyncClient(transport=ASGIStreamingTransport(app)) as client,
         client.stream("POST", "http://mcp-stdio/mcp"),
     ):
         pass
@@ -412,7 +412,7 @@ async def test_transport_bounds_cancellation_resistant_cleanup(caplog: pytest.Lo
                     await release_cleanup.wait()
             finalized.set()
 
-    async with httpx.AsyncClient(transport=ASGIStreamingTransport(app, shutdown_timeout=0.02)) as client:
+    async with httpx2.AsyncClient(transport=ASGIStreamingTransport(app, shutdown_timeout=0.02)) as client:
         response = await client.send(client.build_request("POST", "http://mcp-stdio/mcp"), stream=True)
         try:
             with anyio.fail_after(2):
@@ -445,7 +445,7 @@ async def test_transport_uses_scheme_default_server_port() -> None:
         await send({"type": "http.response.start", "status": 204, "headers": []})
         await send({"type": "http.response.body", "body": b"", "more_body": False})
 
-    async with httpx.AsyncClient(transport=ASGIStreamingTransport(app)) as client:
+    async with httpx2.AsyncClient(transport=ASGIStreamingTransport(app)) as client:
         response = await client.get("https://example.test/path")
 
     assert response.status_code == 204
@@ -481,7 +481,7 @@ async def test_transport_close_cancels_app_and_signals_disconnect() -> None:
             raise
 
     async with (
-        httpx.AsyncClient(transport=ASGIStreamingTransport(app)) as client,
+        httpx2.AsyncClient(transport=ASGIStreamingTransport(app)) as client,
         client.stream("POST", "http://mcp-stdio/mcp", content=b"{}") as response,
     ):
         with anyio.fail_after(2):
@@ -507,7 +507,7 @@ async def test_transport_cancelled_before_response_start_aborts_app() -> None:
             cancelled.set()
             raise
 
-    async with httpx.AsyncClient(transport=ASGIStreamingTransport(app)) as client:
+    async with httpx2.AsyncClient(transport=ASGIStreamingTransport(app)) as client:
         scope = anyio.CancelScope()
 
         async def caller() -> None:
@@ -537,9 +537,9 @@ async def test_transport_honours_read_timeout_for_body_chunks() -> None:
             cancelled.set()
             raise
 
-    timeout = httpx.Timeout(5.0, read=0.2)
-    async with httpx.AsyncClient(transport=ASGIStreamingTransport(app), timeout=timeout) as client:
-        with pytest.raises(httpx.ReadTimeout), anyio.fail_after(3):
+    timeout = httpx2.Timeout(5.0, read=0.2)
+    async with httpx2.AsyncClient(transport=ASGIStreamingTransport(app), timeout=timeout) as client:
+        with pytest.raises(httpx2.ReadTimeout), anyio.fail_after(3):
             await client.post("http://mcp-stdio/mcp", content=b"{}")
 
     assert cancelled.is_set()
@@ -550,9 +550,9 @@ async def test_transport_honours_read_timeout_for_response_start() -> None:
     async def app(scope: Any, receive: Any, send: Any) -> None:
         await asyncio.sleep(30)
 
-    timeout = httpx.Timeout(5.0, read=0.2)
-    async with httpx.AsyncClient(transport=ASGIStreamingTransport(app), timeout=timeout) as client:
-        with pytest.raises(httpx.ReadTimeout), anyio.fail_after(3):
+    timeout = httpx2.Timeout(5.0, read=0.2)
+    async with httpx2.AsyncClient(transport=ASGIStreamingTransport(app), timeout=timeout) as client:
+        with pytest.raises(httpx2.ReadTimeout), anyio.fail_after(3):
             await client.post("http://mcp-stdio/mcp", content=b"{}")
 
 
@@ -562,7 +562,7 @@ async def test_transport_raises_app_exception_before_response_start() -> None:
         msg = "boom"
         raise RuntimeError(msg)
 
-    async with httpx.AsyncClient(transport=ASGIStreamingTransport(app)) as client:
+    async with httpx2.AsyncClient(transport=ASGIStreamingTransport(app)) as client:
         with pytest.raises(RuntimeError, match="boom"):
             await client.post("http://mcp-stdio/mcp", content=b"{}")
 
@@ -575,7 +575,7 @@ async def test_transport_round_trips_a_litestar_app() -> None:
         return {"data": data, "host": request.url.hostname, "client": list(client) if client else None}
 
     app = Litestar(route_handlers=[echo])
-    async with httpx.AsyncClient(transport=ASGIStreamingTransport(app)) as client:
+    async with httpx2.AsyncClient(transport=ASGIStreamingTransport(app)) as client:
         response = await client.post("http://mcp-stdio/echo", json={"x": 1})
 
     assert response.status_code == 201

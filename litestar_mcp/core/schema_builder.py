@@ -4,14 +4,16 @@ import inspect
 import logging
 import re
 from dataclasses import MISSING, fields
+from functools import lru_cache
 from types import UnionType
-from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Union, cast, get_args, get_origin
 
 import msgspec
 
+from litestar_mcp.core._typing import attrs_nothing
 from litestar_mcp.core.typing import (
     attrs_fields,
-    is_attrs_instance,
+    is_attrs_schema,
     is_dataclass,
     is_msgspec_struct,
     is_pydantic_model,
@@ -105,7 +107,7 @@ def attrs_to_json_schema(attrs_type: "Any") -> "dict[str, Any]":
     for field in attrs_fields(attrs_type):
         field_schema = type_to_json_schema(field.type)
         properties[field.name] = field_schema
-        if field.default is inspect.Parameter.empty:
+        if field.default is attrs_nothing:
             required.append(field.name)
 
     schema = {"type": "object", "properties": properties}
@@ -125,7 +127,7 @@ def model_to_json_schema(annotation: "Any") -> "dict[str, Any] | None":
     if is_msgspec_struct(annotation):
         return msgspec_to_json_schema(annotation)
 
-    if is_attrs_instance(annotation):
+    if is_attrs_schema(annotation):
         return attrs_to_json_schema(annotation)
 
     if is_dataclass(annotation):
@@ -241,7 +243,76 @@ def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]"
     else:
         schema["description"] = "Input parameters for " + str(fn_name)
 
+    definitions: dict[str, Any] = {}
+    _hoist_definitions(properties, definitions)
+    if definitions:
+        schema["$defs"] = definitions
+
     return schema
+
+
+@lru_cache(maxsize=1024)
+def cached_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]":
+    """Return :func:`generate_schema_for_handler` output, computed once per handler.
+
+    The returned schema is shared between callers and must not be mutated.
+    """
+    return generate_schema_for_handler(handler)
+
+
+_DEFS_REF_PREFIX = "#/$defs/"
+
+
+def _hoist_definitions(node: "Any", definitions: "dict[str, Any]") -> "None":
+    """Move every nested ``$defs`` block into ``definitions``, the root schema's ``$defs``.
+
+    Model schemas from pydantic and msgspec are standalone documents whose
+    ``#/$defs/...`` references resolve against their own root. Nested under a
+    tool's ``properties`` they would point nowhere, so their definitions move to
+    the tool schema's root. A name already taken by a different definition is
+    renamed, and the references inside that model's subtree are rewritten.
+    """
+    if isinstance(node, list):
+        for item in node:
+            _hoist_definitions(item, definitions)
+        return
+    if not isinstance(node, dict):
+        return
+    local = node.pop("$defs", None)
+    if isinstance(local, dict):
+        renames: dict[str, str] = {}
+        for name, definition in cast("dict[str, Any]", local).items():
+            target = name
+            suffix = 2
+            while target in definitions and definitions[target] != definition:
+                target = f"{name}{suffix}"
+                suffix += 1
+            if target != name:
+                renames[name] = target
+        if renames:
+            _rename_refs(node, renames)
+            _rename_refs(local, renames)
+        for name, definition in cast("dict[str, Any]", local).items():
+            _hoist_definitions(definition, definitions)
+            definitions.setdefault(renames.get(name, name), definition)
+    for value in node.values():
+        _hoist_definitions(value, definitions)
+
+
+def _rename_refs(node: "Any", renames: "dict[str, str]") -> "None":
+    if isinstance(node, list):
+        for item in node:
+            _rename_refs(item, renames)
+        return
+    if not isinstance(node, dict):
+        return
+    ref = node.get("$ref")
+    if isinstance(ref, str) and ref.startswith(_DEFS_REF_PREFIX):
+        name = ref[len(_DEFS_REF_PREFIX) :]
+        if name in renames:
+            node["$ref"] = _DEFS_REF_PREFIX + renames[name]
+    for value in node.values():
+        _rename_refs(value, renames)
 
 
 _META_FIELD_MAP: "tuple[tuple[str, str], ...]" = (

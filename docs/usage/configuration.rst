@@ -72,6 +72,26 @@ task-handle authorization boundary.
     :end-before: # end-example
     :dedent:
 
+Skills
+======
+
+Enable the opt-in ``io.modelcontextprotocol/skills`` extension by passing an
+:class:`~litestar_mcp.mcp.config.MCPSkillsConfig`. The catalog is loaded once
+from the configured directories at startup; a skill folder that fails
+validation fails application startup, not a later request.
+
+Pass :class:`~pathlib.Path` objects for ``paths`` — the annotation is
+``Sequence[Path]``, and while a plain string is coerced at runtime, a
+type-checked caller passing ``str`` sees a mypy or pyright error. See
+:doc:`skills` for the directory layout, wire methods, and error contract.
+
+.. literalinclude:: /examples/snippets/configuration_skills.py
+    :language: python
+    :caption: ``docs/examples/snippets/configuration_skills.py``
+    :start-after: # start-example
+    :end-before: # end-example
+    :dedent:
+
 Configuration Options
 =====================
 
@@ -111,6 +131,10 @@ Configuration Options
     * - ``tasks``
       - ``False``
       - Enable the Tasks extension, optionally with a persistent Store.
+    * - ``skills``
+      - ``None``
+      - Serve Agent Skills over MCP from the configured directories; see
+        :doc:`skills`.
     * - ``cache_ttl_ms`` / ``cache_scope``
       - ``0`` / ``"private"``
       - Cache hints on discovery, list, and resource-read results.

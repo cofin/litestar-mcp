@@ -30,6 +30,23 @@ This directory contains examples demonstrating the Litestar MCP Plugin integrati
 
 **Best for**: Learning comprehensive MCP integration patterns
 
+### 📁 a2a_application/
+
+**Authenticated A2A Application**
+
+- ✅ Official A2A SDK request handler served by `LitestarA2A`
+- ✅ Bearer authentication with workspace-scoped task and push stores
+- ✅ Agent card, JSON-RPC and streaming responses on native Litestar routes
+- ✅ Executor that owns its service scope beyond the HTTP request
+
+**Best for**: Serving an A2A 1.0 agent from a Litestar app
+
+Needs the `a2a` extra:
+
+```bash
+uv run --extra a2a --with granian granian --interface asgi docs.examples.a2a_application.main:app
+```
+
 ## Quick Start Guide
 
 ### 1. Setup

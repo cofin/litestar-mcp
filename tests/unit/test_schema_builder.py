@@ -530,11 +530,9 @@ class TestMsgspecAsHandlerParam:
         _, handler = create_app_with_handler(struct_handler)
         schema = generate_schema_for_handler(handler)
 
-        payload_schema = schema["properties"]["payload"]
-        # msgspec.json.schema emits a $ref into $defs.
-        assert "$defs" in payload_schema
-        assert "HandlerPayload" in payload_schema["$defs"]
-        target = payload_schema["$defs"]["HandlerPayload"]
+        # msgspec.json.schema emits a $ref; its $defs move to the tool schema root.
+        assert schema["properties"]["payload"] == {"$ref": "#/$defs/HandlerPayload"}
+        target = schema["$defs"]["HandlerPayload"]
         assert target["type"] == "object"
         assert "name" in target["properties"]
         assert "count" in target["properties"]
@@ -550,10 +548,8 @@ class TestMsgspecAsHandlerParam:
         schema = generate_schema_for_handler(handler)
 
         assert schema["required"] == ["data"]
-        data_schema = schema["properties"]["data"]
-        assert "$defs" in data_schema
-        assert "CreatePayload" in data_schema["$defs"]
-        payload_schema = data_schema["$defs"]["CreatePayload"]
+        assert schema["properties"]["data"] == {"$ref": "#/$defs/CreatePayload"}
+        payload_schema = schema["$defs"]["CreatePayload"]
         assert payload_schema["properties"]["title"]["type"] == "string"
         assert payload_schema["properties"]["count"]["type"] == "integer"
         assert payload_schema["required"] == ["title"]
@@ -1280,3 +1276,71 @@ class TestDependencyProviderParameters:
         schema = generate_schema_for_handler(h)
         assert set(schema["properties"]) == {"name"}
         assert schema["required"] == ["name"]
+
+
+class _DefsInner(msgspec.Struct):
+    x: "int"
+
+
+class _DefsOuter(msgspec.Struct):
+    inner: "_DefsInner"
+
+
+class _DefsPydanticInner(BaseModel):
+    y: "str"
+
+
+class _DefsPydanticOuter(BaseModel):
+    inner: "_DefsPydanticInner"
+
+
+def test_nested_model_definitions_are_hoisted_to_the_tool_schema_root() -> "None":
+    """``$ref``s inside nested model schemas resolve against the tool schema's root ``$defs``."""
+    from litestar import post
+
+    @post("/defs", opt={"mcp_tool": "defs"})
+    async def defs(data: "_DefsOuter", items: "list[_DefsPydanticOuter]") -> "None": ...
+
+    schema = generate_schema_for_handler(defs)
+
+    assert schema["properties"]["data"] == {"$ref": "#/$defs/_DefsOuter"}
+    assert set(schema["$defs"]) == {"_DefsOuter", "_DefsInner", "_DefsPydanticInner"}
+    assert schema["$defs"]["_DefsOuter"]["properties"]["inner"] == {"$ref": "#/$defs/_DefsInner"}
+    assert "$defs" not in schema["properties"]["data"]
+    assert schema["properties"]["items"]["items"]["properties"]["inner"] == {"$ref": "#/$defs/_DefsPydanticInner"}
+
+
+def test_conflicting_nested_definition_names_are_renamed() -> "None":
+    """Two different models sharing a name keep separate, correctly referenced definitions."""
+    from litestar import post
+
+    first = msgspec.defstruct("Shared", [("a", int)])
+    second = msgspec.defstruct("Shared", [("b", str)])
+
+    @post("/clash", opt={"mcp_tool": "clash"})
+    async def clash(one: "first", two: "second") -> "None":  # type: ignore[valid-type]
+        ...
+
+    clash.fn.__annotations__.update({"one": first, "two": second})
+    schema = generate_schema_for_handler(clash)
+
+    one_ref = schema["properties"]["one"]["$ref"].removeprefix("#/$defs/")
+    two_ref = schema["properties"]["two"]["$ref"].removeprefix("#/$defs/")
+    assert one_ref != two_ref
+    assert set(schema["$defs"][one_ref]["properties"]) == {"a"}
+    assert set(schema["$defs"][two_ref]["properties"]) == {"b"}
+
+
+def test_attrs_class_parameter_is_described_with_required_fields() -> "None":
+    """An attrs class maps to its fields, and a field without a default is required."""
+    import attrs
+
+    @attrs.define
+    class Settings:
+        name: "str"
+        retries: "int" = 3
+
+    schema = type_to_json_schema(Settings)
+
+    assert schema["properties"] == {"name": {"type": "string"}, "retries": {"type": "integer"}}
+    assert schema["required"] == ["name"]

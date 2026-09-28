@@ -24,9 +24,14 @@ run_bridge
 
 .. autofunction:: run_bridge
 
-MissingDependencyError
-----------------------
+BridgeConnectionError
+---------------------
 
-.. autoclass:: MissingDependencyError
-   :members:
+.. autoclass:: BridgeConnectionError
+   :show-inheritance:
+
+BridgeMessageTooLargeError
+--------------------------
+
+.. autoclass:: BridgeMessageTooLargeError
    :show-inheritance:

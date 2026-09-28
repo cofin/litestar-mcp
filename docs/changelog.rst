@@ -11,6 +11,29 @@ Recent Updates
 
 .. changelog:: 0.14.0
 
+    .. change:: move the HTTP client to httpx2 and drop the bridge extra
+        :type: breaking
+
+        The runtime dependency on ``httpx`` is replaced by ``httpx2``. The
+        stdio bridge reads server-sent events with ``httpx2``'s built-in
+        ``EventSource``, so the ``bridge`` extra and ``httpx-sse`` are gone,
+        and ``max_message_size`` now bounds each incoming event as well as
+        each stdin message.
+
+    .. change:: serve Agent Skills over MCP
+        :type: feature
+
+        Added ``MCPSkillsConfig`` and the opt-in
+        ``io.modelcontextprotocol/skills`` extension, which loads a static
+        catalog of ``<path>/<name>/SKILL.md`` folders once at startup.
+        ``skills/list`` and ``skills/get`` return each skill's frontmatter and
+        a SHA-256 manifest of its files, and ``resources/directory/read``
+        lists the entries directly under a skill directory when
+        ``directory_read`` is enabled.
+        Skill files themselves are served through the existing
+        ``resources/read`` method under ``skill://<name>/<relative-path>``
+        URIs, alongside handler-declared resources.
+
     .. change:: require modern MCP requests and canonical APIs
         :type: breaking
 
@@ -22,16 +45,19 @@ Recent Updates
         resolution, execution or stream allocation. Current task,
         subscription, cache and application-session settings remain available.
 
-    .. change:: make the A2A 1.0 and context contract explicit
-        :type: breaking
+    .. change:: fix nested tool schemas and harden subscriptions
+        :type: bugfix
 
-        Require A2A 1.0 version headers and method/model shapes, with no 0.3
-        conversion fallback. ``A2AConfig.context_builder`` now receives
-        ``(request, context)`` and supports synchronous or asynchronous
-        authorization without overwriting the returned tenant or state.
-        Extension activation must precede the first result or stream event.
-        Notifications are declined with HTTP 204 without executing handlers;
-        explicit null IDs remain correlated A2A requests.
+        Tool input schemas now hoist the ``$defs`` of msgspec Structs and
+        nested pydantic models to the schema root, so their ``$ref``\ s
+        resolve, and attrs classes are described by their fields. Tool
+        schemas are built once per handler instead of on every request. The
+        cross-worker subscription listener skips undecodable events and
+        resubscribes after a backend error instead of stopping silently, and
+        streams closed at shutdown receive their terminal response.
+        ``schema_dump`` caches encoder maps by content and returns JSON-safe
+        values for pydantic models. Unexpected JSON-RPC handler errors no
+        longer send the exception message to the client.
 
     .. change:: close streamed work and use native stdio lifespan
         :type: bugfix
@@ -75,6 +101,17 @@ Recent Updates
         ``A2A-Version`` header regardless of the configured context builder,
         reports ``scope["user"]`` objects that carry ``is_authenticated`` as
         such, and serves the agent card with ``ETag`` and ``Cache-Control``.
+        Only A2A 1.0 is accepted: requests must send ``A2A-Version: 1.0``
+        (or a ``1.0.x`` patch version) and use the 1.0 method names and
+        protobuf JSON shapes. ``A2AConfig.context_builder`` receives
+        ``(request, context)`` and may be synchronous or asynchronous.
+        Notifications are answered with HTTP 204 without running the handler,
+        while explicit null IDs still get a response. The card's JSONRPC
+        interface URL may carry a proxy or ``root_path`` prefix ahead of
+        ``A2AConfig.path``. An authenticated principal without an ``id``,
+        ``sub`` or ``username`` is refused unless a context builder supplies
+        the SDK user, so it never shares the anonymous task owner. Requires
+        a2a-sdk 1.1.4 or later.
 
     .. change:: stream progress on the requesting response
         :type: feature
@@ -100,7 +137,7 @@ Recent Updates
         (JSON-RPC, subscription streams, schema building, serialization,
         typing, exceptions); ``litestar_mcp.mcp`` holds the MCP plugin,
         configuration, routes, executor, registry, tasks, bridge, and CLI;
-        ``litestar_mcp.a2a`` is unchanged; ``litestar_mcp.utils`` keeps the
+        ``litestar_mcp.a2a`` holds the optional A2A adapter; ``litestar_mcp.utils`` keeps the
         decorators and signature helpers. Root imports are unchanged and
         ``litestar_mcp.A2AConfig`` / ``litestar_mcp.LitestarA2A`` resolve
         lazily without importing ``a2a-sdk`` at package import time. Deep

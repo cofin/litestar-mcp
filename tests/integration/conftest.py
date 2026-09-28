@@ -7,6 +7,7 @@ import psycopg
 import pytest
 from litestar.testing import AsyncTestClient, TestClient
 
+from litestar_mcp.mcp.routes import MCP_NAME_FIELDS
 from tests.integration.apps import POSTGRES_TEST_TABLES, AuthMode
 
 if TYPE_CHECKING:
@@ -110,14 +111,7 @@ def modern_direct_mcp_requests(monkeypatch: "pytest.MonkeyPatch") -> "None":
         headers = dict(kwargs.get("headers") or {})
         headers.setdefault("MCP-Protocol-Version", "2026-07-28")
         headers.setdefault("Mcp-Method", method)
-        name_field = {
-            "tools/call": "name",
-            "resources/read": "uri",
-            "prompts/get": "name",
-            "tasks/get": "taskId",
-            "tasks/update": "taskId",
-            "tasks/cancel": "taskId",
-        }.get(method)
+        name_field = MCP_NAME_FIELDS.get(method)
         if name_field is not None:
             headers.setdefault("Mcp-Name", str(params.get(name_field, "")))
         kwargs["headers"] = headers
@@ -157,16 +151,8 @@ def _modern_headers(
     final_headers.setdefault("Accept", "application/json, text/event-stream")
     final_headers.setdefault("MCP-Protocol-Version", "2026-07-28")
     final_headers.setdefault("Mcp-Method", method)
-    name_fields = {
-        "tools/call": "name",
-        "resources/read": "uri",
-        "prompts/get": "name",
-        "tasks/get": "taskId",
-        "tasks/update": "taskId",
-        "tasks/cancel": "taskId",
-    }
-    if method in name_fields:
-        final_headers.setdefault("Mcp-Name", str(params.get(name_fields[method], "")))
+    if method in MCP_NAME_FIELDS:
+        final_headers.setdefault("Mcp-Name", str(params.get(MCP_NAME_FIELDS[method], "")))
     return final_headers
 
 

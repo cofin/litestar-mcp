@@ -9,7 +9,7 @@ from types import TracebackType
 from typing import Any
 
 import anyio
-import httpx
+import httpx2
 from anyio import EndOfStream, get_cancelled_exc_class
 from anyio.abc import ByteReceiveStream, ByteSendStream
 from anyio.to_thread import run_sync as run_sync_in_worker_thread
@@ -18,11 +18,12 @@ from litestar.status_codes import HTTP_202_ACCEPTED, HTTP_401_UNAUTHORIZED
 from typing_extensions import Self
 
 from litestar_mcp.__metadata__ import __version__
-from litestar_mcp.core.exceptions import BridgeConnectionError, BridgeMessageTooLargeError, MissingDependencyError
+from litestar_mcp.core.exceptions import BridgeConnectionError, BridgeMessageTooLargeError
 from litestar_mcp.core.jsonrpc import JSONRPCError, error_response
 from litestar_mcp.core.serialization import from_json, to_json
 from litestar_mcp.mcp.routes import (
     MCP_METHOD_HEADER,
+    MCP_NAME_FIELDS,
     MCP_NAME_HEADER,
     MCP_PROTOCOL_VERSION,
     MCP_PROTOCOL_VERSION_HEADER,
@@ -44,7 +45,6 @@ __all__ = (
     "DEFAULT_MAX_STDIN_MESSAGE_SIZE",
     "BridgeConnectionError",
     "BridgeMessageTooLargeError",
-    "MissingDependencyError",
     "TokenProvider",
     "run_bridge",
     "run_stdio_streamable_http_bridge",
@@ -54,7 +54,7 @@ __all__ = (
 async def run_stdio_streamable_http_bridge(
     endpoint: str,
     *,
-    transport: "httpx.AsyncBaseTransport | None" = None,
+    transport: "httpx2.AsyncBaseTransport | None" = None,
     client_info: "Mapping[str, str] | None" = None,
     headers: Mapping[str, str] | None = None,
     token_provider: TokenProvider | None = None,
@@ -71,7 +71,7 @@ async def run_stdio_streamable_http_bridge(
 
     Args:
         endpoint: Full MCP Streamable HTTP endpoint URL.
-        transport: Optional httpx transport. Pass
+        transport: Optional httpx2 transport. Pass
             :class:`~litestar_mcp.mcp.stdio.ASGIStreamingTransport` to serve an
             in-process ASGI app instead of a remote endpoint.
         client_info: Default ``io.modelcontextprotocol/clientInfo`` injected
@@ -87,13 +87,13 @@ async def run_stdio_streamable_http_bridge(
         stdout: Optional byte send stream for tests or embedding.
         stderr: Optional diagnostic text stream. Defaults to ``sys.stderr``.
         max_message_size: Maximum bytes allowed for one newline-delimited
-            stdin JSON-RPC message. Set to ``-1`` to disable the limit.
+            JSON-RPC message, applied both to stdin lines and to server-sent
+            events read from the endpoint. Set to ``-1`` to disable the limit.
 
     Returns:
         Process-style exit code. ``0`` means clean EOF/shutdown; non-zero means
         a transport or pump error was surfaced to the local stdio client.
     """
-    event_source_cls = _load_event_source()
     stdin_stream: ByteReceiveStream = stdin if stdin is not None else _StdinByteReceiveStream()
     stdout_stream: ByteSendStream = stdout if stdout is not None else _StdoutByteSendStream()
     stderr_stream = stderr or sys.stderr
@@ -116,7 +116,7 @@ async def run_stdio_streamable_http_bridge(
                 sse_read_timeout=_normalize_sse_read_timeout(sse_read_timeout),
                 stdout=stdout_stream,
                 stderr=stderr_stream,
-                event_source_cls=event_source_cls,
+                max_event_size=None if max_message_size < 0 else max_message_size,
             ) as bridge_client,
             anyio.create_task_group() as task_group,
         ):
@@ -137,8 +137,6 @@ async def run_stdio_streamable_http_bridge(
                 record_error,
                 True,
             )
-    except MissingDependencyError:
-        raise
     except Exception as exc:  # noqa: BLE001
         error = exc
 
@@ -183,7 +181,7 @@ def run_bridge(
         return 0
 
 
-class _TokenProviderAuth(httpx.Auth):
+class _TokenProviderAuth(httpx2.Auth):
     """Resolve a bearer-style token per request and retry once on 401."""
 
     def __init__(self, token_provider: TokenProvider, *, header_name: str, token_prefix: str) -> None:
@@ -191,7 +189,7 @@ class _TokenProviderAuth(httpx.Auth):
         self._header_name = header_name
         self._token_prefix = token_prefix
 
-    async def async_auth_flow(self, request: httpx.Request) -> AsyncGenerator[httpx.Request, httpx.Response]:
+    async def async_auth_flow(self, request: httpx2.Request) -> AsyncGenerator[httpx2.Request, httpx2.Response]:
         request.headers[self._header_name] = await self._header_value()
         response = yield request
         if response.status_code == HTTP_401_UNAUTHORIZED:
@@ -217,23 +215,23 @@ class _StreamableHTTPBridgeClient:
         endpoint: str,
         *,
         headers: Mapping[str, str] | None,
-        auth: httpx.Auth | None,
-        transport: "httpx.AsyncBaseTransport | None" = None,
+        auth: httpx2.Auth | None,
+        transport: "httpx2.AsyncBaseTransport | None" = None,
         client_info: "Mapping[str, str] | None" = None,
         timeout: float,
         sse_read_timeout: float | None,
         stdout: ByteSendStream,
         stderr: Any,
-        event_source_cls: type[Any],
+        max_event_size: int | None,
     ) -> None:
         self._endpoint = endpoint
         self._stdout = stdout
         self._stderr = stderr
-        self._event_source_cls = event_source_cls
+        self._max_event_size = max_event_size
         self._client_info: dict[str, str] = dict(client_info or _DEFAULT_CLIENT_INFO)
-        self._client = httpx.AsyncClient(
+        self._client = httpx2.AsyncClient(
             headers=dict(headers or {}),
-            timeout=httpx.Timeout(timeout, read=sse_read_timeout),
+            timeout=httpx2.Timeout(timeout, read=sse_read_timeout),
             auth=auth,
             follow_redirects=True,
             transport=transport,
@@ -316,9 +314,9 @@ class _StreamableHTTPBridgeClient:
                         else:
                             msg = f"Unexpected Streamable HTTP content type: {content_type or '<empty>'}"
                             raise RuntimeError(msg)
-                except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                except (httpx2.ConnectError, httpx2.ConnectTimeout) as exc:
                     raise BridgeConnectionError(self._endpoint) from exc
-        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+        except (httpx2.ConnectError, httpx2.ConnectTimeout) as exc:
             raise BridgeConnectionError(self._endpoint) from exc
         finally:
             if request_id is not None:
@@ -350,14 +348,7 @@ class _StreamableHTTPBridgeClient:
         }
         params = message.get("params")
         if isinstance(params, dict):
-            name_field = {
-                "tools/call": "name",
-                "resources/read": "uri",
-                "prompts/get": "name",
-                "tasks/get": "taskId",
-                "tasks/update": "taskId",
-                "tasks/cancel": "taskId",
-            }.get(method)
+            name_field = MCP_NAME_FIELDS.get(method)
             if name_field is not None and isinstance(params.get(name_field), str):
                 headers[MCP_NAME_HEADER] = _encode_header_value(params[name_field])
             if method == "tools/call":
@@ -434,9 +425,8 @@ class _StreamableHTTPBridgeClient:
                 page += 1
             self._tool_headers = cache
 
-    async def _consume_sse_response(self, response: httpx.Response, *, expected_id: Any | None) -> None:
-        event_source = self._event_source_cls(response)
-        async for event in event_source.aiter_sse():
+    async def _consume_sse_response(self, response: httpx2.Response, *, expected_id: Any | None) -> None:
+        async for event in httpx2.EventSource(response, max_event_size=self._max_event_size):
             if not event.data:
                 continue
             payload = from_json(event.data)
@@ -464,14 +454,6 @@ class _StdoutByteSendStream(ByteSendStream):
 
     async def aclose(self) -> None:
         return None
-
-
-def _load_event_source() -> type[Any]:
-    try:
-        from httpx_sse import EventSource
-    except ImportError as exc:
-        raise MissingDependencyError(package="httpx-sse", extra="bridge") from exc
-    return EventSource
 
 
 async def _run_bridge_pump(

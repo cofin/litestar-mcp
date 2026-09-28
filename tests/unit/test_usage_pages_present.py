@@ -21,6 +21,7 @@ EXPECTED_PAGES = (
     "marking_routes.rst",
     "tools.rst",
     "resources.rst",
+    "skills.rst",
     "prompts.rst",
     "discovery.rst",
     "auth.rst",
