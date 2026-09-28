@@ -45,16 +45,19 @@ Recent Updates
         resolution, execution or stream allocation. Current task,
         subscription, cache and application-session settings remain available.
 
-    .. change:: make the A2A 1.0 and context contract explicit
-        :type: breaking
+    .. change:: fix nested tool schemas and harden subscriptions
+        :type: bugfix
 
-        Require A2A 1.0 version headers and method/model shapes, with no 0.3
-        conversion fallback. ``A2AConfig.context_builder`` now receives
-        ``(request, context)`` and supports synchronous or asynchronous
-        authorization without overwriting the returned tenant or state.
-        Extension activation must precede the first result or stream event.
-        Notifications are declined with HTTP 204 without executing handlers;
-        explicit null IDs remain correlated A2A requests.
+        Tool input schemas now hoist the ``$defs`` of msgspec Structs and
+        nested pydantic models to the schema root, so their ``$ref``\ s
+        resolve, and attrs classes are described by their fields. Tool
+        schemas are built once per handler instead of on every request. The
+        cross-worker subscription listener skips undecodable events and
+        resubscribes after a backend error instead of stopping silently, and
+        streams closed at shutdown receive their terminal response.
+        ``schema_dump`` caches encoder maps by content and returns JSON-safe
+        values for pydantic models. Unexpected JSON-RPC handler errors no
+        longer send the exception message to the client.
 
     .. change:: close streamed work and use native stdio lifespan
         :type: bugfix
@@ -98,6 +101,17 @@ Recent Updates
         ``A2A-Version`` header regardless of the configured context builder,
         reports ``scope["user"]`` objects that carry ``is_authenticated`` as
         such, and serves the agent card with ``ETag`` and ``Cache-Control``.
+        Only A2A 1.0 is accepted: requests must send ``A2A-Version: 1.0``
+        (or a ``1.0.x`` patch version) and use the 1.0 method names and
+        protobuf JSON shapes. ``A2AConfig.context_builder`` receives
+        ``(request, context)`` and may be synchronous or asynchronous.
+        Notifications are answered with HTTP 204 without running the handler,
+        while explicit null IDs still get a response. The card's JSONRPC
+        interface URL may carry a proxy or ``root_path`` prefix ahead of
+        ``A2AConfig.path``. An authenticated principal without an ``id``,
+        ``sub`` or ``username`` is refused unless a context builder supplies
+        the SDK user, so it never shares the anonymous task owner. Requires
+        a2a-sdk 1.1.4 or later.
 
     .. change:: stream progress on the requesting response
         :type: feature
@@ -123,7 +137,7 @@ Recent Updates
         (JSON-RPC, subscription streams, schema building, serialization,
         typing, exceptions); ``litestar_mcp.mcp`` holds the MCP plugin,
         configuration, routes, executor, registry, tasks, bridge, and CLI;
-        ``litestar_mcp.a2a`` is unchanged; ``litestar_mcp.utils`` keeps the
+        ``litestar_mcp.a2a`` holds the optional A2A adapter; ``litestar_mcp.utils`` keeps the
         decorators and signature helpers. Root imports are unchanged and
         ``litestar_mcp.A2AConfig`` / ``litestar_mcp.LitestarA2A`` resolve
         lazily without importing ``a2a-sdk`` at package import time. Deep

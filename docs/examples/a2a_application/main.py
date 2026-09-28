@@ -47,7 +47,6 @@ from a2a.types import (
     AgentInterface,
     AgentSkill,
     Artifact,
-    CancelTaskRequest,
     HTTPAuthSecurityScheme,
     Part,
     SecurityRequirement,
@@ -118,19 +117,15 @@ def resolve_owner(context: ServerCallContext) -> str:
 
 
 class WorkspaceTaskHandler(DefaultRequestHandler):
-    """Example-local authorization correction for A2A SDK 1.1.2.
+    """Report subscription to a finished task as ``UnsupportedOperationError``.
 
-    Its active registry bypasses scoped stores for cancel/subscribe and reports
-    terminal subscription as InvalidParamsError. Remove these overrides only
-    after an upstream fix passes the ownership and terminal-race regressions.
-    Globally unique task IDs and immutable ownership remain prerequisites.
+    A2A SDK 1.1.5 raises ``InvalidParamsError`` when a client subscribes to a
+    task in a terminal state, including one that finishes while the
+    subscription is being set up. A2A 1.0 specifies
+    ``UnsupportedOperationError``. Remove this override once the SDK reports
+    it directly. Globally unique task IDs and immutable ownership remain
+    prerequisites for the SDK's owner-scoped stores.
     """
-
-    async def on_cancel_task(self, params: CancelTaskRequest, context: ServerCallContext) -> Task | None:
-        validate_proto_required_fields(params)
-        if await self.task_store.get(params.id, context) is None:
-            raise TaskNotFoundError
-        return await super().on_cancel_task(params, context)
 
     async def on_subscribe_to_task(
         self, params: SubscribeToTaskRequest, context: ServerCallContext

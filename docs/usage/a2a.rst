@@ -22,10 +22,14 @@ The default RPC endpoint is ``/a2a`` and the card is served from
 from the OpenAPI schema unless ``A2AConfig.include_in_schema`` is set. Requests
 must send ``A2A-Version: 1.0``; valid ``1.0.x`` patch versions are also accepted.
 Missing, malformed, 0.3, and unsupported major/minor versions are rejected.
-Only the 1.0 method names and protobuf JSON shapes are accepted. The card
-must advertise an absolute JSONRPC interface URL for protocol ``1.0`` whose
-path matches ``A2AConfig.path``. Cards should describe the actual supported
-input/output modes, :class:`a2a.types.AgentSkill` entries and capabilities.
+Only the 1.0 method names and protobuf JSON shapes are accepted. Notifications
+(requests without an ``id``) are answered with HTTP 204 before the version is
+checked, and never reach the handler. The card must advertise an absolute
+JSONRPC interface URL for protocol ``1.0`` (or a ``1.0.x`` patch version)
+whose path ends with ``A2AConfig.path``, so a card may carry the public URL of
+an app served under a proxy prefix or ASGI ``root_path``. Cards should describe
+the actual supported input/output modes, :class:`a2a.types.AgentSkill` entries
+and capabilities. The ``a2a`` extra requires a2a-sdk 1.1.4 or later.
 
 .. note::
 
@@ -82,8 +86,10 @@ Authentication and context
 Authenticate the RPC route with Litestar middleware and authorize access with
 ``A2AConfig.guards`` or ``A2AConfig.route_opt``. The public card route declares
 ``exclude_from_auth``; authentication middleware must honor that opt when
-public discovery is wanted.
-Card metadata does not enforce authorization.
+public discovery is wanted. ``A2AConfig.guards`` apply only to the RPC route,
+but application-level guards (``Litestar(guards=[...])``) also apply to the
+card route, so a deny-by-default app must let the card path through in those
+guards. Card metadata does not enforce authorization.
 
 ``context_builder(request, context)`` accepts a Litestar request and a prepared
 SDK ``ServerCallContext``. It may return the context synchronously or await
@@ -93,23 +99,26 @@ requested tenant and extensions, plus ``state["auth"]``, ``state["headers"]``,
 The returned context is authoritative: the adapter does not overwrite its
 authorized tenant or state with untrusted request parameters.
 
-The prepared user's ``user_name`` is taken from the first of ``id``, ``sub``,
-``username`` or ``display_name`` found on the Litestar principal. A principal
-that exposes none of them maps to the empty owner key the SDK uses for
-anonymous callers, so such applications must supply a ``context_builder``
-that sets the user themselves; otherwise the SDK's owner-scoped stores treat
-every such caller as one owner.
+The prepared user's ``user_name`` is taken from the first of ``id``, ``sub``
+or ``username`` found on the Litestar principal. An anonymous caller has the
+empty owner key. An authenticated principal that exposes none of those
+attributes would share that key with every anonymous caller in the SDK's
+owner-scoped stores, so its requests fail with an internal error unless a
+``context_builder`` sets ``context.user`` to an SDK ``User`` with a unique
+``user_name``.
 
 Resolve tenant membership from authenticated application identity. A tenant
 parameter, task ID or context ID alone grants no access. Enforce the same
 principal/tenant boundary on task get/list/continue/cancel/subscribe and push
-configuration operations. A scoped store alone is insufficient with SDK
-``DefaultRequestHandler``: its live execution registry can bypass store lookups
-for cancellation and subscription. The authenticated example in
-``docs/examples/a2a_application/main.py`` uses a narrow handler authorization
-boundary around these operations and scopes request services inside the
-executor. That example's identity and callback sender are demonstrations;
-production applications supply real identity validation and delivery policy.
+configuration operations. From a2a-sdk 1.1.4, the SDK's
+``DefaultRequestHandler`` checks its owner-scoped task store before resolving
+a live task for cancellation or subscription, so a scoped store covers those
+operations as well. The authenticated example in
+``docs/examples/a2a_application/main.py`` scopes its stores by workspace and
+principal, scopes request services inside the executor, and reports
+subscription to a finished task as ``UnsupportedOperationError``. That
+example's identity and callback sender are demonstrations; production
+applications supply real identity validation and delivery policy.
 
 Resource lifetime and streaming
 ===============================

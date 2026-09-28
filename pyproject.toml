@@ -47,7 +47,7 @@ Issue = "https://github.com/cofin/litestar-mcp/issues/"
 Source = "https://github.com/cofin/litestar-mcp"
 
 [project.optional-dependencies]
-a2a = ["a2a-sdk>=1.1.2", "protobuf>=5.29.5"]
+a2a = ["a2a-sdk>=1.1.4", "protobuf>=5.29.5"]
 
 [project.entry-points."pygments.styles"]
 litestar-mcp-dark = "tools.sphinx_ext.pygments_styles:LitestarMcpDarkStyle"
@@ -57,10 +57,8 @@ litestar-mcp-light = "tools.sphinx_ext.pygments_styles:LitestarMcpLightStyle"
 packages = ["litestar_mcp"]
 
 [dependency-groups]
-adk = ["google-adk[mcp]>=2"]
 build = ["bump-my-version"]
 dev = [
-    { include-group = "adk" },
     { include-group = "build" },
     { include-group = "lint" },
     { include-group = "doc" },
@@ -280,7 +278,6 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
     "unit: marks tests as unit tests",
-    "adk: marks optional Google ADK compatibility tests",
 ]
 minversion = "7.0"
 testpaths = ["tests", "docs/examples"]
