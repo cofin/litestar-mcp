@@ -55,7 +55,7 @@ HEADER_MISMATCH = -32020
 MISSING_REQUIRED_CLIENT_CAPABILITY = -32021
 UNSUPPORTED_PROTOCOL_VERSION = -32022
 
-_NAME_FIELDS = {
+MCP_NAME_FIELDS = {
     "tools/call": "name",
     "resources/read": "uri",
     "prompts/get": "name",
@@ -185,7 +185,7 @@ def _request_metadata_error(
             },
         )
 
-    name_field = _NAME_FIELDS.get(rpc_request.method)
+    name_field = MCP_NAME_FIELDS.get(rpc_request.method)
     if name_field is not None:
         body_name = params.get(name_field)
         header_name = request.headers.get(MCP_NAME_HEADER)

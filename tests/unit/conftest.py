@@ -8,6 +8,7 @@ from litestar import Litestar, get
 from litestar.testing import AsyncTestClient, TestClient
 
 from litestar_mcp import LitestarMCP
+from litestar_mcp.mcp.routes import MCP_NAME_FIELDS
 
 if TYPE_CHECKING:
     from litestar.handlers import BaseRouteHandler
@@ -15,16 +16,6 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 PROTOCOL_VERSION = "2026-07-28"
-NAME_FIELDS = {
-    "tools/call": "name",
-    "resources/read": "uri",
-    "prompts/get": "name",
-    "tasks/get": "taskId",
-    "tasks/update": "taskId",
-    "tasks/cancel": "taskId",
-    "skills/get": "uri",
-    "resources/directory/read": "uri",
-}
 
 
 def mcp_envelope(
@@ -57,7 +48,7 @@ def mcp_envelope(
         "MCP-Protocol-Version": PROTOCOL_VERSION,
         "Mcp-Method": method,
     }
-    name_field = NAME_FIELDS.get(method)
+    name_field = MCP_NAME_FIELDS.get(method)
     if name_field is not None and name_field in request_params:
         request_headers["Mcp-Name"] = str(request_params[name_field])
     body = {"jsonrpc": "2.0", "id": msg_id, "method": method, "params": request_params}

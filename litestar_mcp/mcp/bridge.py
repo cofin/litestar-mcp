@@ -23,6 +23,7 @@ from litestar_mcp.core.jsonrpc import JSONRPCError, error_response
 from litestar_mcp.core.serialization import from_json, to_json
 from litestar_mcp.mcp.routes import (
     MCP_METHOD_HEADER,
+    MCP_NAME_FIELDS,
     MCP_NAME_HEADER,
     MCP_PROTOCOL_VERSION,
     MCP_PROTOCOL_VERSION_HEADER,
@@ -350,16 +351,7 @@ class _StreamableHTTPBridgeClient:
         }
         params = message.get("params")
         if isinstance(params, dict):
-            name_field = {
-                "tools/call": "name",
-                "resources/read": "uri",
-                "prompts/get": "name",
-                "tasks/get": "taskId",
-                "tasks/update": "taskId",
-                "tasks/cancel": "taskId",
-                "skills/get": "uri",
-                "resources/directory/read": "uri",
-            }.get(method)
+            name_field = MCP_NAME_FIELDS.get(method)
             if name_field is not None and isinstance(params.get(name_field), str):
                 headers[MCP_NAME_HEADER] = _encode_header_value(params[name_field])
             if method == "tools/call":
