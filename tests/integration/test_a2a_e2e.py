@@ -433,7 +433,7 @@ async def test_mcp_and_a2a_coexist_in_both_plugin_orders(order: str) -> None:
 
 
 @pytest.mark.parametrize("order", ["mcp_first", "a2a_first"])
-def test_mcp_route_does_not_collide_with_a2a_path(order: str) -> None:
+def test_mcp_route_on_the_a2a_path_is_rejected_in_either_order(order: str) -> None:
     plugins = _plugin_orders(make_card(), RecordingHandler(), LitestarMCP(MCPConfig(base_path="/a2a")))[order]
 
     if order == "mcp_first":

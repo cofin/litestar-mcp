@@ -97,7 +97,7 @@ class _LitestarUser(User):
 
     @property
     def user_name(self) -> "str":
-        for name in ("id", "sub", "username", "display_name"):
+        for name in ("id", "sub", "username"):
             value = self.value.get(name) if isinstance(self.value, dict) else getattr(self.value, name, None)
             if value is not None:
                 return str(value)
@@ -119,14 +119,31 @@ def _default_context_builder(request: "Request[Any, Any, Any]") -> "ServerCallCo
     )
 
 
+def _is_version_1_0(version: "str") -> "bool":
+    match = _VERSION_PATTERN.fullmatch(version)
+    return match is not None and match.group(1, 2) == ("1", "0")
+
+
 def _validate_card(card: "AgentCard", path: "str") -> "None":
+    """Require an absolute JSONRPC 1.0 interface whose URL path ends with the A2A path.
+
+    A suffix match allows the app to be served under a proxy prefix or ASGI
+    ``root_path``, where the public URL is longer than the route path.
+    """
+    route_path = path.rstrip("/")
     for interface in card.supported_interfaces:
-        if interface.protocol_version == "1.0" and interface.protocol_binding == "JSONRPC":
+        if _is_version_1_0(interface.protocol_version) and interface.protocol_binding == "JSONRPC":
             url = urlparse(interface.url)
-            if url.scheme and url.netloc and url.path.rstrip("/") == path.rstrip("/"):
+            if url.scheme and url.netloc and url.path.rstrip("/").endswith(route_path):
                 return
     msg = "AgentCard must advertise an absolute JSONRPC supported interface for protocol 1.0 matching the A2A path"
     raise ValueError(msg)
+
+
+def _etag_matches(if_none_match: "str", etag: "str") -> "bool":
+    """Apply RFC 9110 weak comparison of ``If-None-Match`` against ``etag``."""
+    candidates = [candidate.strip() for candidate in if_none_match.split(",")]
+    return "*" in candidates or etag in (candidate.removeprefix("W/") for candidate in candidates)
 
 
 class _JsonRpcTransport:
@@ -178,6 +195,13 @@ class _JsonRpcTransport:
         if self.config.context_builder is not None:
             result = self.config.context_builder(request, context)
             context = await result if isawaitable(result) else result
+        user = context.user
+        if isinstance(user, _LitestarUser) and user.is_authenticated and not user.user_name:
+            msg = (
+                "The authenticated principal has no id, sub or username, so it would share the anonymous "
+                "task owner. Set context.user in an A2AConfig.context_builder."
+            )
+            raise RuntimeError(msg)
         self._extension_headers(request, context)
         return context
 
@@ -207,40 +231,64 @@ class _JsonRpcTransport:
 
     @staticmethod
     def _validate_version(request: "Request[Any, Any, Any]") -> "None":
-        actual = request.headers.get(constants.VERSION_HEADER, "").strip(" \t") or constants.PROTOCOL_VERSION_0_3
-        match = _VERSION_PATTERN.fullmatch(actual)
-        if match is None or match.group(1, 2) != ("1", "0"):
+        actual = request.headers.get(constants.VERSION_HEADER, "").strip(" \t")
+        if not actual:
+            raise VersionNotSupportedError(
+                message=f"The {constants.VERSION_HEADER} header is required. Expected version '1.0'."
+            )
+        if not _is_version_1_0(actual):
             raise VersionNotSupportedError(message=f"A2A version '{actual}' is not supported. Expected version '1.0'.")
+
+    async def _read_envelope(  # noqa: PLR0911
+        self, request: "Request[Any, Any, Any]"
+    ) -> "tuple[Any, str, dict[str, Any]] | dict[str, Any]":
+        """Validate the JSON-RPC envelope.
+
+        Returns:
+            ``(id, method, params)``, where ``id`` is ``_MISSING_ID`` for a
+            notification, or the JSON-RPC error response to send instead.
+        """
+        if not await request.body():
+            return self._error(None, JSONParseError(message="Request body is empty"))
+        try:
+            body = await request.json()
+        except (ValueError, SerializationException) as exc:
+            return self._error(None, JSONParseError(message=str(exc)))
+        if not isinstance(body, dict):
+            return self._error(None, InvalidRequestError())
+        candidate_id = body.get("id", _MISSING_ID)
+        request_id = None
+        if candidate_id is not _MISSING_ID:
+            if isinstance(candidate_id, bool) or not isinstance(candidate_id, str | int | float | type(None)):
+                return self._error(None, InvalidRequestError(message="Invalid request ID"))
+            if isinstance(candidate_id, float) and not math.isfinite(candidate_id):
+                return self._error(None, InvalidRequestError(message="Invalid request ID"))
+            request_id = candidate_id
+        if body.get("jsonrpc") != "2.0":
+            return self._error(
+                request_id, InvalidRequestError(message="Invalid request: 'jsonrpc' must be exactly '2.0'")
+            )
+        method = body.get("method")
+        if not isinstance(method, str) or not method:
+            return self._error(request_id, InvalidRequestError(message="Method is required"))
+        raw_params = body.get("params", {})
+        if isinstance(raw_params, list):
+            return self._error(request_id, InvalidParamsError(message="Parameters must be an object"))
+        if not isinstance(raw_params, dict):
+            return self._error(request_id, InvalidRequestError(message="Parameters must be an object"))
+        return candidate_id, method, raw_params
 
     async def handle(self, request: "Request[Any, Any, Any]") -> "dict[str, Any] | Response[Any]":  # noqa: PLR0911
         request_id: str | int | float | None = None
         context: ServerCallContext | None = None
         try:
-            try:
-                body = await request.json()
-            except (ValueError, SerializationException) as exc:
-                return self._error(None, JSONParseError(message=str(exc)))
-            if not isinstance(body, dict):
-                return self._error(None, InvalidRequestError())
-            candidate_id = body.get("id", _MISSING_ID)
-            if candidate_id is not _MISSING_ID:
-                if isinstance(candidate_id, bool) or not isinstance(candidate_id, str | int | float | type(None)):
-                    return self._error(None, InvalidRequestError(message="Invalid request ID"))
-                if isinstance(candidate_id, float) and not math.isfinite(candidate_id):
-                    return self._error(None, InvalidRequestError(message="Invalid request ID"))
-                request_id = candidate_id
-            if body.get("jsonrpc") != "2.0":
-                return self._error(
-                    request_id, InvalidRequestError(message="Invalid request: 'jsonrpc' must be exactly '2.0'")
-                )
-            method = body.get("method")
-            if not isinstance(method, str) or not method:
-                return self._error(request_id, InvalidRequestError(message="Method is required"))
-            raw_params = body.get("params", {})
-            if not isinstance(raw_params, dict):
-                return self._error(request_id, InvalidRequestError(message="Parameters must be an object"))
+            envelope = await self._read_envelope(request)
+            if isinstance(envelope, dict):
+                return envelope
+            candidate_id, method, raw_params = envelope
             if candidate_id is _MISSING_ID:
                 return Response(content=None, status_code=HTTP_204_NO_CONTENT)
+            request_id = candidate_id
             self._validate_version(request)
             model = self._models.get(method)
             if model is None:
@@ -279,9 +327,13 @@ class _JsonRpcTransport:
                 raise TaskNotFoundError
             return _message_to_dict(result)
         if method == "ListTasks":
-            return _message_to_dict(
+            listed = _message_to_dict(
                 await self.handler.on_list_tasks(params, context), always_print_fields_with_no_presence=True
             )
+            if not params.include_artifacts:
+                for task in listed.get("tasks", []):
+                    task.pop("artifacts", None)
+            return listed
         if method == "CancelTask":
             result = await self.handler.on_cancel_task(params, context)
             if result is None:
@@ -405,7 +457,7 @@ class LitestarA2A(InitPluginProtocol):
             opt={"exclude_from_auth": True, "exclude_from_csrf": True},
         )
         async def agent_card(request: "Request[Any, Any, Any]") -> "Response[bytes]":
-            if request.headers.get("if-none-match") == card_etag:
+            if _etag_matches(request.headers.get("if-none-match", ""), card_etag):
                 return Response(content=b"", status_code=HTTP_304_NOT_MODIFIED, headers=card_headers)
             return Response(content=card_body, media_type=MediaType.JSON, headers=card_headers)
 
