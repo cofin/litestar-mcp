@@ -197,10 +197,7 @@ allocation. Progress streams apply bounded backpressure; slow subscription
 consumers are completed and disconnected. Shared task Stores persist records
 but do not distribute task execution or local input/cancel queues.
 
-Google ADK 2.8.0 with MCP SDK 1.29.1 still sends the initialize-era lifecycle
-and cannot consume this endpoint. ADK `RemoteA2aAgent` interoperability has
-not been verified; local ADK agents and the tested official A2A SDK client are
-separate integration paths. See the [0.14 migration guide](https://cofin.github.io/litestar-mcp/latest/usage/migration_0_14.html)
+See the [0.14 migration guide](https://cofin.github.io/litestar-mcp/latest/usage/migration_0_14.html)
 for removed aliases and configuration.
 
 **Built-in Resources:**

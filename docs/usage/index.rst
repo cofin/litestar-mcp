@@ -115,12 +115,6 @@ examples drawn from :mod:`docs.examples`.
         Move initialize-era clients to MCP 2026-07-28 request metadata,
         extensions, subscriptions, and MRTR.
 
-    .. grid-item-card:: ADK Integration
-        :link: adk
-        :link-type: doc
-
-        Connect Google ADK clients to your remote Litestar MCP server.
-
     .. grid-item-card:: A2A Integration
         :link: a2a
         :link-type: doc
@@ -147,6 +141,5 @@ examples drawn from :mod:`docs.examples`.
     uvx_guide
     deployment
     migration_0_12
-    adk
     a2a
     migration_0_14

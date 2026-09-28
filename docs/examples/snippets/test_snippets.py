@@ -14,10 +14,9 @@ from litestar import Litestar
 import docs.examples.snippets as snippets_pkg
 from litestar_mcp import MCPConfig
 
-CLIENT_ONLY_SNIPPET_MODULES = {"adk_snippets"}
 CONFIG_SNIPPET_MODULES = {"configuration_stateless"}
 HANDLER_ONLY_SNIPPET_MODULES = {"tool_explicit_input_schema", "tool_task_input_before_start"}
-NON_APP_SNIPPET_MODULES = CLIENT_ONLY_SNIPPET_MODULES | CONFIG_SNIPPET_MODULES | HANDLER_ONLY_SNIPPET_MODULES
+NON_APP_SNIPPET_MODULES = CONFIG_SNIPPET_MODULES | HANDLER_ONLY_SNIPPET_MODULES
 
 SNIPPET_MODULES = [
     name
@@ -41,9 +40,9 @@ def test_snippet_build_returns_litestar(module_name: "str") -> "None":
     assert isinstance(app, Litestar)
 
 
-@pytest.mark.parametrize("module_name", sorted(CLIENT_ONLY_SNIPPET_MODULES | HANDLER_ONLY_SNIPPET_MODULES))
+@pytest.mark.parametrize("module_name", sorted(HANDLER_ONLY_SNIPPET_MODULES))
 def test_non_app_snippet_imports(module_name: "str") -> "None":
-    """Import client-only and handler-only snippets that do not define a Litestar application."""
+    """Import handler-only snippets that do not define a Litestar application."""
     importlib.import_module(f"docs.examples.snippets.{module_name}")
 
 
