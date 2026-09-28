@@ -119,9 +119,9 @@ class JSONRPCRouter:
             return _error_response(request.id, exc.error)
         except Exception as exc:
             # Blanket catch: any uncaught handler exception becomes
-            # INTERNAL_ERROR. Log with traceback so production triage
-            # has more than the wire payload to work from — silent
-            # -32603 in callers is otherwise undebugable.
+            # INTERNAL_ERROR. The message stays in the server log; the wire
+            # carries only the exception type, since the text can hold
+            # connection strings, paths or other internal detail.
             _logger.exception("JSON-RPC handler %r raised", request.method)
             if request.is_notification:
                 return None
@@ -130,7 +130,7 @@ class JSONRPCRouter:
                 JSONRPCError(
                     code=INTERNAL_ERROR,
                     message="Internal error",
-                    data={"error": type(exc).__name__, "detail": str(exc)},
+                    data={"error": type(exc).__name__},
                 ),
             )
         else:

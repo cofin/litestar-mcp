@@ -67,6 +67,9 @@ async def test_stream_limit_and_graceful_shutdown() -> None:
         await manager.open(2, {})
 
     await manager.close_all()
+    completion = await stream.__anext__()
+    assert completion["id"] == 1
+    assert completion["result"]["resultType"] == "complete"
     with pytest.raises(StopAsyncIteration):
         await stream.__anext__()
     await manager.disconnect(stream_id)
@@ -133,3 +136,51 @@ async def test_slow_subscriber_receives_completion_before_close() -> None:
         "result": {"resultType": "complete", "_meta": {"io.modelcontextprotocol/subscriptionId": "sub-1"}},
     }
     assert "method" not in messages[-1]
+
+
+class _FlakyChannels:
+    """Channels double whose first subscription fails and whose events can be injected."""
+
+    def __init__(self) -> None:
+        self.attempts = 0
+        self.queue: asyncio.Queue[bytes] = asyncio.Queue()
+
+    @asynccontextmanager
+    async def start_subscription(self, _channel: str) -> "AsyncIterator[Any]":
+        self.attempts += 1
+        if self.attempts == 1:
+            msg = "broker unavailable"
+            raise ConnectionError(msg)
+        queue = self.queue
+
+        class Subscriber:
+            async def iter_events(self) -> "AsyncGenerator[bytes, None]":
+                while True:
+                    yield await queue.get()
+
+        yield Subscriber()
+
+    def publish(self, data: dict[str, Any], *, channels: str) -> None:
+        from litestar.serialization import encode_json
+
+        self.queue.put_nowait(encode_json(data))
+
+
+@pytest.mark.asyncio
+async def test_channels_broker_survives_backend_errors_and_undecodable_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("litestar_mcp.core.sse._BROKER_RETRY_INITIAL", 0)
+    channels = _FlakyChannels()
+    manager = SubscriptionManager(channels=channels)
+    manager.start()
+    _stream_id, stream = await manager.open("sub-1", {"toolsListChanged": True})
+    await stream.__anext__()
+
+    channels.queue.put_nowait(b"{not json")
+    await manager.publish("notifications/tools/list_changed", {})
+    notification = await asyncio.wait_for(stream.__anext__(), timeout=1)
+
+    assert notification["method"] == "notifications/tools/list_changed"
+    assert channels.attempts == 2
+    await manager.close_all()

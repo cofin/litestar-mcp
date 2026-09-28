@@ -20,7 +20,7 @@ from litestar_mcp.core.jsonrpc import (
     JSONRPCError,
     JSONRPCErrorException,
 )
-from litestar_mcp.core.schema_builder import generate_schema_for_handler
+from litestar_mcp.core.schema_builder import cached_schema_for_handler
 from litestar_mcp.mcp.content import (
     MCPBlobResource,
     MCPInputRequiredResult,
@@ -546,7 +546,9 @@ class MCPHandlerService:
                 "description": render_description(
                     handler, fn, kind="tool", fallback_name=name, opt_keys=self.config.opt_keys
                 ),
-                "inputSchema": metadata.get("input_schema", generate_schema_for_handler(handler)),
+                "inputSchema": metadata["input_schema"]
+                if "input_schema" in metadata
+                else cached_schema_for_handler(handler),
             }
             if "output_schema" in metadata:
                 tool_entry["outputSchema"] = metadata["output_schema"]

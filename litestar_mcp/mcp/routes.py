@@ -30,7 +30,7 @@ from litestar_mcp.core.jsonrpc import (
     error_response,
     parse_request,
 )
-from litestar_mcp.core.schema_builder import generate_schema_for_handler, iter_mcp_header_fields
+from litestar_mcp.core.schema_builder import cached_schema_for_handler, iter_mcp_header_fields
 from litestar_mcp.core.serialization import from_json, to_json
 from litestar_mcp.mcp.config import MCPConfig  # noqa: TC001
 from litestar_mcp.mcp.registry import PromptRegistration, Registry  # noqa: TC001
@@ -214,7 +214,7 @@ def _request_metadata_error(
     arguments = params.get("arguments")
     if not isinstance(arguments, dict):
         return None
-    for path, custom_name, _property_schema in iter_mcp_header_fields(generate_schema_for_handler(handler)):
+    for path, custom_name, _property_schema in iter_mcp_header_fields(cached_schema_for_handler(handler)):
         value: Any = arguments
         present = True
         for part in path:

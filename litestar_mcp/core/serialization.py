@@ -1,7 +1,7 @@
 """Cached schema serializer delegating to Litestar's native encoder pipeline.
 
 Type-keyed pipeline: the first ``schema_dump`` call for a given
-``(type, exclude_unset, id(type_encoders))`` triple builds a dispatch function
+``(type, exclude_unset, type_encoders)`` triple builds a dispatch function
 once and caches it. Subsequent calls reuse the cached
 :class:`SchemaSerializer` instead of rebuilding per value.
 
@@ -23,10 +23,13 @@ msgspec's encoder unconditionally filters ``UNSET`` values at the wire level.
 ``exclude_unset=False`` is accepted for back-compat but is effectively a
 no-op for ``Struct`` types — the wire bytes never carry ``UNSET``. Pydantic's
 ``model_dump(exclude_unset=...)`` semantics ARE honored before encoding.
+
+Encoder maps are cached by their contents, so a map whose keys or values are
+unhashable builds a fresh, uncached pipeline on each call.
 """
 
 from threading import RLock
-from typing import TYPE_CHECKING, Any, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast, overload
 
 import msgspec
 from litestar.serialization import decode_json as from_json
@@ -51,9 +54,10 @@ __all__ = (
     "to_json",
 )
 
+_SerializerKey: TypeAlias = "tuple[type[Any] | None, bool, frozenset[tuple[Any, Any]] | None]"
 _PRIMITIVE_TYPES: "tuple[type[Any], ...]" = (str, bytes, int, float, bool)
 _SERIALIZER_LOCK: "RLock" = RLock()
-_SCHEMA_SERIALIZERS: "dict[tuple[type[Any] | None, bool, int | None], SchemaSerializer]" = {}
+_SCHEMA_SERIALIZERS: "dict[_SerializerKey, SchemaSerializer]" = {}
 
 
 @overload
@@ -140,16 +144,17 @@ def serialize_collection(
         A list where each non-primitive item has been dumped.
     """
     serialized: list[Any] = []
-    local_cache: dict[tuple[type[Any] | None, bool, int | None], SchemaSerializer] = {}
+    local_cache: dict[_SerializerKey, SchemaSerializer] = {}
     for item in items:
         if isinstance(item, _PRIMITIVE_TYPES) or item is None or isinstance(item, dict):
             serialized.append(item)
             continue
         key = _make_serializer_key(item, exclude_unset, type_encoders)
-        pipeline = local_cache.get(key)
+        pipeline = local_cache.get(key) if key is not None else None
         if pipeline is None:
             pipeline = get_collection_serializer(item, exclude_unset=exclude_unset, type_encoders=type_encoders)
-            local_cache[key] = pipeline
+            if key is not None:
+                local_cache[key] = pipeline
         serialized.append(pipeline.dump_one(item))
     return serialized
 
@@ -162,7 +167,7 @@ def get_collection_serializer(
 ) -> "SchemaSerializer":
     """Return (and cache) a :class:`SchemaSerializer` for ``sample``'s type.
 
-    The cache key is ``(type(sample), exclude_unset, id(type_encoders))`` —
+    The cache key is ``(type(sample), exclude_unset, type_encoders items)`` —
     ``dict`` and ``None`` share a ``(None, ...)`` type component so pass-through
     inputs don't bloat the cache. Distinct encoder maps cache separately.
 
@@ -179,6 +184,8 @@ def get_collection_serializer(
         A cached pipeline that emits JSON-friendly data for each item.
     """
     key = _make_serializer_key(sample, exclude_unset, type_encoders)
+    if key is None:
+        return SchemaSerializer(None, _build_dump_function(sample, exclude_unset, type_encoders))
     with _SERIALIZER_LOCK:
         pipeline = _SCHEMA_SERIALIZERS.get(key)
         if pipeline is not None:
@@ -190,27 +197,28 @@ def get_collection_serializer(
 
 
 class SchemaSerializer:
-    """Dispatch wrapper cached per ``(type, exclude_unset, encoder_map_id)``."""
+    """Dispatch wrapper cached per ``(type, exclude_unset, encoder map)``."""
 
     __slots__ = ("_dump", "_key")
 
     def __init__(
         self,
-        key: "tuple[type[Any] | None, bool, int | None]",
+        key: "_SerializerKey | None",
         dump: "Callable[[Any], Any]",
     ) -> "None":
         """Initialize the wrapper.
 
         Args:
-            key: ``(type, exclude_unset, encoder_map_id)`` cache key.
+            key: ``(type, exclude_unset, encoder map)`` cache key, or ``None``
+                for an uncached pipeline.
             dump: Pre-built dumper closure for items of that type.
         """
         self._key = key
         self._dump = dump
 
     @property
-    def key(self) -> "tuple[type[Any] | None, bool, int | None]":
-        """The cache key this pipeline was built for."""
+    def key(self) -> "_SerializerKey | None":
+        """The cache key this pipeline was built for, or ``None`` if uncached."""
         return self._key
 
     def dump_one(self, item: "Any") -> "Any":
@@ -240,21 +248,20 @@ def _dump_identity_dict(value: "Any") -> "dict[str, Any]":
     return cast("dict[str, Any]", value)
 
 
-def _encoder_map_id(type_encoders: "Mapping[Any, Callable[[Any], Any]] | None") -> "int | None":
-    """Return a stable-for-the-map-lifetime key for the encoder map, or None."""
-    if not type_encoders:
-        return None
-    return id(type_encoders)
-
-
 def _make_serializer_key(
     sample: "Any",
     exclude_unset: "bool",
     type_encoders: "Mapping[Any, Callable[[Any], Any]] | None",
-) -> "tuple[type[Any] | None, bool, int | None]":
-    if sample is None or isinstance(sample, dict):
-        return (None, exclude_unset, _encoder_map_id(type_encoders))
-    return (type(sample), exclude_unset, _encoder_map_id(type_encoders))
+) -> "_SerializerKey | None":
+    """Return the cache key, or ``None`` when the encoder map is not hashable."""
+    encoders_key: frozenset[tuple[Any, Any]] | None = None
+    if type_encoders:
+        try:
+            encoders_key = frozenset(type_encoders.items())
+        except TypeError:
+            return None
+    sample_type = None if sample is None or isinstance(sample, dict) else type(sample)
+    return (sample_type, exclude_unset, encoders_key)
 
 
 def _build_dump_function(
@@ -279,7 +286,7 @@ def _build_dump_function(
             preserving — pre-filter via model_dump before JSON roundtrip so
             the encoder sees a plain dict.
             """
-            return value.model_dump(exclude_unset=exclude_unset)
+            return msgspec.json.decode(encoder.encode(value.model_dump(exclude_unset=exclude_unset)))
 
         return _dump_pydantic
 
