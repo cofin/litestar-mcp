@@ -2034,6 +2034,7 @@ dependencies = [
     { name = "anyio" },
     { name = "httpx" },
     { name = "litestar" },
+    { name = "pyyaml" },
     { name = "typing-extensions" },
 ]
 
@@ -2175,6 +2176,7 @@ requires-dist = [
     { name = "httpx-sse", marker = "extra == 'bridge'", specifier = ">=0.4.0" },
     { name = "litestar", specifier = ">=2.23.0" },
     { name = "protobuf", marker = "extra == 'a2a'", specifier = ">=5.29.5" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "typing-extensions", specifier = ">=4.0.0" },
 ]
 provides-extras = ["a2a", "bridge"]
