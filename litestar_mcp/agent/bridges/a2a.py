@@ -1,35 +1,35 @@
 """A2A 1.0 protocol bridge for Agent and AgentGroup specifications."""
 
-import importlib.util
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
-from a2a.server.agent_execution import AgentExecutor, RequestContext
-from a2a.server.events import EventQueue
-from a2a.server.request_handlers import DefaultRequestHandler
-from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import (
-    AgentCapabilities,
-    AgentCard,
-    AgentInterface,
-    AgentSkill,
-    Artifact,
-    Part,
-    Task,
-    TaskArtifactUpdateEvent,
-    TaskState,
-    TaskStatus,
-    TaskStatusUpdateEvent,
-)
+from litestar_mcp.core.exceptions import MissingDependencyError
+
+try:
+    from a2a.server.agent_execution import AgentExecutor, RequestContext
+    from a2a.server.events import EventQueue
+    from a2a.server.request_handlers import DefaultRequestHandler
+    from a2a.server.tasks import InMemoryTaskStore
+    from a2a.types import (
+        AgentCapabilities,
+        AgentCard,
+        AgentInterface,
+        AgentSkill,
+        Artifact,
+        Part,
+        Task,
+        TaskArtifactUpdateEvent,
+        TaskState,
+        TaskStatus,
+        TaskStatusUpdateEvent,
+    )
+except ImportError as exc:  # pragma: no cover
+    raise MissingDependencyError(package="a2a-sdk", extra="a2a") from exc
 
 from litestar_mcp.a2a import A2AConfig, LitestarA2A
 from litestar_mcp.agent.runtime import AgentRuntime, TurnRequest
 from litestar_mcp.agent.spec import Agent, AgentGroup
 from litestar_mcp.core.context import ToolContext
-from litestar_mcp.core.exceptions import MissingDependencyError
-
-A2A_INSTALLED: bool = importlib.util.find_spec("a2a") is not None
-_missing_a2a_exc: ImportError | None = None
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -78,9 +78,6 @@ def agent_to_a2a(
     Returns:
         Configured LitestarA2A plugin instance.
     """
-    if _missing_a2a_exc is not None:
-        raise MissingDependencyError(package="a2a-sdk", extra="a2a") from _missing_a2a_exc
-
     effective_runtime = runtime if runtime is not None else AgentRuntime(target=agent_or_group)
     effective_resolver = owner_resolver or _default_owner_resolver
     effective_task_store = task_store or InMemoryTaskStore(owner_resolver=effective_resolver)

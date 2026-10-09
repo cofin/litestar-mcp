@@ -1,5 +1,7 @@
 """Unit tests for A2A protocol bridge."""
 
+import importlib
+import sys
 from typing import Any, cast
 from unittest.mock import AsyncMock
 
@@ -29,14 +31,12 @@ def test_agent_to_a2a_creates_plugin() -> None:
 
 
 def test_agent_to_a2a_missing_dependency(monkeypatch: pytest.MonkeyPatch) -> None:
-    """agent_to_a2a raises MissingDependencyError when a2a package is unavailable."""
-    from litestar_mcp.agent.bridges import a2a as a2a_mod
+    """Importing the A2A bridge raises MissingDependencyError when the a2a SDK is unavailable."""
+    monkeypatch.delitem(sys.modules, "litestar_mcp.agent.bridges.a2a", raising=False)
+    monkeypatch.setitem(sys.modules, "a2a.server.agent_execution", None)
 
-    monkeypatch.setattr(a2a_mod, "_missing_a2a_exc", ImportError("No module named a2a"))
-    agent = Agent(name="test_agent")
-    with pytest.raises(MissingDependencyError) as exc_info:
-        agent_to_a2a(agent, base_url="https://api.example.com")
-    assert exc_info.value.package == "a2a-sdk"
+    with pytest.raises(MissingDependencyError, match="a2a-sdk"):
+        importlib.import_module("litestar_mcp.agent.bridges.a2a")
 
 
 @pytest.mark.anyio
