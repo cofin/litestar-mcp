@@ -12,9 +12,6 @@ resolution-markers = [
     "python_full_version < '3.11'",
 ]
 
-[manifest]
-constraints = [{ name = "multidict", specifier = "<7.1" }]
-
 [[package]]
 name = "a2a-sdk"
 version = "1.2.2"

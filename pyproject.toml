@@ -112,9 +112,6 @@ test = [
     "tomli>=2.4.1",
 ]
 
-[tool.uv]
-constraint-dependencies = ["multidict<7.1"]
-
 [tool.bumpversion]
 allow_dirty = true
 commit = false
