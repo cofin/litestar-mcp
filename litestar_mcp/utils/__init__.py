@@ -390,6 +390,16 @@ def get_mcp_metadata(obj: "Any") -> "dict[str, Any] | None":
     return _REGISTRY.get(obj)
 
 
+def set_mcp_metadata(obj: "Any", metadata: "dict[str, Any]") -> "None":
+    """Set MCP metadata for an object in the registry.
+
+    Args:
+        obj: Object to register MCP metadata for.
+        metadata: MCP metadata dictionary.
+    """
+    _REGISTRY.set(obj, metadata)
+
+
 def extract_description_sources(
     handler: "Any",
     fn: "Any",
@@ -569,5 +579,6 @@ __all__ = (
     "mcp_tool",
     "parse_template",
     "render_description",
+    "set_mcp_metadata",
     "should_include_handler",
 )

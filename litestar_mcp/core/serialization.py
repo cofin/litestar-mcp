@@ -61,19 +61,35 @@ _SCHEMA_SERIALIZERS: "dict[_SerializerKey, SchemaSerializer]" = {}
 
 
 @overload
-def to_json(data: "Any", *, as_bytes: "Literal[False]" = ...) -> "str": ...
+def to_json(
+    data: "Any",
+    *,
+    as_bytes: "Literal[False]" = ...,
+    type_encoders: "TypeEncodersMap | None" = ...,
+) -> "str": ...
 
 
 @overload
-def to_json(data: "Any", *, as_bytes: "Literal[True]") -> "bytes": ...
+def to_json(
+    data: "Any",
+    *,
+    as_bytes: "Literal[True]",
+    type_encoders: "TypeEncodersMap | None" = ...,
+) -> "bytes": ...
 
 
-def to_json(data: "Any", *, as_bytes: "bool" = False) -> "str | bytes":
-    """Encode data using Litestar's native JSON serializer.
+def to_json(
+    data: "Any",
+    *,
+    as_bytes: "bool" = False,
+    type_encoders: "TypeEncodersMap | None" = None,
+) -> "str | bytes":
+    """Encode data using Litestar's native JSON serializer with optional type encoders.
 
     Args:
         data: Value to encode.
         as_bytes: Return bytes instead of UTF-8 text.
+        type_encoders: Optional custom type encoders map from route handler or app.
 
     Returns:
         JSON bytes or text.
@@ -81,7 +97,11 @@ def to_json(data: "Any", *, as_bytes: "bool" = False) -> "str | bytes":
     Raises:
         SerializationException: If data cannot be encoded.
     """
-    encoded = encode_json(data)
+    if type_encoders:
+        serializer = get_serializer(type_encoders)
+        encoded = msgspec.json.Encoder(enc_hook=serializer).encode(data)
+    else:
+        encoded = encode_json(data)
     return encoded if as_bytes else encoded.decode("utf-8")
 
 

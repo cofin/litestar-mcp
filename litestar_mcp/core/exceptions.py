@@ -37,10 +37,11 @@ class MissingDependencyError(LitestarMCPError, ImportError):
     """
 
     def __init__(self, package: str, install_package: str | None = None, *, extra: str | None = None) -> None:
-        install_package = install_package or package
-        extra = extra or install_package
+        self.package = package
+        self.install_package = install_package or package
+        self.extra = extra or self.install_package
         super().__init__(
             f"Package {package!r} is not installed but required. You can install it by running "
-            f"'pip install litestar-mcp[{extra}]' to install litestar-mcp with the required extra "
-            f"or 'pip install {install_package}' to install the package separately",
+            f"'pip install litestar-mcp[{self.extra}]' to install litestar-mcp with the required extra "
+            f"or 'pip install {self.install_package}' to install the package separately",
         )

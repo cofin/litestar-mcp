@@ -504,6 +504,55 @@ class Registry:
         )
         self._trigger_change()
 
+    def register_prompt_controller(self, controller: "Any") -> "list[PromptRegistration]":
+        """Register all prompts discovered on a PromptController class or instance."""
+        inst = controller(None) if isinstance(controller, type) else controller
+        registered: list[PromptRegistration] = []
+        getter = getattr(inst, "get_prompt_registrations", None) or getattr(inst, "get_prompts", None)
+        if callable(getter):
+            prompts = getter()
+            if isinstance(prompts, (list, tuple)):
+                for p in prompts:
+                    self.register_prompt(
+                        name=p.name,
+                        fn=p.fn,
+                        title=p.title,
+                        description=p.description,
+                        arguments=p.arguments,
+                        icons=p.icons,
+                    )
+                    registered.append(p)
+        return registered
+
+    def register_skill_controller(
+        self,
+        controller: "Any",
+        *,
+        base_path: "str" = "/mcp",
+        opt_keys: "Any | None" = None,
+    ) -> "list[BaseRouteHandler]":
+        """Register prompts and tools discovered on a SkillController class or instance."""
+        from litestar_mcp.mcp.skill_controller import build_tool_route_handler
+
+        inst = controller(None) if isinstance(controller, type) else controller
+        self.register_prompt_controller(inst)
+        handlers: list[BaseRouteHandler] = []
+        tool_getter = getattr(inst, "get_tools", None)
+        if callable(tool_getter):
+            tools = tool_getter()
+            if isinstance(tools, (list, tuple)):
+                controller_guards = getattr(inst, "guards", None)
+                for t in tools:
+                    tool_name, handler = build_tool_route_handler(
+                        t,
+                        base_path=base_path,
+                        opt_keys=opt_keys,
+                        guards=controller_guards,
+                    )
+                    self.register_tool(tool_name, handler)
+                    handlers.append(handler)
+        return handlers
+
     async def publish_notification(
         self,
         method: "str",

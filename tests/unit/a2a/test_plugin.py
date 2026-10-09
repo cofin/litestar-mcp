@@ -7,6 +7,9 @@ from unittest.mock import AsyncMock, Mock
 import anyio
 import anyio.lowlevel
 import pytest
+
+pytest.importorskip("a2a")
+
 from a2a.client.transports.jsonrpc import JsonRpcTransport
 from a2a.server.context import ServerCallContext
 from a2a.server.request_handlers import RequestHandler

@@ -18,12 +18,42 @@ also be registered via ``LitestarMCP(prompts=[...])`` after decoration with
 from typing import TYPE_CHECKING, Any
 
 from litestar_mcp.__metadata__ import __version__
+from litestar_mcp.agent.bridges import (
+    MCPHttpClient,
+    agent_to_a2a,
+    agent_to_mcp,
+    discover_mcp_tools,
+    mcp_to_tools,
+)
+from litestar_mcp.agent.context import ToolContext, resolve_tool_context
+from litestar_mcp.agent.controller import AgentChatController
+from litestar_mcp.agent.guards import BudgetExceededError, TurnBudget
+from litestar_mcp.agent.models import (
+    GoogleGenAIClient,
+    MockModelClient,
+    ModelClient,
+    ModelDelta,
+)
+from litestar_mcp.agent.runtime import AgentRuntime, TurnRequest, TurnResponse
+from litestar_mcp.agent.spec import Agent, AgentGroup, AgentMessage
+from litestar_mcp.agent.streaming import AgentStreamFrame, iter_agent_stream
+from litestar_mcp.agent.tools import RunContextRegistry, Tool, execute_parallel, tool
+from litestar_mcp.agent.workflow import (
+    DynamicWorkflow,
+    StepResult,
+    WorkflowContext,
+    WorkflowEngine,
+    WorkflowNode,
+)
+from litestar_mcp.controllers.prompt import PromptController, PromptMessage, prompt
+from litestar_mcp.controllers.skill import SkillController
 from litestar_mcp.core.exceptions import (
     BridgeConnectionError,
     BridgeMessageTooLargeError,
     LitestarMCPError,
     MissingDependencyError,
 )
+from litestar_mcp.core.observability import SpanManager, TelemetryConfig
 from litestar_mcp.mcp.app import MCP
 from litestar_mcp.mcp.config import (
     AfterToolCallHook,
@@ -32,6 +62,7 @@ from litestar_mcp.mcp.config import (
     MCPOptKeys,
     MCPSkillsConfig,
     MCPTaskConfig,
+    MCPTasksConfig,
 )
 from litestar_mcp.mcp.content import MCPBlobResource, MCPInputRequiredResult, MCPResourceLink, MCPToolResult
 from litestar_mcp.mcp.plugin import LitestarMCP
@@ -43,14 +74,24 @@ from litestar_mcp.utils import mcp_prompt, mcp_resource, mcp_tool
 __all__ = (
     "MCP",
     "AfterToolCallHook",
+    "Agent",
+    "AgentChatController",
+    "AgentGroup",
+    "AgentMessage",
+    "AgentRuntime",
+    "AgentStreamFrame",
     "BeforeToolCallHook",
     "BridgeConnectionError",
     "BridgeMessageTooLargeError",
+    "BudgetExceededError",
+    "DynamicWorkflow",
+    "GoogleGenAIClient",
     "LitestarMCP",
     "LitestarMCPError",
     "MCPBlobResource",
     "MCPConfig",
     "MCPController",
+    "MCPHttpClient",
     "MCPInputRequiredResult",
     "MCPOptKeys",
     "MCPRequestContext",
@@ -58,13 +99,41 @@ __all__ = (
     "MCPSkillsConfig",
     "MCPStdioContext",
     "MCPTaskConfig",
+    "MCPTasksConfig",
     "MCPToolResult",
     "MissingDependencyError",
+    "MockModelClient",
+    "ModelClient",
+    "ModelDelta",
+    "PromptController",
+    "PromptMessage",
+    "RunContextRegistry",
+    "SkillController",
+    "SpanManager",
+    "StepResult",
+    "TelemetryConfig",
+    "Tool",
+    "ToolContext",
+    "TurnBudget",
+    "TurnRequest",
+    "TurnResponse",
+    "WorkflowContext",
+    "WorkflowEngine",
+    "WorkflowNode",
     "__version__",
+    "agent_to_a2a",
+    "agent_to_mcp",
+    "discover_mcp_tools",
+    "execute_parallel",
     "get_mcp_request_context",
+    "iter_agent_stream",
     "mcp_prompt",
     "mcp_resource",
+    "mcp_to_tools",
     "mcp_tool",
+    "prompt",
+    "resolve_tool_context",
+    "tool",
 )
 
 if TYPE_CHECKING:

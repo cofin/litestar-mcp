@@ -121,6 +121,12 @@ examples drawn from :mod:`docs.examples`.
 
         Mount an official A2A SDK handler alongside MCP.
 
+    .. grid-item-card:: Agents
+        :link: agents
+        :link-type: doc
+
+        Multi-agent orchestration, PromptController, SkillController, and Google GenAI runtime.
+
 .. toctree::
     :hidden:
     :maxdepth: 1
@@ -132,6 +138,7 @@ examples drawn from :mod:`docs.examples`.
     resources
     skills
     tools
+    agents
     discovery
     auth
     security

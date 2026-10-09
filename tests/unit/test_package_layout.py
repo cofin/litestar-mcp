@@ -12,6 +12,7 @@ from litestar_mcp.core.exceptions import MissingDependencyError
 
 
 def test_root_exposes_a2a_names_lazily() -> None:
+    pytest.importorskip("a2a")
     a2a = importlib.import_module("litestar_mcp.a2a")
 
     assert "A2AConfig" in dir(litestar_mcp)

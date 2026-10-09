@@ -125,9 +125,12 @@ class MCPTaskConfig:
     """Configuration for the opt-in MCP Tasks extension."""
 
     store: "Store | None" = None
+    backend: "Literal['memory', 'queue', 'store']" = "memory"
+    queue_service: "Any" = None
     default_ttl_ms: "int" = 300_000
     max_ttl_ms: "int" = 3_600_000
     poll_interval_ms: "int" = 1_000
+    enabled: "bool" = True
 
     def __post_init__(self) -> "None":
         if self.default_ttl_ms < 0:
@@ -141,12 +144,17 @@ class MCPTaskConfig:
             raise ValueError(msg)
 
 
+MCPTasksConfig = MCPTaskConfig
+
+
 def normalize_task_config(value: "bool | MCPTaskConfig") -> "MCPTaskConfig | None":
     """Normalize task configuration into a concrete config object."""
     if value is False:
         return None
     if value is True:
         return MCPTaskConfig()
+    if not value.enabled:
+        return None
     return value
 
 
@@ -175,9 +183,7 @@ class MCPSkillsConfig:
     max_bytes_per_skill: "int" = 16_777_216
 
     def __post_init__(self) -> "None":
-        # Widened to object because the annotation already excludes str, so type checkers
-        # call the branch unreachable. It guards untyped callers, for whom a bare string
-        # would iterate per character. ValueError, since a str is a valid Sequence.
+        """Validate and normalize skill directory paths and size bounds."""
         configured_paths: object = self.paths
         if isinstance(configured_paths, (str, bytes)):
             msg = "paths must be a sequence of paths, not a single string; pass [path] instead"
@@ -235,8 +241,13 @@ class MCPConfig:
             as incomplete cleanup; application finalizers must tolerate cancellation.
         max_blob_bytes: Maximum raw byte length for base64-embedded MCP blobs.
             Set to ``None`` to disable the library cap.
-        skills: Optional Skills over MCP configuration; ``None`` leaves the
-            extension disabled.
+        skills: Optional Skills over MCP configuration or sequence of
+            SkillController classes/instances; ``None`` leaves the extension
+            disabled.
+        prompt_controllers: Optional sequence of PromptController classes or
+            instances to register on startup.
+        skill_controllers: Optional sequence of SkillController classes or
+            instances to register on startup.
     """
 
     base_path: "str" = "/mcp"
@@ -250,7 +261,9 @@ class MCPConfig:
     include_tags: "list[str] | None" = None
     exclude_tags: "list[str] | None" = None
     tasks: "bool | MCPTaskConfig" = False
-    skills: "MCPSkillsConfig | None" = None
+    skills: "MCPSkillsConfig | Sequence[Any] | None" = None
+    prompt_controllers: "Sequence[Any]" = ()
+    skill_controllers: "Sequence[Any]" = ()
     opt_keys: "MCPOptKeys" = field(default_factory=MCPOptKeys)
     cache_ttl_ms: "int" = 0
     cache_scope: "Literal['private', 'public']" = "private"

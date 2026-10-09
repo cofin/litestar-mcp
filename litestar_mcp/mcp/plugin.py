@@ -1,9 +1,10 @@
 """Litestar MCP Plugin implementation."""
 
 import logging
-from typing import TYPE_CHECKING, Any
+from contextlib import suppress
+from typing import TYPE_CHECKING, Any, cast
 
-from litestar import Litestar, Router
+from litestar import Controller, Litestar, Router
 from litestar.di import Provide
 from litestar.handlers import BaseRouteHandler
 from litestar.plugins import CLIPlugin, InitPluginProtocol
@@ -11,7 +12,7 @@ from litestar.plugins import CLIPlugin, InitPluginProtocol
 from litestar_mcp.core.schema_builder import generate_schema_for_handler, validate_mcp_header_schema
 from litestar_mcp.core.sse import SubscriptionManager
 from litestar_mcp.mcp.cli import mcp_group
-from litestar_mcp.mcp.config import MCPConfig
+from litestar_mcp.mcp.config import MCPConfig, MCPSkillsConfig
 from litestar_mcp.mcp.registry import PromptRegistration, Registry
 from litestar_mcp.mcp.routes import MCPController
 from litestar_mcp.mcp.skills import SkillCatalog
@@ -34,19 +35,53 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         self,
         config: "MCPConfig | None" = None,
         prompts: "Sequence[Callable[..., Any]] | None" = None,
+        controllers: "Sequence[Any] | None" = None,
+        skill_controllers: "Sequence[Any] | None" = None,
+        *,
+        prompt_controllers: "Sequence[Any] | None" = None,
+        skills: "Sequence[Any] | None" = None,
     ) -> "None":
         """Initialize the MCP plugin.
 
         Args:
             config: Plugin configuration. Defaults to ``MCPConfig()``.
             prompts: Optional sequence of standalone prompt functions
-                decorated with ``@mcp_prompt``. These are registered
-                immediately and made available via ``prompts/list`` and
-                ``prompts/get``.
+                decorated with ``@mcp_prompt`` or ``@prompt``.
+            controllers: Optional sequence of PromptController or Controller
+                classes or instances to mount and discover prompts from.
+            skill_controllers: Optional sequence of SkillController classes
+                or instances to mount and discover tools/prompts from.
+            prompt_controllers: Optional sequence of PromptController classes
+                or instances to mount and discover prompts from.
+            skills: Optional sequence of SkillController classes or instances.
         """
         self._config = config or MCPConfig()
         self._registry = Registry()
-        self._dynamic_handlers: list[BaseRouteHandler] = []
+        self._dynamic_handlers: list[Any] = []
+        self._dynamic_handler_paths: set[tuple[str, ...]] = set()
+
+        all_prompt_controllers: list[Any] = [
+            *(controllers or ()),
+            *(prompt_controllers or ()),
+            *self._config.prompt_controllers,
+        ]
+        for c in all_prompt_controllers:
+            self.register_prompt_controller(c)
+
+        config_skill_controllers: Sequence[Any] = (
+            self._config.skills
+            if (self._config.skills is not None and not isinstance(self._config.skills, MCPSkillsConfig))
+            else ()
+        )
+        all_skill_controllers: list[Any] = [
+            *(skill_controllers or ()),
+            *(skills or ()),
+            *self._config.skill_controllers,
+            *config_skill_controllers,
+        ]
+        for s in all_skill_controllers:
+            self.register_skill_controller(s)
+
         if prompts:
             for fn in prompts:
                 metadata = get_mcp_metadata(fn) or {}
@@ -76,7 +111,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                 poll_interval_ms=task_config.poll_interval_ms,
             )
         self._skill_catalog: SkillCatalog | None = (
-            SkillCatalog.from_config(self._config.skills) if self._config.skills is not None else None
+            SkillCatalog.from_config(self._config.skills) if isinstance(self._config.skills, MCPSkillsConfig) else None
         )
 
     @property
@@ -114,13 +149,38 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         """Get discovered MCP prompts."""
         return self._registry.prompts
 
-    def register_dynamic_handler(self, handler: "BaseRouteHandler") -> "None":
+    def register_dynamic_handler(self, handler: "Any") -> "None":
         """Register a dynamic route handler on the plugin.
 
         This is typically used by the wrapper class to register decorated
         tools and resources.
         """
-        self._dynamic_handlers.append(handler)
+        paths_attr = getattr(handler, "paths", None)
+        if paths_attr:
+            path_key = tuple(sorted(str(p) for p in paths_attr))
+            if path_key in self._dynamic_handler_paths:
+                return
+            self._dynamic_handler_paths.add(path_key)
+        if handler not in self._dynamic_handlers:
+            self._dynamic_handlers.append(handler)
+
+    def register_prompt_controller(self, controller: "Any") -> "None":
+        """Register a PromptController class or instance on the plugin."""
+        ctrl_cls = controller if isinstance(controller, type) else type(controller)
+        self.register_dynamic_handler(ctrl_cls)
+        self._registry.register_prompt_controller(controller)
+
+    def register_skill_controller(self, controller: "Any") -> "None":
+        """Register a SkillController class or instance and its tools and prompts."""
+        ctrl_cls = controller if isinstance(controller, type) else type(controller)
+        self.register_dynamic_handler(ctrl_cls)
+        handlers = self._registry.register_skill_controller(
+            controller,
+            base_path=self._config.base_path,
+            opt_keys=self._config.opt_keys,
+        )
+        for h in handlers:
+            self.register_dynamic_handler(h)
 
     def on_cli_init(self, cli: "Group") -> "None":
         """Configure CLI commands for MCP operations."""
@@ -128,8 +188,11 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
 
     def on_app_init(self, app_config: "AppConfig") -> "AppConfig":
         """Initialize the MCP integration when the Litestar app starts."""
-        app_config.route_handlers.extend(self._dynamic_handlers)
         self._discover_mcp_routes(app_config.route_handlers)
+        for dyn_handler in list(self._dynamic_handlers):
+            if dyn_handler not in app_config.route_handlers:
+                app_config.route_handlers.append(dyn_handler)
+        self._discover_mcp_routes(self._dynamic_handlers)
         self._registry.set_subscription_manager(self._subscription_manager)
 
         if self._task_store is not None:
@@ -263,5 +326,28 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                             icons=handler.opt.get(opt_keys.prompt_icons),
                         )
 
-            if getattr(handler, "route_handlers", None):
-                self._discover_mcp_routes(handler.route_handlers)  # pyright: ignore[reportAttributeAccessIssue]
+            self._discover_controller_prompts(handler)
+
+            child_handlers = getattr(handler, "route_handlers", None)
+            if isinstance(child_handlers, (list, tuple)):
+                self._discover_mcp_routes(cast("Any", child_handlers))
+
+    def _discover_controller_prompts(self, handler: Any) -> None:
+        """Register prompts and tools declared on Controller instances or classes."""
+        controller_inst: Any = None
+        if isinstance(handler, Controller):
+            controller_inst = handler
+        elif isinstance(handler, type) and issubclass(handler, Controller):
+            with suppress(TypeError, ValueError):
+                controller_inst = handler(cast("Any", None))
+
+        if controller_inst is None:
+            return
+
+        handlers = self._registry.register_skill_controller(
+            controller_inst,
+            base_path=self._config.base_path,
+            opt_keys=self._config.opt_keys,
+        )
+        for h in handlers:
+            self.register_dynamic_handler(h)
