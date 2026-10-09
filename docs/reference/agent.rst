@@ -140,4 +140,3 @@ TelemetryConfig
 .. autoclass:: TelemetryConfig
    :members:
    :show-inheritance:
-

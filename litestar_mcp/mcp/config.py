@@ -241,9 +241,8 @@ class MCPConfig:
             as incomplete cleanup; application finalizers must tolerate cancellation.
         max_blob_bytes: Maximum raw byte length for base64-embedded MCP blobs.
             Set to ``None`` to disable the library cap.
-        skills: Optional Skills over MCP configuration or sequence of
-            SkillController classes/instances; ``None`` leaves the extension
-            disabled.
+        skills: Optional Skills over MCP configuration; ``None`` leaves the
+            extension disabled.
         prompt_controllers: Optional sequence of PromptController classes or
             instances to register on startup.
         skill_controllers: Optional sequence of SkillController classes or
@@ -261,7 +260,7 @@ class MCPConfig:
     include_tags: "list[str] | None" = None
     exclude_tags: "list[str] | None" = None
     tasks: "bool | MCPTaskConfig" = False
-    skills: "MCPSkillsConfig | Sequence[Any] | None" = None
+    skills: "MCPSkillsConfig | None" = None
     prompt_controllers: "Sequence[Any]" = ()
     skill_controllers: "Sequence[Any]" = ()
     opt_keys: "MCPOptKeys" = field(default_factory=MCPOptKeys)

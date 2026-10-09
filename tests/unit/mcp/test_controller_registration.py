@@ -55,7 +55,7 @@ def test_litestar_mcp_controller_jsonrpc_dispatch() -> None:
     """Verify tools/list, tools/call, prompts/list, and prompts/get work end-to-end with controllers."""
     config = MCPConfig(
         prompt_controllers=[OpsPromptController],
-        skills=[MathSkillController],
+        skill_controllers=[MathSkillController],
     )
     plugin = LitestarMCP(config=config)
     app = Litestar(plugins=[plugin])
