@@ -1627,13 +1627,6 @@ agent = [
     { name = "google-genai" },
     { name = "opentelemetry-api" },
 ]
-all = [
-    { name = "a2a-sdk" },
-    { name = "google-genai" },
-    { name = "litestar-queues" },
-    { name = "opentelemetry-api" },
-    { name = "protobuf" },
-]
 google-genai = [
     { name = "google-genai" },
 ]
@@ -1766,7 +1759,6 @@ requires-dist = [
     { name = "google-genai", marker = "extra == 'google-genai'", specifier = ">=1.0.0" },
     { name = "httpx2", specifier = ">=2.13.1" },
     { name = "litestar", specifier = ">=2.23.0" },
-    { name = "litestar-mcp", extras = ["a2a", "opentelemetry", "google-genai", "queues"], marker = "extra == 'all'" },
     { name = "litestar-mcp", extras = ["google-genai", "opentelemetry"], marker = "extra == 'agent'" },
     { name = "litestar-queues", marker = "extra == 'queues'", specifier = ">=0.12.0" },
     { name = "opentelemetry-api", marker = "extra == 'opentelemetry'", specifier = ">=1.20.0" },
@@ -1774,7 +1766,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "typing-extensions", specifier = ">=4.0.0" },
 ]
-provides-extras = ["a2a", "google-genai", "opentelemetry", "queues", "agent", "all"]
+provides-extras = ["a2a", "google-genai", "opentelemetry", "queues", "agent"]
 
 [package.metadata.requires-dev]
 build = [{ name = "bump-my-version" }]

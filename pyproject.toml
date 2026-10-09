@@ -52,7 +52,6 @@ google-genai = ["google-genai>=1.0.0"]
 opentelemetry = ["opentelemetry-api>=1.20.0"]
 queues = ["litestar-queues>=0.12.0"]
 agent = ["litestar-mcp[google-genai,opentelemetry]"]
-all = ["litestar-mcp[a2a,opentelemetry,google-genai,queues]"]
 
 [project.entry-points."pygments.styles"]
 litestar-mcp-dark = "tools.sphinx_ext.pygments_styles:LitestarMcpDarkStyle"
