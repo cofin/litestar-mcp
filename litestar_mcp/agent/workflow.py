@@ -1,19 +1,16 @@
-"""Two-phase DynamicWorkflow DAG execution engine for multi-agent pipelines."""
-
-from __future__ import annotations
+"""In-process concurrent DAG execution engine for multi-agent workflows."""
 
 import inspect
+from collections import defaultdict
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any, Literal
 from uuid import uuid4
 
 import anyio
 
 from litestar_mcp.agent.runtime import AgentRuntime, TurnRequest
 from litestar_mcp.agent.spec import Agent
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 
 @dataclass(slots=True)
@@ -22,7 +19,7 @@ class StepResult:
 
     node_name: str
     output: Any
-    status: str = "completed"
+    status: Literal["completed", "skipped", "failed"] = "completed"
 
 
 @dataclass(slots=True)
@@ -56,27 +53,29 @@ class WorkflowNode:
     name: str
     agent: Agent | None = None
     handler: Callable[..., Any] | Agent | None = None
-    dependencies: list[str] = field(default_factory=list)
-    depends_on: list[str] | None = None
+    depends_on: tuple[str, ...] | Sequence[str] = ()
+    prompt: Callable[[WorkflowContext], str] | None = None
     timeout_seconds: float = 300.0
     condition: Callable[[WorkflowContext], bool] | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.handler, Agent) and self.agent is None:
-            self.agent = self.handler
-            self.handler = None
-        if self.depends_on is not None:
-            merged = list(self.dependencies)
-            for dep in self.depends_on:
-                if dep not in merged:
-                    merged.append(dep)
-            self.dependencies = merged
+            object.__setattr__(self, "agent", self.handler)
+            object.__setattr__(self, "handler", None)
+        if not isinstance(self.depends_on, tuple):
+            object.__setattr__(self, "depends_on", tuple(self.depends_on))
+
+    @property
+    def dependencies(self) -> list[str]:
+        """Backward-compatible list representation of node dependencies."""
+        return list(self.depends_on)
 
 
 class DynamicWorkflow:
     """DAG-based workflow connecting agents and discrete task handlers."""
 
     def __init__(self, name: str = "workflow") -> None:
+        """Initialize DynamicWorkflow with a name."""
         self.name = name
         self.nodes: dict[str, WorkflowNode] = {}
 
@@ -85,11 +84,13 @@ class DynamicWorkflow:
         name_or_node: str | WorkflowNode,
         *,
         agent: Agent | None = None,
-        handler: Callable[..., Any] | Agent | None = None,
-        depends_on: list[str] | None = None,
+        handler: Callable[..., Any] | None = None,
+        depends_on: tuple[str, ...] | list[str] | None = None,
+        dependencies: tuple[str, ...] | list[str] | None = None,
+        prompt: Callable[[WorkflowContext], str] | None = None,
         timeout_seconds: float = 300.0,
         condition: Callable[[WorkflowContext], bool] | None = None,
-    ) -> DynamicWorkflow:
+    ) -> "DynamicWorkflow":
         """Add a step to the workflow with explicit dependencies."""
         if isinstance(name_or_node, WorkflowNode):
             node = name_or_node
@@ -107,11 +108,13 @@ class DynamicWorkflow:
             msg = f"Node '{name}' requires either an agent or a handler"
             raise ValueError(msg)
 
+        resolved_deps = tuple(depends_on if depends_on is not None else (dependencies or ()))
         node = WorkflowNode(
             name=name,
             agent=agent,
             handler=handler,
-            dependencies=list(depends_on or []),
+            depends_on=resolved_deps,
+            prompt=prompt,
             timeout_seconds=timeout_seconds,
             condition=condition,
         )
@@ -124,15 +127,16 @@ class DynamicWorkflow:
         for name, node in self.nodes.items():
             if name in completed:
                 continue
-            if all(dep in completed for dep in node.dependencies):
+            if all(dep in completed for dep in node.depends_on):
                 ready.append(name)
         return ready
 
 
 class WorkflowEngine:
-    """Two-phase execution engine for DynamicWorkflow DAG pipelines."""
+    """Concurrent in-process DAG execution engine for DynamicWorkflow pipelines."""
 
     def __init__(self, default_runtime: AgentRuntime | None = None) -> None:
+        """Initialize WorkflowEngine with optional default AgentRuntime."""
         self.default_runtime = default_runtime
 
     async def execute_node(
@@ -150,6 +154,7 @@ class WorkflowEngine:
         )
 
         if node.condition is not None and not node.condition(ctx):
+            ctx.step_results[node_name] = StepResult(node_name=node_name, output=None, status="skipped")
             return None
 
         with anyio.fail_after(node.timeout_seconds):
@@ -161,49 +166,114 @@ class WorkflowEngine:
 
             if node.agent is not None:
                 runtime = self.default_runtime or AgentRuntime(target=node.agent)
-                prompt_input = str(ctx.get("input") or ctx.get(node_name, ""))
+                if node.prompt is not None:
+                    prompt_input = node.prompt(ctx)
+                else:
+                    upstream_parts = [
+                        str(ctx.node_outputs[dep])
+                        for dep in node.depends_on
+                        if dep in ctx.node_outputs and ctx.node_outputs[dep] is not None
+                    ]
+                    prompt_input = "\n\n".join(upstream_parts) if upstream_parts else str(ctx.get("input") or "")
+
                 req = TurnRequest(
-                    session_id=workflow.name,
-                    turn_id=node_name,
+                    session_id=f"{ctx.run_id}:{node.name}",
+                    turn_id=node.name,
                     user_message=prompt_input,
                 )
-                turn_res = await runtime.run_turn(req, agent=node.agent)
-                return turn_res.output
+                turn_res = await runtime.run_turn(req)
+                return turn_res.content
 
         msg = f"Node '{node_name}' has no executable target"
         raise RuntimeError(msg)
+
+    @staticmethod
+    def _validate_dependencies(workflow: DynamicWorkflow) -> None:
+        """Validate that all node dependencies exist and graph is acyclic."""
+        all_nodes = set(workflow.nodes.keys())
+        for name, node in workflow.nodes.items():
+            for dep in node.depends_on:
+                if dep not in all_nodes:
+                    msg = f"Node '{name}' depends on unknown node '{dep}'"
+                    raise ValueError(msg)
+
+        in_degrees: dict[str, int] = {name: len(node.depends_on) for name, node in workflow.nodes.items()}
+        dependents: dict[str, list[str]] = defaultdict(list)
+        for name, node in workflow.nodes.items():
+            for dep in node.depends_on:
+                dependents[dep].append(name)
+
+        ready = [name for name, deg in in_degrees.items() if deg == 0]
+        visited = 0
+        while ready:
+            curr = ready.pop()
+            visited += 1
+            for nxt in dependents[curr]:
+                in_degrees[nxt] -= 1
+                if in_degrees[nxt] == 0:
+                    ready.append(nxt)
+
+        if visited < len(workflow.nodes):
+            unresolved = set(workflow.nodes.keys()) - {n for n, deg in in_degrees.items() if deg == 0}
+            msg = f"Workflow stalled: circular or unresolved dependencies in {unresolved}"
+            raise RuntimeError(msg)
 
     async def execute_run(
         self,
         workflow: DynamicWorkflow,
         initial_state: dict[str, Any] | None = None,
     ) -> WorkflowContext:
-        """Execute workflow in DAG topological order, fanning out concurrent ready nodes via anyio."""
+        """Execute workflow in DAG topological order via ready queue scheduling."""
         ctx = WorkflowContext(state=dict(initial_state or {}))
+        self._validate_dependencies(workflow)
+
+        in_degrees: dict[str, int] = {name: len(node.depends_on) for name, node in workflow.nodes.items()}
+        dependents: dict[str, list[str]] = defaultdict(list)
+        for name, node in workflow.nodes.items():
+            for dep in node.depends_on:
+                dependents[dep].append(name)
+
+        send_channel, receive_channel = anyio.create_memory_object_stream[str](max_buffer_size=len(workflow.nodes) + 1)
         completed: set[str] = set()
 
-        while len(completed) < len(workflow.nodes):
-            ready = workflow.get_ready_nodes(completed)
-            if not ready:
-                unresolved = set(workflow.nodes.keys()) - completed
-                msg = f"Workflow stalled: circular or unresolved dependencies in {unresolved}"
-                raise RuntimeError(msg)
+        for name, deg in in_degrees.items():
+            if deg == 0:
+                await send_channel.send(name)
 
-            step_outputs: dict[str, Any] = {}
+        if not workflow.nodes:
+            return ctx
 
-            async def _run_step(step_name: str, target_dict: dict[str, Any] = step_outputs) -> None:
-                target_dict[step_name] = await self.execute_node(workflow, step_name, ctx)
+        async with anyio.create_task_group() as tg:
 
-            async with anyio.create_task_group() as tg:
-                for name in ready:
-                    tg.start_soon(_run_step, name)
+            async def _worker(node_name: str) -> None:
+                try:
+                    out = await self.execute_node(workflow, node_name, ctx)
+                    if node_name not in ctx.step_results:
+                        ctx.step_results[node_name] = StepResult(node_name=node_name, output=out, status="completed")
+                    ctx.node_outputs[node_name] = out
+                    ctx.state[node_name] = out
+                    completed.add(node_name)
 
-            for name in ready:
-                out = step_outputs[name]
-                completed.add(name)
-                ctx.state[name] = out
-                ctx.node_outputs[name] = out
-                ctx.step_results[name] = StepResult(node_name=name, output=out)
+                    for dep in dependents[node_name]:
+                        in_degrees[dep] -= 1
+                        if in_degrees[dep] == 0:
+                            await send_channel.send(dep)
+                except Exception:
+                    ctx.step_results[node_name] = StepResult(node_name=node_name, output=None, status="failed")
+                    tg.cancel_scope.cancel()
+                    raise
+
+            for _ in range(len(workflow.nodes)):
+                if len(completed) + 1 > len(workflow.nodes):
+                    break
+                try:
+                    with anyio.fail_after(3600.0):
+                        next_node = await receive_channel.receive()
+                except TimeoutError as exc:
+                    unresolved = set(workflow.nodes.keys()) - completed
+                    msg = f"Workflow stalled: circular or unresolved dependencies in {unresolved}"
+                    raise RuntimeError(msg) from exc
+                tg.start_soon(_worker, next_node)
 
         return ctx
 

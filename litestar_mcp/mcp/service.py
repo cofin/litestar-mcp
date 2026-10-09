@@ -48,6 +48,7 @@ from litestar_mcp.mcp.registry import (
     PromptRegistration,
     Registry,
     _normalize_prompt_result,
+    apply_prompt_instructions,
     render_prompt_entry,
     resolve_prompt_description,
     should_include_prompt,
@@ -995,6 +996,10 @@ class MCPHandlerService:
                 handler_result = result
             else:
                 handler_result = {"messages": _normalize_prompt_result(result)}
+            handler_result["messages"] = apply_prompt_instructions(
+                handler_result["messages"],
+                registration.instructions,
+            )
             if resolved_description is not None and "description" not in handler_result:
                 handler_result["description"] = resolved_description
             return handler_result
@@ -1027,6 +1032,7 @@ class MCPHandlerService:
             if isinstance(result, MCPInputRequiredResult):
                 return result.to_result()
             messages = _normalize_prompt_result(result)
+            messages = apply_prompt_instructions(messages, registration.instructions)
             get_result: dict[str, Any] = {"messages": messages}
             if resolved_description is not None and "description" not in get_result:
                 get_result["description"] = resolved_description

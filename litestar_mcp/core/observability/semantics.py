@@ -1,19 +1,32 @@
 """OpenTelemetry semantic convention constants for AI agent and tool operations."""
 
-from __future__ import annotations
+GEN_AI_OPERATION_NAME = "gen_ai.operation.name"
+GEN_AI_AGENT_NAME = "gen_ai.agent.name"
+GEN_AI_CONVERSATION_ID = "gen_ai.conversation.id"
+GEN_AI_PROVIDER_NAME = "gen_ai.provider.name"
+GEN_AI_REQUEST_MODEL = "gen_ai.request.model"
+GEN_AI_USAGE_INPUT_TOKENS = "gen_ai.usage.input_tokens"
+GEN_AI_USAGE_OUTPUT_TOKENS = "gen_ai.usage.output_tokens"
 
-AI_AGENT_NAME = "ai.agent.name"
-AI_AGENT_GROUP = "ai.agent.group"
-AI_AGENT_ACTION = "ai.agent.action"
-AI_TOOL_NAME = "ai.tool.name"
-AI_TOOL_CALL_ID = "ai.tool.call_id"
-AI_MODEL_NAME = "ai.model.name"
-AI_MODEL_PROVIDER = "ai.model.provider"
-AI_TOKENS_PROMPT = "ai.tokens.prompt"
-AI_TOKENS_COMPLETION = "ai.tokens.completion"
+GEN_AI_TOOL_NAME = "gen_ai.tool.name"
+GEN_AI_TOOL_CALL_ID = "gen_ai.tool.call.id"
+ERROR_TYPE = "error.type"
+
+LITESTAR_MCP_AGENT_GROUP = "litestar_mcp.agent.group"
+LITESTAR_MCP_TURN_ID = "litestar_mcp.turn.id"
+
+AI_AGENT_NAME = GEN_AI_AGENT_NAME
+AI_AGENT_GROUP = LITESTAR_MCP_AGENT_GROUP
+AI_AGENT_ACTION = GEN_AI_OPERATION_NAME
+AI_TOOL_NAME = GEN_AI_TOOL_NAME
+AI_TOOL_CALL_ID = GEN_AI_TOOL_CALL_ID
+AI_MODEL_NAME = GEN_AI_REQUEST_MODEL
+AI_MODEL_PROVIDER = GEN_AI_PROVIDER_NAME
+AI_TOKENS_PROMPT = GEN_AI_USAGE_INPUT_TOKENS
+AI_TOKENS_COMPLETION = GEN_AI_USAGE_OUTPUT_TOKENS
 AI_TOKENS_TOTAL = "ai.tokens.total"
-AI_SESSION_ID = "ai.session.id"
-AI_TURN_ID = "ai.turn.id"
+AI_SESSION_ID = GEN_AI_CONVERSATION_ID
+AI_TURN_ID = LITESTAR_MCP_TURN_ID
 
 __all__ = (
     "AI_AGENT_ACTION",
@@ -28,4 +41,16 @@ __all__ = (
     "AI_TOOL_CALL_ID",
     "AI_TOOL_NAME",
     "AI_TURN_ID",
+    "ERROR_TYPE",
+    "GEN_AI_AGENT_NAME",
+    "GEN_AI_CONVERSATION_ID",
+    "GEN_AI_OPERATION_NAME",
+    "GEN_AI_PROVIDER_NAME",
+    "GEN_AI_REQUEST_MODEL",
+    "GEN_AI_TOOL_CALL_ID",
+    "GEN_AI_TOOL_NAME",
+    "GEN_AI_USAGE_INPUT_TOKENS",
+    "GEN_AI_USAGE_OUTPUT_TOKENS",
+    "LITESTAR_MCP_AGENT_GROUP",
+    "LITESTAR_MCP_TURN_ID",
 )

@@ -1,7 +1,6 @@
 """Durable support for the ``io.modelcontextprotocol/tasks`` extension."""
 
 import asyncio
-import contextlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -226,9 +225,6 @@ class MCPTaskStore:
         runner = self._runners.get(task_id)
         if runner is not None:
             runner.cancel()
-        if self.queue_service is not None and hasattr(self.queue_service, "cancel_task"):
-            with contextlib.suppress(Exception):
-                await self.queue_service.cancel_task(task_id, include_running=True)
 
     async def mark_cancelled(self, task_id: str) -> TaskRecord:
         """Persist cancellation after the runner cooperates."""

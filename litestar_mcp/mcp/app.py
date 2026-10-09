@@ -288,10 +288,6 @@ class MCP:
         config: "MCPConfig | None" = None,
         plugins: "list[Any] | None" = None,
         route_handlers: "list[ControllerRouterHandler] | None" = None,
-        controllers: "Sequence[Any] | None" = None,
-        prompt_controllers: "Sequence[Any] | None" = None,
-        skill_controllers: "Sequence[Any] | None" = None,
-        skills: "Sequence[Any] | None" = None,
         **kwargs: "Any",
     ) -> "None":
         resolved_plugins = plugins or []
@@ -306,23 +302,13 @@ class MCP:
             self.config.name = name
             if instructions is not None:
                 self.config.instructions = instructions
-            found_plugin = LitestarMCP(
-                config=self.config,
-                controllers=controllers,
-                prompt_controllers=prompt_controllers,
-                skill_controllers=skill_controllers,
-                skills=skills,
-            )
+            found_plugin = LitestarMCP(config=self.config)
             resolved_plugins.append(found_plugin)
         else:
             self.config = found_plugin.config
             self.config.name = name
             if instructions is not None:
                 self.config.instructions = instructions
-            for c in (*(controllers or ()), *(prompt_controllers or ())):
-                found_plugin.register_prompt_controller(c)
-            for s in (*(skill_controllers or ()), *(skills or ())):
-                found_plugin.register_skill_controller(s)
 
         self.plugin: LitestarMCP = found_plugin
 

@@ -1,7 +1,5 @@
 """Lazy OpenTelemetry SpanManager implementation with zero-overhead no-op fallback."""
 
-from __future__ import annotations
-
 import logging
 from contextlib import contextmanager, suppress
 from importlib import import_module
@@ -9,13 +7,18 @@ from typing import TYPE_CHECKING, Any
 
 from litestar_mcp.core.observability.config import TelemetryConfig
 from litestar_mcp.core.observability.semantics import (
-    AI_AGENT_ACTION,
-    AI_AGENT_GROUP,
-    AI_AGENT_NAME,
-    AI_MODEL_NAME,
-    AI_MODEL_PROVIDER,
-    AI_TOOL_CALL_ID,
-    AI_TOOL_NAME,
+    ERROR_TYPE,
+    GEN_AI_AGENT_NAME,
+    GEN_AI_CONVERSATION_ID,
+    GEN_AI_OPERATION_NAME,
+    GEN_AI_PROVIDER_NAME,
+    GEN_AI_REQUEST_MODEL,
+    GEN_AI_TOOL_CALL_ID,
+    GEN_AI_TOOL_NAME,
+    GEN_AI_USAGE_INPUT_TOKENS,
+    GEN_AI_USAGE_OUTPUT_TOKENS,
+    LITESTAR_MCP_AGENT_GROUP,
+    LITESTAR_MCP_TURN_ID,
 )
 
 if TYPE_CHECKING:
@@ -43,7 +46,8 @@ class SpanManager:
         "_tracer_name",
     )
 
-    def __init__(self, telemetry: TelemetryConfig | None = None) -> None:
+    def __init__(self, telemetry: "TelemetryConfig | None" = None) -> None:
+        """Initialize the SpanManager with configuration and resolve trace API if enabled."""
         telemetry = telemetry or TelemetryConfig()
         self._enabled = bool(telemetry.enable_spans)
         self._provider_factory = telemetry.provider_factory
@@ -65,30 +69,37 @@ class SpanManager:
     def start_agent_span(
         self,
         agent_name: str = "",
-        action: str = "turn",
+        action: str = "invoke_agent",
         *,
         agent_group: str | None = None,
+        session_id: str | None = None,
+        turn_id: str | None = None,
         model: str | None = None,
         provider: str | None = None,
         attributes: dict[str, Any] | None = None,
     ) -> Any:
-        """Start a span representing an agent turn with standard AI semantic conventions."""
+        """Start a span representing an agent turn with standard GenAI semantic conventions."""
         if not self._enabled:
             return None
         attrs: dict[str, Any] = {
-            AI_AGENT_NAME: agent_name,
-            AI_AGENT_ACTION: action,
+            GEN_AI_OPERATION_NAME: action,
+            GEN_AI_AGENT_NAME: agent_name,
         }
+        if session_id:
+            attrs[GEN_AI_CONVERSATION_ID] = session_id
+        if turn_id:
+            attrs[LITESTAR_MCP_TURN_ID] = turn_id
         if agent_group:
-            attrs[AI_AGENT_GROUP] = agent_group
+            attrs[LITESTAR_MCP_AGENT_GROUP] = agent_group
         if model:
-            attrs[AI_MODEL_NAME] = model
+            attrs[GEN_AI_REQUEST_MODEL] = model
         if provider:
-            attrs[AI_MODEL_PROVIDER] = provider
+            attrs[GEN_AI_PROVIDER_NAME] = provider
         if attributes:
             attrs.update(attributes)
         attrs.update(self._resource_attributes)
-        return self._start_span(f"agent.{agent_name}.{action}", attrs)
+        span_name = f"{action} {agent_name}".strip()
+        return self._start_span(span_name, attrs)
 
     def start_tool_span(
         self,
@@ -97,18 +108,29 @@ class SpanManager:
         *,
         attributes: dict[str, Any] | None = None,
     ) -> Any:
-        """Start a span representing a tool execution."""
+        """Start a span representing a single tool execution."""
         if not self._enabled:
             return None
         attrs: dict[str, Any] = {
-            AI_TOOL_NAME: tool_name,
+            GEN_AI_OPERATION_NAME: "execute_tool",
+            GEN_AI_TOOL_NAME: tool_name,
         }
         if call_id:
-            attrs[AI_TOOL_CALL_ID] = call_id
+            attrs[GEN_AI_TOOL_CALL_ID] = call_id
         if attributes:
             attrs.update(attributes)
         attrs.update(self._resource_attributes)
-        return self._start_span(f"tool.{tool_name}.execute", attrs)
+        span_name = f"execute_tool {tool_name}".strip()
+        return self._start_span(span_name, attrs)
+
+    def set_usage(self, span: Any, prompt_tokens: int, completion_tokens: int) -> None:
+        """Record input and output token usage on an agent turn span."""
+        if span is None:
+            return
+        with suppress(Exception):
+            if hasattr(span, "set_attribute"):
+                span.set_attribute(GEN_AI_USAGE_INPUT_TOKENS, prompt_tokens)
+                span.set_attribute(GEN_AI_USAGE_OUTPUT_TOKENS, completion_tokens)
 
     def start_span(self, name: str, attributes: dict[str, Any] | None = None) -> Any:
         """Start a generic span with custom attributes."""
@@ -127,13 +149,15 @@ class SpanManager:
             if error:
                 if hasattr(span, "record_exception"):
                     span.record_exception(error)
+                if hasattr(span, "set_attribute"):
+                    span.set_attribute(ERROR_TYPE, type(error).__name__)
                 if self._status_cls and self._status_code_cls and hasattr(span, "set_status"):
                     status = self._status_cls(self._status_code_cls.ERROR, str(error))
                     span.set_status(status)
             span.end()
 
     @contextmanager
-    def span(self, name: str, attributes: dict[str, Any] | None = None) -> Iterator[Any]:
+    def span(self, name: str, attributes: dict[str, Any] | None = None) -> "Iterator[Any]":
         """Context manager for tracing blocks with automatic end and error capture."""
         s = self.start_span(name, attributes)
         try:
@@ -143,6 +167,15 @@ class SpanManager:
             raise
         else:
             self.end_span(s)
+
+    @contextmanager
+    def use(self, span: Any) -> "Iterator[Any]":
+        """Make span current in the OpenTelemetry context during execution."""
+        if span is None or self._trace_api is None or not hasattr(self._trace_api, "use_span"):
+            yield span
+            return
+        with self._trace_api.use_span(span, end_on_exit=False):
+            yield span
 
     def _start_span(self, name: str, attributes: dict[str, Any]) -> Any:
         tracer = self._get_tracer()

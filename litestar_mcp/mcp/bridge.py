@@ -21,10 +21,9 @@ from litestar_mcp.__metadata__ import __version__
 from litestar_mcp.core.exceptions import BridgeConnectionError, BridgeMessageTooLargeError
 from litestar_mcp.core.jsonrpc import JSONRPCError, error_response
 from litestar_mcp.core.serialization import from_json, to_json
+from litestar_mcp.mcp.client import mcp_request_headers, prepare_mcp_request
 from litestar_mcp.mcp.routes import (
     MCP_METHOD_HEADER,
-    MCP_NAME_FIELDS,
-    MCP_NAME_HEADER,
     MCP_PROTOCOL_VERSION,
     MCP_PROTOCOL_VERSION_HEADER,
 )
@@ -339,32 +338,15 @@ class _StreamableHTTPBridgeClient:
             scope.cancel()
 
     async def _mcp_headers(self, message: dict[str, Any]) -> dict[str, str]:
+        headers = mcp_request_headers(message)
         method = str(message.get("method", ""))
-        headers = {
-            "Accept": "application/json, text/event-stream",
-            "Content-Type": "application/json",
-            MCP_PROTOCOL_VERSION_HEADER: MCP_PROTOCOL_VERSION,
-            MCP_METHOD_HEADER: method,
-        }
         params = message.get("params")
-        if isinstance(params, dict):
-            name_field = MCP_NAME_FIELDS.get(method)
-            if name_field is not None and isinstance(params.get(name_field), str):
-                headers[MCP_NAME_HEADER] = _encode_header_value(params[name_field])
-            if method == "tools/call":
-                headers.update(await self._custom_tool_headers(params))
+        if isinstance(params, dict) and method == "tools/call":
+            headers.update(await self._custom_tool_headers(params))
         return headers
 
     def _prepare_message(self, message: dict[str, Any]) -> dict[str, Any]:
-        prepared = dict(message)
-        params = dict(prepared.get("params") or {})
-        meta = dict(params.get("_meta") or {})
-        meta.setdefault("io.modelcontextprotocol/protocolVersion", MCP_PROTOCOL_VERSION)
-        meta.setdefault("io.modelcontextprotocol/clientCapabilities", {})
-        meta.setdefault("io.modelcontextprotocol/clientInfo", dict(self._client_info))
-        params["_meta"] = meta
-        prepared["params"] = params
-        return prepared
+        return prepare_mcp_request(message, client_info=self._client_info)
 
     async def _custom_tool_headers(self, params: dict[str, Any]) -> dict[str, str]:
         tool_name = params.get("name")

@@ -1,186 +1,174 @@
 """Litestar controller providing HTTP and SSE streaming endpoints for agents."""
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING, Any, cast
+from contextlib import suppress
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+import anyio
+import msgspec
 from litestar import Controller, get, post
+from litestar.connection import Request  # noqa: TC002
+from litestar.di import NamedDependency  # noqa: TC002
+from litestar.exceptions import HTTPException, NotFoundException
 from litestar.response import ServerSentEvent
+from litestar.status_codes import HTTP_200_OK
 
+from litestar_mcp.agent.guards import BudgetExceededError
 from litestar_mcp.agent.runtime import AgentRuntime, TurnRequest
-from litestar_mcp.agent.security import resolve_tool_context
+from litestar_mcp.agent.spec import AgentMessage  # noqa: TC001
 from litestar_mcp.agent.streaming import AgentStreamFrame
+from litestar_mcp.core._streaming import (
+    DEFAULT_STREAM_CLEANUP_TIMEOUT,
+    StreamCleanupMiddleware,
+    prefetch_stream,
+    start_stream,
+)
+from litestar_mcp.core.context import ToolContext
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from litestar.connection import Request
+    from anyio.streams.memory import MemoryObjectSendStream
     from litestar.response.sse import ServerSentEventMessage
 
-_RUNTIME_REQUIRED_ERROR = "AgentRuntime must be provided via dependency injection or controller attribute."
+    from litestar_mcp.core._streaming import StreamOwner
+
+__all__ = ("AgentChatController", "ChatRequest", "SessionHistory", "SessionNotFoundError", "TurnResult")
 
 
-def _build_sse_stream(
-    resolved_runtime: AgentRuntime,
-    turn_req: TurnRequest,
-    type_encoders: Any = None,
-    *,
-    emit_session_frame: bool = True,
-) -> AsyncIterator[ServerSentEventMessage]:
-    """Build an async generator yielding ServerSentEventMessage items for a turn."""
+class SessionNotFoundError(NotFoundException):
+    """Exception raised when a requested session is not found."""
 
-    async def _generator() -> AsyncIterator[ServerSentEventMessage]:
-        seq = 0
-        if emit_session_frame:
-            seq += 1
-            session_frame = AgentStreamFrame.session(
-                turn_req.session_id,
-                turn_id=turn_req.turn_id,
-                seq=seq,
-            )
-            yield session_frame.to_sse_message(type_encoders=type_encoders)
+    def __init__(self, session_id: str) -> None:
+        """Initialize with session_id."""
+        super().__init__(detail=f"Session {session_id!r} not found")
 
-        async for frame in resolved_runtime.stream_turn(turn_req):
-            seq += 1
-            frame.seq = seq
-            yield frame.to_sse_message(type_encoders=type_encoders)
 
-    return _generator()
+class ChatRequest(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
+    """Body payload for agent chat streaming and turn creation."""
+
+    message: "str"
+    session_id: "str | None" = None
+    dynamic_context: "str | None" = None
+
+
+class TurnResult(msgspec.Struct, kw_only=True):
+    """Aggregated turn result returned by POST /agent/turns."""
+
+    session_id: "str"
+    turn_id: "str"
+    agent_name: "str"
+    output: "str"
+    messages: "list[AgentMessage]"
+    token_usage: "dict[str, int]"
+
+
+class SessionHistory(msgspec.Struct, kw_only=True):
+    """Conversation history payload returned by GET /agent/sessions/{session_id}."""
+
+    session_id: "str"
+    messages: "list[AgentMessage]"
 
 
 class AgentChatController(Controller):
-    """Litestar controller providing HTTP endpoints and SSE streaming for agents."""
+    """SSE chat, synchronous turns, and owner-scoped history over an injected AgentRuntime."""
 
     path = "/agent"
-    runtime: AgentRuntime | None = None
-    ping_interval: int = 15
+    ping_interval: "float" = 15.0
 
-    def __init__(self, owner: Any = None, runtime: AgentRuntime | None = None) -> None:
-        """Initialize the agent chat controller."""
-        super().__init__(owner if owner is not None else cast("Any", None))
-        if not hasattr(self, "path"):
-            self.path = "/agent"
-        if runtime is not None:
-            self.runtime = runtime
+    def _turn(self, request: "Request[Any, Any, Any]", data: "ChatRequest") -> "TurnRequest":
+        """Build TurnRequest from connection request and payload data."""
+        return TurnRequest(
+            user_message=data.message,
+            session_id=data.session_id,
+            dynamic_context=data.dynamic_context,
+            context=ToolContext.from_connection(request),
+        )
 
-    def _resolve_runtime(self, runtime: AgentRuntime | None) -> AgentRuntime:
-        """Resolve runtime from route dependency or controller attribute."""
-        resolved = runtime or self.runtime
-        if resolved is None:
-            raise ValueError(_RUNTIME_REQUIRED_ERROR)
-        return resolved
-
-    @post("/chat")
-    async def chat_stream(
+    @post("/chat", middleware=[StreamCleanupMiddleware()], status_code=HTTP_200_OK)
+    async def chat(
         self,
-        request: Request[Any, Any, Any],
-        data: dict[str, Any],
-        runtime: AgentRuntime | None = None,
-    ) -> ServerSentEvent:
-        """Stream an agent turn over Server-Sent Events from a JSON chat payload."""
-        resolved_runtime = self._resolve_runtime(runtime)
-        session_id = str(data.get("session_id") or uuid4().hex)
-        turn_id = str(data.get("turn_id") or uuid4().hex)
-        user_message = str(data.get("user_message") or data.get("message") or "")
-        dynamic_context = data.get("dynamic_context")
+        request: "Request[Any, Any, Any]",
+        data: "ChatRequest",
+        runtime: "NamedDependency[AgentRuntime]",
+    ) -> "ServerSentEvent":
+        """Stream an agent turn over Server-Sent Events from a typed chat payload."""
+        turn_req = self._turn(request, data)
+        encoders = request.route_handler.resolve_type_encoders()
 
-        tool_ctx = resolve_tool_context(request)
-        tool_ctx.session_id = session_id
-        tool_ctx.turn_id = turn_id
+        async def _producer(send: "MemoryObjectSendStream[AgentStreamFrame]") -> None:
+            await runtime.produce(turn_req, send)
 
-        turn_req = TurnRequest(
-            session_id=session_id,
-            turn_id=turn_id,
-            user_message=user_message,
-            dynamic_context=dynamic_context,
-            context=tool_ctx,
+        owner: StreamOwner[AgentStreamFrame, None] = start_stream(
+            request.scope,
+            _producer,
+            capacity=runtime.stream_buffer,
+            cleanup_timeout=DEFAULT_STREAM_CLEANUP_TIMEOUT,
         )
-        type_encoders = getattr(request.route_handler, "type_encoders", None)
-        return ServerSentEvent(
-            content=_build_sse_stream(resolved_runtime, turn_req, type_encoders=type_encoders),
-        )
+        try:
+            first = await prefetch_stream(request.scope, request.receive, owner)
+        except anyio.EndOfStream:
+            first = None
 
-    @post("/turns")
+        turn_id = first.turn_id if first is not None else uuid4().hex
+
+        async def events() -> "AsyncIterator[ServerSentEventMessage]":
+            try:
+                if first is not None:
+                    yield first.to_sse_message(encoders)
+                while True:
+                    frame: AgentStreamFrame | None = None
+                    with anyio.move_on_after(self.ping_interval) as idle:
+                        try:
+                            frame = await owner.receiver.receive()
+                        except anyio.EndOfStream:
+                            break
+                    if idle.cancelled_caught or frame is None:
+                        yield AgentStreamFrame(event_type="ping", turn_id=turn_id).to_sse_message(encoders)
+                        continue
+                    yield frame.to_sse_message(encoders)
+                with suppress(Exception):
+                    await owner.result()
+            finally:
+                await owner.close()
+
+        return ServerSentEvent(events())
+
+    @post("/turns", status_code=HTTP_200_OK)
     async def create_turn(
         self,
-        request: Request[Any, Any, Any],
-        data: dict[str, Any],
-        runtime: AgentRuntime | None = None,
-    ) -> dict[str, Any]:
-        """Execute an agent turn synchronously returning final aggregated response."""
-        resolved_runtime = self._resolve_runtime(runtime)
-        session_id = str(data.get("session_id") or uuid4().hex)
-        turn_id = str(data.get("turn_id") or uuid4().hex)
-        user_message = str(data.get("user_message") or data.get("message") or "")
-        dynamic_context = data.get("dynamic_context")
-
-        tool_ctx = resolve_tool_context(request)
-        tool_ctx.session_id = session_id
-        tool_ctx.turn_id = turn_id
-
-        turn_req = TurnRequest(
-            session_id=session_id,
-            turn_id=turn_id,
-            user_message=user_message,
-            dynamic_context=dynamic_context,
-            context=tool_ctx,
-        )
-
-        response = await resolved_runtime.run_turn(turn_req)
-        return {
-            "session_id": response.session_id,
-            "turn_id": response.turn_id,
-            "output": response.output,
-            "messages": [m.to_dict() for m in response.messages],
-            "token_usage": response.token_usage,
-        }
-
-    @get("/turns/{turn_id:str}/stream")
-    async def stream_turn(
-        self,
-        request: Request[Any, Any, Any],
-        turn_id: str,
-        runtime: AgentRuntime | None = None,
-        session_id: str | None = None,
-        message: str = "",
-    ) -> ServerSentEvent:
-        """Stream an agent turn as Server-Sent Events."""
-        resolved_runtime = self._resolve_runtime(runtime)
-        sid = session_id or uuid4().hex
-        tool_ctx = resolve_tool_context(request)
-        tool_ctx.session_id = sid
-        tool_ctx.turn_id = turn_id
-
-        turn_req = TurnRequest(
-            session_id=sid,
-            turn_id=turn_id,
-            user_message=message,
-            context=tool_ctx,
-        )
-        type_encoders = getattr(request.route_handler, "type_encoders", None)
-        return ServerSentEvent(
-            content=_build_sse_stream(
-                resolved_runtime,
-                turn_req,
-                type_encoders=type_encoders,
-                emit_session_frame=False,
-            ),
+        request: "Request[Any, Any, Any]",
+        data: "ChatRequest",
+        runtime: "NamedDependency[AgentRuntime]",
+    ) -> "TurnResult":
+        """Execute an agent turn synchronously returning final TurnResult."""
+        turn_req = self._turn(request, data)
+        try:
+            res = await runtime.run_turn(turn_req)
+        except BudgetExceededError as exc:
+            raise HTTPException(status_code=504, detail=str(exc)) from exc
+        return TurnResult(
+            session_id=res.session_id,
+            turn_id=res.turn_id,
+            agent_name=res.agent_name,
+            output=res.output,
+            messages=res.messages,
+            token_usage=res.token_usage,
         )
 
     @get("/sessions/{session_id:str}")
     async def get_session(
         self,
-        session_id: str,
-        runtime: AgentRuntime | None = None,
-    ) -> dict[str, Any]:
-        """Return conversation history for a session."""
-        resolved_runtime = self._resolve_runtime(runtime)
-        messages = resolved_runtime.get_session_messages(session_id)
-        return {
-            "session_id": session_id,
-            "messages": [m.to_dict() for m in messages],
-        }
-
-
-__all__ = ("AgentChatController",)
+        request: "Request[Any, Any, Any]",
+        session_id: "str",
+        runtime: "NamedDependency[AgentRuntime]",
+    ) -> "SessionHistory":
+        """Return conversation history for a session scoped to caller identity."""
+        tool_ctx = ToolContext.from_connection(request)
+        messages = await runtime.get_history(tool_ctx, session_id)
+        if messages is None:
+            raise SessionNotFoundError(session_id)
+        return SessionHistory(
+            session_id=session_id,
+            messages=messages,
+        )

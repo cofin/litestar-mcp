@@ -97,11 +97,8 @@ def to_json(
     Raises:
         SerializationException: If data cannot be encoded.
     """
-    if type_encoders:
-        serializer = get_serializer(type_encoders)
-        encoded = msgspec.json.Encoder(enc_hook=serializer).encode(data)
-    else:
-        encoded = encode_json(data)
+    serializer = get_serializer(type_encoders) if type_encoders else None
+    encoded = encode_json(data, serializer=serializer)
     return encoded if as_bytes else encoded.decode("utf-8")
 
 

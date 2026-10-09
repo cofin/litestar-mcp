@@ -1,18 +1,11 @@
 """Executable reference example: Coffee Shop Barista Agent with Litestar MCP."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from litestar import Litestar
 from litestar.di import Provide
 
 from litestar_mcp import (
-    Agent,
-    AgentChatController,
-    AgentGroup,
-    AgentRuntime,
-    GoogleGenAIClient,
     LitestarMCP,
     PromptController,
     PromptMessage,
@@ -20,6 +13,14 @@ from litestar_mcp import (
     prompt,
     tool,
 )
+from litestar_mcp.agent import (
+    Agent,
+    AgentChatController,
+    AgentGroup,
+    AgentRuntime,
+    GoogleGenAIClient,
+)
+from litestar_mcp.mcp.config import MCPConfig
 
 
 class BaristaSkillController(SkillController):
@@ -36,6 +37,7 @@ class BaristaSkillController(SkillController):
     )
 
     def __init__(self, owner: Any = None) -> None:
+        """Initialize the barista skill with catalog menu and empty order list."""
         super().__init__(owner)
         self.menu: dict[str, dict[str, Any]] = {
             "espresso": {"price": 3.50, "roast": "Ethiopian Yirgacheffe", "decaf_available": True},
@@ -95,7 +97,7 @@ class CoffeePromptController(PromptController):
 def create_model_client() -> GoogleGenAIClient:
     """Instantiate GoogleGenAIClient with optional thinking budget."""
     return GoogleGenAIClient(
-        model="gemini-2.5-pro",
+        model="gemini-3.8-flash",
         thinking_budget=2048,
         temperature=0.2,
     )
@@ -103,7 +105,7 @@ def create_model_client() -> GoogleGenAIClient:
 
 def setup_coffee_agent_group() -> AgentGroup:
     """Build and configure the coffee shop agent group with specialists."""
-    model_client = GoogleGenAIClient(model="gemini-2.5-flash")
+    model_client = GoogleGenAIClient(model="gemini-3.8-flash")
 
     barista_agent = Agent(
         name="barista",
@@ -131,8 +133,10 @@ coffee_shop_group = setup_coffee_agent_group()
 agent_runtime = AgentRuntime(target=coffee_shop_group)
 
 mcp_plugin = LitestarMCP(
-    controllers=[CoffeePromptController],
-    skill_controllers=[BaristaSkillController],
+    config=MCPConfig(
+        prompt_controllers=[CoffeePromptController],
+        skill_controllers=[BaristaSkillController],
+    )
 )
 
 app = Litestar(

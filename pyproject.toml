@@ -48,10 +48,9 @@ Source = "https://github.com/cofin/litestar-mcp"
 
 [project.optional-dependencies]
 a2a = ["a2a-sdk>=1.1.4", "protobuf>=5.29.5"]
-google-genai = ["google-genai>=1.0.0"]
+google-genai = ["google-genai>=2.29.0"]
 opentelemetry = ["opentelemetry-api>=1.20.0"]
 queues = ["litestar-queues>=0.12.0"]
-agent = ["litestar-mcp[google-genai,opentelemetry]"]
 
 [project.entry-points."pygments.styles"]
 litestar-mcp-dark = "tools.sphinx_ext.pygments_styles:LitestarMcpDarkStyle"
@@ -105,6 +104,7 @@ test = [
     "pytest-mock>=3.11.1",
     "pytest-xdist>=3.6.1",
     "httpx>=0.24.1",
+    "opentelemetry-sdk",
     "pyjwt[crypto]>=2.10.1",
     "attrs",
     "cattrs",
@@ -232,9 +232,6 @@ strict-imports = false
 
 [tool.codespell]
 skip = 'uv.lock,package-lock.json'
-[tool.pyright]
-include = ["litestar_mcp", "tests"]
-reportMissingImports = "none"
 
 # MyPy configuration
 [tool.mypy]
@@ -260,20 +257,7 @@ follow_imports = "skip"
 module = ["_pytest.*", "pytest.*", "sphinx.*"]
 
 [[tool.mypy.overrides]]
-ignore_missing_imports = true
-module = ["a2a.*", "litestar_queues.*"]
-
-[[tool.mypy.overrides]]
-disallow_subclassing_any = false
-module = ["litestar_mcp.a2a.*", "tests.integration.*", "tests.unit.a2a.*"]
-
-[[tool.mypy.overrides]]
-warn_return_any = false
-module = ["litestar_mcp.a2a.*"]
-
-[[tool.mypy.overrides]]
 disallow_untyped_decorators = false
-warn_unused_ignores = false
 module = ["tests.*"]
 
 # Pytest configuration

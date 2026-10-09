@@ -125,12 +125,9 @@ class MCPTaskConfig:
     """Configuration for the opt-in MCP Tasks extension."""
 
     store: "Store | None" = None
-    backend: "Literal['memory', 'queue', 'store']" = "memory"
-    queue_service: "Any" = None
     default_ttl_ms: "int" = 300_000
     max_ttl_ms: "int" = 3_600_000
     poll_interval_ms: "int" = 1_000
-    enabled: "bool" = True
 
     def __post_init__(self) -> "None":
         if self.default_ttl_ms < 0:
@@ -144,17 +141,12 @@ class MCPTaskConfig:
             raise ValueError(msg)
 
 
-MCPTasksConfig = MCPTaskConfig
-
-
 def normalize_task_config(value: "bool | MCPTaskConfig") -> "MCPTaskConfig | None":
     """Normalize task configuration into a concrete config object."""
     if value is False:
         return None
     if value is True:
         return MCPTaskConfig()
-    if not value.enabled:
-        return None
     return value
 
 
@@ -261,8 +253,6 @@ class MCPConfig:
     exclude_tags: "list[str] | None" = None
     tasks: "bool | MCPTaskConfig" = False
     skills: "MCPSkillsConfig | None" = None
-    prompt_controllers: "Sequence[Any]" = ()
-    skill_controllers: "Sequence[Any]" = ()
     opt_keys: "MCPOptKeys" = field(default_factory=MCPOptKeys)
     cache_ttl_ms: "int" = 0
     cache_scope: "Literal['private', 'public']" = "private"
@@ -276,6 +266,8 @@ class MCPConfig:
     after_tool_call: "AfterToolCallHook | None" = None
     max_blob_bytes: "int | None" = 25 * 1024 * 1024
     route_opt: "dict[str, Any] | None" = None
+    prompt_controllers: "Sequence[type[Any]]" = ()
+    skill_controllers: "Sequence[type[Any]]" = ()
 
     def __post_init__(self) -> "None":
         validate_stream_cleanup_timeout(self.stream_cleanup_timeout)

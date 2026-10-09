@@ -1,7 +1,5 @@
 """Execution budget guards and exceptions for AgentRuntime."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 from litestar_mcp.core.exceptions import LitestarMCPError

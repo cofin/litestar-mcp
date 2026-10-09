@@ -1,155 +1,146 @@
-from __future__ import annotations
+"""Provider-neutral agent specifications and multi-agent group abstractions."""
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
-from litestar_mcp.agent.tools import Tool, tool
+import msgspec
+from litestar.exceptions import ImproperlyConfiguredException
+
+from litestar_mcp.core.tools import Tool, ToolCall, ToolResult, tool
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from litestar_mcp.agent.models import ModelClient
+    from litestar_mcp.mcp.skill_controller import SkillController
+
+__all__ = ("TRANSFER_TOOL_NAME", "Agent", "AgentGroup", "AgentMessage")
+
+TRANSFER_TOOL_NAME = "transfer_to_agent"
 
 
-@dataclass(slots=True)
-class AgentMessage:
-    """Canonical conversation message representation across heterogeneous models."""
+class AgentMessage(msgspec.Struct, kw_only=True):
+    """Provider-neutral conversation message."""
 
-    role: str
-    content: str
-    tool_calls: list[dict[str, Any]] = field(default_factory=list)
-    tool_results: list[dict[str, Any]] = field(default_factory=list)
-    agent_name: str | None = None
-
-    @classmethod
-    def user(cls, content: str) -> AgentMessage:
-        """Create a user role agent message."""
-        return cls(role="user", content=content)
-
-    @classmethod
-    def assistant(
-        cls,
-        content: str = "",
-        tool_calls: list[dict[str, Any]] | None = None,
-        agent_name: str | None = None,
-    ) -> AgentMessage:
-        """Create an assistant role agent message."""
-        return cls(
-            role="assistant",
-            content=content,
-            tool_calls=tool_calls or [],
-            agent_name=agent_name,
-        )
-
-    @classmethod
-    def system(cls, content: str) -> AgentMessage:
-        """Create a system role agent message."""
-        return cls(role="system", content=content)
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert message to dictionary representation."""
-        data: dict[str, Any] = {
-            "role": self.role,
-            "content": self.content,
-        }
-        if self.tool_calls:
-            data["tool_calls"] = self.tool_calls
-        if self.tool_results:
-            data["tool_results"] = self.tool_results
-        if self.agent_name:
-            data["agent_name"] = self.agent_name
-        return data
+    role: "Literal['system', 'user', 'assistant', 'tool']"
+    content: "str" = ""
+    tool_calls: "list[ToolCall]" = msgspec.field(default_factory=list)
+    tool_results: "list[ToolResult]" = msgspec.field(default_factory=list)
+    agent_name: "str | None" = None
 
 
 @dataclass(slots=True)
 class Agent:
-    """An autonomous agent specification with instructions, tools, skills, and model binding."""
+    """Agent definition with instructions, tools, skills, and an optional model binding."""
 
-    name: str
-    description: str = ""
-    instructions: str = ""
-    tools: list[Any] = field(default_factory=list)
-    skills: list[Any] = field(default_factory=list)
-    model: ModelClient | str | None = None
+    name: "str"
+    description: "str" = ""
+    instructions: "str" = ""
+    tools: "Sequence[Tool | Callable[..., Any]]" = ()
+    skills: "Sequence[SkillController | type[SkillController]]" = ()
+    model: "ModelClient | str | None" = None
+    _tool_set: "tuple[Tool, ...]" = field(init=False, repr=False, default=())
+    _skill_instances: "tuple[SkillController, ...]" = field(init=False, repr=False, default=())
 
-    def get_all_tools(self) -> list[Tool]:
-        """Collect and normalize all tools from direct list and attached skills."""
-        collected: list[Tool] = []
-        for t in self.tools:
-            if isinstance(t, Tool):
-                collected.append(t)
-            elif hasattr(t, "__tool_instance__") and isinstance(t.__tool_instance__, Tool):
-                collected.append(t.__tool_instance__)
-            elif callable(t):
-                collected.append(tool()(t))
+    def __post_init__(self) -> "None":
+        """Instantiate skill classes once, normalize tools, and reject duplicate tool names."""
+        skill_instances: list[Any] = [s() if isinstance(s, type) else s for s in self.skills]
+        self._skill_instances = tuple(skill_instances)
 
-        for s in self.skills:
-            inst = s() if isinstance(s, type) else s
-            if hasattr(inst, "get_tools"):
-                for st in inst.get_tools():
-                    if isinstance(st, Tool):
-                        collected.append(st)
-                    elif hasattr(st, "__tool_instance__") and isinstance(st.__tool_instance__, Tool):
-                        collected.append(st.__tool_instance__)
-                    elif callable(st):
-                        collected.append(tool()(st))
-        return collected
+        own_tools: list[Tool] = [t if isinstance(t, Tool) else tool()(t) for t in self.tools]
 
-    def get_combined_instructions(self) -> str:
-        """Combine agent-level instructions with grounding rules from attached skills."""
+        all_tools: list[Tool] = list(own_tools)
+        for s_inst in self._skill_instances:
+            if hasattr(s_inst, "get_tools"):
+                all_tools.extend(s_inst.get_tools())
+
+        seen_names: set[str] = set()
+        dupes: set[str] = set()
+        for t in all_tools:
+            if t.name == TRANSFER_TOOL_NAME:
+                msg = f"Tool name {TRANSFER_TOOL_NAME!r} is reserved for agent transfer"
+                raise ImproperlyConfiguredException(msg)
+            if t.name in seen_names:
+                dupes.add(t.name)
+            seen_names.add(t.name)
+
+        if dupes:
+            msg = f"Agent {self.name!r} declares duplicate tool names: {sorted(dupes)}"
+            raise ImproperlyConfiguredException(msg)
+
+        self._tool_set = tuple(all_tools)
+
+    @property
+    def tool_set(self) -> "tuple[Tool, ...]":
+        """Return the agent's own tools followed by skill tools."""
+        return self._tool_set
+
+    @property
+    def skill_instances(self) -> "tuple[SkillController, ...]":
+        """Return the instantiated skill controllers attached to this agent."""
+        return self._skill_instances
+
+    @property
+    def combined_instructions(self) -> "str":
+        """Return agent instructions joined with skill instructions by blank lines."""
         parts: list[str] = []
         if self.instructions:
             parts.append(self.instructions)
-        for s in self.skills:
-            inst = s() if isinstance(s, type) else s
+        for inst in self._skill_instances:
             if hasattr(inst, "get_instructions"):
-                skill_rules = inst.get_instructions()
-                if skill_rules:
-                    parts.append(skill_rules)
+                rules = inst.get_instructions()
+                if rules:
+                    parts.append(rules)
         return "\n\n".join(parts)
 
 
 class AgentGroup:
-    """Hierarchical multi-agent group coordinating specialist agents.
+    """Coordinator and specialist agents with a group-owned transfer_to_agent tool."""
 
-    Automatically synthesizes a transfer_to_agent tool for the coordinator,
-    routing turns to specialists based on their declared domain capabilities.
-    """
+    def __init__(self, coordinator: "Agent", specialists: "Sequence[Agent]" = ()) -> "None":
+        all_agents = [coordinator, *specialists]
+        names = [a.name for a in all_agents]
+        if len(names) != len(set(names)):
+            msg = f"Duplicate agent names in group: {names}"
+            raise ImproperlyConfiguredException(msg)
+        for s in specialists:
+            if s is coordinator:
+                msg = f"Specialist {s.name!r} cannot be the coordinator"
+                raise ImproperlyConfiguredException(msg)
 
-    def __init__(self, coordinator: Agent, specialists: Sequence[Agent] = ()) -> None:
         self.coordinator = coordinator
         self.specialists: dict[str, Agent] = {s.name: s for s in specialists}
-        self._inject_transfer_tool()
+        self._transfer_tool: Tool | None = None
 
-    def _inject_transfer_tool(self) -> None:
-        """Synthesize and attach transfer_to_agent tool to coordinator."""
-        if not self.specialists:
-            return
+        if self.specialists:
+            specialist_names = tuple(self.specialists.keys())
+            target_literal = Literal[specialist_names]  # type: ignore[valid-type]
 
-        specialist_names = list(self.specialists.keys())
+            def transfer_to_agent(target_agent: str, reason: str = "") -> dict[str, Any]:
+                return {
+                    "status": "transferred",
+                    "target_agent": target_agent,
+                    "reason": reason,
+                }
 
-        def transfer_to_agent(target_agent: str, reason: str = "") -> dict[str, Any]:
-            if target_agent not in self.specialists:
-                valid = ", ".join(self.specialists.keys())
-                return {"status": "error", "message": f"Unknown agent '{target_agent}'. Valid agents: {valid}"}
-            return {
-                "status": "transferred",
-                "target_agent": target_agent,
-                "reason": reason,
+            transfer_to_agent.__annotations__ = {
+                "target_agent": target_literal,
+                "reason": str,
+                "return": dict[str, Any],
             }
 
-        transfer_tool = tool(
-            name="transfer_to_agent",
-            description=f"Transfer control to a specialist agent. Available agents: {', '.join(specialist_names)}",
-        )(transfer_to_agent)
+            self._transfer_tool = tool(
+                name=TRANSFER_TOOL_NAME,
+                description=f"Transfer control to a specialist agent. Available agents: {', '.join(specialist_names)}",
+            )(transfer_to_agent)
 
-        transfer_tool.parameters["properties"]["target_agent"]["enum"] = specialist_names
+    def tools_for(self, agent: "Agent") -> "tuple[Tool, ...]":
+        """Return tools available to an agent in this group."""
+        if agent is self.coordinator and self._transfer_tool is not None:
+            return (*agent.tool_set, self._transfer_tool)
+        return agent.tool_set
 
-        existing_names = [getattr(t, "name", getattr(t, "__name__", None)) for t in self.coordinator.tools]
-        if "transfer_to_agent" not in existing_names:
-            self.coordinator.tools.append(transfer_tool)
-
-    def get_agent(self, name: str) -> Agent:
+    def get_agent(self, name: "str") -> "Agent":
         """Retrieve an agent by name from coordinator or specialist roster."""
         if name == self.coordinator.name:
             return self.coordinator
@@ -157,3 +148,12 @@ class AgentGroup:
             return self.specialists[name]
         msg = f"Agent '{name}' not found in group"
         raise KeyError(msg)
+
+    def resolve_transfer(self, call: "ToolCall") -> "Agent | None":
+        """Resolve a tool call into an agent transfer target if applicable."""
+        if call.name != TRANSFER_TOOL_NAME:
+            return None
+        target = call.arguments.get("target_agent")
+        if isinstance(target, str) and target in self.specialists:
+            return self.specialists[target]
+        return None

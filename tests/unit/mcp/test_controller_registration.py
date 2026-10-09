@@ -1,24 +1,50 @@
-"""Unit tests for registering PromptController and SkillController on LitestarMCP and MCP."""
+"""Unit tests for registering PromptController and SkillController on LitestarMCP and MCPConfig."""
 
-from __future__ import annotations
-
+import dataclasses
+import inspect
 import json
-from typing import Any
+from typing import Any, cast
 
-from litestar import Litestar
+import pytest
+from litestar import Controller, Litestar
+from litestar.exceptions import ImproperlyConfiguredException
 from litestar.testing import TestClient
 
-from litestar_mcp import (
-    MCP,
-    LitestarMCP,
-    MCPConfig,
-    PromptController,
-    SkillController,
-    ToolContext,
-    prompt,
-    tool,
-)
+from litestar_mcp.core.context import ToolContext
+from litestar_mcp.core.tools import tool
+from litestar_mcp.mcp.config import MCPConfig
+from litestar_mcp.mcp.plugin import LitestarMCP
+from litestar_mcp.mcp.prompt_controller import PromptController, prompt
+from litestar_mcp.mcp.skill_controller import SkillController
 from tests.unit.conftest import mcp_post
+
+V0_14_MCP_CONFIG_FIELDS = [
+    "base_path",
+    "include_in_schema",
+    "name",
+    "instructions",
+    "guards",
+    "allowed_origins",
+    "include_operations",
+    "exclude_operations",
+    "include_tags",
+    "exclude_tags",
+    "tasks",
+    "skills",
+    "opt_keys",
+    "cache_ttl_ms",
+    "cache_scope",
+    "subscription_max_streams",
+    "subscription_keepalive_seconds",
+    "stream_queue_capacity",
+    "stream_cleanup_timeout",
+    "subscription_channels",
+    "list_page_size",
+    "before_tool_call",
+    "after_tool_call",
+    "max_blob_bytes",
+    "route_opt",
+]
 
 
 class OpsPromptController(PromptController):
@@ -51,7 +77,23 @@ class MathSkillController(SkillController):
         return f"Explain how to add {a} and {b}"
 
 
-def test_litestar_mcp_controller_jsonrpc_dispatch() -> None:
+class OwnerInstantiationError(AttributeError):
+    """Raised when plugin instantiates user controller with owner=None."""
+
+    def __init__(self) -> None:
+        super().__init__("Plugin must not instantiate user Controller with owner=None")
+
+
+class ExplodingController(Controller):
+    """Controller whose __init__ explodes if instantiated directly by the plugin."""
+
+    def __init__(self, owner: Any = None) -> None:
+        if owner is None:
+            raise OwnerInstantiationError
+        super().__init__(owner)
+
+
+def test_config_registration_dispatches_end_to_end() -> None:
     """Verify tools/list, tools/call, prompts/list, and prompts/get work end-to-end with controllers."""
     config = MCPConfig(
         prompt_controllers=[OpsPromptController],
@@ -92,25 +134,41 @@ def test_litestar_mcp_controller_jsonrpc_dispatch() -> None:
             {"name": "ops/triage", "arguments": {"service": "billing"}},
         ).json()
         messages = get_prompt_res["result"]["messages"]
-        assert len(messages) == 2
-        assert messages[0]["role"] == "system"
-        assert messages[0]["content"]["text"] == "Follow incident response protocol."
-        assert messages[1]["role"] == "user"
-        assert messages[1]["content"]["text"] == "Triage alert for service: billing"
+        assert len(messages) == 1
+        assert messages[0]["role"] == "user"
+        assert messages[0]["content"]["text"].startswith("Follow incident response protocol.\n\n")
 
 
-def test_standalone_mcp_wrapper_registers_controllers() -> None:
-    """Verify standalone MCP wrapper forwards prompt_controllers and skills to LitestarMCP."""
-    mcp_app = MCP(
-        "controller-server",
-        prompt_controllers=[OpsPromptController],
-        skills=[MathSkillController],
-    )
-    with TestClient(app=mcp_app.app) as client:
-        call_res = mcp_post(
-            client,
-            "tools/call",
-            {"name": "add", "arguments": {"a": 3, "b": 4}},
-        ).json()
-        payload = json.loads(call_res["result"]["content"][0]["text"])
-        assert payload["sum"] == 7
+def test_non_controller_registration_rejected() -> None:
+    """Verify passing non-PromptController classes or instances to config raises ImproperlyConfiguredException."""
+
+    class PlainClass:
+        pass
+
+    with pytest.raises(ImproperlyConfiguredException, match="is not a PromptController subclass"):
+        MCPConfig(prompt_controllers=cast("Any", [PlainClass]))
+        LitestarMCP(config=MCPConfig(prompt_controllers=cast("Any", [PlainClass])))
+
+    with pytest.raises(ImproperlyConfiguredException, match="is not a PromptController subclass"):
+        LitestarMCP(config=MCPConfig(skill_controllers=cast("Any", [OpsPromptController()])))
+
+
+def test_plugin_never_instantiates_user_controllers() -> None:
+    """Verify normal Litestar Controller subclasses are not instantiated by the plugin during discovery."""
+    config = MCPConfig()
+    plugin = LitestarMCP(config=config)
+    app = Litestar(route_handlers=[ExplodingController], plugins=[plugin])
+    with TestClient(app=app) as client:
+        res = mcp_post(client, "tools/list", {}).json()
+        assert "result" in res
+
+
+def test_v0_14_constructor_signatures() -> None:
+    """Verify LitestarMCP.__init__ parameters and MCPConfig leading field order match v0.14.0."""
+    sig = inspect.signature(LitestarMCP.__init__)
+    param_names = list(sig.parameters.keys())
+    assert param_names == ["self", "config", "prompts"]
+
+    field_names = [f.name for f in dataclasses.fields(MCPConfig)]
+    leading_fields = field_names[: len(V0_14_MCP_CONFIG_FIELDS)]
+    assert leading_fields == V0_14_MCP_CONFIG_FIELDS

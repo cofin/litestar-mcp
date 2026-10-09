@@ -9,6 +9,40 @@ notes, and important protocol fixes.
 Recent Updates
 ==============
 
+.. changelog:: 0.15.0
+
+    .. change:: agent abstractions, class-based controllers, and Google GenAI runtime
+        :type: feature
+
+        Added high-level agent primitives integrating directly with Litestar:
+        - Class-based ``PromptController`` and ``SkillController`` compile each
+          method into an internal route handler preserving Litestar guards and
+          dependency injection providers. Class instructions are automatically
+          prepended to the first user message, adhering to MCP's user/assistant
+          role constraint.
+        - Core ``Tool`` and ``@tool`` abstraction with type-based context
+          injection (``ToolContext``, ``ASGIConnection``, ``Request``) and
+          strict msgspec argument validation.
+        - Hierarchical ``Agent`` and ``AgentGroup`` models with non-mutating
+          coordinator boundaries and Literal-typed ``transfer_to_agent`` tools.
+        - ``GoogleGenAIClient`` defaulting to ``gemini-3.8-flash`` with automatic
+          thought signature and provider call ID preservation, structured
+          function response envelopes, thinking token tracking, and shared
+          httpx2 client support.
+        - Pluggable ``SessionStore`` implementations (``MemorySessionStore`` and
+          ``LitestarStoreSessionStore``) with per-session locks, TTL eviction, and
+          strict owner scoping.
+        - Realtime SSE chat streaming via ``AgentChatController`` with
+          typed ``AgentStreamFrame`` structures, keepalive pings, and
+          ``Last-Event-ID`` cursor recovery.
+        - Concurrent in-process DAG execution engine via ``DynamicWorkflow`` and
+          ``WorkflowEngine`` with ready queue scheduling and upstream output passing.
+        - Protocol bridges for bidirectional MCP (``agent_to_mcp``, ``mcp_to_tools``,
+          ``discover_mcp_tools``) and A2A 1.0 (``agent_to_a2a``).
+        - OpenTelemetry observability using vendor-neutral GenAI semantic
+          conventions (``invoke_agent``, ``execute_tool``) with ``enable_spans=False``
+          default matching sqlspec.
+
 .. changelog:: 0.14.0
 
     .. change:: move the HTTP client to httpx2 and drop the bridge extra
