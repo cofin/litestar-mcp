@@ -175,9 +175,7 @@ class MCPSkillsConfig:
     max_bytes_per_skill: "int" = 16_777_216
 
     def __post_init__(self) -> "None":
-        # Widened to object because the annotation already excludes str, so type checkers
-        # call the branch unreachable. It guards untyped callers, for whom a bare string
-        # would iterate per character. ValueError, since a str is a valid Sequence.
+        """Validate and normalize skill directory paths and size bounds."""
         configured_paths: object = self.paths
         if isinstance(configured_paths, (str, bytes)):
             msg = "paths must be a sequence of paths, not a single string; pass [path] instead"
@@ -237,6 +235,10 @@ class MCPConfig:
             Set to ``None`` to disable the library cap.
         skills: Optional Skills over MCP configuration; ``None`` leaves the
             extension disabled.
+        prompt_controllers: Optional sequence of PromptController classes or
+            instances to register on startup.
+        skill_controllers: Optional sequence of SkillController classes or
+            instances to register on startup.
     """
 
     base_path: "str" = "/mcp"
@@ -264,6 +266,8 @@ class MCPConfig:
     after_tool_call: "AfterToolCallHook | None" = None
     max_blob_bytes: "int | None" = 25 * 1024 * 1024
     route_opt: "dict[str, Any] | None" = None
+    prompt_controllers: "Sequence[type[Any]]" = ()
+    skill_controllers: "Sequence[type[Any]]" = ()
 
     def __post_init__(self) -> "None":
         validate_stream_cleanup_timeout(self.stream_cleanup_timeout)

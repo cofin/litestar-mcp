@@ -87,12 +87,14 @@ class MCPTaskStore:
         max_ttl_ms: int = 3_600_000,
         poll_interval_ms: int = 1_000,
         status_callback: Callable[[TaskRecord], Awaitable[None]] | None = None,
+        queue_service: Any = None,
     ) -> None:
         self.store = store or MemoryStore()
         self.default_ttl_ms = default_ttl_ms
         self.max_ttl_ms = max_ttl_ms
         self.poll_interval_ms = poll_interval_ms
         self.status_callback = status_callback
+        self.queue_service = queue_service
         self._lock = asyncio.Lock()
         self._runners: dict[str, asyncio.Task[Any]] = {}
         self._input_queues: dict[str, asyncio.Queue[dict[str, Any]]] = {}
@@ -129,6 +131,18 @@ class MCPTaskStore:
         async with self._lock:
             await self._lookup(task_id, None)
             self._runners[task_id] = runner
+
+    async def enqueue_tool(
+        self,
+        task_id: str,
+        tool_fn: Callable[..., Any],
+        **kwargs: Any,
+    ) -> Any:
+        """Enqueue a tool execution job onto the configured queue_service."""
+        if self.queue_service is None:
+            msg = "No queue_service configured on MCPTaskStore"
+            raise TaskStateError(msg)
+        return await self.queue_service.enqueue(tool_fn, task_id=task_id, **kwargs)
 
     async def get(self, task_id: str, owner_id: str | None) -> TaskRecord:
         """Retrieve a task, enforcing authenticated ownership when present."""

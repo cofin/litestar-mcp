@@ -1,21 +1,24 @@
 """Litestar MCP Plugin implementation."""
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from litestar import Litestar, Router
 from litestar.di import Provide
+from litestar.exceptions import ImproperlyConfiguredException
 from litestar.handlers import BaseRouteHandler
 from litestar.plugins import CLIPlugin, InitPluginProtocol
 
 from litestar_mcp.core.schema_builder import generate_schema_for_handler, validate_mcp_header_schema
 from litestar_mcp.core.sse import SubscriptionManager
 from litestar_mcp.mcp.cli import mcp_group
-from litestar_mcp.mcp.config import MCPConfig
+from litestar_mcp.mcp.config import MCPConfig, MCPSkillsConfig
+from litestar_mcp.mcp.prompt_controller import PromptController
 from litestar_mcp.mcp.registry import PromptRegistration, Registry
 from litestar_mcp.mcp.routes import MCPController
 from litestar_mcp.mcp.skills import SkillCatalog
 from litestar_mcp.mcp.tasks import MCPTaskStore, TaskRecord
+from litestar_mcp.mcp.tool_handlers import build_tool_route_handler
 from litestar_mcp.utils import get_handler_function, get_mcp_metadata
 
 _logger = logging.getLogger(__name__)
@@ -25,6 +28,9 @@ if TYPE_CHECKING:
 
     from click import Group
     from litestar.config.app import AppConfig
+    from litestar.types import Guard
+
+    from litestar_mcp.core.tools import Tool
 
 
 class LitestarMCP(InitPluginProtocol, CLIPlugin):
@@ -40,13 +46,20 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         Args:
             config: Plugin configuration. Defaults to ``MCPConfig()``.
             prompts: Optional sequence of standalone prompt functions
-                decorated with ``@mcp_prompt``. These are registered
-                immediately and made available via ``prompts/list`` and
-                ``prompts/get``.
+                decorated with ``@mcp_prompt`` or ``@prompt``.
         """
         self._config = config or MCPConfig()
         self._registry = Registry()
-        self._dynamic_handlers: list[BaseRouteHandler] = []
+        self._dynamic_handlers: list[Any] = []
+        self._dynamic_handler_paths: set[tuple[str, ...]] = set()
+
+        controllers_to_mount = (*self._config.prompt_controllers, *self._config.skill_controllers)
+        for entry in controllers_to_mount:
+            if not (isinstance(entry, type) and issubclass(entry, PromptController)):
+                msg = f"{entry!r} is not a PromptController subclass"
+                raise ImproperlyConfiguredException(msg)
+            self.register_dynamic_handler(entry)
+
         if prompts:
             for fn in prompts:
                 metadata = get_mcp_metadata(fn) or {}
@@ -76,7 +89,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                 poll_interval_ms=task_config.poll_interval_ms,
             )
         self._skill_catalog: SkillCatalog | None = (
-            SkillCatalog.from_config(self._config.skills) if self._config.skills is not None else None
+            SkillCatalog.from_config(self._config.skills) if isinstance(self._config.skills, MCPSkillsConfig) else None
         )
 
     @property
@@ -114,13 +127,36 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         """Get discovered MCP prompts."""
         return self._registry.prompts
 
-    def register_dynamic_handler(self, handler: "BaseRouteHandler") -> "None":
+    def register_dynamic_handler(self, handler: "Any") -> "None":
         """Register a dynamic route handler on the plugin.
 
         This is typically used by the wrapper class to register decorated
         tools and resources.
         """
-        self._dynamic_handlers.append(handler)
+        paths_attr = getattr(handler, "paths", None)
+        if paths_attr:
+            path_key = tuple(sorted(str(p) for p in paths_attr))
+            if path_key in self._dynamic_handler_paths:
+                return
+            self._dynamic_handler_paths.add(path_key)
+        if handler not in self._dynamic_handlers:
+            self._dynamic_handlers.append(handler)
+
+    def register_tool(
+        self,
+        tool: "Tool",
+        *,
+        guards: "Sequence[Guard] | None" = None,
+        dependencies: "dict[str, Provide] | None" = None,
+    ) -> "None":
+        """Register a Tool instance with the MCP plugin."""
+        route_handler = build_tool_route_handler(
+            tool,
+            base_path=self._config.base_path,
+            guards=guards,
+            dependencies=dependencies,
+        )
+        self.register_dynamic_handler(route_handler)
 
     def on_cli_init(self, cli: "Group") -> "None":
         """Configure CLI commands for MCP operations."""
@@ -128,8 +164,11 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
 
     def on_app_init(self, app_config: "AppConfig") -> "AppConfig":
         """Initialize the MCP integration when the Litestar app starts."""
-        app_config.route_handlers.extend(self._dynamic_handlers)
         self._discover_mcp_routes(app_config.route_handlers)
+        for dyn_handler in list(self._dynamic_handlers):
+            if dyn_handler not in app_config.route_handlers:
+                app_config.route_handlers.append(dyn_handler)
+        self._discover_mcp_routes(self._dynamic_handlers)
         self._registry.set_subscription_manager(self._subscription_manager)
 
         if self._task_store is not None:
@@ -223,45 +262,71 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                     metadata = get_mcp_metadata(get_handler_function(handler))
 
                 if metadata:
-                    if metadata["type"] == "tool":
-                        self._registry.register_tool(metadata["name"], handler)
-                    elif metadata["type"] == "resource":
-                        self._registry.register_resource(metadata["name"], handler)
-                        template = metadata.get("resource_template")
-                        if template is not None:
-                            self._registry.register_resource_template(metadata["name"], handler, template)
-                    elif metadata["type"] == "prompt":
-                        self._registry.register_prompt_handler(
-                            metadata["name"],
-                            handler,
-                            title=metadata.get("title"),
-                            description=metadata.get("description"),
-                            arguments=metadata.get("arguments"),
-                            icons=metadata.get("icons"),
-                        )
+                    self._register_from_metadata(handler, metadata)
                 elif handler.opt:
-                    tool_key = self._config.opt_keys.tool
-                    resource_key = self._config.opt_keys.resource
-                    template_key = self._config.opt_keys.resource_template
-                    prompt_key = self._config.opt_keys.prompt
-                    if tool_key in handler.opt:
-                        self._registry.register_tool(handler.opt[tool_key], handler)
-                    if resource_key in handler.opt:
-                        resource_name = handler.opt[resource_key]
-                        self._registry.register_resource(resource_name, handler)
-                        opt_template = handler.opt.get(template_key)
-                        if isinstance(opt_template, str):
-                            self._registry.register_resource_template(resource_name, handler, opt_template)
-                    if prompt_key in handler.opt:
-                        opt_keys = self._config.opt_keys
-                        self._registry.register_prompt_handler(
-                            handler.opt[prompt_key],
-                            handler,
-                            title=handler.opt.get(opt_keys.prompt_title),
-                            description=handler.opt.get(opt_keys.prompt_description),
-                            arguments=handler.opt.get(opt_keys.prompt_arguments),
-                            icons=handler.opt.get(opt_keys.prompt_icons),
-                        )
+                    self._register_from_opt(handler)
 
-            if getattr(handler, "route_handlers", None):
-                self._discover_mcp_routes(handler.route_handlers)  # pyright: ignore[reportAttributeAccessIssue]
+            child_handlers = getattr(handler, "route_handlers", None)
+            if isinstance(child_handlers, (list, tuple)):
+                self._discover_mcp_routes(cast("Any", child_handlers))
+
+    def _register_from_metadata(self, handler: BaseRouteHandler, metadata: dict[str, Any]) -> None:
+        """Register MCP handler from extracted metadata."""
+        if metadata["type"] == "tool":
+            self._registry.register_tool(metadata["name"], handler)
+        elif metadata["type"] == "resource":
+            self._registry.register_resource(metadata["name"], handler)
+            template = metadata.get("resource_template")
+            if template is not None:
+                self._registry.register_resource_template(metadata["name"], handler, template)
+        elif metadata["type"] == "prompt":
+            owner = getattr(handler.fn, "__self__", None) or getattr(handler, "owner", None)
+            if isinstance(owner, PromptController):
+                prompt_name = owner.qualify_prompt_name(metadata["name"])
+                instructions = owner.instructions
+            else:
+                prompt_name = metadata["name"]
+                instructions = None
+            self._registry.register_prompt_handler(
+                prompt_name,
+                handler,
+                title=metadata.get("title"),
+                description=metadata.get("description"),
+                arguments=metadata.get("arguments"),
+                icons=metadata.get("icons"),
+                instructions=instructions,
+            )
+
+    def _register_from_opt(self, handler: BaseRouteHandler) -> None:
+        """Register MCP handler from handler.opt keys."""
+        tool_key = self._config.opt_keys.tool
+        resource_key = self._config.opt_keys.resource
+        template_key = self._config.opt_keys.resource_template
+        prompt_key = self._config.opt_keys.prompt
+        if tool_key in handler.opt:
+            self._registry.register_tool(handler.opt[tool_key], handler)
+        if resource_key in handler.opt:
+            resource_name = handler.opt[resource_key]
+            self._registry.register_resource(resource_name, handler)
+            opt_template = handler.opt.get(template_key)
+            if isinstance(opt_template, str):
+                self._registry.register_resource_template(resource_name, handler, opt_template)
+        if prompt_key in handler.opt:
+            opt_keys = self._config.opt_keys
+            owner = getattr(handler.fn, "__self__", None) or getattr(handler, "owner", None)
+            raw_name = handler.opt[prompt_key]
+            if isinstance(owner, PromptController):
+                prompt_name = owner.qualify_prompt_name(raw_name)
+                instructions = owner.instructions
+            else:
+                prompt_name = raw_name
+                instructions = None
+            self._registry.register_prompt_handler(
+                prompt_name,
+                handler,
+                title=handler.opt.get(opt_keys.prompt_title),
+                description=handler.opt.get(opt_keys.prompt_description),
+                arguments=handler.opt.get(opt_keys.prompt_arguments),
+                icons=handler.opt.get(opt_keys.prompt_icons),
+                instructions=instructions,
+            )

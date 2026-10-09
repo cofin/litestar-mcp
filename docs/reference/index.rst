@@ -12,5 +12,6 @@ API Reference
     bridge
     stdio
     a2a
+    agent
 
 This section provides detailed API documentation for all public interfaces.

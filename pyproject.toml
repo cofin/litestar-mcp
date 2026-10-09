@@ -35,7 +35,7 @@ maintainers = [
 name = "litestar-mcp"
 readme = "README.md"
 requires-python = ">=3.10"
-version = "0.14.0"
+version = "0.15.0"
 
 [project.urls]
 Changelog = "https://cofin.github.io/litestar-mcp/latest/changelog"
@@ -48,6 +48,9 @@ Source = "https://github.com/cofin/litestar-mcp"
 
 [project.optional-dependencies]
 a2a = ["a2a-sdk>=1.1.4", "protobuf>=5.29.5"]
+google-genai = ["google-genai>=2.29.0"]
+opentelemetry = ["opentelemetry-api>=1.20.0"]
+queues = ["litestar-queues>=0.12.0"]
 
 [project.entry-points."pygments.styles"]
 litestar-mcp-dark = "tools.sphinx_ext.pygments_styles:LitestarMcpDarkStyle"
@@ -101,6 +104,7 @@ test = [
     "pytest-mock>=3.11.1",
     "pytest-xdist>=3.6.1",
     "httpx>=0.24.1",
+    "opentelemetry-sdk",
     "pyjwt[crypto]>=2.10.1",
     "attrs",
     "cattrs",
@@ -112,7 +116,7 @@ test = [
 allow_dirty = true
 commit = false
 commit_args = "--no-verify"
-current_version = "0.14.0"
+current_version = "0.15.0"
 ignore_missing_files = false
 ignore_missing_version = false
 message = "chore(release): bump to v{new_version}"
@@ -228,6 +232,7 @@ strict-imports = false
 
 [tool.codespell]
 skip = 'uv.lock,package-lock.json'
+
 # MyPy configuration
 [tool.mypy]
 check_untyped_defs = true

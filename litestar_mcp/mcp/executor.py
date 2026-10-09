@@ -28,7 +28,7 @@ from urllib.parse import urlencode
 
 from litestar import Litestar, Request
 from litestar._asgi.routing_trie.traversal import parse_path_params
-from litestar.exceptions import ImproperlyConfiguredException, SerializationException
+from litestar.exceptions import ImproperlyConfiguredException, PermissionDeniedException, SerializationException
 from litestar.response import Response
 from litestar.serialization import decode_json, encode_json
 from litestar.types.empty import Empty
@@ -40,6 +40,7 @@ from litestar_mcp.utils.handler_signature import get_advertised_handler_paramete
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
 
+    from litestar.connection import ASGIConnection
     from litestar.handlers.base import BaseRouteHandler
     from litestar.handlers.http_handlers.base import HTTPRouteHandler
     from litestar.types import Message, Receive, Scope, Send
@@ -55,6 +56,7 @@ __all__ = (
     "execute_handler",
     "execute_handler_response",
     "execute_tool",
+    "require_internal_dispatch",
 )
 
 _logger = logging.getLogger(__name__)
@@ -62,6 +64,22 @@ _logger = logging.getLogger(__name__)
 _NON_JSON_STATUS = 500
 _ERROR_STATUS_FLOOR = 400
 _INTERNAL_DISPATCH_SCOPE_KEY = "litestar_mcp.internal_dispatch"
+
+
+class InternalDispatchOnlyError(PermissionDeniedException):
+    """Exception raised when a route intended solely for internal MCP dispatch is accessed directly."""
+
+    def __init__(self) -> None:
+        """Initialize with fixed detail message."""
+        super().__init__(detail="This route is only reachable through MCP dispatch")
+
+
+def require_internal_dispatch(connection: "ASGIConnection[Any, Any, Any, Any]", _: "BaseRouteHandler") -> "None":
+    """Reject direct HTTP access to routes that only serve MCP dispatch."""
+    if not connection.scope.get(_INTERNAL_DISPATCH_SCOPE_KEY):
+        raise InternalDispatchOnlyError
+
+
 _TEXT_MEDIA_TYPES = {
     "application/javascript",
     "application/json",

@@ -1,12 +1,13 @@
 """Automatic JSON Schema generation for MCP tools."""
 
+import enum
 import inspect
 import logging
 import re
 from dataclasses import MISSING, fields
 from functools import lru_cache
 from types import UnionType
-from typing import TYPE_CHECKING, Any, Union, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Literal, Union, cast, get_args, get_origin
 
 import msgspec
 
@@ -188,6 +189,8 @@ def type_to_json_schema(annotation: "Any") -> "dict[str, Any]":  # noqa: PLR0911
         return result
     if result := collection_type_to_json_schema(annotation):
         return result
+    if result := literal_type_to_json_schema(annotation):
+        return result
     if result := model_to_json_schema(annotation):
         return result
 
@@ -195,6 +198,25 @@ def type_to_json_schema(annotation: "Any") -> "dict[str, Any]":  # noqa: PLR0911
         "type": "object",
         "description": "Parameter of type " + str(annotation),
     }
+
+
+def literal_type_to_json_schema(annotation: "Any") -> "dict[str, Any] | None":
+    """Describe ``Literal[...]`` and ``Enum`` annotations as JSON Schema ``enum`` constraints."""
+    if get_origin(annotation) is Literal:
+        values = list(get_args(annotation))
+    elif isinstance(annotation, type) and issubclass(annotation, enum.Enum):
+        values = [member.value for member in annotation]
+    else:
+        return None
+    schema: dict[str, Any] = {"enum": values}
+    kinds = {type(value) for value in values}
+    if kinds == {str}:
+        schema["type"] = "string"
+    elif kinds == {bool}:
+        schema["type"] = "boolean"
+    elif kinds <= {int}:
+        schema["type"] = "integer"
+    return schema
 
 
 def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]":
@@ -244,7 +266,7 @@ def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]"
         schema["description"] = "Input parameters for " + str(fn_name)
 
     definitions: dict[str, Any] = {}
-    _hoist_definitions(properties, definitions)
+    hoist_definitions(properties, definitions)
     if definitions:
         schema["$defs"] = definitions
 
@@ -263,7 +285,7 @@ def cached_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]":
 _DEFS_REF_PREFIX = "#/$defs/"
 
 
-def _hoist_definitions(node: "Any", definitions: "dict[str, Any]") -> "None":
+def hoist_definitions(node: "Any", definitions: "dict[str, Any]") -> "None":
     """Move every nested ``$defs`` block into ``definitions``, the root schema's ``$defs``.
 
     Model schemas from pydantic and msgspec are standalone documents whose
@@ -274,7 +296,7 @@ def _hoist_definitions(node: "Any", definitions: "dict[str, Any]") -> "None":
     """
     if isinstance(node, list):
         for item in node:
-            _hoist_definitions(item, definitions)
+            hoist_definitions(item, definitions)
         return
     if not isinstance(node, dict):
         return
@@ -293,10 +315,10 @@ def _hoist_definitions(node: "Any", definitions: "dict[str, Any]") -> "None":
             _rename_refs(node, renames)
             _rename_refs(local, renames)
         for name, definition in cast("dict[str, Any]", local).items():
-            _hoist_definitions(definition, definitions)
+            hoist_definitions(definition, definitions)
             definitions.setdefault(renames.get(name, name), definition)
     for value in node.values():
-        _hoist_definitions(value, definitions)
+        hoist_definitions(value, definitions)
 
 
 def _rename_refs(node: "Any", renames: "dict[str, str]") -> "None":

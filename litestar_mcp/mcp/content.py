@@ -3,7 +3,7 @@
 import base64
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from litestar.serialization import encode_json
 
@@ -122,6 +122,33 @@ class MCPToolResult:
         return result
 
 
+@dataclass(frozen=True, slots=True)
+class PromptMessage:
+    """An MCP ``PromptMessage`` with a ``user`` or ``assistant`` role and one content block."""
+
+    role: "Literal['user', 'assistant']"
+    content: "dict[str, Any]"
+
+    def __post_init__(self) -> "None":
+        if self.role not in {"user", "assistant"}:
+            msg = f"MCP prompt roles are 'user' or 'assistant', got {self.role!r}"
+            raise ValueError(msg)
+
+    @classmethod
+    def user(cls, text: "str") -> "PromptMessage":
+        """Create a user text message."""
+        return cls(role="user", content={"type": "text", "text": text})
+
+    @classmethod
+    def assistant(cls, text: "str") -> "PromptMessage":
+        """Create an assistant text message."""
+        return cls(role="assistant", content={"type": "text", "text": text})
+
+    def to_mcp_dict(self) -> "dict[str, Any]":
+        """Return the wire dictionary."""
+        return {"role": self.role, "content": dict(self.content)}
+
+
 def enforce_blob_size(size: "int", *, max_blob_bytes: "int | None") -> "None":
     """Raise when ``size`` exceeds the configured blob cap."""
     if max_blob_bytes is not None and size > max_blob_bytes:
@@ -178,8 +205,10 @@ def _enforce_dict_blob_size(block: "dict[str, Any]", *, max_blob_bytes: "int | N
 
 __all__ = (
     "MCPBlobResource",
+    "MCPInputRequiredResult",
     "MCPResourceLink",
     "MCPToolResult",
+    "PromptMessage",
     "enforce_blob_size",
     "is_content_block",
     "normalize_content_block",

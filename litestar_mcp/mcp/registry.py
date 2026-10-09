@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from litestar.handlers import BaseRouteHandler  # noqa: TC002
 
+from litestar_mcp.mcp.content import PromptMessage
 from litestar_mcp.utils import (
     get_handler_function,
     get_mcp_metadata,
@@ -88,6 +89,7 @@ class PromptRegistration:
     description: "str | None" = None
     arguments: "list[dict[str, Any]] | None" = field(default=None, hash=False)
     icons: "list[dict[str, Any]] | None" = field(default=None, hash=False)
+    instructions: "str | None" = None
 
     def __post_init__(self) -> "None":
         if self.fn is not None and self.handler is not None:
@@ -176,16 +178,33 @@ def _normalize_prompt_result(result: "Any") -> "list[dict[str, Any]]":
     return [{"role": "user", "content": {"type": "text", "text": str(result)}}]
 
 
+def apply_prompt_instructions(messages: "list[dict[str, Any]]", instructions: "str | None") -> "list[dict[str, Any]]":
+    """Prefix instructions to the first user text message, or prepend a user message when none exists."""
+    if not instructions:
+        return messages
+    for index, message in enumerate(messages):
+        content = message.get("content")
+        if message.get("role") == "user" and isinstance(content, dict) and content.get("type") == "text":
+            updated = dict(message)
+            updated["content"] = {**content, "text": f"{instructions}\n\n{content['text']}"}
+            return [*messages[:index], updated, *messages[index + 1 :]]
+    return [{"role": "user", "content": {"type": "text", "text": instructions}}, *messages]
+
+
 def _coerce_prompt_message(item: "Any", *, index: "int | None") -> "dict[str, Any]":
     """Coerce a single result element into a valid ``PromptMessage`` dict.
 
     Recognises:
+      * PromptMessage instances (converted via to_mcp_dict).
       * Already-shaped messages (``role`` + ``content`` where ``content`` is
         a valid content block or list of content blocks).
       * Unwrapped content blocks (``type`` + variant-required keys) — wrapped
         in a ``user``-role envelope.
       * Anything else — stringified with a warning.
     """
+    if isinstance(item, PromptMessage):
+        return item.to_mcp_dict()
+
     if not isinstance(item, dict):
         _logger.warning(
             "Prompt result element %sis not a dict (%s), coercing to string",
@@ -468,6 +487,7 @@ class Registry:
         description: "str | None" = None,
         arguments: "list[dict[str, Any]] | None" = None,
         icons: "list[dict[str, Any]] | None" = None,
+        instructions: "str | None" = None,
     ) -> "None":
         """Register a route-handler-based prompt.
 
@@ -489,6 +509,7 @@ class Registry:
                 (DI- and framework-injected parameters filtered out).
                 Pass ``[]`` to advertise no arguments explicitly.
             icons: Optional list of icon objects for UI display.
+            instructions: Grounding instructions prepended to prompt output.
         """
         if name in self._prompts:
             _logger.warning("Overwriting existing prompt registration: %s", name)
@@ -501,6 +522,7 @@ class Registry:
             description=desc,
             arguments=arguments if arguments is not None else metadata.get("arguments"),
             icons=icons if icons is not None else metadata.get("icons"),
+            instructions=instructions,
         )
         self._trigger_change()
 
@@ -533,3 +555,10 @@ class Registry:
     async def notify_prompts_list_changed(self) -> "None":
         """Notify clients that the prompt list has changed."""
         await self.publish_notification("notifications/prompts/list_changed", {})
+
+
+__all__ = (
+    "PromptRegistration",
+    "Registry",
+    "apply_prompt_instructions",
+)

@@ -11,7 +11,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import anyio
-import httpx
+import httpx2
 import pytest
 import uvicorn
 from anyio import sleep_forever
@@ -61,10 +61,10 @@ def _run_app_server(app: "Litestar") -> "Iterator[tuple[str, uvicorn.Server]]":
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
         try:
-            httpx.get(base_url, timeout=0.2)
+            httpx2.get(base_url, timeout=0.2)
             yield base_url, server
             break
-        except httpx.HTTPError:
+        except httpx2.HTTPError:
             time.sleep(0.05)
     else:
         msg = "test MCP server did not start"
