@@ -3,6 +3,8 @@
 from typing import Any, cast
 
 import pytest
+from dishka import Provider, Scope, from_context, make_async_container, provide
+from dishka.integrations.litestar import DishkaRouter, FromDishka, LitestarProvider, setup_dishka
 from litestar import Litestar
 from litestar.connection import ASGIConnection
 from litestar.di import Provide
@@ -162,3 +164,73 @@ def test_prompt_route_not_directly_reachable() -> None:
     with TestClient(app=app) as client:
         res = client.post(f"{ctrl_path}/prompts/triage", json={"service": "auth"})
         assert res.status_code == 403
+
+
+class _PromptFormatter:
+    """Service injected into @prompt methods via Dishka."""
+
+    def __init__(self, tag: str) -> None:
+        self.tag = tag
+
+    def render(self, subject: str) -> str:
+        return f"[{self.tag}] {subject}"
+
+
+class _PromptFormatterProvider(Provider):
+    """Dishka provider for _PromptFormatter."""
+
+    scope = Scope.REQUEST
+    request = from_context(provides=ASGIConnection, scope=Scope.REQUEST)
+
+    @provide
+    def provide_formatter(self) -> _PromptFormatter:
+        return _PromptFormatter("dishka-prompt")
+
+
+class DishkaPromptController(PromptController):
+    """PromptController using FromDishka[T] on a @prompt method."""
+
+    prefix = "dishka_ops"
+
+    @prompt(title="Format Subject", description="Format subject using Dishka.")
+    async def format_subject(self, subject: str, formatter: FromDishka[_PromptFormatter]) -> str:
+        """Render subject with Dishka-injected formatter."""
+        return formatter.render(subject)
+
+
+@pytest.mark.anyio
+async def test_prompt_controller_dishka_injection_and_schema_filtering() -> None:
+    """Verify @prompt supports FromDishka[T], omits it from prompts/list, and is idempotent on DishkaRouter."""
+    container = make_async_container(_PromptFormatterProvider(), LitestarProvider())
+    config = MCPConfig(prompt_controllers=[DishkaPromptController])
+    app = Litestar(plugins=[LitestarMCP(config=config)])
+    setup_dishka(container, app)
+
+    with TestClient(app=app) as client:
+        list_res = mcp_post(client, "prompts/list", {}).json()
+        prompts = list_res["result"]["prompts"]
+        entry = next(p for p in prompts if p["name"] == "dishka_ops/format_subject")
+        arg_names = [a["name"] for a in entry.get("arguments", [])]
+        assert arg_names == ["subject"]
+
+        get_res = mcp_post(
+            client,
+            "prompts/get",
+            {"name": "dishka_ops/format_subject", "arguments": {"subject": "deploy"}},
+        ).json()
+        assert "result" in get_res
+        text = get_res["result"]["messages"][0]["content"]["text"]
+        assert text == "[dishka-prompt] deploy"
+
+    router = DishkaRouter(path="", route_handlers=[DishkaPromptController])
+    app_router = Litestar(route_handlers=[router], plugins=[LitestarMCP(config=MCPConfig())])
+    setup_dishka(container, app_router)
+    with TestClient(app=app_router) as client:
+        get_res = mcp_post(
+            client,
+            "prompts/get",
+            {"name": "dishka_ops/format_subject", "arguments": {"subject": "via-router"}},
+        ).json()
+        assert get_res["result"]["messages"][0]["content"]["text"] == "[dishka-prompt] via-router"
+
+    await container.close()

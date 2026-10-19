@@ -9,6 +9,39 @@ notes, and important protocol fixes.
 Recent Updates
 ==============
 
+.. changelog:: 0.16.0
+
+    .. change:: add request-aware SkillSource protocol and dynamic skill composition
+        :type: feature
+
+        Added the ``SkillSource`` protocol, ``FilesystemSkillSource``, in-memory
+        ``Skill.build`` / ``Skill.from_content`` and ``SkillFile.from_content``
+        constructors, and ``MCPSkillsConfig.sources`` so applications can serve
+        caller-scoped, database-backed, or lazily loaded Agent Skills over MCP
+        alongside static filesystem folders while preserving SHA-256 manifest
+        integrity verification.
+
+    .. change:: support universal dependency injection and nested router discovery for tools and controllers
+        :type: feature
+
+        ``@tool``, ``SkillController``, and ``PromptController`` now resolve
+        Litestar ``Provide`` / ``Dependency`` providers, Dishka ``FromDishka[T]``
+        dependencies, third-party ``Annotated[T, Inject()]`` / ``Depends(fn)``
+        markers, and custom ``ToolContext(container=..., dependency_resolver=...)``
+        hooks across HTTP endpoints, MCP ``tools/call`` / ``prompts/get``, and
+        standalone ``AgentRuntime`` turns. ``LitestarMCP`` also recursively
+        discovers and deduplicates ``SkillController`` and ``PromptController``
+        classes mounted inside nested ``Router`` and ``DishkaRouter`` trees.
+
+    .. change:: make SkillCatalog accessors asynchronous and request-aware
+        :type: breaking
+
+        ``SkillCatalog.skills``, ``list_page``, ``get_by_uri``, ``read_file``,
+        and ``read_directory`` are now ``async`` methods accepting an optional
+        ``Request`` so dynamic ``SkillSource`` backends can resolve skills per
+        caller. Direct callers inspecting a static filesystem snapshot can read
+        ``FilesystemSkillSource(paths).skills``.
+
 .. changelog:: 0.15.0
 
     .. change:: agent abstractions, class-based controllers, and Google GenAI runtime

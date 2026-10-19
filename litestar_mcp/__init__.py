@@ -46,6 +46,13 @@ from litestar_mcp.mcp.prompt_controller import PromptController, prompt
 from litestar_mcp.mcp.routes import MCPController
 from litestar_mcp.mcp.service import MCPRequestContext, get_mcp_request_context
 from litestar_mcp.mcp.skill_controller import SkillController
+from litestar_mcp.mcp.skills import (
+    FilesystemSkillSource,
+    Skill,
+    SkillFile,
+    SkillIntegrityError,
+    SkillSource,
+)
 from litestar_mcp.mcp.stdio import MCPStdioContext
 from litestar_mcp.utils import mcp_prompt, mcp_resource, mcp_tool
 
@@ -55,6 +62,7 @@ __all__ = (
     "BeforeToolCallHook",
     "BridgeConnectionError",
     "BridgeMessageTooLargeError",
+    "FilesystemSkillSource",
     "LitestarMCP",
     "LitestarMCPError",
     "MCPBlobResource",
@@ -71,7 +79,11 @@ __all__ = (
     "MissingDependencyError",
     "PromptController",
     "PromptMessage",
+    "Skill",
     "SkillController",
+    "SkillFile",
+    "SkillIntegrityError",
+    "SkillSource",
     "Tool",
     "__version__",
     "get_mcp_request_context",

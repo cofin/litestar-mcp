@@ -12,7 +12,7 @@ new content model.
 
 .. note::
 
-    This page documents MCP skills: filesystem-backed instruction
+    This page documents MCP skills: filesystem-backed and dynamic instruction
     bundles served through ``skills/list``, ``skills/get``, and
     ``resources/*``. It has no relationship to the A2A agent card's
     ``AgentSkill`` entries described in :doc:`a2a`, which advertise this
@@ -33,7 +33,7 @@ Pass :class:`~litestar_mcp.mcp.config.MCPSkillsConfig` to
     :end-before: # end-example
     :dedent:
 
-``paths`` is typed as ``Sequence[Path]``. Pass :class:`~pathlib.Path`
+``paths`` is typed as ``Sequence[Path] | None``. Pass :class:`~pathlib.Path`
 objects, not strings — ``__post_init__`` coerces each entry with
 ``Path(...)`` so a plain string happens to work at runtime, but a
 type-checked caller passing ``str`` gets a mypy or pyright error against
@@ -41,6 +41,11 @@ the declared annotation. Passing a bare string in place of the sequence —
 ``paths="/srv/skills"`` — is rejected with a :exc:`ValueError`, since a
 string is itself a sequence and would otherwise be read one character at
 a time.
+
+``sources`` accepts ``Sequence[SkillSource] | None`` for dynamic or
+request-scoped skill catalogs (see :ref:`Dynamic Skill Sources
+<usage/skills:Dynamic Skill Sources>` below). At least one of ``paths`` or
+``sources`` must be non-empty.
 
 Other :class:`~litestar_mcp.mcp.config.MCPSkillsConfig` fields default to
 ``directory_read=True``, ``max_files_per_skill=512``, and
@@ -219,25 +224,71 @@ Error Contract
 Static Catalog
 ==============
 
-The skill catalog is built once, when ``LitestarMCP(config)`` constructs
-the plugin, and is never rescanned afterward. Editing a skill file on
-disk after that point does not update ``skills/list`` or ``skills/get`` —
-both keep reporting the manifest captured at construction time — and a
-subsequent ``resources/read`` for that file fails with ``-32603``
-because its bytes no longer match the digest captured then. A file that
-was deleted or can no longer be read also fails with ``-32603``; the
-error data carries only the ``skill://`` URI, and the underlying
-:exc:`OSError` is logged on the server rather than sent to the client.
-Restart the application to pick up filesystem changes.
+For filesystem skills configured via ``paths``, the catalog is built once when
+``LitestarMCP(config)`` constructs the plugin and is never rescanned afterward.
+Editing a skill file on disk after that point does not update ``skills/list``
+or ``skills/get`` — both keep reporting the manifest captured at construction
+time — and a subsequent ``resources/read`` for that file fails with ``-32603``
+because its bytes no longer match the digest captured then. A file that was
+deleted or can no longer be read also fails with ``-32603``; the error data
+carries only the ``skill://`` URI, and the underlying :exc:`OSError` is logged
+on the server rather than sent to the client. Restart the application to pick
+up filesystem changes.
 
-Each ``resources/read`` for a skill file reads and hashes the file in a
-worker thread, so large skill files do not block the event loop.
+Each ``resources/read`` for a filesystem skill file reads and hashes the file
+in a worker thread, so large skill files do not block the event loop.
 
 ``MCPConfig.include_operations`` / ``exclude_operations`` /
 ``include_tags`` / ``exclude_tags`` do not filter skills. Those filters
 apply only to Litestar route handlers marked with ``mcp_tool`` /
-``mcp_resource`` / ``mcp_prompt``; every configured skill is always
-served.
+``mcp_resource`` / ``mcp_prompt``.
+
+Dynamic Skill Sources
+=====================
+
+Applications that store skills in a database, object storage, or tenant-scoped
+knowledge graph can implement the :class:`~litestar_mcp.SkillSource` protocol
+and register instances via ``MCPSkillsConfig(sources=[...])``:
+
+- ``await source.list_skills(request)`` returns a sequence of
+  :class:`~litestar_mcp.Skill` entries visible to the caller, sorted by skill
+  name by the catalog.
+- ``await source.get_skill(request, name)`` resolves a single skill by name
+  or returns ``None`` when unknown or hidden from the caller.
+- ``await source.read_file(request, skill, file)`` returns the raw
+  ``bytes`` for ``file`` within ``skill``; the catalog verifies that the
+  SHA-256 digest of the returned bytes matches the manifest entry before
+  serving it.
+
+Construct in-memory skills using :meth:`~litestar_mcp.Skill.build` (from
+structured ``name``, ``description``, and markdown ``body``) or
+:meth:`~litestar_mcp.Skill.from_content` (from raw ``SKILL.md`` markdown with
+frontmatter), and attach additional files via the ``files`` mapping or
+:meth:`~litestar_mcp.SkillFile.from_content`. Construct a
+:class:`~litestar_mcp.SkillFile` with ``content=None`` when a secondary file's
+bytes should be fetched lazily from ``read_file`` instead of retained in
+memory.
+
+.. literalinclude:: /examples/skills_dynamic/main.py
+    :language: python
+    :caption: ``docs/examples/skills_dynamic/main.py`` - ``WorkspaceSkillSource``
+    :pyobject: WorkspaceSkillSource
+
+When both ``paths`` and ``sources`` are provided, the catalog wraps ``paths``
+in a :class:`~litestar_mcp.FilesystemSkillSource` ahead of ``sources`` and
+evaluates sources in order. On a skill name collision across sources, the
+first source in sequence wins and the catalog logs a warning.
+
+.. literalinclude:: /examples/skills_dynamic/main.py
+    :language: python
+    :caption: ``docs/examples/skills_dynamic/main.py`` - ``build_app``
+    :pyobject: build_app
+
+.. important::
+
+    Keep ``MCPConfig.cache_scope="private"`` (the default) whenever a
+    :class:`~litestar_mcp.SkillSource` filters skills or file contents per
+    caller so shared caches do not mix responses across principals.
 
 Disabling Directory Listing
 ===========================

@@ -54,7 +54,32 @@ prompts, instructions, and guards into a reusable unit:
 Skill controllers compile each method into an internal Litestar route handler,
 retaining method guards, type-based context injection, and dependency parameters.
 Skill controllers can be mounted on :class:`~litestar_mcp.LitestarMCP`,
-attached to an :class:`~litestar_mcp.agent.Agent`, or bridged to A2A ``AgentSkill`` cards.
+included inside nested :class:`~litestar.Router` or Dishka ``DishkaRouter``
+trees, attached to an :class:`~litestar_mcp.agent.Agent`, or bridged to A2A
+``AgentSkill`` cards.
+
+Universal Dependency Injection
+------------------------------
+
+Tools, :class:`~litestar_mcp.SkillController` methods, and
+:class:`~litestar_mcp.PromptController` methods support four dependency
+injection mechanisms across HTTP routes, MCP ``tools/call`` / ``prompts/get``,
+and standalone :class:`~litestar_mcp.agent.AgentRuntime` turns:
+
+1. **Litestar native DI** — ``dependencies={"svc": Provide(...)}`` on the
+   controller, router, or app (including ``Dependency()`` parameter markers).
+2. **Dishka** — ``FromDishka[Service]`` annotations on ``@tool`` and
+   ``@prompt`` methods. Controller and router route handlers are automatically
+   wrapped with ``dishka.integrations.litestar.inject`` when Dishka parameters
+   are present, and standalone ``Tool.invoke`` resolves ``FromDishka[T]`` from
+   the request or app container.
+3. **Third-party DI markers** — ``Annotated[Service, Inject()]`` (Wireup,
+   svcs, punq, Lagom, Dependency Injector) or ``service: Service = Depends(fn)``
+   markers are excluded from the public JSON schema and resolved at invocation
+   time against the active container or callable provider.
+4. **Custom resolver hook** — pass ``container=...`` or
+   ``dependency_resolver=...`` on :class:`~litestar_mcp.core.context.ToolContext`
+   to plug any custom container into standalone tool execution.
 
 Agents and Agent Groups
 =======================

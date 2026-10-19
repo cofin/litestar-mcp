@@ -76,14 +76,16 @@ Skills
 ======
 
 Enable the opt-in ``io.modelcontextprotocol/skills`` extension by passing an
-:class:`~litestar_mcp.mcp.config.MCPSkillsConfig`. The catalog is loaded once
-from the configured directories at startup; a skill folder that fails
-validation fails application startup, not a later request.
+:class:`~litestar_mcp.mcp.config.MCPSkillsConfig`. Configure static filesystem
+directories via ``paths`` (validated once at startup) and/or dynamic,
+request-aware :class:`~litestar_mcp.SkillSource` implementations via
+``sources``.
 
 Pass :class:`~pathlib.Path` objects for ``paths`` — the annotation is
-``Sequence[Path]``, and while a plain string is coerced at runtime, a
+``Sequence[Path] | None``, and while a plain string is coerced at runtime, a
 type-checked caller passing ``str`` sees a mypy or pyright error. See
-:doc:`skills` for the directory layout, wire methods, and error contract.
+:doc:`skills` for the directory layout, :class:`~litestar_mcp.SkillSource`
+protocol, wire methods, and error contract.
 
 .. literalinclude:: /examples/snippets/configuration_skills.py
     :language: python

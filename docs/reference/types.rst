@@ -25,6 +25,39 @@ MCPSkillsConfig
    :members:
    :show-inheritance:
 
+.. currentmodule:: litestar_mcp.mcp.skills
+
+SkillSource
+-----------
+
+.. autoclass:: SkillSource
+   :members:
+
+FilesystemSkillSource
+---------------------
+
+.. autoclass:: FilesystemSkillSource
+   :members:
+
+Skill
+-----
+
+.. autoclass:: Skill
+   :members:
+
+SkillFile
+---------
+
+.. autoclass:: SkillFile
+   :members:
+
+SkillIntegrityError
+-------------------
+
+.. autoexception:: SkillIntegrityError
+   :members:
+   :show-inheritance:
+
 .. currentmodule:: litestar_mcp.mcp.app
 
 MCPStdioContext

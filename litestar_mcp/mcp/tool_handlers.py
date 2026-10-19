@@ -1,11 +1,13 @@
 """Litestar route handler builders for MCP Tool instances."""
 
 import inspect
-from typing import TYPE_CHECKING, Any, get_type_hints
+from typing import TYPE_CHECKING, Annotated, Any, get_type_hints
 
 from litestar import Request
+from litestar.constants import RESERVED_KWARGS
 from litestar.exceptions import ImproperlyConfiguredException
 from litestar.handlers import HTTPRouteHandler, post
+from litestar.params import Dependency, Parameter
 
 from litestar_mcp.core.context import ToolContext
 from litestar_mcp.core.tools import Tool
@@ -28,8 +30,8 @@ def _build_tool_endpoint_signature(
     tool: Tool,
     *,
     is_controller: bool,
-) -> tuple[inspect.Signature, dict[str, Any]]:
-    """Build inspect.Signature and __annotations__ for a tool route handler."""
+) -> tuple[inspect.Signature, dict[str, Any], dict[str, str]]:
+    """Build inspect.Signature, __annotations__, and reserved-kwarg alias map for a tool route handler."""
     try:
         hints = get_type_hints(tool.fn, include_extras=True)
     except Exception as exc:
@@ -39,6 +41,8 @@ def _build_tool_endpoint_signature(
     raw_sig = inspect.signature(tool.fn)
     params: list[inspect.Parameter] = []
     annotations: dict[str, Any] = {}
+    renamed_params: dict[str, str] = {}
+    di_params = tool.di_parameters
 
     if is_controller:
         params.append(
@@ -51,23 +55,49 @@ def _build_tool_endpoint_signature(
         annotations["self"] = Any
 
     for pname, param in raw_sig.parameters.items():
-        if pname == "self" or pname in tool.stripped_parameters:
+        if pname == "self":
             continue
         if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+            continue
+
+        di_spec = di_params.get(pname)
+        if di_spec is not None:
+            if di_spec.source_kind == "litestar":
+                litestar_ann = Annotated[Any, Dependency(skip_validation=True)]
+                params.append(
+                    inspect.Parameter(
+                        name=pname,
+                        kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                        default=di_spec.default,
+                        annotation=litestar_ann,
+                    )
+                )
+                annotations[pname] = litestar_ann
+            continue
+
+        if pname in tool.stripped_parameters:
             continue
 
         ann = hints.get(pname, param.annotation)
         if ann is inspect.Parameter.empty:
             ann = Any
+
+        endpoint_name = pname
+        endpoint_ann: Any = ann
+        if pname in RESERVED_KWARGS:
+            endpoint_name = f"_mcp_param_{pname}"
+            endpoint_ann = Annotated[ann, Parameter(query=pname)]
+            renamed_params[endpoint_name] = pname
+
         params.append(
             inspect.Parameter(
-                name=pname,
+                name=endpoint_name,
                 kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
                 default=param.default,
-                annotation=ann,
+                annotation=endpoint_ann,
             )
         )
-        annotations[pname] = ann
+        annotations[endpoint_name] = endpoint_ann
 
     params.append(
         inspect.Parameter(
@@ -84,15 +114,18 @@ def _build_tool_endpoint_signature(
     annotations["return"] = ret_ann
 
     sig = inspect.Signature(parameters=params, return_annotation=ret_ann)
-    return sig, annotations
+    return sig, annotations, renamed_params
 
 
 def build_controller_tool_handler(tool: Tool) -> HTTPRouteHandler:
     """Return a POST /tools/<name> handler that dispatches a bound controller tool."""
-    sig, annotations = _build_tool_endpoint_signature(tool, is_controller=True)
+    sig, annotations, renamed_params = _build_tool_endpoint_signature(tool, is_controller=True)
 
     async def _controller_tool_endpoint(self: Any, **kwargs: Any) -> Any:
         req = kwargs.pop("request", None)
+        for endpoint_name, original_name in renamed_params.items():
+            if endpoint_name in kwargs:
+                kwargs[original_name] = kwargs.pop(endpoint_name)
         ctx = ToolContext.from_connection(req) if req is not None else None
         bound = tool.__get__(self, type(self))
         return await bound.execute(kwargs, context=ctx)
@@ -108,9 +141,11 @@ def build_controller_tool_handler(tool: Tool) -> HTTPRouteHandler:
         {"type": "tool", "name": tool.name, "description": tool.description},
     )
 
+    handler_deps = {k: v for k, v in tool.dependencies.items() if k in tool.di_parameters}
     return post(
         f"/tools/{tool.name}",
         guards=[require_internal_dispatch],
+        dependencies=handler_deps or None,
         include_in_schema=False,
     )(_controller_tool_endpoint)
 
@@ -123,10 +158,15 @@ def build_tool_route_handler(
     dependencies: "dict[str, Provide] | None" = None,
 ) -> HTTPRouteHandler:
     """Return a standalone POST <base_path>/internal/tools/<name> handler for a tool."""
-    sig, annotations = _build_tool_endpoint_signature(tool, is_controller=False)
+    if dependencies:
+        tool.register_dependencies(dependencies)
+    sig, annotations, renamed_params = _build_tool_endpoint_signature(tool, is_controller=False)
 
     async def _standalone_tool_endpoint(**kwargs: Any) -> Any:
         req = kwargs.pop("request", None)
+        for endpoint_name, original_name in renamed_params.items():
+            if endpoint_name in kwargs:
+                kwargs[original_name] = kwargs.pop(endpoint_name)
         ctx = ToolContext.from_connection(req) if req is not None else None
         return await tool.execute(kwargs, context=ctx)
 
@@ -144,10 +184,14 @@ def build_tool_route_handler(
     clean_base = base_path.rstrip("/")
     path = f"{clean_base}/internal/tools/{tool.name}"
 
+    merged_deps: dict[str, Any] = dict(tool.dependencies)
+    if dependencies:
+        merged_deps.update(dependencies)
+
     route_guards = [require_internal_dispatch, *(guards or ())]
     return post(
         path=path,
         guards=route_guards,
-        dependencies=dependencies,
+        dependencies=merged_deps or None,
         include_in_schema=False,
     )(_standalone_tool_endpoint)

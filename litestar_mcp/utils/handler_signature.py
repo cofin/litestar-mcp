@@ -11,19 +11,173 @@ from types import UnionType
 from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin, get_type_hints
 
 from litestar.constants import RESERVED_KWARGS
+from litestar.di import Provide
 from litestar.enums import ParamType
-from litestar.params import ParameterKwarg
+from litestar.params import DependencyKwarg, ParameterKwarg
+from litestar.types import Empty
 
 from litestar_mcp.core.typing import DISHKA_INSTALLED, DishkaDependencyKey
 from litestar_mcp.utils import get_handler_function
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from litestar.handlers import BaseRouteHandler
 
 _logger = logging.getLogger(__name__)
 
 _EXECUTION_CONTEXT_PARAMS = {"resolved_user", "user_claims"}
 _ADVERTISED_RESERVED_KWARGS = set(RESERVED_KWARGS) - {"data"}
+_GENERIC_INJECT_MARKER_NAMES = frozenset(
+    {
+        "Inject",
+        "_Inject",
+        "Injected",
+        "Marker",
+        "Closing",
+    }
+)
+_GENERIC_DI_MODULE_PREFIXES = (
+    "wireup",
+    "aioinject",
+    "dependency_injector",
+    "svcs",
+    "that_depends",
+    "fast_depends",
+    "lagom",
+    "punq",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class DIParameterSpec:
+    """Metadata describing a Dependency Injection parameter on a tool or prompt callable."""
+
+    name: "str"
+    type_hint: "Any"
+    source_kind: "str"
+    component: "str" = ""
+    provider: "Any | None" = None
+    default: "Any" = inspect.Parameter.empty
+
+
+def extract_di_parameter(
+    name: "str",
+    annotation: "Any",
+    *,
+    default: "Any" = inspect.Parameter.empty,
+    explicit_dependencies: "Mapping[str, Any] | None" = None,
+) -> "DIParameterSpec | None":
+    """Inspect a parameter's annotation, default, and explicit dependencies for DI metadata."""
+    inner_type, metas = _unwrap_all_annotated_metadata(annotation)
+
+    if explicit_dependencies and name in explicit_dependencies:
+        return DIParameterSpec(
+            name=name,
+            type_hint=inner_type,
+            source_kind="litestar",
+            provider=explicit_dependencies[name],
+            default=default,
+        )
+
+    candidates = [*metas]
+    if default is not inspect.Parameter.empty:
+        candidates.append(default)
+
+    for marker in candidates:
+        if isinstance(marker, DependencyKwarg):
+            marker_default = getattr(marker, "default", Empty)
+            effective_default = marker_default if marker_default is not Empty else default
+            if effective_default is marker:
+                effective_default = inspect.Parameter.empty
+            return DIParameterSpec(
+                name=name,
+                type_hint=inner_type,
+                source_kind="litestar",
+                default=effective_default,
+            )
+        if isinstance(marker, Provide) or callable(getattr(marker, "dependency", None)):
+            effective_default = inspect.Parameter.empty if default is marker else default
+            return DIParameterSpec(
+                name=name,
+                type_hint=inner_type,
+                source_kind="callable",
+                provider=marker,
+                default=effective_default,
+            )
+        if _is_dishka_marker(marker):
+            component = getattr(marker, "component", "")
+            return DIParameterSpec(
+                name=name,
+                type_hint=inner_type,
+                source_kind="dishka",
+                component=component if isinstance(component, str) else "",
+                default=default,
+            )
+        if _is_generic_di_marker(marker):
+            effective_default = inspect.Parameter.empty if default is marker else default
+            return DIParameterSpec(
+                name=name,
+                type_hint=inner_type,
+                source_kind="container",
+                provider=marker,
+                default=effective_default,
+            )
+
+    return None
+
+
+def has_dishka_parameters(fn: "Callable[..., Any]") -> "bool":
+    """Return whether callable declares any FromDishka / Dishka component parameters."""
+    try:
+        hints = get_type_hints(fn, include_extras=True)
+    except (NameError, TypeError, ValueError):
+        hints = getattr(fn, "__annotations__", {})
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return False
+    for pname, param in sig.parameters.items():
+        if pname == "self":
+            continue
+        ann = hints.get(pname, param.annotation)
+        spec = extract_di_parameter(pname, ann, default=param.default)
+        if spec is not None and spec.source_kind == "dishka":
+            return True
+    return False
+
+
+def _is_dishka_marker(marker: "Any") -> "bool":
+    marker_type = type(marker)
+    type_name = getattr(marker_type, "__name__", "")
+    module_name = getattr(marker_type, "__module__", "")
+    return type_name in {"_FromComponent", "FromDishka"} or module_name.startswith("dishka")
+
+
+def _is_generic_di_marker(marker: "Any") -> "bool":
+    if getattr(marker, "__inject_marker__", False) is True:
+        return True
+    marker_type = type(marker)
+    type_name = getattr(marker_type, "__name__", "")
+    if type_name in _GENERIC_INJECT_MARKER_NAMES:
+        return True
+    module_name = getattr(marker_type, "__module__", "")
+    return any(module_name.startswith(prefix) for prefix in _GENERIC_DI_MODULE_PREFIXES)
+
+
+def _unwrap_all_annotated_metadata(annotation: "Any") -> "tuple[Any, list[Any]]":
+    origin = get_origin(annotation)
+    if origin is Annotated:
+        args = get_args(annotation)
+        if not args:
+            return annotation, []
+        inner, nested_metas = _unwrap_all_annotated_metadata(args[0])
+        return inner, [*nested_metas, *args[1:]]
+    if origin in (Union, UnionType):
+        non_none = [a for a in get_args(annotation) if a is not type(None)]
+        if len(non_none) == 1:
+            return _unwrap_all_annotated_metadata(non_none[0])
+    return annotation, []
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,15 +334,19 @@ def get_advertised_handler_parameters(
     for name, definition in parsed_parameters.items():
         if name == "self" or name in skipped_names:
             continue
+        raw_annotation = getattr(definition, "raw", getattr(definition, "annotation", Any))
+        default_value = getattr(definition, "default", inspect.Parameter.empty)
+        if extract_di_parameter(name, raw_annotation, default=default_value) is not None:
+            continue
         wire_name = handler_aliases.get(name, name)
         description = doc_descriptions.get(name) or doc_descriptions.get(wire_name)
         advertised.append(
             AdvertisedHandlerParameter(
                 python_name=name,
                 wire_name=wire_name,
-                annotation=getattr(definition, "raw", getattr(definition, "annotation", Any)),
+                annotation=raw_annotation,
                 required=bool(getattr(definition, "is_required", False)),
-                default=getattr(definition, "default", inspect.Parameter.empty),
+                default=default_value,
                 description=description or None,
             )
         )

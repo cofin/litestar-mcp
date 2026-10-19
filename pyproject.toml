@@ -35,7 +35,7 @@ maintainers = [
 name = "litestar-mcp"
 readme = "README.md"
 requires-python = ">=3.10"
-version = "0.15.0"
+version = "0.16.0"
 
 [project.urls]
 Changelog = "https://cofin.github.io/litestar-mcp/latest/changelog"
@@ -116,7 +116,7 @@ test = [
 allow_dirty = true
 commit = false
 commit_args = "--no-verify"
-current_version = "0.15.0"
+current_version = "0.16.0"
 ignore_missing_files = false
 ignore_missing_version = false
 message = "chore(release): bump to v{new_version}"
@@ -204,6 +204,7 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ['F401', 'D104']
+"litestar_mcp/core/tools.py" = ["BLE001"]
 "docs/**/*.*" = ["S", "B", "DTZ", "A", "TC", "ERA", "D", "RET", "E731", "RUF012", "FA100", "ARG001"]
 "docs/examples/**/test_*.py" = ["PLR2004", "S101", "S105", "S106", "ARG001", "SLF001", "DOC"]
 "docs/conf.py" = ["FIX002", "ARG001", "INP001"]
@@ -255,6 +256,10 @@ warn_unused_ignores = true
 [[tool.mypy.overrides]]
 follow_imports = "skip"
 module = ["_pytest.*", "pytest.*", "sphinx.*"]
+
+[[tool.mypy.overrides]]
+ignore_missing_imports = true
+module = ["yaml", "yaml.*"]
 
 [[tool.mypy.overrides]]
 disallow_untyped_decorators = false
