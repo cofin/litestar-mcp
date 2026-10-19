@@ -30,6 +30,17 @@ This directory contains examples demonstrating the Litestar MCP Plugin integrati
 
 **Best for**: Learning comprehensive MCP integration patterns
 
+### 📁 skills_dynamic/
+
+**Dynamic Request-Aware Skills Example**
+
+- ✅ Composes filesystem skills with a request-scoped `SkillSource`
+- ✅ Constructs skills in memory via `Skill.build` and `SkillFile.from_content`
+- ✅ Filters visible skills per caller using request headers
+- ✅ Serves lazy secondary skill files on demand via `read_file`
+
+**Best for**: Serving dynamic or caller-scoped Agent Skills over MCP
+
 ### 📁 a2a_application/
 
 **Authenticated A2A Application**

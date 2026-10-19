@@ -30,6 +30,7 @@ ROOT = Path(__file__).resolve().parents[2]
 EXAMPLES: "tuple[Path, ...]" = (
     ROOT / "docs/examples/hello_world/main.py",
     ROOT / "docs/examples/task_manager/main.py",
+    ROOT / "docs/examples/skills_dynamic/main.py",
     ROOT / "docs/examples/notes/advanced_alchemy/no_auth.py",
     ROOT / "docs/examples/notes/advanced_alchemy/no_auth_dishka.py",
     ROOT / "docs/examples/notes/advanced_alchemy/jwt_auth.py",
