@@ -5,16 +5,25 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from litestar.types import TypeEncodersMap
 
 __all__ = ("ToolContext",)
 
 _USER_ID_FIELDS = ("id", "sub", "username", "pk")
+_CONTAINER_STATE_ATTRS = (
+    "dishka_container",
+    "wireup_container",
+    "svcs_registry",
+    "di_container",
+    "container",
+)
 
 
 @dataclass(slots=True)
 class ToolContext:
-    """Identity, tenant, and request metadata injected into tools by type.
+    """Identity, tenant, request metadata, and DI container context injected into tools.
 
     Attributes:
         user: Authenticated principal from ``connection.user``, or ``None``.
@@ -27,6 +36,9 @@ class ToolContext:
         request: Originating Litestar connection, or ``None`` outside HTTP.
         state: Mutable per-invocation values shared between tools.
         type_encoders: Encoders resolved from the route's ownership layers, used to serialize tool results.
+        container: Active DI container (Dishka, Wireup, svcs, dependency-injector, or custom) for resolving tool dependencies.
+        dishka_container: Alias for ``container`` when using Dishka.
+        dependency_resolver: Optional callback ``(param_name, type_hint, ctx) -> Any | Awaitable[Any]`` for custom DI frameworks.
     """
 
     user: "Any | None" = None
@@ -39,6 +51,16 @@ class ToolContext:
     request: "Any | None" = None
     state: "dict[str, Any]" = field(default_factory=dict)
     type_encoders: "TypeEncodersMap | None" = None
+    container: "Any | None" = None
+    dishka_container: "Any | None" = None
+    dependency_resolver: "Callable[[str, Any, ToolContext], Any] | None" = None
+
+    def __post_init__(self) -> "None":
+        """Synchronize container and dishka_container aliases."""
+        if self.container is None and self.dishka_container is not None:
+            self.container = self.dishka_container
+        elif self.dishka_container is None and self.container is not None:
+            self.dishka_container = self.container
 
     @classmethod
     def from_connection(
@@ -59,6 +81,7 @@ class ToolContext:
         roles, scopes, tenant_id = cls._extract_identity_attributes(connection, scope_map, user, auth)
         resolved_session_id = cls._extract_session_id(connection, scope_map, session_id)
         type_encoders = cls._extract_type_encoders(connection, scope_map)
+        container, dishka_container = cls._extract_containers(connection, scope_map)
 
         return cls(
             user=user,
@@ -70,6 +93,8 @@ class ToolContext:
             turn_id=turn_id,
             request=connection,
             type_encoders=type_encoders,
+            container=container,
+            dishka_container=dishka_container,
         )
 
     def owner_key(self) -> str | None:
@@ -200,6 +225,33 @@ class ToolContext:
             with suppress(Exception):
                 return cast("TypeEncodersMap", route_handler.resolve_type_encoders())
         return None
+
+    @staticmethod
+    def _extract_containers(connection: Any, scope_map: dict[str, Any]) -> tuple[Any | None, Any | None]:
+        """Resolve active DI container and Dishka container from connection or app state."""
+        state_sources: list[Any] = []
+        conn_state = getattr(connection, "state", None)
+        if conn_state is not None:
+            state_sources.append(conn_state)
+        scope_state = scope_map.get("state")
+        if isinstance(scope_state, dict):
+            state_sources.append(scope_state)
+        app = getattr(connection, "app", None) or scope_map.get("app")
+        app_state = getattr(app, "state", None)
+        if app_state is not None:
+            state_sources.append(app_state)
+
+        dishka_container: Any | None = None
+        container: Any | None = None
+        for source in state_sources:
+            for attr in _CONTAINER_STATE_ATTRS:
+                val = source.get(attr) if isinstance(source, dict) else getattr(source, attr, None)
+                if val is not None and not hasattr(val, "_mock_return_value"):
+                    if attr == "dishka_container" and dishka_container is None:
+                        dishka_container = val
+                    if container is None:
+                        container = val
+        return container, dishka_container
 
     @staticmethod
     def _extract_items(obj: Any, key: str) -> list[str]:

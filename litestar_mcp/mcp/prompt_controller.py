@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Any, cast
 from litestar import Controller, Router
 from litestar.handlers import HTTPRouteHandler, post
 
+from litestar_mcp.core._typing import DISHKA_INSTALLED, dishka_inject
+from litestar_mcp.core.tools import has_dishka_parameters
 from litestar_mcp.mcp.executor import require_internal_dispatch
 from litestar_mcp.utils import set_mcp_metadata
 
@@ -13,6 +15,15 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 __all__ = ("PromptController", "prompt")
+
+
+def _wrap_dishka_if_needed(fn: "Callable[..., Any]") -> "Callable[..., Any]":
+    """Wrap callable with dishka.integrations.litestar.inject if it uses FromDishka."""
+    if not DISHKA_INSTALLED or getattr(fn, "__dishka_injected__", False):
+        return fn
+    if not has_dishka_parameters(fn):
+        return fn
+    return cast("Callable[..., Any]", dishka_inject(fn))
 
 
 def prompt(
@@ -27,24 +38,25 @@ def prompt(
 
     def decorator(fn: "Callable[..., Any]") -> HTTPRouteHandler:
         prompt_name = name or fn.__name__
-        set_mcp_metadata(
-            fn,
-            {
-                "type": "prompt",
-                "name": prompt_name,
-                "title": title,
-                "description": description or inspect.cleandoc(fn.__doc__ or "") or None,
-                "arguments": arguments,
-                "icons": icons,
-            },
-        )
-        sync_option = None if inspect.iscoroutinefunction(fn) else False
+        metadata = {
+            "type": "prompt",
+            "name": prompt_name,
+            "title": title,
+            "description": description or inspect.cleandoc(fn.__doc__ or "") or None,
+            "arguments": arguments,
+            "icons": icons,
+        }
+        set_mcp_metadata(fn, metadata)
+        target_fn = _wrap_dishka_if_needed(fn)
+        if target_fn is not fn:
+            set_mcp_metadata(target_fn, metadata)
+        sync_option = None if inspect.iscoroutinefunction(target_fn) else False
         return post(
             f"/prompts/{prompt_name}",
             guards=[require_internal_dispatch],
             include_in_schema=False,
             sync_to_thread=sync_option,
-        )(fn)
+        )(target_fn)
 
     return decorator
 

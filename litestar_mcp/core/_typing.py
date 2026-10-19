@@ -200,12 +200,20 @@ class DishkaDependencyKeyStub:
         pass
 
 
+def dishka_inject_stub(fn: "T") -> "T":
+    """Placeholder implementation for dishka.integrations.litestar.inject."""
+    return fn
+
+
 try:
     from dishka.entities.key import DependencyKey as DishkaDependencyKey
+    from dishka.integrations.litestar import inject as _real_dishka_inject
 
+    dishka_inject: Any = _real_dishka_inject
     DISHKA_INSTALLED = True
 except ImportError:
     DishkaDependencyKey = DishkaDependencyKeyStub  # type: ignore[assignment,misc]
+    dishka_inject = dishka_inject_stub
     DISHKA_INSTALLED = False
 
 
@@ -255,4 +263,6 @@ __all__ = (
     "attrs_nothing",
     "convert",
     "convert_stub",
+    "dishka_inject",
+    "dishka_inject_stub",
 )

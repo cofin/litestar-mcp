@@ -166,7 +166,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         """Initialize the MCP integration when the Litestar app starts."""
         self._discover_mcp_routes(app_config.route_handlers)
         for dyn_handler in list(self._dynamic_handlers):
-            if dyn_handler not in app_config.route_handlers:
+            if not _is_handler_registered(dyn_handler, app_config.route_handlers):
                 app_config.route_handlers.append(dyn_handler)
         self._discover_mcp_routes(self._dynamic_handlers)
         self._registry.set_subscription_manager(self._subscription_manager)
@@ -270,6 +270,10 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
             if isinstance(child_handlers, (list, tuple)):
                 self._discover_mcp_routes(cast("Any", child_handlers))
 
+            nested_routes = getattr(handler, "routes", None)
+            if isinstance(nested_routes, (list, tuple)):
+                self._discover_mcp_routes(cast("Any", nested_routes))
+
     def _register_from_metadata(self, handler: BaseRouteHandler, metadata: dict[str, Any]) -> None:
         """Register MCP handler from extracted metadata."""
         if metadata["type"] == "tool":
@@ -280,7 +284,11 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
             if template is not None:
                 self._registry.register_resource_template(metadata["name"], handler, template)
         elif metadata["type"] == "prompt":
-            owner = getattr(handler.fn, "__self__", None) or getattr(handler, "owner", None)
+            owner = (
+                getattr(get_handler_function(handler), "__self__", None)
+                or getattr(handler.fn, "__self__", None)
+                or getattr(handler, "owner", None)
+            )
             if isinstance(owner, PromptController):
                 prompt_name = owner.qualify_prompt_name(metadata["name"])
                 instructions = owner.instructions
@@ -313,7 +321,11 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                 self._registry.register_resource_template(resource_name, handler, opt_template)
         if prompt_key in handler.opt:
             opt_keys = self._config.opt_keys
-            owner = getattr(handler.fn, "__self__", None) or getattr(handler, "owner", None)
+            owner = (
+                getattr(get_handler_function(handler), "__self__", None)
+                or getattr(handler.fn, "__self__", None)
+                or getattr(handler, "owner", None)
+            )
             raw_name = handler.opt[prompt_key]
             if isinstance(owner, PromptController):
                 prompt_name = owner.qualify_prompt_name(raw_name)
@@ -330,3 +342,34 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                 icons=handler.opt.get(opt_keys.prompt_icons),
                 instructions=instructions,
             )
+
+
+def _is_handler_registered(dyn_handler: "Any", route_handlers: "Sequence[Any]") -> "bool":
+    """Return whether ``dyn_handler`` is already present in ``route_handlers`` or nested routers."""
+    is_ctrl_class = isinstance(dyn_handler, type) and issubclass(dyn_handler, PromptController)
+    ctrl_path = getattr(dyn_handler, "path", None) if is_ctrl_class else None
+
+    for item in route_handlers:
+        if item is dyn_handler or item == dyn_handler:
+            return True
+        if is_ctrl_class:
+            item_path = getattr(item, "path", None)
+            if (
+                isinstance(item_path, str)
+                and isinstance(ctrl_path, str)
+                and (item_path.endswith(ctrl_path) or f"{ctrl_path}/" in item_path)
+            ):
+                return True
+            if isinstance(item, BaseRouteHandler):
+                bound_self = getattr(get_handler_function(item), "__self__", None) or getattr(item.fn, "__self__", None)
+                if isinstance(bound_self, dyn_handler) or isinstance(getattr(item, "owner", None), dyn_handler):
+                    return True
+
+        child_handlers = getattr(item, "route_handlers", None)
+        if isinstance(child_handlers, (list, tuple)) and _is_handler_registered(dyn_handler, child_handlers):
+            return True
+        nested_routes = getattr(item, "routes", None)
+        if isinstance(nested_routes, (list, tuple)) and _is_handler_registered(dyn_handler, nested_routes):
+            return True
+
+    return False

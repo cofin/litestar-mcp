@@ -29,8 +29,14 @@ class SkillController(PromptController):
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Attach a controller route handler for every Tool declared on the class."""
         super().__init_subclass__(**kwargs)
+        controller_deps: dict[str, Any] = {}
+        for base in reversed(cls.__mro__):
+            base_deps = vars(base).get("dependencies")
+            if isinstance(base_deps, dict):
+                controller_deps.update(base_deps)
         for value in list(vars(cls).values()):
             if isinstance(value, Tool):
+                value.register_dependencies(controller_deps)
                 setattr(cls, f"_mcp_tool_{value.name}", build_controller_tool_handler(value))
 
     def qualify_prompt_name(self, name: str) -> str:

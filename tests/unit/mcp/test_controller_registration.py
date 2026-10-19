@@ -6,7 +6,7 @@ import json
 from typing import Any, cast
 
 import pytest
-from litestar import Controller, Litestar
+from litestar import Controller, Litestar, Router
 from litestar.exceptions import ImproperlyConfiguredException
 from litestar.testing import TestClient
 
@@ -172,3 +172,60 @@ def test_v0_14_constructor_signatures() -> None:
     field_names = [f.name for f in dataclasses.fields(MCPConfig)]
     leading_fields = field_names[: len(V0_14_MCP_CONFIG_FIELDS)]
     assert leading_fields == V0_14_MCP_CONFIG_FIELDS
+
+
+def test_controllers_mounted_in_router_discovered_and_deduplicated() -> None:
+    """Verify controllers mounted in Router/DishkaRouter are discovered and not duplicated when also in MCPConfig."""
+
+    class RoutedPromptController(PromptController):
+        prefix = "routed_ops"
+        instructions = "Follow incident response protocol."
+
+        @prompt(title="Triage Alert", description="Triage an incoming alert.")
+        def triage(self, service: str) -> str:
+            return f"Triage alert for service: {service}"
+
+    class RoutedSkillController(SkillController):
+        name = "routed_math"
+        description = "Perform arithmetic operations."
+
+        @tool(description="Add two integers.")
+        def add(self, a: int, b: int, ctx: ToolContext) -> dict[str, Any]:
+            return {"sum": a + b, "tenant": ctx.tenant_id}
+
+        @prompt(title="Explain Addition", description="Explain addition step by step.")
+        def explain_add(self, a: str, b: str) -> str:
+            return f"Explain how to add {a} and {b}"
+
+    router_only = Router(path="", route_handlers=[RoutedPromptController, RoutedSkillController])
+    app_router_only = Litestar(route_handlers=[router_only], plugins=[LitestarMCP(config=MCPConfig())])
+    with TestClient(app=app_router_only) as client:
+        tools_res = mcp_post(client, "tools/list", {}).json()
+        assert "add" in {t["name"] for t in tools_res["result"]["tools"]}
+        prompts_res = mcp_post(client, "prompts/list", {}).json()
+        assert {"routed_ops/triage", "routed_math/explain_add"} <= {p["name"] for p in prompts_res["result"]["prompts"]}
+
+    nested_router = Router(
+        path="/api",
+        route_handlers=[Router(path="/v1", route_handlers=[RoutedPromptController, RoutedSkillController])],
+    )
+    config_both = MCPConfig(
+        prompt_controllers=[RoutedPromptController],
+        skill_controllers=[RoutedSkillController],
+    )
+    app_both = Litestar(route_handlers=[nested_router], plugins=[LitestarMCP(config=config_both)])
+    with TestClient(app=app_both) as client:
+        call_res = mcp_post(
+            client,
+            "tools/call",
+            {"name": "add", "arguments": {"a": 7, "b": 8}},
+        ).json()
+        assert call_res["result"]["isError"] is False
+        assert json.loads(call_res["result"]["content"][0]["text"])["sum"] == 15
+
+        prompt_res = mcp_post(
+            client,
+            "prompts/get",
+            {"name": "routed_ops/triage", "arguments": {"service": "search"}},
+        ).json()
+        assert "Triage alert for service: search" in prompt_res["result"]["messages"][0]["content"]["text"]
