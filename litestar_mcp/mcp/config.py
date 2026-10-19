@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 from litestar.stores.base import Store  # noqa: TC002
 
 from litestar_mcp.core._streaming import DEFAULT_STREAM_CLEANUP_TIMEOUT, validate_stream_cleanup_timeout
+from litestar_mcp.mcp.skills import SkillSource
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable
@@ -161,28 +162,39 @@ class MCPSkillsConfig:
             works at runtime; the annotation is ``Sequence[Path]``, so
             type-checked callers should pass :class:`~pathlib.Path`
             objects. A bare ``str`` in place of the sequence is
-            rejected.
+            rejected. Optional when ``sources`` is non-empty.
         directory_read: Advertise and serve ``resources/directory/read``.
         max_files_per_skill: Maximum files, including ``SKILL.md``, one
-            skill may contain before it is rejected at startup.
-        max_bytes_per_skill: Maximum total byte size of one skill's files
-            before it is rejected at startup.
+            filesystem skill may contain before it is rejected at startup.
+        max_bytes_per_skill: Maximum total byte size of one filesystem
+            skill's files before it is rejected at startup.
+        sources: Async, request-aware :class:`~litestar_mcp.SkillSource`
+            instances composed after any ``paths`` source.
     """
 
-    paths: "Sequence[Path]"
+    paths: "Sequence[Path]" = ()
     directory_read: "bool" = True
     max_files_per_skill: "int" = 512
     max_bytes_per_skill: "int" = 16_777_216
+    sources: "Sequence[SkillSource]" = ()
 
     def __post_init__(self) -> "None":
-        """Validate and normalize skill directory paths and size bounds."""
-        configured_paths: object = self.paths
-        if isinstance(configured_paths, (str, bytes)):
+        """Validate and normalize skill directory paths, sources, and size bounds."""
+        if _is_bare_string_or_bytes(self.paths):
             msg = "paths must be a sequence of paths, not a single string; pass [path] instead"
-            raise ValueError(msg)  # noqa: TRY004
+            raise ValueError(msg)
         self.paths = tuple(Path(path) for path in self.paths)
-        if not self.paths:
-            msg = "paths must contain at least one directory"
+        if _is_bare_string_or_bytes(self.sources):
+            msg = "sources must be a sequence of SkillSource instances"
+            raise TypeError(msg)
+        raw_sources: Sequence[object] = self.sources
+        for source in raw_sources:
+            if not isinstance(source, SkillSource):
+                msg = f"Every entry in sources must satisfy the SkillSource protocol, got {source!r}"
+                raise TypeError(msg)
+        self.sources = tuple(self.sources)
+        if not self.paths and not self.sources:
+            msg = "MCPSkillsConfig requires at least one entry in paths or sources"
             raise ValueError(msg)
         if self.max_files_per_skill <= 0:
             msg = "max_files_per_skill must be positive"
@@ -294,3 +306,7 @@ class MCPConfig:
     def task_config(self) -> "MCPTaskConfig | None":
         """Return the normalized task configuration, if task support is enabled."""
         return normalize_task_config(self.tasks)
+
+
+def _is_bare_string_or_bytes(value: "object") -> "bool":
+    return isinstance(value, (str, bytes))

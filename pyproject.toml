@@ -257,6 +257,10 @@ follow_imports = "skip"
 module = ["_pytest.*", "pytest.*", "sphinx.*"]
 
 [[tool.mypy.overrides]]
+ignore_missing_imports = true
+module = ["yaml", "yaml.*"]
+
+[[tool.mypy.overrides]]
 disallow_untyped_decorators = false
 module = ["tests.*"]
 

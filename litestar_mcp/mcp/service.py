@@ -679,7 +679,12 @@ class MCPHandlerService:
                 }
             )
         if self.skill_catalog is not None:
-            resources.extend(self.skill_catalog.resource_entries())
+            req = _require_skill_request(context)
+            token = _request_context.set(context)
+            try:
+                resources.extend(await self.skill_catalog.resource_entries(req))
+            finally:
+                _request_context.reset(token)
         try:
             page, next_cursor = _paginate_list(resources, params, self.config.list_page_size)
         except ValueError as exc:
@@ -742,25 +747,29 @@ class MCPHandlerService:
             }
 
         if self.skill_catalog is not None and uri.startswith(SKILL_URI_PREFIX):
-            match = self.skill_catalog.get_file(uri)
-            if match is None:
-                raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
-            _skill, skill_file = match
-            if not _is_resource_text_media_type(skill_file.mime_type):
-                # A non-text media type always becomes a blob, so the manifest size is
-                # exactly what the cap will test; refuse before reading. Text types are
-                # excluded because only the read reveals the non-UTF-8 blob fallback.
-                try:
-                    enforce_blob_size(skill_file.size, max_blob_bytes=self.config.max_blob_bytes)
-                except ValueError as exc:
-                    raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
+            req = _require_skill_request(context)
+            token = _request_context.set(context)
             try:
-                body = await self.skill_catalog.read_file(skill_file)
-            except SkillIntegrityError as exc:
-                raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
-            except OSError as exc:
-                _logger.exception("Skill file read failed: %s", uri)
-                raise JSONRPCErrorException(mcp_error_for_skill_file_unreadable(uri)) from exc
+                match = await self.skill_catalog.get_file(req, uri)
+                if match is None:
+                    raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
+                skill_file = match.file
+                if not _is_resource_text_media_type(skill_file.mime_type):
+                    try:
+                        enforce_blob_size(skill_file.size, max_blob_bytes=self.config.max_blob_bytes)
+                    except ValueError as exc:
+                        raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
+                try:
+                    body = await self.skill_catalog.read_file(req, match)
+                except SkillIntegrityError as exc:
+                    raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
+                except LookupError as exc:
+                    raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri)) from exc
+                except OSError as exc:
+                    _logger.exception("Skill file read failed: %s", uri)
+                    raise JSONRPCErrorException(mcp_error_for_skill_file_unreadable(uri)) from exc
+            finally:
+                _request_context.reset(token)
             try:
                 content = _resource_content_from_bytes(
                     uri, body, mime_type=skill_file.mime_type, max_blob_bytes=self.config.max_blob_bytes
@@ -857,8 +866,17 @@ class MCPHandlerService:
         """List every skill in the catalog, one atomic entry per skill."""
         if self.skill_catalog is None:
             raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message="Skills are not configured"))
-        entries = [skill.to_entry() for skill in self.skill_catalog.skills]
-        page, next_cursor = _paginate_list(entries, params, self.config.list_page_size)
+        req = _require_skill_request(context)
+        token = _request_context.set(context)
+        try:
+            skills = await self.skill_catalog.list_skills(req)
+        finally:
+            _request_context.reset(token)
+        entries = [skill.to_entry() for skill in skills]
+        try:
+            page, next_cursor = _paginate_list(entries, params, self.config.list_page_size)
+        except ValueError as exc:
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
         result: dict[str, Any] = {"skills": page}
         if next_cursor is not None:
             result["nextCursor"] = next_cursor
@@ -871,7 +889,12 @@ class MCPHandlerService:
         uri = params.get("uri")
         if not isinstance(uri, str) or not uri:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'uri'"))
-        skill = self.skill_catalog.get(uri)
+        req = _require_skill_request(context)
+        token = _request_context.set(context)
+        try:
+            skill = await self.skill_catalog.get(req, uri)
+        finally:
+            _request_context.reset(token)
         if skill is None:
             raise JSONRPCErrorException(mcp_error_for_skill_not_found(uri))
         return {"skill": skill.to_entry()}
@@ -885,10 +908,18 @@ class MCPHandlerService:
         uri = params.get("uri")
         if not isinstance(uri, str) or not uri:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'uri'"))
-        children = self.skill_catalog.list_directory(uri)
+        req = _require_skill_request(context)
+        token = _request_context.set(context)
+        try:
+            children = await self.skill_catalog.list_directory(req, uri)
+        finally:
+            _request_context.reset(token)
         if children is None:
             raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
-        page, next_cursor = _paginate_list(children, params, self.config.list_page_size)
+        try:
+            page, next_cursor = _paginate_list(children, params, self.config.list_page_size)
+        except ValueError as exc:
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
         result: dict[str, Any] = {"resources": page}
         if next_cursor is not None:
             result["nextCursor"] = next_cursor
@@ -1095,3 +1126,14 @@ def _require_tasks_capability(context: "MCPRequestContext") -> None:
                 data={"requiredCapabilities": {"extensions": {TASKS_EXTENSION: {}}}},
             )
         )
+
+
+def _require_skill_request(context: "MCPRequestContext") -> "Request[Any, Any, Any]":
+    if context.request is None:
+        raise JSONRPCErrorException(
+            JSONRPCError(
+                code=INTERNAL_ERROR,
+                message="Skills require an HTTP request context",
+            )
+        )
+    return context.request
