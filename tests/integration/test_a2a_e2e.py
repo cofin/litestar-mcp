@@ -10,6 +10,7 @@ import anyio
 import anyio.lowlevel
 import pytest
 from a2a.client.transports.jsonrpc import JsonRpcTransport
+from a2a.client.transports.rest import RestTransport
 from a2a.server.context import ServerCallContext
 from a2a.server.request_handlers import RequestHandler
 from a2a.server.request_handlers.response_helpers import build_error_response
@@ -754,3 +755,67 @@ async def test_prefetch_watcher_exits_before_native_sse_reads_disconnect() -> No
         await app(cast("Any", _stream_scope()), cast("Any", receive), cast("Any", send))
     assert calls == 3
     assert active_reads == 0
+
+
+@pytest.mark.anyio
+async def test_rest_transport_full_task_push_and_tenant_lifecycle() -> None:
+    card = make_card()
+    handler = RecordingHandler()
+    app = Litestar(plugins=[LitestarA2A(card, handler)])
+    push_cfg = TaskPushNotificationConfig(id="cfg-rest", task_id="task-1", url="https://hooks.example/rest")
+
+    async with AsyncTestClient(app=app) as http_client:
+        http_client.headers["A2A-Version"] = "1.0"
+        transport = RestTransport(http_client, card, "http://testserver.local/a2a")
+
+        sent = await transport.send_message(SendMessageRequest(tenant="acme", message=_user_message()))
+        streamed = [
+            event.WhichOneof("payload")
+            async for event in transport.send_message_streaming(
+                SendMessageRequest(tenant="acme", message=_user_message())
+            )
+        ]
+        fetched = await transport.get_task(GetTaskRequest(tenant="acme", id=sent.task.id))
+        listed = await transport.list_tasks(ListTasksRequest(tenant="acme"))
+        subscribed = [
+            event.status_update.status.state
+            async for event in transport.subscribe(SubscribeToTaskRequest(tenant="acme", id=sent.task.id))
+        ]
+        created_push = await transport.create_task_push_notification_config(push_cfg)
+        fetched_push = await transport.get_task_push_notification_config(
+            GetTaskPushNotificationConfigRequest(task_id="task-1", id="cfg-rest")
+        )
+        listed_push = await transport.list_task_push_notification_configs(
+            ListTaskPushNotificationConfigsRequest(task_id="task-1")
+        )
+        await transport.delete_task_push_notification_config(
+            DeleteTaskPushNotificationConfigRequest(task_id="task-1", id="cfg-rest")
+        )
+        cancelled = await transport.cancel_task(CancelTaskRequest(tenant="acme", id=sent.task.id))
+        extended = await transport.get_extended_agent_card(GetExtendedAgentCardRequest(tenant="acme"))
+
+        get_sub_resp = await http_client.get(
+            f"/a2a/acme/tasks/{sent.task.id}:subscribe",
+            headers={"A2A-Version": "1.0"},
+        )
+        header_tenant_resp = await http_client.post(
+            "/a2a/message:send",
+            headers={"A2A-Version": "1.0", "X-A2A-Tenant": "header-tenant"},
+            json={"message": {"messageId": "m-hdr", "role": "ROLE_USER", "parts": [{"text": "hi"}]}},
+        )
+
+    assert sent.WhichOneof("payload") == "task"
+    assert streamed == ["message"]
+    assert fetched.id == sent.task.id
+    assert [t.id for t in listed.tasks] == [sent.task.id]
+    assert subscribed == [TaskState.TASK_STATE_WORKING, TaskState.TASK_STATE_COMPLETED]
+    assert created_push.url == push_cfg.url
+    assert fetched_push.id == "cfg-rest"
+    assert [c.id for c in listed_push.configs] == ["cfg-rest"]
+    assert cancelled.status.state == TaskState.TASK_STATE_CANCELED
+    assert extended.name == "Extended agent"
+    assert get_sub_resp.status_code == 200
+    assert get_sub_resp.headers["content-type"].startswith("text/event-stream")
+    assert header_tenant_resp.status_code == 200
+    assert handler.contexts[0].tenant == "acme"
+    assert handler.contexts[-1].tenant == "header-tenant"

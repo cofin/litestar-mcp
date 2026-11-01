@@ -17,8 +17,7 @@ from litestar.params import DependencyKwarg, ParameterKwarg
 from litestar.types import Empty
 
 from litestar_mcp.core.typing import DISHKA_INSTALLED, DishkaDependencyKey
-from litestar_mcp.utils import get_handler_function
-from litestar_mcp.utils import strip_docstring_sections as strip_docstring_sections
+from litestar_mcp.utils import get_handler_function, strip_docstring_sections
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -728,3 +727,17 @@ def _record_alias(
         f"Wire-name collision in handler {handler_name!r}: {wire_name!r} maps to both {existing!r} and {python_name!r}"
     )
     raise ValueError(msg)
+
+
+__all__ = (
+    "AdvertisedHandlerParameter",
+    "DIParameterSpec",
+    "extract_advertised_handler_arguments",
+    "extract_di_parameter",
+    "get_advertised_handler_parameters",
+    "has_dishka_parameters",
+    "iter_dependency_input_parameters",
+    "parameter_aliases",
+    "resolve_tool_argument_aliases",
+    "strip_docstring_sections",
+)

@@ -573,7 +573,9 @@ class MCPController(Controller):
                 and isinstance(raw_method, str)
                 and raw_method.startswith("notifications/")
             ):
-                response = Response(content=b"", status_code=HTTP_202_ACCEPTED, media_type=MediaType.TEXT)
+                response: Response[Any] = Response(
+                    content=b"", status_code=HTTP_202_ACCEPTED, media_type=MediaType.TEXT
+                )
                 response.headers[MCP_PROTOCOL_VERSION_HEADER] = MCP_PROTOCOL_VERSION
                 return response
             request_id = raw.get("id")

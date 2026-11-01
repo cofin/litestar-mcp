@@ -38,6 +38,7 @@ from a2a.types import (
     TaskPushNotificationConfig,
 )
 from a2a.utils import constants, proto_utils
+from a2a.utils.error_handlers import build_rest_error_payload
 from a2a.utils.errors import (
     A2AError,
     ExtensionSupportRequiredError,
@@ -45,12 +46,12 @@ from a2a.utils.errors import (
     UnsupportedOperationError,
     VersionNotSupportedError,
 )
-from google.protobuf.json_format import MessageToDict, ParseDict  # type: ignore[import-untyped]
-from litestar import Litestar, MediaType, Request, Response, Router, get, post
+from google.protobuf.json_format import MessageToDict, Parse, ParseDict, ParseError  # type: ignore[import-untyped]
+from litestar import Litestar, MediaType, Request, Response, Router, delete, get, post, route
 from litestar.exceptions import HTTPException, SerializationException
 from litestar.plugins import InitPluginProtocol
 from litestar.response import ServerSentEvent, ServerSentEventMessage
-from litestar.status_codes import HTTP_204_NO_CONTENT, HTTP_304_NOT_MODIFIED
+from litestar.status_codes import HTTP_204_NO_CONTENT, HTTP_304_NOT_MODIFIED, HTTP_404_NOT_FOUND
 
 from litestar_mcp.a2a.config import A2AConfig
 from litestar_mcp.core._streaming import StreamCleanupMiddleware, prefetch_stream, start_stream
@@ -125,19 +126,42 @@ def _is_version_1_0(version: "str") -> "bool":
 
 
 def _validate_card(card: "AgentCard", path: "str") -> "None":
-    """Require an absolute JSONRPC 1.0 interface whose URL path ends with the A2A path.
+    """Require an absolute JSONRPC or HTTP+JSON 1.0 interface whose URL path ends with the A2A path.
 
     A suffix match allows the app to be served under a proxy prefix or ASGI
     ``root_path``, where the public URL is longer than the route path.
     """
     route_path = path.rstrip("/")
+    matched = False
     for interface in card.supported_interfaces:
-        if _is_version_1_0(interface.protocol_version) and interface.protocol_binding == "JSONRPC":
+        if interface.protocol_binding == "HTTP_JSON":
+            interface.protocol_binding = constants.TransportProtocol.HTTP_JSON.value
+        if _is_version_1_0(interface.protocol_version) and interface.protocol_binding in {
+            constants.TransportProtocol.JSONRPC.value,
+            constants.TransportProtocol.HTTP_JSON.value,
+        }:
             url = urlparse(interface.url)
             if url.scheme and url.netloc and url.path.rstrip("/").endswith(route_path):
-                return
-    msg = "AgentCard must advertise an absolute JSONRPC supported interface for protocol 1.0 matching the A2A path"
-    raise ValueError(msg)
+                matched = True
+    if not matched:
+        msg = (
+            "AgentCard must advertise an absolute JSONRPC or HTTP+JSON supported interface "
+            "for protocol 1.0 matching the A2A path"
+        )
+        raise ValueError(msg)
+
+
+class _LitestarQueryParams:
+    """Adapter exposing Starlette-compatible ``getlist`` over Litestar ``query_params``."""
+
+    def __init__(self, query_params: "Any") -> "None":
+        self._query_params = query_params
+
+    def keys(self) -> "Any":
+        return self._query_params.keys()
+
+    def getlist(self, key: "str") -> "list[Any]":
+        return list(self._query_params.get_all(key, default=[]))
 
 
 def _etag_matches(if_none_match: "str", etag: "str") -> "bool":
@@ -166,7 +190,28 @@ class _JsonRpcTransport:
         self.config = config
         self.agent_card = agent_card
 
-    def _extension_headers(self, request: "Request[Any, Any, Any]", context: "ServerCallContext") -> "dict[str, str]":
+    @staticmethod
+    def _resolve_tenant(
+        request: "Request[Any, Any, Any]",
+        explicit_tenant: "str" = "",
+        *,
+        tenant_header: "str | None" = "X-A2A-Tenant",
+    ) -> "str":
+        """Resolve A2A tenant from explicit parameter, URL path parameter, or request header."""
+        if explicit_tenant:
+            return explicit_tenant
+        path_params = getattr(request, "path_params", None)
+        if isinstance(path_params, dict):
+            path_tenant = path_params.get("tenant")
+            if isinstance(path_tenant, str) and path_tenant:
+                return path_tenant
+        if tenant_header:
+            header_tenant = request.headers.get(tenant_header, "").strip()
+            if header_tenant:
+                return header_tenant
+        return ""
+
+    def extension_headers(self, request: "Request[Any, Any, Any]", context: "ServerCallContext") -> "dict[str, str]":
         activated = context.state.get("a2a_activated_extensions", set())
         if not isinstance(activated, set) or any(not isinstance(uri, str) for uri in activated):
             msg = "Activated extensions must be a set of URI strings"
@@ -181,11 +226,15 @@ class _JsonRpcTransport:
             raise ValueError(msg)
         return {HTTP_EXTENSION_HEADER: ", ".join(sorted(activated))} if activated else {}
 
-    async def _build_context(
+    async def build_context(
         self, request: "Request[Any, Any, Any]", params: "Any", method: "str", request_id: "str | int | float | None"
     ) -> "ServerCallContext":
         context = _default_context_builder(request)
-        context.tenant = getattr(params, "tenant", "")
+        context.tenant = self._resolve_tenant(
+            request,
+            getattr(params, "tenant", ""),
+            tenant_header=self.config.tenant_header,
+        )
         context.state["method"] = method
         context.state["request_id"] = request_id
         requested = set(context.requested_extensions)
@@ -202,7 +251,7 @@ class _JsonRpcTransport:
                 "task owner. Set context.user in an A2AConfig.context_builder."
             )
             raise RuntimeError(msg)
-        self._extension_headers(request, context)
+        self.extension_headers(request, context)
         return context
 
     def _response(
@@ -212,7 +261,7 @@ class _JsonRpcTransport:
         context: "ServerCallContext | None",
     ) -> "Response[Any]":
         try:
-            headers = self._extension_headers(request, context) if context is not None else {}
+            headers = self.extension_headers(request, context) if context is not None else {}
         except ValueError:
             logger.exception("Invalid A2A extension activation")
             payload = self._error(payload["id"], InternalError())
@@ -230,7 +279,7 @@ class _JsonRpcTransport:
         return response
 
     @staticmethod
-    def _validate_version(request: "Request[Any, Any, Any]") -> "None":
+    def validate_version(request: "Request[Any, Any, Any]") -> "None":
         actual = request.headers.get(constants.VERSION_HEADER, "").strip(" \t")
         if not actual:
             raise VersionNotSupportedError(
@@ -289,7 +338,7 @@ class _JsonRpcTransport:
             if candidate_id is _MISSING_ID:
                 return Response(content=None, status_code=HTTP_204_NO_CONTENT)
             request_id = candidate_id
-            self._validate_version(request)
+            self.validate_version(request)
             model = self._models.get(method)
             if model is None:
                 return self._error(request_id, MethodNotFoundError())
@@ -298,10 +347,10 @@ class _JsonRpcTransport:
             except Exception as exc:  # noqa: BLE001
                 return self._error(request_id, InvalidParamsError(data=str(exc)))
 
-            context = await self._build_context(request, params, method, request_id)
+            context = await self.build_context(request, params, method, request_id)
             if method in ("SendStreamingMessage", "SubscribeToTask"):
                 return await self._stream(request, method, params, context, request_id)
-            result = await self._dispatch(method, params, context)
+            result = await self.dispatch(method, params, context)
             return self._response(request, _success_response(request_id, result), context)
         except A2AError as exc:
             return self._response(request, self._error(request_id, exc), context)
@@ -311,7 +360,7 @@ class _JsonRpcTransport:
             logger.exception("Unhandled A2A JSON-RPC error")
             return self._response(request, self._error(request_id, InternalError()), context)
 
-    async def _dispatch(  # noqa: PLR0911
+    async def dispatch(  # noqa: PLR0911
         self, method: "str", params: "Any", context: "ServerCallContext"
     ) -> "dict[str, Any] | None":
         result: Any
@@ -372,7 +421,7 @@ class _JsonRpcTransport:
             async with aclosing(stream):
                 async for item in stream:
                     if headers is None:
-                        headers = self._extension_headers(request, context)
+                        headers = self.extension_headers(request, context)
                     response = proto_utils.to_stream_response(item)
                     if response.WhichOneof("payload") is None:
                         msg = "A2A stream event has no supported payload"
@@ -380,7 +429,7 @@ class _JsonRpcTransport:
                     payload = _success_response(request_id, _message_to_dict(response))
                     await sender.send(ServerSentEventMessage(data=_sse_data(payload)))
                 if headers is None:
-                    headers = self._extension_headers(request, context)
+                    headers = self.extension_headers(request, context)
 
         owner = start_stream(request.scope, produce, capacity=1, cleanup_timeout=self.config.stream_cleanup_timeout)
         try:
@@ -406,6 +455,257 @@ class _JsonRpcTransport:
         return ServerSentEvent(events(), headers=headers)
 
 
+class _HttpJsonTransport:
+    """Native Litestar HTTP+JSON REST transport for A2A 1.0."""
+
+    def __init__(self, rpc_transport: "_JsonRpcTransport") -> "None":
+        self._rpc = rpc_transport
+        self.config = rpc_transport.config
+
+    @staticmethod
+    def _query_params(request: "Request[Any, Any, Any]") -> "Any":
+        return _LitestarQueryParams(request.query_params)
+
+    @staticmethod
+    def _rest_error_payload(error: "Any") -> "dict[str, Any]":
+        return build_rest_error_payload(error)
+
+    def _json_response(
+        self,
+        request: "Request[Any, Any, Any]",
+        payload: "dict[str, Any]",
+        context: "ServerCallContext | None",
+    ) -> "Response[Any]":
+        try:
+            headers = self._rpc.extension_headers(request, context) if context is not None else {}
+        except ValueError:
+            logger.exception("Invalid A2A extension activation")
+            return self._error_response(request, InternalError(), None)
+        return Response(content=payload, media_type=constants.A2A_JSON_MEDIA_TYPE, headers=headers)
+
+    def _error_response(
+        self,
+        request: "Request[Any, Any, Any]",
+        error: "Any",
+        context: "ServerCallContext | None",
+    ) -> "Response[Any]":
+        headers: dict[str, str] = {}
+        if context is not None:
+            try:
+                headers = self._rpc.extension_headers(request, context)
+            except ValueError:
+                headers = {}
+        payload = self._rest_error_payload(error)
+        status_code = int(payload.get("error", {}).get("code", 500))
+        return Response(content=payload, status_code=status_code, media_type=MediaType.JSON, headers=headers)
+
+    async def _run_unary(
+        self,
+        request: "Request[Any, Any, Any]",
+        method: "str",
+        params: "Any",
+    ) -> "Response[Any]":
+        context: ServerCallContext | None = None
+        try:
+            self._rpc.validate_version(request)
+            context = await self._rpc.build_context(request, params, method, None)
+            result = await self._rpc.dispatch(method, params, context)
+            return self._json_response(request, result or {}, context)
+        except (A2AError, ParseError) as exc:
+            return self._error_response(request, exc, context)
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("Unhandled A2A HTTP+JSON error")
+            return self._error_response(request, InternalError(), context)
+
+    async def _stream(
+        self,
+        request: "Request[Any, Any, Any]",
+        method: "str",
+        params: "Any",
+        context: "ServerCallContext",
+    ) -> "ServerSentEvent":
+        headers: dict[str, str] | None = None
+
+        async def produce(sender: "MemoryObjectSendStream[ServerSentEventMessage]") -> None:
+            nonlocal headers
+            stream = (
+                self._rpc.handler.on_message_send_stream(params, context)
+                if method == "SendStreamingMessage"
+                else self._rpc.handler.on_subscribe_to_task(params, context)
+            )
+            async with aclosing(stream):
+                async for item in stream:
+                    if headers is None:
+                        headers = self._rpc.extension_headers(request, context)
+                    response = proto_utils.to_stream_response(item)
+                    if response.WhichOneof("payload") is None:
+                        msg = "A2A stream event has no supported payload"
+                        raise ValueError(msg)
+                    await sender.send(ServerSentEventMessage(data=_sse_data(_message_to_dict(response))))
+                if headers is None:
+                    headers = self._rpc.extension_headers(request, context)
+
+        owner = start_stream(request.scope, produce, capacity=1, cleanup_timeout=self.config.stream_cleanup_timeout)
+        try:
+            first = await prefetch_stream(request.scope, request.receive, owner)
+        except anyio.EndOfStream:
+            first = None
+
+        async def events() -> "AsyncGenerator[ServerSentEventMessage, None]":
+            try:
+                if first is not None:
+                    yield first
+                async for item in owner.receiver:
+                    yield item
+                await owner.result()
+            except A2AError as exc:
+                yield ServerSentEventMessage(data=_sse_data(self._rest_error_payload(exc)), event="error")
+            except Exception:
+                logger.exception("Unhandled A2A HTTP+JSON SSE stream error")
+                yield ServerSentEventMessage(data=_sse_data(self._rest_error_payload(InternalError())), event="error")
+            finally:
+                await owner.close()
+
+        return ServerSentEvent(events(), headers=headers)
+
+    async def send_message(self, request: "Request[Any, Any, Any]") -> "Response[Any]":
+        try:
+            self._rpc.validate_version(request)
+            params = SendMessageRequest()
+            raw_body = await request.body()
+            if raw_body:
+                Parse(raw_body, params, ignore_unknown_fields=True)
+        except (A2AError, ParseError) as exc:
+            return self._error_response(request, exc, None)
+        return await self._run_unary(request, "SendMessage", params)
+
+    async def send_message_stream(self, request: "Request[Any, Any, Any]") -> "Response[Any] | ServerSentEvent":
+        context: ServerCallContext | None = None
+        try:
+            self._rpc.validate_version(request)
+            params = SendMessageRequest()
+            raw_body = await request.body()
+            if raw_body:
+                Parse(raw_body, params, ignore_unknown_fields=True)
+            context = await self._rpc.build_context(request, params, "SendStreamingMessage", None)
+            return await self._stream(request, "SendStreamingMessage", params, context)
+        except (A2AError, ParseError) as exc:
+            return self._error_response(request, exc, context)
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("Unhandled A2A HTTP+JSON stream setup error")
+            return self._error_response(request, InternalError(), context)
+
+    async def _handle_task_get(
+        self,
+        request: "Request[Any, Any, Any]",
+        task_segment: "str",
+    ) -> "Response[Any] | ServerSentEvent":
+        self._rpc.validate_version(request)
+        if task_segment.endswith(":subscribe"):
+            sub_params = SubscribeToTaskRequest(id=task_segment.removesuffix(":subscribe"))
+            context = await self._rpc.build_context(request, sub_params, "SubscribeToTask", None)
+            return await self._stream(request, "SubscribeToTask", sub_params, context)
+        get_params = GetTaskRequest()
+        proto_utils.parse_params(self._query_params(request), get_params)
+        get_params.id = task_segment
+        return await self._run_unary(request, "GetTask", get_params)
+
+    async def handle_task_segment(
+        self,
+        request: "Request[Any, Any, Any]",
+        task_segment: "str",
+    ) -> "Response[Any] | ServerSentEvent":
+        context: ServerCallContext | None = None
+        try:
+            if request.method == "GET":
+                return await self._handle_task_get(request, task_segment)
+
+            if task_segment.endswith(":cancel"):
+                self._rpc.validate_version(request)
+                cancel_params = CancelTaskRequest()
+                raw_body = await request.body()
+                if raw_body:
+                    Parse(raw_body, cancel_params, ignore_unknown_fields=True)
+                cancel_params.id = task_segment.removesuffix(":cancel")
+                return await self._run_unary(request, "CancelTask", cancel_params)
+
+            if task_segment.endswith(":subscribe"):
+                self._rpc.validate_version(request)
+                post_sub_params = SubscribeToTaskRequest()
+                raw_body = await request.body()
+                if raw_body:
+                    Parse(raw_body, post_sub_params, ignore_unknown_fields=True)
+                post_sub_params.id = task_segment.removesuffix(":subscribe")
+                context = await self._rpc.build_context(request, post_sub_params, "SubscribeToTask", None)
+                return await self._stream(request, "SubscribeToTask", post_sub_params, context)
+
+            return Response(content={"detail": "Not Found"}, status_code=HTTP_404_NOT_FOUND, media_type=MediaType.JSON)
+        except (A2AError, ParseError) as exc:
+            return self._error_response(request, exc, context)
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("Unhandled A2A HTTP+JSON task route error")
+            return self._error_response(request, InternalError(), context)
+
+    async def list_tasks(self, request: "Request[Any, Any, Any]") -> "Response[Any]":
+        try:
+            self._rpc.validate_version(request)
+            params = ListTasksRequest()
+            proto_utils.parse_params(self._query_params(request), params)
+        except (A2AError, ParseError) as exc:
+            return self._error_response(request, exc, None)
+        return await self._run_unary(request, "ListTasks", params)
+
+    async def create_push_config(self, request: "Request[Any, Any, Any]", task_id: "str") -> "Response[Any]":
+        try:
+            self._rpc.validate_version(request)
+            params = TaskPushNotificationConfig()
+            raw_body = await request.body()
+            if raw_body:
+                Parse(raw_body, params, ignore_unknown_fields=True)
+            params.task_id = task_id
+        except (A2AError, ParseError) as exc:
+            return self._error_response(request, exc, None)
+        return await self._run_unary(request, "CreateTaskPushNotificationConfig", params)
+
+    async def list_push_configs(self, request: "Request[Any, Any, Any]", task_id: "str") -> "Response[Any]":
+        try:
+            self._rpc.validate_version(request)
+            params = ListTaskPushNotificationConfigsRequest()
+            proto_utils.parse_params(self._query_params(request), params)
+            params.task_id = task_id
+        except (A2AError, ParseError) as exc:
+            return self._error_response(request, exc, None)
+        return await self._run_unary(request, "ListTaskPushNotificationConfigs", params)
+
+    async def get_push_config(
+        self,
+        request: "Request[Any, Any, Any]",
+        task_id: "str",
+        push_id: "str",
+    ) -> "Response[Any]":
+        params = GetTaskPushNotificationConfigRequest(task_id=task_id, id=push_id)
+        return await self._run_unary(request, "GetTaskPushNotificationConfig", params)
+
+    async def delete_push_config(
+        self,
+        request: "Request[Any, Any, Any]",
+        task_id: "str",
+        push_id: "str",
+    ) -> "Response[Any]":
+        params = DeleteTaskPushNotificationConfigRequest(task_id=task_id, id=push_id)
+        return await self._run_unary(request, "DeleteTaskPushNotificationConfig", params)
+
+    async def extended_agent_card(self, request: "Request[Any, Any, Any]") -> "Response[Any]":
+        params = GetExtendedAgentCardRequest()
+        return await self._run_unary(request, "GetExtendedAgentCard", params)
+
+
 class LitestarA2A(InitPluginProtocol):
     """Register an A2A 1.0 request handler on Litestar-native routes.
 
@@ -421,11 +721,132 @@ class LitestarA2A(InitPluginProtocol):
         self.config = config or A2AConfig()
         _validate_card(agent_card, self.config.path)
 
+    def _build_http_json_handlers(
+        self,
+        rest_transport: "_HttpJsonTransport",
+        base_prefix: "str",
+        route_opt: "dict[str, Any]",
+    ) -> "list[Any]":
+        def _paths(suffix: "str") -> "list[str]":
+            return [f"{base_prefix}{suffix}", f"{base_prefix}/{{tenant:str}}{suffix}"]
+
+        common_kwargs: dict[str, Any] = {
+            "guards": self.config.guards,
+            "opt": route_opt,
+            "include_in_schema": self.config.include_in_schema,
+        }
+
+        @post(_paths("/message:send"), status_code=200, **common_kwargs)
+        async def a2a_rest_message_send(
+            request: "Request[Any, Any, Any]",
+            tenant: "str | None" = None,
+        ) -> "Response[Any]":
+            del tenant
+            return await rest_transport.send_message(request)
+
+        @post(
+            _paths("/message:stream"),
+            status_code=200,
+            middleware=[StreamCleanupMiddleware()],
+            **common_kwargs,
+        )
+        async def a2a_rest_message_stream(
+            request: "Request[Any, Any, Any]",
+            tenant: "str | None" = None,
+        ) -> "Response[Any] | ServerSentEvent":
+            del tenant
+            return await rest_transport.send_message_stream(request)
+
+        @route(
+            _paths("/tasks/{task_segment:str}"),
+            http_method=["GET", "POST"],
+            status_code=200,
+            middleware=[StreamCleanupMiddleware()],
+            **common_kwargs,
+        )
+        async def a2a_rest_task_segment(
+            request: "Request[Any, Any, Any]",
+            task_segment: "str",
+            tenant: "str | None" = None,
+        ) -> "Response[Any] | ServerSentEvent":
+            del tenant
+            return await rest_transport.handle_task_segment(request, task_segment)
+
+        @get(_paths("/tasks"), **common_kwargs)
+        async def a2a_rest_list_tasks(
+            request: "Request[Any, Any, Any]",
+            tenant: "str | None" = None,
+        ) -> "Response[Any]":
+            del tenant
+            return await rest_transport.list_tasks(request)
+
+        @post(_paths("/tasks/{id:str}/pushNotificationConfigs"), status_code=200, **common_kwargs)
+        async def a2a_rest_create_push_config(
+            request: "Request[Any, Any, Any]",
+            id: "str",  # noqa: A002
+            tenant: "str | None" = None,
+        ) -> "Response[Any]":
+            del tenant
+            return await rest_transport.create_push_config(request, id)
+
+        @get(_paths("/tasks/{id:str}/pushNotificationConfigs"), **common_kwargs)
+        async def a2a_rest_list_push_configs(
+            request: "Request[Any, Any, Any]",
+            id: "str",  # noqa: A002
+            tenant: "str | None" = None,
+        ) -> "Response[Any]":
+            del tenant
+            return await rest_transport.list_push_configs(request, id)
+
+        @get(_paths("/tasks/{id:str}/pushNotificationConfigs/{push_id:str}"), **common_kwargs)
+        async def a2a_rest_get_push_config(
+            request: "Request[Any, Any, Any]",
+            id: "str",  # noqa: A002
+            push_id: "str",
+            tenant: "str | None" = None,
+        ) -> "Response[Any]":
+            del tenant
+            return await rest_transport.get_push_config(request, id, push_id)
+
+        @delete(
+            _paths("/tasks/{id:str}/pushNotificationConfigs/{push_id:str}"),
+            status_code=200,
+            **common_kwargs,
+        )
+        async def a2a_rest_delete_push_config(
+            request: "Request[Any, Any, Any]",
+            id: "str",  # noqa: A002
+            push_id: "str",
+            tenant: "str | None" = None,
+        ) -> "Response[Any]":
+            del tenant
+            return await rest_transport.delete_push_config(request, id, push_id)
+
+        @get(_paths("/extendedAgentCard"), **common_kwargs)
+        async def a2a_rest_extended_agent_card(
+            request: "Request[Any, Any, Any]",
+            tenant: "str | None" = None,
+        ) -> "Response[Any]":
+            del tenant
+            return await rest_transport.extended_agent_card(request)
+
+        return [
+            a2a_rest_message_send,
+            a2a_rest_message_stream,
+            a2a_rest_task_segment,
+            a2a_rest_list_tasks,
+            a2a_rest_create_push_config,
+            a2a_rest_list_push_configs,
+            a2a_rest_get_push_config,
+            a2a_rest_delete_push_config,
+            a2a_rest_extended_agent_card,
+        ]
+
     def on_app_init(self, app_config: "AppConfig") -> "AppConfig":
         occupied = {
-            route.path
+            route_obj.path
             for entry in app_config.route_handlers
-            for route in Router(path="", route_handlers=[entry]).routes
+            for route_obj in Router(path="", route_handlers=[entry]).routes
         }
         collisions = occupied.intersection((self.config.path, self.config.agent_card_path))
         if collisions:
@@ -436,16 +857,23 @@ class LitestarA2A(InitPluginProtocol):
         card_body = to_json(_message_to_dict(self.agent_card), as_bytes=True)
         card_etag = f'"{hashlib.sha256(card_body).hexdigest()}"'
         card_headers = {"ETag": card_etag, "Cache-Control": f"public, max-age={self.config.agent_card_max_age}"}
+        base_prefix = "" if self.config.path == "/" else self.config.path
+        rpc_opt = {"exclude_from_csrf": True, **self.config.route_opt}
+        card_opt = {"exclude_from_auth": True, "exclude_from_csrf": True, **self.config.agent_card_route_opt}
 
         @post(
-            self.config.path,
+            [self.config.path, f"{base_prefix}/{{tenant:str}}"],
             guards=self.config.guards,
             middleware=[StreamCleanupMiddleware()],
-            opt={"exclude_from_csrf": True, **self.config.route_opt},
+            opt=rpc_opt,
             status_code=200,
             include_in_schema=self.config.include_in_schema,
         )
-        async def a2a_endpoint(request: "Request[Any, Any, Any]") -> "Response[Any]":
+        async def a2a_endpoint(
+            request: "Request[Any, Any, Any]",
+            tenant: "str | None" = None,
+        ) -> "Response[Any]":
+            del tenant
             result = await transport.handle(request)
             if isinstance(result, Response):
                 return result
@@ -454,7 +882,7 @@ class LitestarA2A(InitPluginProtocol):
         @get(
             self.config.agent_card_path,
             include_in_schema=self.config.include_in_schema,
-            opt={"exclude_from_auth": True, "exclude_from_csrf": True},
+            opt=card_opt,
         )
         async def agent_card(request: "Request[Any, Any, Any]") -> "Response[bytes]":
             if _etag_matches(request.headers.get("if-none-match", ""), card_etag):
@@ -462,6 +890,9 @@ class LitestarA2A(InitPluginProtocol):
             return Response(content=card_body, media_type=MediaType.JSON, headers=card_headers)
 
         app_config.route_handlers.extend((a2a_endpoint, agent_card))
+        if self.config.enable_http_json:
+            rest_transport = _HttpJsonTransport(transport)
+            app_config.route_handlers.extend(self._build_http_json_handlers(rest_transport, base_prefix, rpc_opt))
         app_config.on_shutdown.append(self.on_shutdown)
         return app_config
 

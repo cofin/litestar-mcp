@@ -6,6 +6,8 @@ import httpx2
 import pytest
 from litestar import Litestar
 
+from litestar_mcp.a2a.plugin import LitestarA2A
+from litestar_mcp.agent.bridges.a2a import agent_to_a2a
 from litestar_mcp.agent.bridges.mcp import agent_to_mcp, discover_mcp_tools, mcp_to_tools
 from litestar_mcp.agent.spec import Agent, AgentGroup
 from litestar_mcp.core.tools import tool
@@ -76,3 +78,24 @@ async def test_discover_mcp_tools() -> None:
     assert len(tools) >= 1
     tool_names = [t.name for t in tools]
     assert "ping" in tool_names
+
+
+def test_agent_to_a2a_forwards_options_and_advertises_bindings() -> None:
+    """agent_to_a2a forwards route options, tenant_header, and enable_http_json."""
+    agent = Agent(name="bridge_agent", description="Bridge A2A agent.", tools=[ping])
+    plugin = agent_to_a2a(
+        agent,
+        base_url="http://testserver",
+        path="/a2a/bridge",
+        route_opt={"exclude_from_auth": False},
+        agent_card_route_opt={"exclude_from_auth": True},
+        tenant_header="X-A2A-Tenant",
+        enable_http_json=True,
+    )
+    assert isinstance(plugin, LitestarA2A)
+    assert plugin.config.route_opt == {"exclude_from_auth": False}
+    assert plugin.config.agent_card_route_opt == {"exclude_from_auth": True}
+    assert plugin.config.tenant_header == "X-A2A-Tenant"
+    assert plugin.config.enable_http_json is True
+    bindings = [iface.protocol_binding for iface in plugin.agent_card.supported_interfaces]
+    assert bindings == ["JSONRPC", "HTTP+JSON"]
