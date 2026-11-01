@@ -8,6 +8,7 @@ import shlex
 import subprocess
 import sys
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from anyio.abc import ByteSendStream
@@ -19,11 +20,13 @@ from litestar.serialization import decode_json
 from rich.console import Console
 from rich.json import JSON
 
+from litestar_mcp.core.serialization import format_json
 from litestar_mcp.mcp import bridge as bridge_transport
 from litestar_mcp.mcp import stdio as stdio_transport
 from litestar_mcp.mcp.bridge import BEARER_TOKEN_PREFIX, DEFAULT_AUTH_HEADER_NAME
 from litestar_mcp.mcp.executor import NotCallableInCLIContextError, execute_tool
-from litestar_mcp.utils import get_handler_function, render_description
+from litestar_mcp.mcp.service import MCPHandlerService
+from litestar_mcp.utils import get_handler_function, render_description, validate_tool_descriptions
 from litestar_mcp.utils.handler_signature import iter_dependency_input_parameters
 
 try:
@@ -224,6 +227,84 @@ def list_resources(app: "Litestar") -> "None":
 
 
 mcp_group.add_command(ToolExecutor(name="run", help="Run a discovered MCP tool by name."))  # pragma: no cover
+
+
+@mcp_group.command(name="export-tool-spec")  # type: ignore[untyped-decorator]
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    type=click.Path(dir_okay=False, writable=True),
+    default=None,
+    help="Write the exported tool specification JSON to this file instead of stdout.",
+)
+@click.option(
+    "--indent",
+    type=int,
+    default=2,
+    show_default=True,
+    help="Number of spaces for JSON indentation.",
+)
+@click.option(
+    "--strict-bounds/--no-strict-bounds",
+    default=False,
+    help="Validate tool, parameter, and output field description lengths against bounds.",
+)
+def export_tool_spec(
+    ctx: "click.Context",
+    output_path: "str | None",
+    indent: "int",
+    strict_bounds: "bool",
+) -> "None":
+    """Export the MCP tools/list specification as formatted JSON."""
+    app = _get_ctx_app(ctx)
+    plugin = _get_ctx_plugin(ctx)
+    service = MCPHandlerService(
+        config=plugin.config,
+        discovered_tools=plugin.discovered_tools,
+        discovered_resources=plugin.discovered_resources,
+        discovered_prompts=plugin.discovered_prompts,
+        app_ref=app,
+        registry=plugin.registry,
+    )
+    tools = service.build_tool_entries()
+
+    cfg = plugin.config
+    has_configured_bounds = (
+        cfg.max_tool_description_length is not None
+        or cfg.max_param_description_length is not None
+        or cfg.max_output_field_description_length is not None
+    )
+    if strict_bounds or has_configured_bounds:
+        max_tool = (
+            cfg.max_tool_description_length
+            if cfg.max_tool_description_length is not None
+            else (1000 if strict_bounds else None)
+        )
+        max_param = (
+            cfg.max_param_description_length
+            if cfg.max_param_description_length is not None
+            else (750 if strict_bounds else None)
+        )
+        max_output = (
+            cfg.max_output_field_description_length
+            if cfg.max_output_field_description_length is not None
+            else (300 if strict_bounds else None)
+        )
+        violations = validate_tool_descriptions(
+            tools,
+            max_tool_description_length=max_tool,
+            max_param_description_length=max_param,
+            max_output_field_description_length=max_output,
+        )
+        if violations:
+            raise click.ClickException("\n".join(violations))
+
+    rendered = format_json({"tools": tools}, indent=indent)
+    if output_path is not None:
+        Path(output_path).write_text(rendered + "\n", encoding="utf-8")
+    else:
+        click.echo(rendered)
 
 
 @mcp_group.command(name="bridge")  # type: ignore[untyped-decorator]

@@ -262,6 +262,13 @@ class MCPConfig:
             ``ToolAnnotations`` hints (``readOnlyHint``, ``destructiveHint``,
             ``idempotentHint``) from the route handler's HTTP method when not
             explicitly overridden.
+        max_tool_description_length: Optional maximum character length for
+            tool descriptions enforced during tool-spec validation.
+        max_param_description_length: Optional maximum character length for
+            input parameter descriptions enforced during tool-spec validation.
+        max_output_field_description_length: Optional maximum character length
+            for output schema property descriptions enforced during tool-spec
+            validation.
     """
 
     base_path: "str" = "/mcp"
@@ -292,6 +299,9 @@ class MCPConfig:
     prompt_controllers: "Sequence[type[Any]]" = ()
     skill_controllers: "Sequence[type[Any]]" = ()
     infer_http_method_annotations: "bool" = True
+    max_tool_description_length: "int | None" = None
+    max_param_description_length: "int | None" = None
+    max_output_field_description_length: "int | None" = None
 
     def __post_init__(self) -> "None":
         validate_stream_cleanup_timeout(self.stream_cleanup_timeout)
@@ -312,6 +322,18 @@ class MCPConfig:
             raise ValueError(msg)
         if self.stream_queue_capacity <= 0:
             msg = f"stream_queue_capacity must be positive, got {self.stream_queue_capacity}"
+            raise ValueError(msg)
+        if self.max_tool_description_length is not None and self.max_tool_description_length <= 0:
+            msg = f"max_tool_description_length must be positive or None, got {self.max_tool_description_length}"
+            raise ValueError(msg)
+        if self.max_param_description_length is not None and self.max_param_description_length <= 0:
+            msg = f"max_param_description_length must be positive or None, got {self.max_param_description_length}"
+            raise ValueError(msg)
+        if self.max_output_field_description_length is not None and self.max_output_field_description_length <= 0:
+            msg = (
+                "max_output_field_description_length must be positive or None, "
+                f"got {self.max_output_field_description_length}"
+            )
             raise ValueError(msg)
 
     @property

@@ -10,10 +10,11 @@ from unittest.mock import Mock
 import pytest
 from click import Context, Group
 from click.testing import CliRunner
-from litestar import Litestar
+from litestar import Litestar, get
 from litestar.cli._utils import LitestarEnv
 
 from litestar_mcp import LitestarMCP, MCPConfig
+from litestar_mcp.core.serialization import from_json
 from litestar_mcp.mcp.cli import mcp_group
 
 
@@ -68,6 +69,7 @@ def test_mcp_group_help_command(cli_runner: CliRunner) -> None:
     assert "Manage MCP tools and resources" in result.output
     assert "list-tools" in result.output
     assert "list-resources" in result.output
+    assert "export-tool-spec" in result.output
     assert "run" in result.output
     assert "bridge" in result.output
     assert "stdio" in result.output
@@ -278,3 +280,54 @@ def test_mcp_bridge_redirects_runtime_stdout_pollution(
     assert result.exit_code == 0
     assert result.stdout == '{"jsonrpc":"2.0","id":1,"result":{}}\n'
     assert "accidental app output" in result.stderr
+
+
+def test_mcp_export_tool_spec_stdout_file_and_strict_bounds(
+    cli_runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    @get("/items", description="List catalog items.", opt={"mcp_tool": "list_items"}, sync_to_thread=False)
+    def list_items(limit: int = 10) -> list[str]:
+        """List catalog items.
+
+        Args:
+            limit: Maximum number of items to return.
+        """
+        return []
+
+    app = Litestar(route_handlers=[list_items], plugins=[LitestarMCP(MCPConfig())])
+    env = LitestarEnv(app_path="tests.unit.test_cli:app", app=app, cwd=Path.cwd(), host=None, port=None)
+
+    stdout_result = cli_runner.invoke(mcp_group, ["export-tool-spec"], obj=env)
+    assert stdout_result.exit_code == 0, stdout_result.output
+    payload = from_json(stdout_result.stdout)
+    assert len(payload["tools"]) == 1
+    tool_entry = payload["tools"][0]
+    assert tool_entry["name"] == "list_items"
+    assert tool_entry["description"] == "List catalog items."
+    assert tool_entry["inputSchema"]["properties"]["limit"]["description"] == "Maximum number of items to return."
+    assert tool_entry["annotations"] == {
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+    }
+
+    output_file = tmp_path / "tools.json"
+    file_result = cli_runner.invoke(
+        mcp_group,
+        ["export-tool-spec", "--output", str(output_file), "--strict-bounds"],
+        obj=env,
+    )
+    assert file_result.exit_code == 0, file_result.output
+    file_payload = from_json(output_file.read_text(encoding="utf-8"))
+    assert file_payload == payload
+
+    @get("/verbose", description="v" * 1050, opt={"mcp_tool": "verbose_tool"}, sync_to_thread=False)
+    def verbose_tool() -> dict[str, str]:
+        return {"ok": "yes"}
+
+    bad_app = Litestar(route_handlers=[verbose_tool], plugins=[LitestarMCP(MCPConfig())])
+    bad_env = LitestarEnv(app_path="tests.unit.test_cli:bad_app", app=bad_app, cwd=Path.cwd(), host=None, port=None)
+    strict_fail = cli_runner.invoke(mcp_group, ["export-tool-spec", "--strict-bounds"], obj=bad_env)
+    assert strict_fail.exit_code != 0
+    assert "verbose_tool" in strict_fail.output

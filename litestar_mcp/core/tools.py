@@ -20,8 +20,10 @@ from litestar.serialization import decode_json, encode_json, get_serializer
 from litestar_mcp.core.context import ToolContext
 from litestar_mcp.core.exceptions import LitestarMCPError
 from litestar_mcp.core.schema_builder import hoist_definitions, type_to_json_schema
+from litestar_mcp.utils import strip_docstring_sections
 from litestar_mcp.utils.handler_signature import (
     DIParameterSpec,
+    _parse_docstring_args,
     extract_di_parameter,
     has_dishka_parameters,
 )
@@ -122,8 +124,11 @@ class Tool:
         self.fn = fn
         self.bound_instance = bound_instance
         self.name = str(name or getattr(fn, "__name__", "tool"))
-        resolved_desc = description if description is not None else getattr(fn, "__doc__", None)
-        self.description = (resolved_desc or "").strip()
+        if description is not None:
+            self.description = description.strip()
+        else:
+            raw_doc = inspect.getdoc(fn)
+            self.description = strip_docstring_sections(raw_doc) if raw_doc else ""
         self.dependencies = dict(dependencies) if dependencies is not None else {}
         merged_annotations: dict[str, Any] = dict(annotations) if annotations is not None else {}
         if read_only is not None:
@@ -321,6 +326,7 @@ class Tool:
             type_hints = getattr(fn, "__annotations__", {})
 
         sig = inspect.signature(fn)
+        doc_param_descriptions = _parse_docstring_args(inspect.getdoc(fn))
         injected: dict[str, Callable[[ToolContext], Any]] = {}
         di_injected: dict[str, DIParameterSpec] = {}
         properties: dict[str, Any] = {}
@@ -352,6 +358,8 @@ class Tool:
                 continue
 
             prop_schema = type_to_json_schema(hint)
+            if "description" not in prop_schema and param.name in doc_param_descriptions:
+                prop_schema["description"] = doc_param_descriptions[param.name]
             properties[param.name] = prop_schema
             if param.default is inspect.Parameter.empty:
                 required.append(param.name)
@@ -372,6 +380,16 @@ class Tool:
         if defs:
             param_schema["$defs"] = defs
 
+        args_model = cls._build_args_model(name, fields, defer_unknown_types=defer_unknown_types)
+        return param_schema, args_model, injected, di_injected
+
+    @staticmethod
+    def _build_args_model(
+        name: str,
+        fields: "list[tuple[str, Any] | tuple[str, Any, Any]]",
+        *,
+        defer_unknown_types: bool,
+    ) -> "type[Any] | None":
         try:
             args_model = msgspec.defstruct(
                 f"{name}_arguments",
@@ -382,11 +400,10 @@ class Tool:
             msgspec.inspect.type_info(args_model)
         except TypeError as exc:
             if defer_unknown_types:
-                return param_schema, None, injected, di_injected
+                return None
             msg = f"Tool {name!r} has invalid parameter types: {exc}"
             raise ImproperlyConfiguredException(msg) from exc
-
-        return param_schema, args_model, injected, di_injected
+        return args_model
 
 
 def tool(

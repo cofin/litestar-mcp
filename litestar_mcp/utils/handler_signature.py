@@ -18,6 +18,7 @@ from litestar.types import Empty
 
 from litestar_mcp.core.typing import DISHKA_INSTALLED, DishkaDependencyKey
 from litestar_mcp.utils import get_handler_function
+from litestar_mcp.utils import strip_docstring_sections as strip_docstring_sections
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -232,6 +233,9 @@ _GOOGLE_SECTION_HEADERS = frozenset(
         "Arguments:",
         "Params:",
         "Parameters:",
+        "Keyword Args:",
+        "Keyword Arguments:",
+        "Other Parameters:",
         "Returns:",
         "Return:",
         "Raises:",
@@ -251,9 +255,28 @@ _GOOGLE_SECTION_HEADERS = frozenset(
     }
 )
 
+_NUMPY_SECTION_TITLES = frozenset(
+    {
+        "parameters",
+        "args",
+        "arguments",
+        "other parameters",
+        "returns",
+        "yields",
+        "raises",
+        "attributes",
+        "see also",
+        "notes",
+        "references",
+        "examples",
+        "warnings",
+    }
+)
+_SPHINX_PARAM_RE = re.compile(r"^:(?:param|parameter|arg|argument)(?:\s+[^:]+)?\s+(\w+)\s*:\s*(.+)$")
+
 
 def _parse_docstring_args(docstring: "str | None") -> "dict[str, str]":
-    """Extract parameter descriptions from a Google-style docstring."""
+    """Extract parameter descriptions from Google, Sphinx, or NumPy docstrings."""
     if not docstring:
         return {}
     lines = docstring.splitlines()
@@ -266,7 +289,7 @@ def _parse_docstring_args(docstring: "str | None") -> "dict[str, str]":
 
     for line in lines:
         stripped = line.strip()
-        if stripped in ("Args:", "Arguments:", "Params:", "Parameters:"):
+        if stripped in ("Args:", "Arguments:", "Params:", "Parameters:", "Keyword Args:", "Keyword Arguments:"):
             in_args = True
             continue
         if not in_args:
@@ -298,7 +321,55 @@ def _parse_docstring_args(docstring: "str | None") -> "dict[str, str]":
 
     if current_name is not None:
         result[current_name] = " ".join(current_desc).strip()
+
+    _parse_sphinx_docstring_args(lines, result)
+    _parse_numpy_docstring_args(docstring, result)
     return result
+
+
+def _parse_sphinx_docstring_args(lines: "list[str]", result: "dict[str, str]") -> "None":
+    for line in lines:
+        sphinx_match = _SPHINX_PARAM_RE.match(line.strip())
+        if sphinx_match:
+            pname, pdesc = sphinx_match.group(1), sphinx_match.group(2).strip()
+            if pname not in result and pdesc:
+                result[pname] = pdesc
+
+
+def _parse_numpy_docstring_args(docstring: "str", result: "dict[str, str]") -> "None":
+    cleaned_lines = inspect.cleandoc(docstring).splitlines()
+    in_numpy_params = False
+    numpy_name: str | None = None
+    numpy_desc: list[str] = []
+    idx = 0
+    while idx < len(cleaned_lines):
+        sline = cleaned_lines[idx].strip()
+        is_section_header = (
+            sline.lower() in _NUMPY_SECTION_TITLES
+            and idx + 1 < len(cleaned_lines)
+            and bool(re.match(r"^-{3,}\s*$", cleaned_lines[idx + 1].strip()))
+        )
+        if not in_numpy_params:
+            if is_section_header and sline.lower() in {"parameters", "other parameters"}:
+                in_numpy_params = True
+                idx += 2
+                continue
+            idx += 1
+            continue
+        if is_section_header:
+            break
+        raw_line = cleaned_lines[idx]
+        if sline and not raw_line[0].isspace():
+            if numpy_name is not None and numpy_name not in result and numpy_desc:
+                result[numpy_name] = " ".join(numpy_desc).strip()
+            header_match = re.match(r"^(\w+)(?:\s*:\s*.*)?$", sline)
+            numpy_name = header_match.group(1) if header_match else None
+            numpy_desc = []
+        elif numpy_name is not None and sline:
+            numpy_desc.append(sline)
+        idx += 1
+    if numpy_name is not None and numpy_name not in result and numpy_desc:
+        result[numpy_name] = " ".join(numpy_desc).strip()
 
 
 def _path_parameter_names(path_parameters: "Mapping[str, Any] | Iterable[str] | None") -> "frozenset[str]":

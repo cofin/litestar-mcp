@@ -628,8 +628,9 @@ class MCPHandlerService:
 
         return annotations
 
-    async def tools_list(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
-        tools = []
+    def build_tool_entries(self) -> "list[dict[str, Any]]":
+        """Build the unpaginated list of advertised MCP tool specifications."""
+        tools: list[dict[str, Any]] = []
         for name, handler in sorted(self.discovered_tools.items()):
             handler_tags = set(getattr(handler, "tags", None) or [])
             if not should_include_handler(name, handler_tags, self.config):
@@ -652,7 +653,10 @@ class MCPHandlerService:
             if annotations:
                 tool_entry["annotations"] = annotations
             tools.append(tool_entry)
+        return tools
 
+    async def tools_list(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
+        tools = self.build_tool_entries()
         try:
             page, next_cursor = _paginate_list(tools, params, self.config.list_page_size)
         except ValueError as exc:

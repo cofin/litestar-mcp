@@ -8,11 +8,12 @@ from litestar.di import Provide
 from litestar.params import CookieParameter, HeaderParameter, Parameter, ParameterKwarg, QueryParameter
 from litestar.testing import TestClient
 
-from litestar_mcp import LitestarMCP, MCPConfig, mcp_resource, mcp_tool
+from litestar_mcp import LitestarMCP, MCPConfig, mcp_resource, mcp_tool, validate_tool_descriptions
 from litestar_mcp.utils import (
     extract_description_sources,
     get_handler_function,
     render_description,
+    strip_docstring_sections,
 )
 from litestar_mcp.utils.handler_signature import (
     extract_advertised_handler_arguments,
@@ -318,6 +319,116 @@ class TestToolDescriptionPrecedence:
 
         fn = get_handler_function(handler)
         assert render_description(handler, fn, kind="tool", fallback_name="foo") == "from-docstring."
+
+    def test_route_handler_description_wins_over_docstring_and_loses_to_mcp_overrides(self) -> "None":
+        @get("/items", description="Clean REST route description.", opt={"mcp_tool": "list_items"})
+        def handler_with_route_desc() -> "list[str]":
+            """Internal docstring that should not be used."""
+            return []
+
+        fn1 = get_handler_function(handler_with_route_desc)
+        assert (
+            render_description(handler_with_route_desc, fn1, kind="tool", fallback_name="list_items")
+            == "Clean REST route description."
+        )
+
+        @mcp_tool("list_items", description="Decorator MCP description.")
+        @get("/items", description="Clean REST route description.")
+        def handler_with_decorator() -> "list[str]":
+            """Internal docstring."""
+            return []
+
+        fn2 = get_handler_function(handler_with_decorator)
+        assert (
+            render_description(handler_with_decorator, fn2, kind="tool", fallback_name="list_items")
+            == "Decorator MCP description."
+        )
+
+        @mcp_tool("list_items", description="Decorator MCP description.")
+        @get("/items", description="Clean REST route description.", opt={"mcp_description": "Opt MCP description."})
+        def handler_with_opt() -> "list[str]":
+            """Internal docstring."""
+            return []
+
+        fn3 = get_handler_function(handler_with_opt)
+        assert (
+            render_description(handler_with_opt, fn3, kind="tool", fallback_name="list_items") == "Opt MCP description."
+        )
+
+    def test_docstring_fallback_strips_google_sphinx_and_numpy_sections(self) -> "None":
+        google_doc = (
+            "List active inventory items.\n\n"
+            "Filters by warehouse and status.\n\n"
+            "Args:\n"
+            "    service: Injected inventory service.\n"
+            "    request: Active HTTP request.\n"
+            "    limit: Maximum items to return.\n\n"
+            "Returns:\n"
+            "    Matching inventory items.\n"
+        )
+        assert strip_docstring_sections(google_doc) == (
+            "List active inventory items.\n\nFilters by warehouse and status."
+        )
+
+        sphinx_doc = (
+            "Fetch user profile.\n\n"
+            ":param user_id: Identifier of the user.\n"
+            ":param db_session: Injected database session.\n"
+            ":returns: User profile dictionary.\n"
+        )
+        assert strip_docstring_sections(sphinx_doc) == "Fetch user profile."
+
+        numpy_doc = (
+            "Compute summary metrics.\n\n"
+            "Parameters\n"
+            "----------\n"
+            "window : int\n"
+            "    Lookback window in days.\n"
+            "service : MetricsService\n"
+            "    Injected metrics service.\n"
+        )
+        assert strip_docstring_sections(numpy_doc) == "Compute summary metrics."
+
+        @get("/inventory", opt={"mcp_tool": "list_inventory"})
+        def list_inventory(limit: "int" = 10) -> "list[str]":
+            """List active inventory items.
+
+            Args:
+                service: Injected inventory service.
+                limit: Maximum items to return.
+            """
+            return []
+
+        fn = get_handler_function(list_inventory)
+        rendered = render_description(list_inventory, fn, kind="tool", fallback_name="list_inventory")
+        assert rendered == "List active inventory items."
+        assert "service" not in rendered
+        assert "Args:" not in rendered
+
+    def test_validate_tool_descriptions_enforces_length_bounds(self) -> "None":
+        tools = [
+            {
+                "name": "bad_tool",
+                "description": "x" * 1001,
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "q" * 751},
+                    },
+                },
+                "outputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "summary": {"type": "string", "description": "s" * 301},
+                    },
+                },
+            }
+        ]
+        violations = validate_tool_descriptions(tools)
+        assert len(violations) == 3
+        assert any("bad_tool" in v and "1000" in v for v in violations)
+        assert any("query" in v and "750" in v for v in violations)
+        assert any("summary" in v and "300" in v for v in violations)
 
 
 class TestStructuredRendering:

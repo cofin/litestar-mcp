@@ -253,14 +253,24 @@ class TestSchemaBuilder:
         """Test that schema includes description from function docstring."""
 
         def documented_handler(value: "str") -> "str":
-            """This is a test handler that processes a value."""
+            """This is a test handler that processes a value.
+
+            Args:
+                value: Input string value to process.
+                injected_service: Internal DI service that must not leak.
+            """
             return f"Processed: {value}"
 
         _, handler = create_app_with_handler(documented_handler)
         schema = generate_schema_for_handler(handler)
 
         assert "description" in schema
-        assert "This is a test handler that processes a value" in schema["description"]
+        assert (
+            schema["description"]
+            == "Input parameters for documented_handler: This is a test handler that processes a value."
+        )
+        assert "injected_service" not in schema["description"]
+        assert schema["properties"]["value"]["description"] == "Input string value to process."
 
     def test_generate_schema_without_docstring(self) -> "None":
         """Test schema generation for handler without docstring."""

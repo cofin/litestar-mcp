@@ -55,7 +55,7 @@ from litestar_mcp.mcp.skills import (
     SkillSource,
 )
 from litestar_mcp.mcp.stdio import MCPStdioContext
-from litestar_mcp.utils import mcp_prompt, mcp_resource, mcp_tool
+from litestar_mcp.utils import mcp_prompt, mcp_resource, mcp_tool, validate_tool_descriptions
 
 __all__ = (
     "MCP",
@@ -94,6 +94,7 @@ __all__ = (
     "mcp_tool",
     "prompt",
     "tool",
+    "validate_tool_descriptions",
 )
 
 if TYPE_CHECKING:
