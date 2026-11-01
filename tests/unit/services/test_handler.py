@@ -54,10 +54,10 @@ async def test_server_discover_returns_capabilities(
     )
 
     result = await service.server_discover({}, request_context)
-    assert result["supportedVersions"] == ["2026-07-28"]
+    assert result["supportedVersions"] == ["2026-07-28", "2025-06-18", "2025-03-26"]
     assert "tools" in result["capabilities"]
     assert "resources" in result["capabilities"]
-    assert "prompts" not in result["capabilities"]  # No prompts registered
+    assert "prompts" not in result["capabilities"]
 
 
 @pytest.mark.asyncio
@@ -412,3 +412,28 @@ async def test_skills_get_and_directory_read_reject_missing_uri(
     with pytest.raises(JSONRPCErrorException) as directory_read_exc:
         await service.resources_directory_read({}, request_context)
     assert directory_read_exc.value.error.code == INVALID_PARAMS
+
+
+@pytest.mark.asyncio
+async def test_initialize_and_ping_on_handler_service(
+    dummy_app: "Litestar", request_context: "MCPRequestContext"
+) -> "None":
+    service = MCPHandlerService(
+        config=MCPConfig(name="Test Server", instructions="Service instructions."),
+        discovered_tools={},
+        discovered_resources={},
+        discovered_prompts={},
+        app_ref=dummy_app,
+        registry=None,
+    )
+
+    init_res = await service.initialize({"protocolVersion": "2025-06-18"}, request_context)
+    assert init_res["protocolVersion"] == "2025-06-18"
+    assert init_res["serverInfo"]["name"] == "Test Server"
+    assert init_res["instructions"] == "Service instructions."
+
+    fallback_res = await service.initialize({"protocolVersion": "2024-11-05"}, request_context)
+    assert fallback_res["protocolVersion"] == "2025-06-18"
+
+    ping_res = await service.ping({}, request_context)
+    assert ping_res == {}

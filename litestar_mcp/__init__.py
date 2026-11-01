@@ -27,6 +27,7 @@ from litestar_mcp.core.exceptions import (
 from litestar_mcp.core.tools import Tool, tool
 from litestar_mcp.mcp.app import MCP
 from litestar_mcp.mcp.config import (
+    SUPPORTED_PROTOCOL_VERSIONS,
     AfterToolCallHook,
     BeforeToolCallHook,
     MCPConfig,
@@ -58,6 +59,7 @@ from litestar_mcp.utils import mcp_prompt, mcp_resource, mcp_tool
 
 __all__ = (
     "MCP",
+    "SUPPORTED_PROTOCOL_VERSIONS",
     "AfterToolCallHook",
     "BeforeToolCallHook",
     "BridgeConnectionError",

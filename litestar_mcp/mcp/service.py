@@ -81,7 +81,9 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 MCP_PROTOCOL_VERSION = "2026-07-28"
+SUPPORTED_PROTOCOL_VERSIONS: tuple[str, ...] = ("2026-07-28", "2025-06-18", "2025-03-26")
 TASKS_EXTENSION = "io.modelcontextprotocol/tasks"
+
 SKILLS_EXTENSION = "io.modelcontextprotocol/skills"
 MISSING_REQUIRED_CLIENT_CAPABILITY = -32021
 
@@ -511,8 +513,8 @@ class MCPHandlerService:
                 status_message=str(exc),
             )
 
-    async def server_discover(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
-        """Describe the modern protocol versions, capabilities, and extensions."""
+    def _server_capabilities(self) -> "dict[str, Any]":
+        """Build the MCP server capabilities object."""
         capabilities: dict[str, Any] = {
             "tools": {"listChanged": True},
             "resources": {"listChanged": True},
@@ -526,13 +528,50 @@ class MCPHandlerService:
             extensions[SKILLS_EXTENSION] = {"directoryRead": self.skill_catalog.directory_read}
         if extensions:
             capabilities["extensions"] = extensions
+        return capabilities
+
+    def _server_info(self) -> "dict[str, str]":
+        """Return server name and version derived from MCPConfig and Litestar OpenAPI config."""
+        openapi = getattr(self.app_ref, "openapi_config", None)
+        return {
+            "name": self.config.name or (openapi.title if openapi is not None else "Litestar MCP Server"),
+            "version": openapi.version if openapi is not None else "1.0.0",
+        }
+
+    async def server_discover(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
+        """Describe the modern protocol versions, capabilities, and extensions."""
         result: dict[str, Any] = {
-            "supportedVersions": [MCP_PROTOCOL_VERSION],
-            "capabilities": capabilities,
+            "supportedVersions": list(SUPPORTED_PROTOCOL_VERSIONS),
+            "capabilities": self._server_capabilities(),
         }
         if self.config.instructions is not None:
             result["instructions"] = self.config.instructions
         return result
+
+    async def initialize(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
+        """Negotiate MCP protocol version and return server capabilities and info."""
+        requested = params.get("protocolVersion")
+        negotiated = (
+            requested if isinstance(requested, str) and requested in SUPPORTED_PROTOCOL_VERSIONS else "2025-06-18"
+        )
+        result: dict[str, Any] = {
+            "protocolVersion": negotiated,
+            "capabilities": self._server_capabilities(),
+            "serverInfo": self._server_info(),
+        }
+        if self.config.instructions is not None:
+            result["instructions"] = self.config.instructions
+        return result
+
+    async def ping(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
+        """Acknowledge an MCP ping health check."""
+        return {}
+
+    async def notifications_initialized(
+        self, params: "dict[str, Any]", context: "MCPRequestContext"
+    ) -> "dict[str, Any]":
+        """Acknowledge an initialized notification."""
+        return {}
 
     def _infer_http_method_annotations(self, handler: "BaseRouteHandler") -> "dict[str, Any]":
         """Infer default MCP ToolAnnotations hints from a route handler's HTTP method."""

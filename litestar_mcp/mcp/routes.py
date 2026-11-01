@@ -7,12 +7,14 @@ import binascii
 from typing import TYPE_CHECKING, Any
 
 import anyio
-from litestar import Controller, Litestar, MediaType, Request, Response, post
+from litestar import Controller, Litestar, MediaType, Request, Response, delete, post
 from litestar.di import NamedDependency  # noqa: TC002
 from litestar.exceptions import SerializationException
 from litestar.response import ServerSentEvent, ServerSentEventMessage
 from litestar.status_codes import (
     HTTP_200_OK,
+    HTTP_202_ACCEPTED,
+    HTTP_204_NO_CONTENT,
     HTTP_400_BAD_REQUEST,
     HTTP_403_FORBIDDEN,
     HTTP_404_NOT_FOUND,
@@ -34,7 +36,11 @@ from litestar_mcp.core.schema_builder import cached_schema_for_handler, iter_mcp
 from litestar_mcp.core.serialization import from_json, to_json
 from litestar_mcp.mcp.config import MCPConfig  # noqa: TC001
 from litestar_mcp.mcp.registry import PromptRegistration, Registry  # noqa: TC001
-from litestar_mcp.mcp.service import MCPHandlerService, MCPRequestContext
+from litestar_mcp.mcp.service import (
+    SUPPORTED_PROTOCOL_VERSIONS,
+    MCPHandlerService,
+    MCPRequestContext,
+)
 from litestar_mcp.mcp.skills import SkillCatalog  # noqa: TC001
 from litestar_mcp.mcp.tasks import MCPTaskStore  # noqa: TC001
 
@@ -134,9 +140,9 @@ def _request_metadata_error(
     rpc_request: "JSONRPCRequest",
     discovered_tools: "dict[str, Any]",
 ) -> "Response[Any] | None":
-    params = rpc_request.params
-    meta = params.get("_meta") if isinstance(params, dict) else None
-    if not isinstance(meta, dict):
+    params = rpc_request.params if isinstance(rpc_request.params, dict) else {}
+    meta = params.get("_meta")
+    if "_meta" in params and not isinstance(meta, dict):
         return _error(
             rpc_request.id,
             code=INVALID_PARAMS,
@@ -144,102 +150,123 @@ def _request_metadata_error(
             status_code=HTTP_400_BAD_REQUEST,
         )
 
-    body_version = meta.get("io.modelcontextprotocol/protocolVersion")
-    client_capabilities = meta.get("io.modelcontextprotocol/clientCapabilities")
-    if not isinstance(body_version, str) or not isinstance(client_capabilities, dict):
-        return _error(
-            rpc_request.id,
-            code=INVALID_PARAMS,
-            message="Missing required MCP request metadata",
-            status_code=HTTP_400_BAD_REQUEST,
-        )
-
     raw_header_version = request.headers.get(MCP_PROTOCOL_VERSION_HEADER)
     raw_header_method = request.headers.get(MCP_METHOD_HEADER)
+    raw_header_name = request.headers.get(MCP_NAME_HEADER)
     header_version = raw_header_version.strip() if raw_header_version is not None else None
     header_method = raw_header_method.strip() if raw_header_method is not None else None
-    if header_version != body_version:
-        return _error(
-            rpc_request.id,
-            code=HEADER_MISMATCH,
-            message="MCP-Protocol-Version header does not match request metadata",
-            status_code=HTTP_400_BAD_REQUEST,
-        )
-    if header_method != rpc_request.method:
-        return _error(
-            rpc_request.id,
-            code=HEADER_MISMATCH,
-            message="Mcp-Method header does not match request method",
-            status_code=HTTP_400_BAD_REQUEST,
-        )
-    if body_version != MCP_PROTOCOL_VERSION:
-        return _error(
-            rpc_request.id,
-            code=UNSUPPORTED_PROTOCOL_VERSION,
-            message=f"Unsupported protocol version: {body_version}",
-            status_code=HTTP_400_BAD_REQUEST,
-            data={
-                "supported": [MCP_PROTOCOL_VERSION],
-                "supportedVersions": [MCP_PROTOCOL_VERSION],
-                "requested": body_version,
-            },
-        )
 
-    name_field = MCP_NAME_FIELDS.get(rpc_request.method)
-    if name_field is not None:
-        body_name = params.get(name_field)
-        header_name = request.headers.get(MCP_NAME_HEADER)
-        try:
-            decoded_name = decode_mcp_header_value(header_name.strip()) if header_name is not None else None
-        except ValueError as exc:
+    body_version = meta.get("io.modelcontextprotocol/protocolVersion") if isinstance(meta, dict) else None
+    client_capabilities = meta.get("io.modelcontextprotocol/clientCapabilities") if isinstance(meta, dict) else None
+    has_mcp_meta = isinstance(meta, dict) and any(k.startswith("io.modelcontextprotocol/") for k in meta)
+
+    is_modern_2026 = (
+        rpc_request.method == "server/discover"
+        or header_version == MCP_PROTOCOL_VERSION
+        or body_version is not None
+        or client_capabilities is not None
+        or has_mcp_meta
+        or header_method is not None
+        or raw_header_name is not None
+        or (header_version is not None and header_version not in SUPPORTED_PROTOCOL_VERSIONS)
+    )
+
+    if is_modern_2026:
+        if not isinstance(meta, dict):
+            return _error(
+                rpc_request.id,
+                code=INVALID_PARAMS,
+                message="Missing or invalid params._meta",
+                status_code=HTTP_400_BAD_REQUEST,
+            )
+        if not isinstance(body_version, str) or not isinstance(client_capabilities, dict):
+            return _error(
+                rpc_request.id,
+                code=INVALID_PARAMS,
+                message="Missing required MCP request metadata",
+                status_code=HTTP_400_BAD_REQUEST,
+            )
+        if header_version != body_version:
             return _error(
                 rpc_request.id,
                 code=HEADER_MISMATCH,
-                message=str(exc),
+                message="MCP-Protocol-Version header does not match request metadata",
                 status_code=HTTP_400_BAD_REQUEST,
             )
-        if not isinstance(body_name, str) or decoded_name != body_name:
+        if header_method != rpc_request.method:
             return _error(
                 rpc_request.id,
                 code=HEADER_MISMATCH,
-                message="Mcp-Name header does not match request parameters",
+                message="Mcp-Method header does not match request method",
                 status_code=HTTP_400_BAD_REQUEST,
             )
-    if rpc_request.method != "tools/call":
-        return None
-    tool_name = params.get("name")
-    handler = discovered_tools.get(tool_name) if isinstance(tool_name, str) else None
-    if handler is None:
-        return None
-    arguments = params.get("arguments")
-    if not isinstance(arguments, dict):
-        return None
-    for path, custom_name, _property_schema in iter_mcp_header_fields(cached_schema_for_handler(handler)):
-        value: Any = arguments
-        present = True
-        for part in path:
-            if not isinstance(value, dict) or part not in value:
-                present = False
-                break
-            value = value[part]
-        header_value = request.headers.get(f"Mcp-Param-{custom_name}")
-        if not present or value is None:
-            if header_value is None:
-                continue
-        elif header_value is not None:
+        if body_version not in SUPPORTED_PROTOCOL_VERSIONS:
+            return _error(
+                rpc_request.id,
+                code=UNSUPPORTED_PROTOCOL_VERSION,
+                message=f"Unsupported protocol version: {body_version}",
+                status_code=HTTP_400_BAD_REQUEST,
+                data={
+                    "supported": list(SUPPORTED_PROTOCOL_VERSIONS),
+                    "supportedVersions": list(SUPPORTED_PROTOCOL_VERSIONS),
+                    "requested": body_version,
+                },
+            )
+
+        name_field = MCP_NAME_FIELDS.get(rpc_request.method)
+        if name_field is not None:
+            body_name = params.get(name_field)
             try:
-                decoded_value = decode_mcp_header_value(header_value.strip())
-            except ValueError:
-                decoded_value = None
-            expected = ("true" if value else "false") if isinstance(value, bool) else str(value)
-            if decoded_value == expected:
-                continue
-        return _error(
-            rpc_request.id,
-            code=HEADER_MISMATCH,
-            message=f"Mcp-Param-{custom_name} header does not match request arguments",
-            status_code=HTTP_400_BAD_REQUEST,
-        )
+                decoded_name = decode_mcp_header_value(raw_header_name.strip()) if raw_header_name is not None else None
+            except ValueError as exc:
+                return _error(
+                    rpc_request.id,
+                    code=HEADER_MISMATCH,
+                    message=str(exc),
+                    status_code=HTTP_400_BAD_REQUEST,
+                )
+            if not isinstance(body_name, str) or decoded_name != body_name:
+                return _error(
+                    rpc_request.id,
+                    code=HEADER_MISMATCH,
+                    message="Mcp-Name header does not match request parameters",
+                    status_code=HTTP_400_BAD_REQUEST,
+                )
+        if rpc_request.method != "tools/call":
+            return None
+        tool_name = params.get("name")
+        handler = discovered_tools.get(tool_name) if isinstance(tool_name, str) else None
+        if handler is None:
+            return None
+        arguments = params.get("arguments")
+        if not isinstance(arguments, dict):
+            return None
+        for path, custom_name, _property_schema in iter_mcp_header_fields(cached_schema_for_handler(handler)):
+            value: Any = arguments
+            present = True
+            for part in path:
+                if not isinstance(value, dict) or part not in value:
+                    present = False
+                    break
+                value = value[part]
+            header_value = request.headers.get(f"Mcp-Param-{custom_name}")
+            if not present or value is None:
+                if header_value is None:
+                    continue
+            elif header_value is not None:
+                try:
+                    decoded_value = decode_mcp_header_value(header_value.strip())
+                except ValueError:
+                    decoded_value = None
+                expected = ("true" if value else "false") if isinstance(value, bool) else str(value)
+                if decoded_value == expected:
+                    continue
+            return _error(
+                rpc_request.id,
+                code=HEADER_MISMATCH,
+                message=f"Mcp-Param-{custom_name} header does not match request arguments",
+                status_code=HTTP_400_BAD_REQUEST,
+            )
     return None
 
 
@@ -264,7 +291,9 @@ def _request_subject(request: "Request[Any, Any, Any]") -> "str | None":
 
 
 def _progress_token(rpc_request: "JSONRPCRequest") -> "str | int | None":
-    token = rpc_request.params["_meta"].get("progressToken")
+    params = rpc_request.params if isinstance(rpc_request.params, dict) else {}
+    meta = params.get("_meta")
+    token = meta.get("progressToken") if isinstance(meta, dict) else None
     return token if isinstance(token, (str, int)) and not isinstance(token, bool) else None
 
 
@@ -273,9 +302,26 @@ def _build_request_context(
     rpc_request: "JSONRPCRequest",
     progress_reporter: "Callable[[dict[str, Any]], Awaitable[None]] | None" = None,
 ) -> "MCPRequestContext":
-    meta = rpc_request.params["_meta"]
+    params = rpc_request.params if isinstance(rpc_request.params, dict) else {}
+    raw_meta = params.get("_meta")
+    meta = raw_meta if isinstance(raw_meta, dict) else {}
     client_info = meta.get("io.modelcontextprotocol/clientInfo")
+    if not isinstance(client_info, dict):
+        top_client_info = params.get("clientInfo")
+        client_info = top_client_info if isinstance(top_client_info, dict) else None
     client_id = client_info.get("name") if isinstance(client_info, dict) else None
+    raw_caps = meta.get("io.modelcontextprotocol/clientCapabilities")
+    if not isinstance(raw_caps, dict):
+        top_caps = params.get("capabilities")
+        client_capabilities = top_caps if isinstance(top_caps, dict) else None
+    else:
+        client_capabilities = raw_caps
+    raw_header_version = request.headers.get(MCP_PROTOCOL_VERSION_HEADER)
+    header_version = raw_header_version.strip() if raw_header_version is not None else None
+    body_version = meta.get("io.modelcontextprotocol/protocolVersion")
+    resolved_version = (
+        body_version if isinstance(body_version, str) and body_version else (header_version or MCP_PROTOCOL_VERSION)
+    )
     sub = _request_subject(request)
     explicit_owner = request.scope.get(MCP_OWNER_ID_SCOPE_KEY)
     owner_id = str(explicit_owner) if explicit_owner is not None else (f"user:{sub}" if sub is not None else None)
@@ -285,11 +331,11 @@ def _build_request_context(
         client_id=client_id or "anonymous",
         owner_id=owner_id,
         request=request,
-        protocol_version=MCP_PROTOCOL_VERSION,
-        client_capabilities=meta["io.modelcontextprotocol/clientCapabilities"],
-        client_info=client_info if isinstance(client_info, dict) else None,
-        input_responses=rpc_request.params.get("inputResponses"),
-        request_state=rpc_request.params.get("requestState"),
+        protocol_version=resolved_version,
+        client_capabilities=client_capabilities,
+        client_info=client_info,
+        input_responses=params.get("inputResponses"),
+        request_state=params.get("requestState"),
         progress_token=progress_token,
         progress_reporter=progress_reporter,
     )
@@ -320,7 +366,11 @@ def _build_cached_router(
         )
 
     router.register("server/discover", lambda params, ctx: service().server_discover(params, ctx))
+    router.register("initialize", lambda params, ctx: service().initialize(params, ctx))
+    router.register("ping", lambda params, ctx: service().ping(params, ctx))
+    router.register("notifications/initialized", lambda params, ctx: service().notifications_initialized(params, ctx))
     router.register("tools/list", lambda params, ctx: service().tools_list(params, ctx))
+
     router.register("tools/call", lambda params, ctx: service().tools_call(params, ctx))
     router.register("resources/list", lambda params, ctx: service().resources_list(params, ctx))
     router.register("resources/templates/list", lambda params, ctx: service().resources_templates_list(params, ctx))
@@ -474,7 +524,26 @@ async def _subscription_response(
 
 
 class MCPController(Controller):
-    """POST-only MCP JSON-RPC controller."""
+    """MCP JSON-RPC Streamable HTTP controller."""
+
+    @delete(
+        "/",
+        name="mcp_delete",
+        status_code=HTTP_200_OK,
+        opt={"exclude_from_csrf": True},
+    )
+    async def terminate_session(
+        self,
+        request: "Request[Any, Any, Any]",
+        config: "NamedDependency[MCPConfig]",
+    ) -> "Response[Any]":
+        """Acknowledge stateless Streamable HTTP session termination."""
+        origin_error = _validate_origin(request, config)
+        if origin_error is not None:
+            return origin_error
+        response = Response(content=b"", status_code=HTTP_204_NO_CONTENT, media_type=MediaType.TEXT)
+        response.headers[MCP_PROTOCOL_VERSION_HEADER] = MCP_PROTOCOL_VERSION
+        return response
 
     @post("/", name="mcp_jsonrpc", status_code=HTTP_200_OK, middleware=[StreamCleanupMiddleware()])
     async def handle_jsonrpc(
@@ -497,6 +566,16 @@ class MCPController(Controller):
         except (SerializationException, ValueError):
             return _error(None, code=PARSE_ERROR, message="Parse error", status_code=HTTP_400_BAD_REQUEST)
         if isinstance(raw, dict):
+            raw_method = raw.get("method")
+            if (
+                raw.get("jsonrpc") == "2.0"
+                and "id" not in raw
+                and isinstance(raw_method, str)
+                and raw_method.startswith("notifications/")
+            ):
+                response = Response(content=b"", status_code=HTTP_202_ACCEPTED, media_type=MediaType.TEXT)
+                response.headers[MCP_PROTOCOL_VERSION_HEADER] = MCP_PROTOCOL_VERSION
+                return response
             request_id = raw.get("id")
             if not (
                 isinstance(request_id, str)
@@ -509,6 +588,7 @@ class MCPController(Controller):
                     message="MCP request id must be a string or integer",
                     status_code=HTTP_400_BAD_REQUEST,
                 )
+
         try:
             rpc_request = parse_request(raw)
         except JSONRPCErrorException as exc:
@@ -582,6 +662,7 @@ __all__ = (
     "MCP_PROTOCOL_VERSION",
     "MCP_PROTOCOL_VERSION_HEADER",
     "MISSING_REQUIRED_CLIENT_CAPABILITY",
+    "SUPPORTED_PROTOCOL_VERSIONS",
     "UNSUPPORTED_PROTOCOL_VERSION",
     "MCPController",
     "decode_mcp_header_value",

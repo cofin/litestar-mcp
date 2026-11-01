@@ -10,6 +10,9 @@ from litestar.stores.base import Store  # noqa: TC002
 from litestar_mcp.core._streaming import DEFAULT_STREAM_CLEANUP_TIMEOUT, validate_stream_cleanup_timeout
 from litestar_mcp.mcp.skills import SkillSource
 
+SUPPORTED_PROTOCOL_VERSIONS: tuple[str, ...] = ("2026-07-28", "2025-06-18", "2025-03-26")
+
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable
 
