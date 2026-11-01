@@ -1,7 +1,10 @@
 """Tests for MCP decorators."""
 
+from litestar import Litestar
 from litestar.handlers import get
 
+from litestar_mcp import LitestarMCP, MCPConfig
+from litestar_mcp.core.tools import tool
 from litestar_mcp.utils import get_mcp_metadata, mcp_resource, mcp_tool
 
 
@@ -95,3 +98,35 @@ def test_description_kwargs_default_to_none_and_omitted_from_metadata() -> "None
     assert "agent_instructions" not in metadata
     assert "when_to_use" not in metadata
     assert "returns" not in metadata
+
+
+def test_mcp_tool_read_only_and_annotations_storage() -> "None":
+    @mcp_tool("ro_tool", read_only=True, annotations={"idempotentHint": True})
+    @get("/ro", sync_to_thread=False)
+    def ro_handler() -> "str":
+        return "ok"
+
+    metadata = get_mcp_metadata(ro_handler)
+    assert metadata is not None
+    assert metadata["annotations"] == {"readOnlyHint": True, "idempotentHint": True}
+
+    @tool(name="standalone_ro", read_only=True, annotations={"openWorldHint": False})
+    def standalone_fn(query: "str") -> "str":
+        """Run a read-only query."""
+        return query
+
+    assert standalone_fn.annotations == {"readOnlyHint": True, "openWorldHint": False}
+
+
+def test_combined_mcp_tool_decorator_and_opt_resource_discovery() -> "None":
+    @mcp_tool("combined_tool")
+    @get("/both", opt={"mcp_resource": "combined_res", "mcp_read_only": True}, sync_to_thread=False)
+    def combined_handler() -> "dict[str, str]":
+        """Serve both tool and resource."""
+        return {"status": "ok"}
+
+    plugin = LitestarMCP(MCPConfig())
+    Litestar(route_handlers=[combined_handler], plugins=[plugin])
+
+    assert "combined_tool" in plugin.discovered_tools
+    assert "combined_res" in plugin.discovered_resources

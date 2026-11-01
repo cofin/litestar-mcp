@@ -150,6 +150,7 @@ def mcp_tool(
     input_schema: "dict[str, Any] | None" = None,
     output_schema: "dict[str, Any] | None" = None,
     annotations: "dict[str, Any] | None" = None,
+    read_only: "bool | None" = None,
     scopes: "list[str] | None" = None,
     task_support: "str | None" = None,
     task_input_before_start: "bool" = False,
@@ -171,6 +172,7 @@ def mcp_tool(
         input_schema: Optional explicit JSON Schema for the tool input.
         output_schema: Optional JSON Schema for the tool's structured output.
         annotations: Optional metadata annotations (audience, priority, etc.).
+        read_only: Optional shorthand setting ``annotations["readOnlyHint"]``.
         scopes: Optional list of OAuth scopes advertised as discovery
             metadata (surfaced under ``tools[].annotations.scopes`` in
             ``tools/list``). Scopes are **not** enforced inline — attach a
@@ -217,8 +219,13 @@ def mcp_tool(
             metadata["input_schema"] = input_schema
         if output_schema is not None:
             metadata["output_schema"] = output_schema
-        if annotations is not None:
-            metadata["annotations"] = annotations
+        if annotations is not None or read_only is not None:
+            merged_annotations = dict(annotations or {})
+            if read_only is not None:
+                merged_annotations["readOnlyHint"] = bool(read_only)
+            metadata["annotations"] = merged_annotations
+        if read_only is not None:
+            metadata["read_only"] = bool(read_only)
         if scopes is not None:
             metadata["scopes"] = scopes
         if task_support is not None:

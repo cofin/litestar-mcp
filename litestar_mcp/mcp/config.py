@@ -84,6 +84,8 @@ class MCPOptKeys:
         agent_instructions: Opt key for the ``## Instructions`` section.
         when_to_use: Opt key for the ``## When to use`` section.
         returns: Opt key for the ``## Returns`` section.
+        annotations: Opt key carrying MCP ``ToolAnnotations`` mapping.
+        read_only: Opt key shorthand setting ``annotations.readOnlyHint``.
     """
 
     tool: "str" = "mcp_tool"
@@ -103,6 +105,8 @@ class MCPOptKeys:
     agent_instructions: "str" = "mcp_agent_instructions"
     when_to_use: "str" = "mcp_when_to_use"
     returns: "str" = "mcp_returns"
+    annotations: "str" = "mcp_annotations"
+    read_only: "str" = "mcp_read_only"
 
     def for_field(self, field_name: "str", kind: "Literal['tool', 'resource', 'prompt']") -> "str":
         """Return the opt key for ``(field_name, kind)``.
@@ -251,6 +255,10 @@ class MCPConfig:
             instances to register on startup.
         skill_controllers: Optional sequence of SkillController classes or
             instances to register on startup.
+        infer_http_method_annotations: Automatically infer default MCP
+            ``ToolAnnotations`` hints (``readOnlyHint``, ``destructiveHint``,
+            ``idempotentHint``) from the route handler's HTTP method when not
+            explicitly overridden.
     """
 
     base_path: "str" = "/mcp"
@@ -280,6 +288,7 @@ class MCPConfig:
     route_opt: "dict[str, Any] | None" = None
     prompt_controllers: "Sequence[type[Any]]" = ()
     skill_controllers: "Sequence[type[Any]]" = ()
+    infer_http_method_annotations: "bool" = True
 
     def __post_init__(self) -> "None":
         validate_stream_cleanup_timeout(self.stream_cleanup_timeout)

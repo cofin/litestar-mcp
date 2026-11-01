@@ -85,6 +85,7 @@ class Tool:
         "_args_model",
         "_di_injected",
         "_injected",
+        "annotations",
         "bound_instance",
         "dependencies",
         "description",
@@ -96,6 +97,7 @@ class Tool:
     name: str
     description: str
     parameters: dict[str, Any]
+    annotations: dict[str, Any]
     bound_instance: Any | None
     fn: Callable[..., Any]
     dependencies: dict[str, Any]
@@ -108,6 +110,8 @@ class Tool:
         name: "str | None" = None,
         description: "str | None" = None,
         dependencies: "Mapping[str, Any] | None" = None,
+        annotations: "Mapping[str, Any] | None" = None,
+        read_only: "bool | None" = None,
         bound_instance: "Any | None" = None,
         _args_model: "type[Any] | None" = None,
         _injected: "dict[str, Callable[[ToolContext], Any]] | None" = None,
@@ -121,6 +125,10 @@ class Tool:
         resolved_desc = description if description is not None else getattr(fn, "__doc__", None)
         self.description = (resolved_desc or "").strip()
         self.dependencies = dict(dependencies) if dependencies is not None else {}
+        merged_annotations: dict[str, Any] = dict(annotations) if annotations is not None else {}
+        if read_only is not None:
+            merged_annotations["readOnlyHint"] = bool(read_only)
+        self.annotations = merged_annotations
 
         if parameters is not None and _injected is not None:
             self._args_model = _args_model
@@ -154,6 +162,7 @@ class Tool:
             name=self.name,
             description=self.description,
             dependencies=self.dependencies,
+            annotations=self.annotations,
             bound_instance=instance,
             _args_model=self._args_model,
             _injected=self._injected,
@@ -204,6 +213,9 @@ class Tool:
         description: "str | None" = None,
         parameters: "dict[str, Any] | None" = None,
         call: "Callable[..., Any] | None" = None,
+        *,
+        annotations: "Mapping[str, Any] | None" = None,
+        read_only: "bool | None" = None,
     ) -> "Tool":
         """Construct a tool instance from an explicit JSON schema and callable."""
         param_schema = dict(parameters) if parameters is not None else {"type": "object", "properties": {}}
@@ -219,6 +231,8 @@ class Tool:
             target_call,
             name=name,
             description=description,
+            annotations=annotations,
+            read_only=read_only,
             parameters=param_schema,
             _args_model=None,
             _injected={},
@@ -381,6 +395,8 @@ def tool(
     name: "str | None" = None,
     description: "str | None" = None,
     dependencies: "Mapping[str, Any] | None" = None,
+    annotations: "Mapping[str, Any] | None" = None,
+    read_only: "bool | None" = None,
 ) -> "Any":
     """Decorate a callable as an executable tool."""
     enclosing_deps = _capture_enclosing_class_dependencies()
@@ -390,6 +406,8 @@ def tool(
             name=name,
             description=description,
             dependencies=dependencies,
+            annotations=annotations,
+            read_only=read_only,
             _enclosing_dependencies=enclosing_deps,
         )
 
@@ -402,6 +420,8 @@ def tool(
             name=resolved_name,
             description=description,
             dependencies=dependencies,
+            annotations=annotations,
+            read_only=read_only,
             _enclosing_dependencies=captured,
         )
 

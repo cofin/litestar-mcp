@@ -263,7 +263,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
 
                 if metadata:
                     self._register_from_metadata(handler, metadata)
-                elif handler.opt:
+                if handler.opt:
                     self._register_from_opt(handler)
 
             child_handlers = getattr(handler, "route_handlers", None)

@@ -136,10 +136,14 @@ def build_controller_tool_handler(tool: Tool) -> HTTPRouteHandler:
     _controller_tool_endpoint.__annotations__ = annotations
     setattr(_controller_tool_endpoint, "__signature__", sig)
 
-    set_mcp_metadata(
-        _controller_tool_endpoint,
-        {"type": "tool", "name": tool.name, "description": tool.description},
-    )
+    metadata: dict[str, Any] = {"type": "tool", "name": tool.name, "description": tool.description}
+    if tool.annotations:
+        metadata["annotations"] = dict(tool.annotations)
+    set_mcp_metadata(_controller_tool_endpoint, metadata)
+
+    route_opt: dict[str, Any] = {"_mcp_synthesized_tool": True}
+    if tool.annotations:
+        route_opt["mcp_annotations"] = dict(tool.annotations)
 
     handler_deps = {k: v for k, v in tool.dependencies.items() if k in tool.di_parameters}
     return post(
@@ -147,6 +151,7 @@ def build_controller_tool_handler(tool: Tool) -> HTTPRouteHandler:
         guards=[require_internal_dispatch],
         dependencies=handler_deps or None,
         include_in_schema=False,
+        opt=route_opt,
     )(_controller_tool_endpoint)
 
 
@@ -176,10 +181,10 @@ def build_tool_route_handler(
     _standalone_tool_endpoint.__annotations__ = annotations
     setattr(_standalone_tool_endpoint, "__signature__", sig)
 
-    set_mcp_metadata(
-        _standalone_tool_endpoint,
-        {"type": "tool", "name": tool.name, "description": tool.description},
-    )
+    metadata: dict[str, Any] = {"type": "tool", "name": tool.name, "description": tool.description}
+    if tool.annotations:
+        metadata["annotations"] = dict(tool.annotations)
+    set_mcp_metadata(_standalone_tool_endpoint, metadata)
 
     clean_base = base_path.rstrip("/")
     path = f"{clean_base}/internal/tools/{tool.name}"
@@ -188,10 +193,15 @@ def build_tool_route_handler(
     if dependencies:
         merged_deps.update(dependencies)
 
+    route_opt: dict[str, Any] = {"_mcp_synthesized_tool": True}
+    if tool.annotations:
+        route_opt["mcp_annotations"] = dict(tool.annotations)
+
     route_guards = [require_internal_dispatch, *(guards or ())]
     return post(
         path=path,
         guards=route_guards,
         dependencies=merged_deps or None,
         include_in_schema=False,
+        opt=route_opt,
     )(_standalone_tool_endpoint)

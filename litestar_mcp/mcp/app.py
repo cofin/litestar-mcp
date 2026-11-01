@@ -394,10 +394,11 @@ class MCP:
                 **_build_standalone_route_kwargs(
                     route_kwargs,
                     fn=fn,
-                    forced_opt={opt_keys.tool: tool_name},
+                    forced_opt={opt_keys.tool: tool_name, "_mcp_synthesized_tool": True},
                     default_opt={opt_keys.description: description or fn.__doc__ or ""},
                 ),
             )(_json_response_wrapper(fn))
+
             self.plugin.register_dynamic_handler(handler)
             return fn
 
