@@ -40,12 +40,13 @@ else:
 def _run(*command: str, cwd: Path) -> None:
     env = os.environ.copy()
     os_release = Path("/etc/os-release")
-    if os_release.is_file() and "rodete" in os_release.read_text(errors="ignore"):
+    if "127.0.0.1" in env.get("HTTP_PROXY", ""):
+        env.setdefault("UV_OFFLINE", "1")
+        env.setdefault("UV_NO_CONFIG", "1")
+    elif os_release.is_file() and "rodete" in os_release.read_text(errors="ignore"):
         env.setdefault("PIP_INDEX_URL", "https://pypi.org/simple")
         env.setdefault("UV_INDEX_URL", "https://pypi.org/simple")
         env.setdefault("UV_NO_CONFIG", "1")
-    if "127.0.0.1" in env.get("HTTP_PROXY", ""):
-        env.setdefault("UV_OFFLINE", "1")
     subprocess.run(command, cwd=cwd, env=env, check=True)  # noqa: S603
 
 

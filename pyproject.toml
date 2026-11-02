@@ -283,6 +283,7 @@ filterwarnings = [
     "ignore:.*without setting sync_to_thread is discouraged",
     "ignore:.*sync_to_thread has no effect on generators",
     "ignore:.*sync_to_thread has no effect on async callable",
+    "ignore:Arrow output on a DB-API result makes an extra copy of the rows:UserWarning",
 ]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",

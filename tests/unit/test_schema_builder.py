@@ -2,7 +2,7 @@
 
 import enum
 from dataclasses import dataclass
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 import msgspec
 import pytest
@@ -954,7 +954,7 @@ class TestDependencyProviderParameters:
             from sqlspec.extensions.litestar.providers import create_filter_dependencies as create_sqlspec_filters
 
             dependencies = create_sqlspec_filters(
-                {"created_at": True, "updated_at": True, "pagination_type": "limit_offset"}
+                cast("Any", {"created_at": True, "updated_at": True, "pagination_type": "limit_offset"})
             )
 
         async def handler(

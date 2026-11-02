@@ -14,12 +14,10 @@ if TYPE_CHECKING:
 def _resolve_fixture_scope(request: "pytest.FixtureRequest", fixture_name: "str") -> "str":
     """Return the pytest scope string for ``fixture_name`` as registered in ``request``."""
     manager: Any = request._fixturemanager
-    name2fixturedefs = manager._arg2fixturedefs
-    if fixture_name not in name2fixturedefs:
+    fixture_defs = manager.getfixturedefs(fixture_name, request.node)
+    if not fixture_defs:
         msg = f"Fixture {fixture_name!r} is not registered in the active session."
         raise AssertionError(msg)
-    fixture_defs = name2fixturedefs[fixture_name]
-    # The final definition wins when multiple conftests contribute.
     return str(fixture_defs[-1].scope)
 
 
