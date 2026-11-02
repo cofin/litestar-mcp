@@ -94,6 +94,7 @@ class DurableWorkflowEngine:
         *,
         registry: WorkflowRegistry,
         store: WorkflowStore,
+        queue_service: "QueueService | None" = None,
         runtime_factory: Callable[[Agent], "AgentRuntime"] | None = None,
         queue: str = "workflow",
         watchdog_interval: float | None = 30.0,
@@ -104,6 +105,7 @@ class DurableWorkflowEngine:
         Args:
             registry: WorkflowRegistry with registered DynamicWorkflow definitions.
             store: WorkflowStore instance for durable state persistence.
+            queue_service: Optional pre-configured QueueService to bind.
             runtime_factory: Optional callable mapping Agent to AgentRuntime.
             queue: Target queue name for workflow tasks.
             watchdog_interval: Optional delay in seconds between watchdog checks.
@@ -111,10 +113,19 @@ class DurableWorkflowEngine:
         """
         self.registry = registry
         self.store = store
+        self._queue_service_instance = queue_service
         self.runtime_factory = runtime_factory
         self._queue = queue
         self.watchdog_interval = watchdog_interval
         self.run_timeout_seconds = run_timeout_seconds
+
+    def bind_queue_service(self, queue_service: "QueueService") -> None:
+        """Bind an active QueueService to this engine.
+
+        Args:
+            queue_service: The QueueService instance to bind.
+        """
+        self._queue_service_instance = queue_service
 
     def dependencies(self) -> TaskDependencyResolver:
         """Create a TaskDependencyResolver providing workflow_engine for workflow tasks.
@@ -145,18 +156,27 @@ class DurableWorkflowEngine:
         Raises:
             ImproperlyConfiguredException: If QueuePlugin is not started.
         """
+        if self._queue_service_instance is not None:
+            return self._queue_service_instance
         service = get_default_service()
         if service is None:
             msg = "DurableWorkflowEngine requires QueuePlugin to be started"
             raise ImproperlyConfiguredException(msg)
         return service
 
-    async def start(self, workflow: str, initial_state: dict[str, Any] | None = None) -> str:
+    async def start(
+        self,
+        workflow: str,
+        initial_state: dict[str, Any] | None = None,
+        *,
+        queue_service: "QueueService | None" = None,
+    ) -> str:
         """Start a new durable workflow run and enqueue initial advance task.
 
         Args:
             workflow: Registered workflow name.
             initial_state: Optional initial state dictionary.
+            queue_service: Optional explicit QueueService to bind and use.
 
         Returns:
             The generated run_id string.
@@ -165,6 +185,8 @@ class DurableWorkflowEngine:
             ImproperlyConfiguredException: If immediate execution backend is used with watchdog.
         """
         self.registry.get(workflow)
+        if queue_service is not None:
+            self._queue_service_instance = queue_service
         service = self._queue_service()
         execution_backend = getattr(service.config, "execution_backend", None)
         if execution_backend == "immediate" and self.watchdog_interval is not None:

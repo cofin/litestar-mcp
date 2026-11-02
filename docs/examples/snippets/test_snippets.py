@@ -65,8 +65,8 @@ async def test_durable_workflow_snippet_runs_to_completion() -> None:
     engine, queue_plugin = durable_workflow.create_engine()
     app = Litestar(plugins=[queue_plugin])
     async with AsyncTestClient(app):
-        run_id = await engine.start("metrics_pipeline")
         service = queue_plugin.config.get_service(app.state)
+        run_id = await engine.start("metrics_pipeline", queue_service=service)
         worker = Worker(service, queue_plugin.config.worker)
         for _ in range(50):
             run, _ = await engine.snapshot(run_id)

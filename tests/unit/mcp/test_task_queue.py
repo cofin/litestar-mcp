@@ -21,6 +21,7 @@ from litestar_mcp import (
     MCPTaskConfig,
     get_mcp_request_context,
 )
+from litestar_mcp.core.jsonrpc import INTERNAL_ERROR, JSONRPCError, JSONRPCErrorException
 from litestar_mcp.mcp.service import TASKS_EXTENSION
 from litestar_mcp.queues import QueueTaskExecutor
 from litestar_mcp.utils import mcp_tool
@@ -66,6 +67,11 @@ def _make_queued_app(
             input_requests={"confirm": {"type": "boolean", "description": "Confirm execution"}},
         )
 
+    @get("/protocol-fail")
+    @mcp_tool(name="protocol_fail", task_support="optional")
+    async def protocol_fail() -> None:
+        raise JSONRPCErrorException(JSONRPCError(code=INTERNAL_ERROR, message="protocol failure"))
+
     plugins: list[Any] = []
     if include_queue_plugin and executor is not None:
         queue_config = QueueConfig(
@@ -96,7 +102,7 @@ def _make_queued_app(
         return asgi_handler
 
     app = Litestar(
-        route_handlers=[slow_echo, whoami, ask, *(extra_handlers or [])],
+        route_handlers=[slow_echo, whoami, ask, protocol_fail, *(extra_handlers or [])],
         plugins=plugins,
         middleware=[user_header_middleware],
     )
@@ -247,8 +253,35 @@ async def test_worker_runs_with_loaded_principal() -> None:
         )
         task_id = result["result"]["taskId"]
         status_result = await _mcp_post(client, "tasks/get", {"taskId": task_id})
+        assert status_result["result"]["status"] == "completed"
+        assert status_result["result"]["result"]["isError"] is True
+        import json
+
+        error_payload = json.loads(status_result["result"]["result"]["content"][0]["text"])
+        assert "Authentication required" in error_payload["error"]
+
+
+@pytest.mark.anyio
+async def test_worker_fails_on_protocol_error() -> None:
+    """Worker transitions task to failed on JSONRPCErrorException."""
+    executor = QueueTaskExecutor()
+    app, _ = _make_queued_app(executor=executor, execution_backend="local")
+    async with AsyncTestClient(app) as client:
+        result = await _mcp_post(
+            client,
+            "tools/call",
+            {"name": "protocol_fail", "arguments": {}},
+        )
+        task_id = result["result"]["taskId"]
+        queue_plugin = app.plugins.get(QueuePlugin)
+        service = queue_plugin.config.get_service(app.state)
+        worker = Worker(service, queue_plugin.config.worker)
+        await worker.run_once()
+        await worker.stop()
+
+        status_result = await _mcp_post(client, "tasks/get", {"taskId": task_id})
         assert status_result["result"]["status"] == "failed"
-        assert "Authentication required" in status_result["result"]["error"]["message"]
+        assert "protocol failure" in status_result["result"]["error"]["message"]
 
 
 @pytest.mark.anyio

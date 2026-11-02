@@ -442,8 +442,6 @@ class MCPHandlerService:
         handler: "BaseRouteHandler",
         tool_args: "dict[str, Any]",
         context: "MCPRequestContext",
-        *,
-        is_task: "bool" = False,
     ) -> "dict[str, Any]":
         validation_errors = _validate_tool_arguments(handler, tool_args)
         if validation_errors:
@@ -474,9 +472,7 @@ class MCPHandlerService:
             )
         except JSONRPCErrorException:
             raise
-        except Exception as exc:
-            if is_task:
-                raise
+        except Exception as exc:  # noqa: BLE001
             return _build_tool_result(
                 {"error": str(exc)},
                 is_error=True,
@@ -515,7 +511,7 @@ class MCPHandlerService:
             return
         try:
             while True:
-                result = await self._execute_tool_call(tool_name, handler, tool_args, context, is_task=True)
+                result = await self._execute_tool_call(tool_name, handler, tool_args, context)
                 if not await self._settle_attempt(record.task_id, result):
                     return
                 context.input_responses = await self.task_store.wait_for_input(record.task_id)
@@ -560,7 +556,7 @@ class MCPHandlerService:
             return
 
         try:
-            result = await self._execute_tool_call(call.tool_name, handler, call.arguments, context, is_task=True)
+            result = await self._execute_tool_call(call.tool_name, handler, call.arguments, context)
             await self._settle_attempt(call.task_id, result)
         except JSONRPCErrorException as exc:
             await self.task_store.fail(call.task_id, exc.error)
