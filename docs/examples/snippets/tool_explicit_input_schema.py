@@ -7,7 +7,6 @@ from litestar_mcp import mcp_tool
 
 # start-example
 @mcp_tool(
-    "search_regions",
     input_schema={
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",

@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-import msgspec
 from advanced_alchemy.extensions.litestar import (
     AsyncSessionConfig,
     SQLAlchemyAsyncConfig,
@@ -42,10 +41,6 @@ from docs.examples.notes.shared.auth import (
 )
 from docs.examples.notes.shared.contracts import (
     APP_INFO_RESOURCE_NAME,
-    CREATE_NOTE_TOOL_NAME,
-    DELETE_NOTE_TOOL_NAME,
-    LIST_NOTES_TOOL_NAME,
-    NOTES_SCHEMA_RESOURCE_NAME,
     AppInfo,
     CreateNoteInput,
     DeleteNoteResult,
@@ -53,7 +48,7 @@ from docs.examples.notes.shared.contracts import (
     NotesSchema,
     build_app_info,
 )
-from litestar_mcp import LitestarMCP, MCPConfig
+from litestar_mcp import LitestarMCP
 
 DEFAULT_USER_DIRECTORY = {"alice": "alice-password", "bob": "bob-password"}
 
@@ -107,7 +102,7 @@ def create_app(
 
     resolved_user_dep = {"resolved_user": Provide(_provide_resolved_user)}
 
-    @get("/notes", mcp_tool=LIST_NOTES_TOOL_NAME, dependencies=resolved_user_dep)
+    @get("/notes", mcp_tool=True, dependencies=resolved_user_dep)
     @inject
     async def list_notes(
         note_service: "FromDishka[NoteService]", resolved_user: "AuthenticatedIdentity"
@@ -115,16 +110,15 @@ def create_app(
         notes = await note_service.list(NoteRecord.owner_sub == resolved_user.sub)
         return note_service.to_schema(notes, schema_type=Note)
 
-    @post("/notes", mcp_tool=CREATE_NOTE_TOOL_NAME, dependencies=resolved_user_dep)
+    @post("/notes", mcp_tool=True, dependencies=resolved_user_dep)
     @inject
     async def create_note(
-        data: "dict[str, Any]",
+        data: "CreateNoteInput",
         note_service: "FromDishka[NoteService]",
         resolved_user: "AuthenticatedIdentity",
     ) -> "Note":
-        payload = msgspec.convert(data, CreateNoteInput)
         note = await note_service.create(
-            {"title": payload.title, "body": payload.body, "owner_sub": resolved_user.sub},
+            {"title": data.title, "body": data.body, "owner_sub": resolved_user.sub},
             auto_commit=True,
         )
         return note_service.to_schema(note, schema_type=Note)
@@ -132,7 +126,7 @@ def create_app(
     @delete(
         "/notes/{note_id:str}",
         status_code=HTTP_200_OK,
-        mcp_tool=DELETE_NOTE_TOOL_NAME,
+        mcp_tool=True,
         dependencies=resolved_user_dep,
     )
     @inject
@@ -149,15 +143,13 @@ def create_app(
         await note_service.delete(existing.id, auto_commit=True)
         return DeleteNoteResult(deleted=True, note_id=note_id)
 
-    @get("/notes/schema", mcp_resource=NOTES_SCHEMA_RESOURCE_NAME, sync_to_thread=False)
+    @get("/notes/schema", mcp_resource=True, sync_to_thread=False)
     def notes_schema() -> "NotesSchema":
         return NotesSchema()
 
     @get("/app/info", mcp_resource=APP_INFO_RESOURCE_NAME, sync_to_thread=False)
     def get_api_info() -> "AppInfo":
         return build_app_info(backend="advanced_alchemy", auth_mode="jwt", supports_dishka=True)
-
-    mcp_config = MCPConfig()
 
     app = Litestar(
         route_handlers=[
@@ -168,7 +160,7 @@ def create_app(
             notes_schema,
             get_api_info,
         ],
-        plugins=[SQLAlchemyPlugin(config=alchemy_config), LitestarMCP(mcp_config)],
+        plugins=[SQLAlchemyPlugin(config=alchemy_config), LitestarMCP()],
         on_app_init=[oauth_backend.on_app_init],
         on_shutdown=[container.close],
     )

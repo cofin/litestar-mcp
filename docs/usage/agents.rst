@@ -106,6 +106,11 @@ automatic thought signature round-tripping on follow-up function-calling turns:
     :caption: ``docs/examples/agent/coffee_shop_agent.py`` - ``create_model_client``
     :pyobject: create_model_client
 
+Agents without an explicit ``model`` use the runtime's ``default_model``; when that is
+unset too, the runtime builds a default :class:`~litestar_mcp.agent.GoogleGenAIClient`.
+Register the :class:`~litestar_mcp.agent.AgentRuntime` in ``Litestar(plugins=[...])`` to
+provide it as the ``runtime`` dependency of :class:`~litestar_mcp.agent.AgentChatController`.
+
 Sessions and Runtime
 ====================
 
@@ -144,18 +149,21 @@ on top of ``litestar-queues``. Install the optional ``queues`` extra to use it:
     :language: python
     :caption: ``docs/examples/snippets/durable_workflow.py``
 
-Architecture & Components:
+Register :class:`~litestar_mcp.queues.DurableWorkflowEngine` next to ``QueuePlugin``;
+no other wiring is required. During app init the engine:
 
-- **WorkflowRegistry**: Holds registered DAG definitions (:class:`~litestar_mcp.agent.workflow.DynamicWorkflow`),
-  validating node dependencies and rejecting duplicate workflow names at startup.
-- **WorkflowStore**: Manages write-once node outcomes (:class:`~litestar_mcp.queues.NodeRecord`)
-  and monotonic run records (:class:`~litestar_mcp.queues.WorkflowRun`) backed by a
-  distributed Litestar :class:`Store` with configurable record TTL.
-- **DurableWorkflowEngine**: Initiates runs via ``await engine.start("workflow_name", initial_state={})``,
-  enqueuing an advance task and periodic watchdog ticks. Snapshots can be inspected at any time
-  via ``await engine.snapshot(run_id)`` returning ``(WorkflowRun, WorkflowContext)``.
-- **Dependency Resolution**: Inject ``engine.dependencies()`` into the queue plugin's
-  ``task_dependency_resolver`` (optionally combined using :func:`~litestar_mcp.queues.chain_task_dependencies`).
+- validates every :class:`~litestar_mcp.agent.workflow.DynamicWorkflow` DAG and rejects
+  duplicate workflow names,
+- attaches its task dependencies to the ``QueuePlugin`` configuration (any
+  ``task_dependency_resolver`` you set keeps running first),
+- stores run and node records (:class:`~litestar_mcp.queues.WorkflowRun`,
+  :class:`~litestar_mcp.queues.NodeRecord`) in the application's ``stores`` registry under
+  ``litestar_mcp_workflows``, so configuring ``Litestar(stores=...)`` once (for example a
+  Redis-backed ``StoreRegistry``) makes workflow state shared across replicas, and
+- provides itself to route handlers as the ``workflow_engine`` dependency.
+
+Start runs with ``await workflow_engine.start("workflow_name", initial_state={})`` and inspect
+them with ``await workflow_engine.snapshot(run_id)``, which returns ``(WorkflowRun, WorkflowContext)``.
 
 Execution Semantics & Guarantees:
 

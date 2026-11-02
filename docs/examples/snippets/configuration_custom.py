@@ -12,6 +12,6 @@ def build() -> "Litestar":
         name="My MCP Server",
         include_in_schema=True,
     )
-    app = Litestar(route_handlers=[], plugins=[LitestarMCP(config)])
+    app = Litestar(plugins=[LitestarMCP(config)])
     # end-example
     return app

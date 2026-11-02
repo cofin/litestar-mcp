@@ -5,7 +5,7 @@ from litestar.handlers import get
 
 from litestar_mcp import LitestarMCP, MCPConfig
 from litestar_mcp.core.tools import tool
-from litestar_mcp.utils import get_mcp_metadata, mcp_resource, mcp_tool
+from litestar_mcp.utils import get_mcp_metadata, mcp_prompt, mcp_resource, mcp_tool
 
 
 def test_mcp_tool_decorator_storage() -> "None":
@@ -130,3 +130,43 @@ def test_combined_mcp_tool_decorator_and_opt_resource_discovery() -> "None":
 
     assert "combined_tool" in plugin.discovered_tools
     assert "combined_res" in plugin.discovered_resources
+
+
+def test_decorators_default_name_to_function_name() -> "None":
+    @mcp_tool()
+    @get("/tool", sync_to_thread=False)
+    def lookup_user() -> "str":
+        return "user"
+
+    @mcp_resource()
+    def app_settings() -> "dict[str, str]":
+        return {}
+
+    @mcp_prompt()
+    def summarize(text: "str") -> "str":
+        return text
+
+    assert (get_mcp_metadata(lookup_user) or {})["name"] == "lookup_user"
+    assert (get_mcp_metadata(app_settings) or {})["name"] == "app_settings"
+    assert (get_mcp_metadata(summarize) or {})["name"] == "summarize"
+
+
+def test_opt_true_registers_primitives_under_function_names() -> "None":
+    @get("/users", mcp_tool=True, sync_to_thread=False)
+    def list_users() -> "list[str]":
+        return []
+
+    @get("/user-schema", mcp_resource=True, sync_to_thread=False)
+    def user_schema() -> "dict[str, str]":
+        return {}
+
+    @get("/review", mcp_prompt=True, sync_to_thread=False)
+    def code_review() -> "str":
+        return "review"
+
+    plugin = LitestarMCP()
+    Litestar(route_handlers=[list_users, user_schema, code_review], plugins=[plugin])
+
+    assert "list_users" in plugin.discovered_tools
+    assert "user_schema" in plugin.discovered_resources
+    assert "code_review" in plugin.discovered_prompts

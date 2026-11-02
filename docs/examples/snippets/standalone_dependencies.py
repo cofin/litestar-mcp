@@ -10,7 +10,6 @@ def provide_account_id() -> "str":
 
 
 @mcp.tool(
-    name="current_account",
     dependencies={"account_id": Provide(provide_account_id, sync_to_thread=False)},
     sync_to_thread=False,
 )

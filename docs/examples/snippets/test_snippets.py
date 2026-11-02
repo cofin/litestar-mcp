@@ -64,16 +64,20 @@ def test_config_snippet_exposes_mcp_config(module_name: "str") -> "None":
 
 @pytest.mark.anyio
 async def test_durable_workflow_snippet_runs_to_completion() -> None:
-    """Run the durable workflow snippet to completion and assert node outputs."""
-    worker_module = pytest.importorskip("litestar_queues.worker")
+    """Start a run through the snippet's route and drive it to completion with a worker."""
+    queues = pytest.importorskip("litestar_queues")
+    worker_module = importlib.import_module("litestar_queues.worker")
     durable_workflow = importlib.import_module("docs.examples.snippets.durable_workflow")
+    engine = importlib.import_module("litestar_mcp.queues").DurableWorkflowEngine([durable_workflow.metrics_pipeline])
+    queue_plugin = queues.QueuePlugin(
+        queues.QueueConfig(queue_backend="memory", worker=queues.WorkerConfig(placement="external"))
+    )
+    app = Litestar(route_handlers=[durable_workflow.start_metrics_pipeline], plugins=[queue_plugin, engine])
 
-    engine, queue_plugin = durable_workflow.create_engine()
-    app = Litestar(plugins=[queue_plugin])
-    async with AsyncTestClient(app):
-        service = queue_plugin.config.get_service(app.state)
-        run_id = await engine.start("metrics_pipeline", queue_service=service)
-        worker = worker_module.Worker(service, queue_plugin.config.worker)
+    async with AsyncTestClient(app) as client:
+        response = await client.post("/pipelines/metrics")
+        run_id = response.json()["run_id"]
+        worker = worker_module.Worker(queue_plugin.get_service(), queue_plugin.config.worker)
         for _ in range(50):
             run, _ = await engine.snapshot(run_id)
             if run.status != "running":
@@ -88,12 +92,12 @@ async def test_durable_workflow_snippet_runs_to_completion() -> None:
         assert ctx.node_outputs["transform"]["processed_count"] == 84
 
 
-@pytest.mark.anyio
-async def test_mcp_tasks_queue_snippet_initializes() -> None:
-    """Verify the distributed MCP Tasks queue snippet builds and initializes correctly."""
-    pytest.importorskip("litestar_queues")
+def test_mcp_tasks_queue_snippet_wires_executor() -> None:
+    """The distributed MCP Tasks snippet attaches the executor to the app's QueuePlugin."""
+    queues = pytest.importorskip("litestar_queues")
     mcp_tasks_queue = importlib.import_module("docs.examples.snippets.mcp_tasks_queue")
 
     app = mcp_tasks_queue.build()
-    async with AsyncTestClient(app):
-        assert app is not None
+    resolver = app.plugins.get(queues.QueuePlugin).config.task_dependency_resolver
+    assert resolver is not None
+    assert resolver.__self__.__class__.__name__ == "QueueTaskExecutor"

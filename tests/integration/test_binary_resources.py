@@ -146,3 +146,16 @@ async def test_blob_size_guard_applies_to_tools_and_resources_read() -> "None":
     assert "max_blob_bytes" in tool_resp["result"]["content"][0]["text"]
     assert resource_resp["error"]["message"] == "Resource read failed"
     assert "max_blob_bytes" in resource_resp["error"]["data"]["detail"]
+
+
+@pytest.mark.anyio
+async def test_resource_mime_type_defaults_to_route_media_type() -> "None":
+    @get("/reports/latest", mcp_resource=True, media_type="application/pdf", sync_to_thread=False)
+    def latest_report() -> "bytes":
+        return b"%PDF"
+
+    async with AsyncTestClient(app=_app(latest_report)) as client:
+        listed = await _rpc(client, "resources/list")
+
+    resource = next(item for item in listed["result"]["resources"] if item["name"] == "latest_report")
+    assert resource["mimeType"] == "application/pdf"

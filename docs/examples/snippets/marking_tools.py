@@ -8,7 +8,7 @@ from litestar_mcp import LitestarMCP
 
 def build() -> "Litestar":
     # start-example
-    @get("/users/{user_id:int}", mcp_tool="get_user")
+    @get("/users/{user_id:int}", mcp_tool=True)
     async def get_user(user_id: "FromPath[int]") -> "dict[str, int]":
         """Return a user by ID - exposed as the ``get_user`` MCP tool."""
         return {"id": user_id}

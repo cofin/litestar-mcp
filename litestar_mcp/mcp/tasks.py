@@ -16,6 +16,7 @@ from litestar_mcp.core.jsonrpc import JSONRPCError
 
 if TYPE_CHECKING:
     from litestar import Litestar
+    from litestar.config.app import AppConfig
 
 DEFAULT_PROTOCOL_VERSION: str = "2026-07-28"
 TERMINAL_TASK_STATUSES = frozenset({"completed", "failed", "cancelled"})
@@ -55,8 +56,14 @@ class MCPTaskRuntime:
 
 
 class MCPTaskExecutor(Protocol):
-    """Runs task-augmented tool calls outside the request that created them."""
+    """Runs task-augmented tool calls outside the request that created them.
 
+    ``LitestarMCP`` calls :meth:`configure` during app init so the executor can
+    wire itself into other plugins, and :meth:`bind` at startup with the
+    collaborators that need the running application.
+    """
+
+    def configure(self, app_config: "AppConfig") -> None: ...
     def bind(self, runtime: MCPTaskRuntime) -> None: ...
     async def submit(self, record: "TaskRecord", call: ToolTaskCall) -> None: ...
     async def resume(self, call: ToolTaskCall) -> None: ...

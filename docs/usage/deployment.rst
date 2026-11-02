@@ -45,11 +45,12 @@ Multi-replica deployments
 Deploying Litestar MCP horizontally across multiple replicas requires shared
 infrastructure for persistent state, notifications, and queue execution:
 
-- **Shared State Store**: Use a shared Litestar :class:`~litestar.stores.redis.RedisStore`
-  for both the MCP Tasks store (:class:`~litestar_mcp.MCPTaskConfig`) and the durable
-  workflow store (:class:`~litestar_mcp.queues.WorkflowStore`). This ensures tasks
-  and workflow runs created on one replica can be polled, advanced, or inspected
-  from any replica.
+- **Shared State Store**: Configure ``Litestar(stores=StoreRegistry(default_factory=...))``
+  with a shared backend such as :class:`~litestar.stores.redis.RedisStore`. MCP Tasks
+  (registry name ``litestar_mcp_tasks``) and durable workflows (``litestar_mcp_workflows``)
+  use the application's store registry unless you pass an explicit store, so tasks and
+  workflow runs created on one replica can be polled, advanced, or inspected from any
+  replica.
 - **Cross-Worker Notification Channels**: Configure ``MCPConfig(subscription_channels=channels)``
   backed by Redis channels via Litestar's ``ChannelsPlugin``. Task status updates,
   cancellation signals, and subscriptions are broadcast across all workers.

@@ -11,6 +11,7 @@ pytest.importorskip("litestar_queues")
 
 from litestar import Litestar, Request, get
 from litestar.connection import ASGIConnection
+from litestar.exceptions import ImproperlyConfiguredException
 from litestar.status_codes import HTTP_200_OK
 from litestar.testing import AsyncTestClient
 from litestar_queues import QueueConfig, QueuePlugin
@@ -81,7 +82,6 @@ def _make_queued_app(
             queue_backend="memory",
             execution_backend=execution_backend,
             worker=WorkerConfig(placement="external"),
-            task_dependency_resolver=executor.dependencies(),
         )
         plugins.append(QueuePlugin(queue_config))
 
@@ -155,20 +155,18 @@ async def test_unbound_executor_raises() -> None:
         _ = executor.runtime
 
 
-@pytest.mark.anyio
-async def test_missing_queue_plugin_raises() -> None:
-    """App without QueuePlugin fails tools/call submission with ImproperlyConfiguredException."""
+def test_missing_queue_plugin_raises() -> None:
+    """Configuring QueueTaskExecutor without QueuePlugin fails while building the app."""
+    with pytest.raises(ImproperlyConfiguredException, match="requires QueuePlugin"):
+        _make_queued_app(executor=QueueTaskExecutor(), include_queue_plugin=False)
+
+
+def test_executor_attaches_resolver_to_queue_plugin() -> None:
+    """LitestarMCP attaches the executor's resolver to the app's QueuePlugin during app init."""
     executor = QueueTaskExecutor()
-    app, _ = _make_queued_app(executor=executor, include_queue_plugin=False)
-    async with AsyncTestClient(app) as client:
-        response = await _mcp_post(
-            client,
-            "tools/call",
-            {"name": "slow_echo", "arguments": {"text": "test"}},
-        )
-        assert "error" in response
-        assert response["error"]["code"] == -32603  # INTERNAL_ERROR
-        assert "QueuePlugin" in response["error"]["message"]
+    app, _ = _make_queued_app(executor=executor)
+    queue_plugin = app.plugins.get(QueuePlugin)
+    assert queue_plugin.config.task_dependency_resolver == executor.resolve_task_dependencies
 
 
 @pytest.mark.anyio

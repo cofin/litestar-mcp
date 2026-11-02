@@ -7,7 +7,6 @@ from litestar_mcp import MCPInputRequiredResult, get_mcp_request_context, mcp_to
 
 # start-example
 @mcp_tool(
-    "publish_report",
     task_support="required",
     task_input_before_start=True,
 )

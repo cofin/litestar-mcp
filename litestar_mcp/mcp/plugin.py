@@ -20,9 +20,11 @@ from litestar_mcp.mcp.service import MCPHandlerService
 from litestar_mcp.mcp.skills import SkillCatalog
 from litestar_mcp.mcp.tasks import MCPTaskRuntime, MCPTaskStore, TaskRecord
 from litestar_mcp.mcp.tool_handlers import build_tool_route_handler
-from litestar_mcp.utils import get_handler_function, get_mcp_metadata
+from litestar_mcp.utils import get_handler_function, get_mcp_metadata, resolve_app_store
 
 _logger = logging.getLogger(__name__)
+
+TASK_STORE_NAME = "litestar_mcp_tasks"
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -173,7 +175,12 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         self._discover_mcp_routes(self._dynamic_handlers)
         self._registry.set_subscription_manager(self._subscription_manager)
 
-        if self._task_store is not None:
+        task_config = self._config.task_config
+        if self._task_store is not None and task_config is not None:
+            if task_config.store is None:
+                self._task_store.store = resolve_app_store(app_config, TASK_STORE_NAME)
+            if task_config.executor is not None:
+                task_config.executor.configure(app_config)
             user_status_callback = self._task_store.status_callback
 
             async def publish_task_status(record: "TaskRecord") -> "None":
@@ -339,9 +346,9 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         template_key = self._config.opt_keys.resource_template
         prompt_key = self._config.opt_keys.prompt
         if tool_key in handler.opt:
-            self._registry.register_tool(handler.opt[tool_key], handler)
+            self._registry.register_tool(self._opt_name(handler, tool_key), handler)
         if resource_key in handler.opt:
-            resource_name = handler.opt[resource_key]
+            resource_name = self._opt_name(handler, resource_key)
             self._registry.register_resource(resource_name, handler)
             opt_template = handler.opt.get(template_key)
             if isinstance(opt_template, str):
@@ -353,7 +360,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                 or getattr(handler.fn, "__self__", None)
                 or getattr(handler, "owner", None)
             )
-            raw_name = handler.opt[prompt_key]
+            raw_name = self._opt_name(handler, prompt_key)
             if isinstance(owner, PromptController):
                 prompt_name = owner.qualify_prompt_name(raw_name)
                 instructions = owner.instructions
@@ -369,6 +376,18 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                 icons=handler.opt.get(opt_keys.prompt_icons),
                 instructions=instructions,
             )
+
+    @staticmethod
+    def _opt_name(handler: BaseRouteHandler, key: str) -> str:
+        """Return the primitive name stored under ``handler.opt[key]``.
+
+        ``True`` names the primitive after the handler function, so
+        ``@get("/users", mcp_tool=True)`` registers a tool named after the function.
+        """
+        value = handler.opt[key]
+        if value is True:
+            return str(get_handler_function(handler).__name__)
+        return str(value)
 
 
 def _is_handler_registered(dyn_handler: "Any", route_handlers: "Sequence[Any]") -> "bool":

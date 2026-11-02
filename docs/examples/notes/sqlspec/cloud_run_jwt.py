@@ -33,10 +33,6 @@ from docs.examples.notes.shared.auth import (
 )
 from docs.examples.notes.shared.contracts import (
     APP_INFO_RESOURCE_NAME,
-    CREATE_NOTE_TOOL_NAME,
-    DELETE_NOTE_TOOL_NAME,
-    LIST_NOTES_TOOL_NAME,
-    NOTES_SCHEMA_RESOURCE_NAME,
     AppInfo,
     CreateNoteInput,
     DeleteNoteResult,
@@ -51,7 +47,7 @@ from docs.examples.notes.sqlspec.common import (
     note_row_to_public,
     provide_note_service,
 )
-from litestar_mcp import LitestarMCP, MCPConfig
+from litestar_mcp import LitestarMCP
 
 DEFAULT_USER_DIRECTORY: "Final" = {"alice": "alice-password", "bob": "bob-password"}
 DEFAULT_SQLITE_URL: "Final" = "sqlite:///.reference-notes-sqlspec-cloud-run.sqlite"
@@ -137,35 +133,34 @@ def create_app(settings: "CloudRunSettings | None" = None) -> "Litestar":
             "resolved_user": Provide(_provide_resolved_user),
         }
 
-        @get("/", mcp_tool=LIST_NOTES_TOOL_NAME)
+        @get("/", mcp_tool=True)
         async def list_notes(
             self, note_service: "SQLSpecNoteService", resolved_user: "AuthenticatedIdentity"
         ) -> "list[Note]":
             rows = await note_service.list_for_owner(resolved_user.sub)
             return [msgspec.convert(note_row_to_public(row), Note) for row in rows]
 
-        @post("/", mcp_tool=CREATE_NOTE_TOOL_NAME)
+        @post("/", mcp_tool=True)
         async def create_note(
-            self, data: "dict[str, Any]", note_service: "SQLSpecNoteService", resolved_user: "AuthenticatedIdentity"
+            self, data: "CreateNoteInput", note_service: "SQLSpecNoteService", resolved_user: "AuthenticatedIdentity"
         ) -> "Note":
-            payload = msgspec.convert(data, CreateNoteInput)
-            row = await note_service.create(title=payload.title, body=payload.body, owner_sub=resolved_user.sub)
+            row = await note_service.create(title=data.title, body=data.body, owner_sub=resolved_user.sub)
             return msgspec.convert(note_row_to_public(row), Note)
 
-        @delete("/{note_id:str}", status_code=HTTP_200_OK, mcp_tool=DELETE_NOTE_TOOL_NAME)
+        @delete("/{note_id:str}", status_code=HTTP_200_OK, mcp_tool=True)
         async def delete_note(
             self, note_id: "str", note_service: "SQLSpecNoteService", resolved_user: "AuthenticatedIdentity"
         ) -> "DeleteNoteResult":
             deleted = await note_service.delete_for_owner(note_id, resolved_user.sub)
             return DeleteNoteResult(deleted=deleted, note_id=note_id)
 
-    @get("/notes/schema", mcp_resource=NOTES_SCHEMA_RESOURCE_NAME, sync_to_thread=False)
+    @get("/notes/schema", mcp_resource=True, sync_to_thread=False)
     def notes_schema() -> "NotesSchema":
         return NotesSchema()
 
     @get("/app/info", mcp_resource=APP_INFO_RESOURCE_NAME, sync_to_thread=False)
     def get_api_info() -> "AppInfo":
-        return build_app_info(backend="sqlspec", auth_mode="jwt", supports_dishka=False)
+        return build_app_info(backend="sqlspec", auth_mode="jwt")
 
     @get("/healthz", opt={"exclude_from_auth": True}, sync_to_thread=False)
     def healthz() -> "dict[str, str]":
@@ -173,8 +168,6 @@ def create_app(settings: "CloudRunSettings | None" = None) -> "Litestar":
 
     async def on_startup() -> "None":
         await bootstrap_schema(sqlspec, config)
-
-    mcp_config = MCPConfig()
 
     return Litestar(
         route_handlers=[
@@ -185,7 +178,7 @@ def create_app(settings: "CloudRunSettings | None" = None) -> "Litestar":
             healthz,
         ],
         on_startup=[on_startup],
-        plugins=[SQLSpecPlugin(sqlspec), LitestarMCP(mcp_config)],
+        plugins=[SQLSpecPlugin(sqlspec), LitestarMCP()],
         on_app_init=[oauth_backend.on_app_init],
     )
 

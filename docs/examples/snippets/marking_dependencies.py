@@ -14,7 +14,7 @@ async def provide_current_user() -> "dict[str, str]":
 
 def build() -> "Litestar":
     # start-example
-    @get("/me", mcp_tool="whoami", dependencies={"current_user": Provide(provide_current_user)})
+    @get("/me", mcp_tool=True, dependencies={"current_user": Provide(provide_current_user)})
     async def whoami(current_user: "NamedDependency[dict[str, Any]]") -> "dict[str, Any]":
         """Return the resolved current user - exposed as the ``whoami`` MCP tool."""
         return current_user

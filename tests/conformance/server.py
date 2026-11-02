@@ -576,14 +576,7 @@ if _TASK_EXECUTOR == "queue":
 
     executor = QueueTaskExecutor()
     queue_plugins = [
-        QueuePlugin(
-            QueueConfig(
-                queue_backend="memory",
-                execution_backend="local",
-                worker=WorkerConfig(placement="asgi", poll_interval=0.05),
-                task_dependency_resolver=executor.dependencies(),
-            )
-        )
+        QueuePlugin(QueueConfig(queue_backend="memory", worker=WorkerConfig(placement="asgi", poll_interval=0.05))),
     ]
 
 plugin = LitestarMCP(

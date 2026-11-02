@@ -85,7 +85,9 @@ is optional; install it with the ``queues`` extra:
     pip install "litestar-mcp[queues]"
 
 Without an executor, MCP Tasks run as in-process background tasks and
-``litestar-queues`` is never imported.
+``litestar-queues`` is never imported. With one, register ``QueuePlugin`` on the
+same application; ``LitestarMCP`` attaches the executor's task dependencies to it
+during app init.
 
 .. literalinclude:: /examples/snippets/mcp_tasks_queue.py
     :language: python

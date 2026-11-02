@@ -8,7 +8,7 @@ A lightweight plugin that integrates Litestar web applications with the Model Co
 
 ## Overview
 
-This plugin automatically discovers Litestar routes marked for MCP and exposes them through an MCP-native transport surface. Pass `mcp_tool="name"`, `mcp_resource="name"`, or `mcp_prompt="name"` straight through to `@get` / `@post` / etc. — Litestar funnels unknown kwargs into `handler.opt`, so no second decorator or `opt={...}` wrapper is needed. Standalone prompt callables that are not bound to an HTTP route can be registered through `LitestarMCP(prompts=[...])`.
+This plugin automatically discovers Litestar routes marked for MCP and exposes them through an MCP-native transport surface. Pass `mcp_tool=True`, `mcp_resource=True`, or `mcp_prompt=True` (named after the function) or an explicit `"name"` straight through to `@get` / `@post` / etc. — Litestar funnels unknown kwargs into `handler.opt`, so no second decorator or `opt={...}` wrapper is needed. Standalone prompt callables that are not bound to an HTTP route can be registered through `LitestarMCP(prompts=[...])`.
 
 ## Features
 
@@ -48,7 +48,7 @@ async def get_users() -> list[dict]:
     """List all users in the system."""
     return [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]
 
-@post("/analyze", mcp_tool="analyze_data")
+@post("/analyze", mcp_tool=True)
 async def analyze_data(data: dict) -> dict:
     """Analyze the provided data and return insights."""
     return {"result": f"Analyzed {len(data)} items"}
@@ -87,7 +87,7 @@ app = mcp.app
 
 if __name__ == "__main__":
     # 4. Boot the modern Streamable HTTP server
-    mcp.run(transport="streamable-http", port=8000)
+    mcp.run(port=8000)
 ```
 
 The standalone decorators accept Litestar route-handler keyword arguments such as `dependencies`, `guards`, `response_headers`, `responses`, `summary`, `tags`, DTO options, hooks, and arbitrary extra kwargs stored in `handler.opt`. The `name` keyword names the MCP primitive; use `route_name` to set Litestar's route-handler name separately.
@@ -143,7 +143,7 @@ async def get_documentation() -> dict:
 **Examples:**
 
 ```python
-@post("/users", mcp_tool="create_user")
+@post("/users", mcp_tool=True)
 async def create_user(user_data: dict) -> dict:
     """Create a new user account."""
     # Perform user creation logic
@@ -206,13 +206,7 @@ for removed aliases and configuration.
 
 ## Configuration
 
-Configure the plugin using `MCPConfig`:
-
-```python
-from litestar_mcp import MCPConfig
-
-config = MCPConfig()
-```
+Every option has a default, so `LitestarMCP()` needs no configuration. Pass an `MCPConfig` only to change one:
 
 **Configuration Options:**
 
@@ -249,7 +243,7 @@ config = MCPConfig()
 ```python
 from litestar import Litestar, get, post, delete
 from litestar.openapi.config import OpenAPIConfig
-from litestar_mcp import LitestarMCP, MCPConfig
+from litestar_mcp import LitestarMCP
 
 # Resources - read-only reference data
 @get("/users/schema", mcp_resource="user_schema")
@@ -274,19 +268,19 @@ async def get_api_info() -> dict:
     }
 
 # Tools - actionable operations
-@get("/users", mcp_tool="list_users")
+@get("/users", mcp_tool=True)
 async def list_users(limit: int = 10) -> dict:
     """List users with optional limit."""
     # Fetch users from database
     return {"users": [{"id": 1, "name": "Alice"}], "total": 1}
 
-@post("/users", mcp_tool="create_user")
+@post("/users", mcp_tool=True)
 async def create_user(user_data: dict) -> dict:
     """Create a new user account."""
     # Create user logic
     return {"id": 123, "created": True, "user": user_data}
 
-@post("/analyze", mcp_tool="analyze_dataset")
+@post("/analyze", mcp_tool=True)
 async def analyze_dataset(config: dict) -> dict:
     """Analyze data with custom configuration."""
     # Analysis logic
@@ -297,12 +291,6 @@ async def analyze_dataset(config: dict) -> dict:
 async def health_check() -> dict:
     return {"status": "healthy"}
 
-# MCP configuration
-mcp_config = MCPConfig(
-    name="User Management API",
-    base_path="/mcp"
-)
-
 # Create Litestar app
 app = Litestar(
     route_handlers=[
@@ -310,7 +298,7 @@ app = Litestar(
         list_users, create_user, analyze_dataset,  # Tools
         health_check  # Regular route
     ],
-    plugins=[LitestarMCP(mcp_config)],
+    plugins=[LitestarMCP()],
     openapi_config=OpenAPIConfig(
         title="User Management API",
         version="2.0.0"
@@ -332,11 +320,11 @@ Litestar's built-in JWT backends), MCP inherits it automatically:
 ```python
 from litestar import Litestar
 from litestar.middleware import DefineMiddleware
-from litestar_mcp import LitestarMCP, MCPConfig
+from litestar_mcp import LitestarMCP
 
 app = Litestar(
     route_handlers=[...],
-    plugins=[LitestarMCP(MCPConfig())],
+    plugins=[LitestarMCP()],
     middleware=[DefineMiddleware(YourAuthMiddleware)],  # MCP gets this for free
 )
 ```

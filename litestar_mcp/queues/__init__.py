@@ -16,7 +16,6 @@ from litestar_mcp.queues.bridge import (
     agent_turn_channel,
     emit_agent_frame,
 )
-from litestar_mcp.queues.dependencies import chain_task_dependencies
 from litestar_mcp.queues.mcp_tasks import (
     RUN_TOOL_TASK,
     QueueTaskExecutor,
@@ -41,7 +40,6 @@ from litestar_mcp.queues.workflow import (
     EXECUTE_NODE_TASK,
     WATCHDOG_TASK,
     DurableWorkflowEngine,
-    WorkflowRegistry,
     advance_workflow,
     execute_workflow_node,
     watch_workflow,
@@ -69,12 +67,10 @@ __all__ = (
     "QueuedTurn",
     "QueuedTurnManager",
     "RunStatus",
-    "WorkflowRegistry",
     "WorkflowRun",
     "WorkflowStore",
     "advance_workflow",
     "agent_turn_channel",
-    "chain_task_dependencies",
     "emit_agent_frame",
     "execute_workflow_node",
     "get_agent_registry",

@@ -7,14 +7,15 @@ from uuid import UUID
 import anyio
 import msgspec
 from litestar.exceptions import ImproperlyConfiguredException
-from litestar_queues import QueuePlugin
-from litestar_queues.config import TaskDependencyResolver
 from litestar_queues.events.context import get_current_task_context
 from litestar_queues.task import task
 
 from litestar_mcp.mcp.tasks import ToolTaskCall
+from litestar_mcp.queues.dependencies import TaskDependencyChain
 
 if TYPE_CHECKING:
+    from litestar.config.app import AppConfig
+    from litestar_queues import QueuePlugin
     from litestar_queues.service import QueueService
 
     from litestar_mcp.mcp.tasks import MCPTaskRuntime, TaskRecord
@@ -27,9 +28,9 @@ RUN_TOOL_TASK = "litestar_mcp.mcp.run_tool_task"
 class QueueTaskExecutor:
     """Run MCP Tasks attempts on litestar-queues.
 
-    The queue service is resolved from the application's ``QueuePlugin`` at
-    submit time, so the executor can be built before the ``QueueConfig`` that
-    references its dependency resolver.
+    ``LitestarMCP`` calls :meth:`configure` during app init, which attaches the
+    executor's task dependencies to the application's ``QueuePlugin``; no queue
+    wiring is needed beyond registering ``QueuePlugin`` on the same app.
 
     Args:
         principal_loader: Rehydrates ``scope["user"]`` from a task ``owner_id``
@@ -50,6 +51,7 @@ class QueueTaskExecutor:
         self._queue = queue
         self._timeout = timeout
         self._runtime: MCPTaskRuntime | None = None
+        self._queue_plugin: QueuePlugin | None = None
 
     @property
     def runtime(self) -> "MCPTaskRuntime":
@@ -59,24 +61,32 @@ class QueueTaskExecutor:
             raise RuntimeError(msg)
         return self._runtime
 
+    def configure(self, app_config: "AppConfig") -> None:
+        """Attach the executor's task dependencies to the application's ``QueuePlugin``."""
+        self._queue_plugin = TaskDependencyChain.attach(
+            app_config,
+            self.resolve_task_dependencies,
+            owner="QueueTaskExecutor",
+        )
+
     def bind(self, runtime: "MCPTaskRuntime") -> None:
         """Bind runtime collaborators to the executor."""
         self._runtime = runtime
 
-    def dependencies(self) -> TaskDependencyResolver:
-        """Return a task dependency resolver injecting this executor into tool task attempts."""
+    async def resolve_task_dependencies(
+        self,
+        task: Any,
+        record: Any = None,
+        task_context: Any = None,
+    ) -> Mapping[str, object]:
+        """Inject this executor into tool task attempts.
 
-        async def _resolve_dependencies(
-            task_target: Any,
-            _record: Any = None,
-            _task_context: Any = None,
-        ) -> Mapping[str, Any]:
-            task_name = getattr(task_target, "name", str(task_target))
-            if task_name == RUN_TOOL_TASK:
-                return {"mcp_task_executor": self}
-            return {}
-
-        return _resolve_dependencies
+        Returns:
+            ``{"mcp_task_executor": self}`` for tool attempts, otherwise an empty mapping.
+        """
+        if getattr(task, "name", None) == RUN_TOOL_TASK:
+            return {"mcp_task_executor": self}
+        return {}
 
     async def submit(self, record: "TaskRecord", call: ToolTaskCall) -> None:
         """Enqueue the first tool call attempt on litestar-queues."""
@@ -117,13 +127,13 @@ class QueueTaskExecutor:
         await self.runtime.task_store.set_job_id(call.task_id, str(result.id))
 
     def _queue_service(self) -> "QueueService":
-        app = self.runtime.app
-        try:
-            queue_plugin = app.plugins.get(QueuePlugin)
-        except (KeyError, ImproperlyConfiguredException) as exc:
-            msg = "QueueTaskExecutor requires QueuePlugin on the same application"
-            raise ImproperlyConfiguredException(msg) from exc
-        return queue_plugin.config.get_service(app.state)
+        """Return the queue service of the application's ``QueuePlugin``."""
+        if self._queue_plugin is None:
+            msg = (
+                "QueueTaskExecutor is not configured; set it on MCPTaskConfig(executor=...) of a registered LitestarMCP"
+            )
+            raise ImproperlyConfiguredException(msg)
+        return self._queue_plugin.get_service()
 
 
 @task(RUN_TOOL_TASK, queue="mcp", retries=0)

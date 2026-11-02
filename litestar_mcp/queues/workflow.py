@@ -7,10 +7,10 @@ from uuid import uuid4
 
 import anyio
 import msgspec
+from litestar.di import Provide
 from litestar.exceptions import ImproperlyConfiguredException, SerializationException
-from litestar_queues import task
-from litestar_queues.config import TaskDependencyResolver
-from litestar_queues.task import get_default_service
+from litestar.plugins import InitPluginProtocol
+from litestar_queues import QueuePlugin, task
 
 from litestar_mcp.agent.spec import Agent
 from litestar_mcp.agent.workflow import (
@@ -20,14 +20,18 @@ from litestar_mcp.agent.workflow import (
     run_workflow_node,
     should_skip,
 )
+from litestar_mcp.queues.dependencies import TaskDependencyChain
 from litestar_mcp.queues.workflow_store import (
     NodeRecord,
     RunStatus,
     WorkflowRun,
     WorkflowStore,
 )
+from litestar_mcp.utils import resolve_app_store
 
 if TYPE_CHECKING:
+    from litestar.config.app import AppConfig
+    from litestar.stores.base import Store
     from litestar_queues import QueueService
 
     from litestar_mcp.agent.runtime import AgentRuntime
@@ -46,6 +50,8 @@ __all__ = (
 ADVANCE_TASK = "litestar_mcp.workflow.advance"
 EXECUTE_NODE_TASK = "litestar_mcp.workflow.execute_node"
 WATCHDOG_TASK = "litestar_mcp.workflow.watchdog"
+WORKFLOW_TASKS = frozenset({ADVANCE_TASK, EXECUTE_NODE_TASK, WATCHDOG_TASK})
+WORKFLOW_STORE_NAME = "litestar_mcp_workflows"
 
 
 class WorkflowRegistry:
@@ -86,15 +92,20 @@ class WorkflowRegistry:
         return self._workflows[name]
 
 
-class DurableWorkflowEngine:
-    """Runs DynamicWorkflow definitions on litestar-queues with Store-backed state."""
+class DurableWorkflowEngine(InitPluginProtocol):
+    """Runs DynamicWorkflow definitions on litestar-queues with Store-backed state.
+
+    Register the engine as a Litestar plugin next to ``QueuePlugin``. On app
+    init it attaches its task dependencies to the queue configuration, resolves
+    its store from the application's store registry, and exposes itself to
+    route handlers as the ``workflow_engine`` dependency.
+    """
 
     def __init__(
         self,
+        workflows: Iterable[DynamicWorkflow],
         *,
-        registry: WorkflowRegistry,
-        store: WorkflowStore,
-        queue_service: "QueueService | None" = None,
+        store: "Store | None" = None,
         runtime_factory: Callable[[Agent], "AgentRuntime"] | None = None,
         queue: str = "workflow",
         watchdog_interval: float | None = 30.0,
@@ -103,80 +114,70 @@ class DurableWorkflowEngine:
         """Initialize DurableWorkflowEngine.
 
         Args:
-            registry: WorkflowRegistry with registered DynamicWorkflow definitions.
-            store: WorkflowStore instance for durable state persistence.
-            queue_service: Optional pre-configured QueueService to bind.
+            workflows: DynamicWorkflow definitions available to every worker.
+            store: Optional Litestar ``Store`` for run and node records. Defaults to
+                the application's ``stores`` registry entry named
+                ``litestar_mcp_workflows``, so a shared registry (for example Redis)
+                configured on ``Litestar(stores=...)`` applies automatically.
             runtime_factory: Optional callable mapping Agent to AgentRuntime.
             queue: Target queue name for workflow tasks.
             watchdog_interval: Optional delay in seconds between watchdog checks.
             run_timeout_seconds: Maximum total duration before timing out a run.
         """
-        self.registry = registry
-        self.store = store
-        self._queue_service_instance = queue_service
+        self.registry = WorkflowRegistry(workflows)
+        self._store: WorkflowStore | None = WorkflowStore(store) if store is not None else None
         self.runtime_factory = runtime_factory
         self._queue = queue
         self.watchdog_interval = watchdog_interval
         self.run_timeout_seconds = run_timeout_seconds
+        self._queue_plugin: QueuePlugin | None = None
 
-    def bind_queue_service(self, queue_service: "QueueService") -> None:
-        """Bind an active QueueService to this engine.
-
-        Args:
-            queue_service: The QueueService instance to bind.
-        """
-        self._queue_service_instance = queue_service
-
-    def dependencies(self) -> TaskDependencyResolver:
-        """Create a TaskDependencyResolver providing workflow_engine for workflow tasks.
-
-        Returns:
-            TaskDependencyResolver callable injecting workflow_engine.
-        """
-        target_tasks = {ADVANCE_TASK, EXECUTE_NODE_TASK, WATCHDOG_TASK}
-
-        async def _resolve_workflow_deps(
-            task_obj: Any,
-            _record: Any = None,
-            _task_context: Any = None,
-        ) -> Mapping[str, Any]:
-            task_name = getattr(task_obj, "name", None)
-            if task_name in target_tasks:
-                return {"workflow_engine": self}
-            return {}
-
-        return _resolve_workflow_deps
-
-    def _queue_service(self) -> "QueueService":
-        """Resolve the active QueueService or raise if QueuePlugin is not started.
-
-        Returns:
-            The active QueueService instance.
-
-        Raises:
-            ImproperlyConfiguredException: If QueuePlugin is not started.
-        """
-        if self._queue_service_instance is not None:
-            return self._queue_service_instance
-        service = get_default_service()
-        if service is None:
-            msg = "DurableWorkflowEngine requires QueuePlugin to be started"
+    @property
+    def store(self) -> WorkflowStore:
+        """Durable run and node records."""
+        if self._store is None:
+            msg = "DurableWorkflowEngine has no store; register it in Litestar(plugins=[...]) or pass store="
             raise ImproperlyConfiguredException(msg)
-        return service
+        return self._store
 
-    async def start(
+    def on_app_init(self, app_config: "AppConfig") -> "AppConfig":
+        """Wire task dependencies, the default store, and the ``workflow_engine`` dependency.
+
+        Returns:
+            The updated application configuration.
+        """
+        self._queue_plugin = TaskDependencyChain.attach(
+            app_config,
+            self.resolve_task_dependencies,
+            owner="DurableWorkflowEngine",
+        )
+        if self._store is None:
+            self._store = WorkflowStore(resolve_app_store(app_config, WORKFLOW_STORE_NAME))
+        app_config.dependencies.setdefault("workflow_engine", Provide(self._provide_engine, sync_to_thread=False))
+        app_config.signature_namespace.setdefault("DurableWorkflowEngine", DurableWorkflowEngine)
+        return app_config
+
+    async def resolve_task_dependencies(
         self,
-        workflow: str,
-        initial_state: dict[str, Any] | None = None,
-        *,
-        queue_service: "QueueService | None" = None,
-    ) -> str:
+        task: Any,
+        record: Any = None,
+        task_context: Any = None,
+    ) -> Mapping[str, object]:
+        """Inject this engine into the workflow tasks.
+
+        Returns:
+            ``{"workflow_engine": self}`` for workflow tasks, otherwise an empty mapping.
+        """
+        if getattr(task, "name", None) in WORKFLOW_TASKS:
+            return {"workflow_engine": self}
+        return {}
+
+    async def start(self, workflow: str, initial_state: dict[str, Any] | None = None) -> str:
         """Start a new durable workflow run and enqueue initial advance task.
 
         Args:
             workflow: Registered workflow name.
             initial_state: Optional initial state dictionary.
-            queue_service: Optional explicit QueueService to bind and use.
 
         Returns:
             The generated run_id string.
@@ -185,8 +186,6 @@ class DurableWorkflowEngine:
             ImproperlyConfiguredException: If immediate execution backend is used with watchdog.
         """
         self.registry.get(workflow)
-        if queue_service is not None:
-            self._queue_service_instance = queue_service
         service = self._queue_service()
         execution_backend = getattr(service.config, "execution_backend", None)
         if execution_backend == "immediate" and self.watchdog_interval is not None:
@@ -376,6 +375,25 @@ class DurableWorkflowEngine:
                 queue=self._queue,
             )
         return current_status
+
+    def _provide_engine(self) -> "DurableWorkflowEngine":
+        """Return this engine for the ``workflow_engine`` dependency."""
+        return self
+
+    def _queue_service(self) -> "QueueService":
+        """Return the queue service of the application's ``QueuePlugin``.
+
+        Inside the application lifespan this is the plugin's opened service. In
+        standalone worker processes, which never run the application lifespan,
+        the plugin builds a service bound to its configured backend.
+
+        Raises:
+            ImproperlyConfiguredException: If the engine was never registered as a plugin.
+        """
+        if self._queue_plugin is None:
+            msg = "DurableWorkflowEngine is not registered; add it to Litestar(plugins=[...]) next to QueuePlugin"
+            raise ImproperlyConfiguredException(msg)
+        return self._queue_plugin.get_service()
 
 
 @task(ADVANCE_TASK, queue="workflow", retries=3)

@@ -1,13 +1,13 @@
 """Snippet: explicit binary and mixed MCP tool content blocks."""
 
-from litestar import Litestar, Response, get
+from litestar import Litestar, get
 
 from litestar_mcp import LitestarMCP, MCPBlobResource, MCPResourceLink, MCPToolResult
 
 
 def build() -> "Litestar":
     # start-example
-    @get("/reports/latest", mcp_tool="generate_report")
+    @get("/reports/latest", mcp_tool=True)
     async def generate_report() -> "MCPToolResult":
         return MCPToolResult(
             content=[
@@ -21,7 +21,7 @@ def build() -> "Litestar":
             structured_content={"reportId": "latest"},
         )
 
-    @get("/reports/inline", mcp_tool="download_report")
+    @get("/reports/inline", mcp_tool=True)
     async def download_report() -> "MCPBlobResource":
         payload = b"...pdf bytes..."
         return MCPBlobResource(
@@ -30,13 +30,9 @@ def build() -> "Litestar":
             mime_type="application/pdf",
         )
 
-    @get(
-        "/reports/resource",
-        mcp_resource="latest_report",
-        mcp_resource_mime_type="application/pdf",
-    )
-    async def latest_report() -> "Response[bytes]":
-        return Response(content=b"...pdf bytes...", media_type="application/pdf")
+    @get("/reports/resource", mcp_resource=True, media_type="application/pdf")
+    async def latest_report() -> bytes:
+        return b"...pdf bytes..."
 
     app = Litestar(route_handlers=[generate_report, download_report, latest_report], plugins=[LitestarMCP()])
     # end-example

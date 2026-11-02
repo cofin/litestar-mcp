@@ -58,7 +58,9 @@ class MCPOptKeys:
 
     Attributes:
         tool: Opt key that marks a route handler as an MCP tool
-            (``handler.opt[tool] = "<tool-name>"``).
+            (``handler.opt[tool] = "<tool-name>"``, or ``True`` to use the
+            handler function name). The resource and prompt keys accept
+            ``True`` the same way.
         resource: Opt key that marks a route handler as an MCP resource.
         resource_uri: Opt key that carries a concrete resource URI override.
         resource_mime_type: Opt key that carries the resource MIME type for

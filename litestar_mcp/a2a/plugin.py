@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 import anyio
 from a2a.auth.user import User
 from a2a.extensions.common import HTTP_EXTENSION_HEADER, get_requested_extensions
+from a2a.server.agent_execution import AgentExecutor
 from a2a.server.context import ServerCallContext
 from a2a.server.jsonrpc_models import (
     InternalError,
@@ -21,7 +22,9 @@ from a2a.server.jsonrpc_models import (
     JSONRPCError,
     MethodNotFoundError,
 )
+from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.request_handlers.response_helpers import build_error_response
+from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import (
     AgentCard,
     CancelTaskRequest,
@@ -715,10 +718,25 @@ class LitestarA2A(InitPluginProtocol):
     """
 
     def __init__(
-        self, agent_card: "AgentCard", request_handler: "RequestHandler", config: "A2AConfig | None" = None
+        self,
+        agent_card: "AgentCard",
+        request_handler: "RequestHandler | AgentExecutor",
+        config: "A2AConfig | None" = None,
     ) -> "None":
+        """Initialize the plugin.
+
+        Args:
+            agent_card: Agent card advertised at the well-known card route.
+            request_handler: An A2A ``RequestHandler``, or an ``AgentExecutor`` that is
+                wrapped in ``DefaultRequestHandler`` with an ``InMemoryTaskStore``.
+            config: Route and protocol configuration. Defaults to ``A2AConfig()``.
+        """
         self.agent_card = agent_card
-        self.request_handler = request_handler
+        self.request_handler: RequestHandler = (
+            DefaultRequestHandler(agent_executor=request_handler, task_store=InMemoryTaskStore(), agent_card=agent_card)
+            if isinstance(request_handler, AgentExecutor)
+            else request_handler
+        )
         self.config = config or A2AConfig()
         _validate_card(agent_card, self.config.path)
 

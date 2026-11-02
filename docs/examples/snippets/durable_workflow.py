@@ -1,16 +1,10 @@
 """Snippet: durable workflow execution on litestar-queues."""
 
-from litestar import Litestar
-from litestar.stores.memory import MemoryStore
-from litestar_queues import QueueConfig, QueuePlugin, WorkerConfig
+from litestar import Litestar, post
+from litestar_queues import QueuePlugin
 
 from litestar_mcp.agent.workflow import DynamicWorkflow, WorkflowContext
-from litestar_mcp.queues import (
-    DurableWorkflowEngine,
-    WorkflowRegistry,
-    WorkflowStore,
-    chain_task_dependencies,
-)
+from litestar_mcp.queues import DurableWorkflowEngine
 
 
 def step_extract(context: WorkflowContext) -> dict[str, int]:
@@ -24,33 +18,20 @@ def step_transform(context: WorkflowContext) -> dict[str, int]:
     return {"processed_count": raw * 2}
 
 
-def create_engine() -> tuple[DurableWorkflowEngine, QueuePlugin]:
-    """Create a configured DurableWorkflowEngine and QueuePlugin."""
-    workflow = DynamicWorkflow(name="metrics_pipeline")
-    workflow.add_node("extract", handler=step_extract)
-    workflow.add_node("transform", handler=step_transform, depends_on=["extract"])
+metrics_pipeline = DynamicWorkflow(name="metrics_pipeline")
+metrics_pipeline.add_node("extract", handler=step_extract)
+metrics_pipeline.add_node("transform", handler=step_transform, depends_on=["extract"])
 
-    registry = WorkflowRegistry([workflow])
-    store = WorkflowStore(MemoryStore())
-    engine = DurableWorkflowEngine(
-        registry=registry,
-        store=store,
-        watchdog_interval=30.0,
-        run_timeout_seconds=86_400.0,
-    )
 
-    queue_plugin = QueuePlugin(
-        QueueConfig(
-            queue_backend="memory",
-            execution_backend="local",
-            worker=WorkerConfig(placement="external"),
-            task_dependency_resolver=chain_task_dependencies(engine.dependencies()),
-        )
-    )
-    return engine, queue_plugin
+@post("/pipelines/metrics")
+async def start_metrics_pipeline(workflow_engine: DurableWorkflowEngine) -> dict[str, str]:
+    """Start a durable run; any worker sharing the queue backend executes it."""
+    return {"run_id": await workflow_engine.start("metrics_pipeline")}
 
 
 def build() -> Litestar:
     """Build a Litestar application configured for durable workflows."""
-    _engine, queue_plugin = create_engine()
-    return Litestar(plugins=[queue_plugin])
+    return Litestar(
+        route_handlers=[start_metrics_pipeline],
+        plugins=[QueuePlugin(), DurableWorkflowEngine([metrics_pipeline])],
+    )

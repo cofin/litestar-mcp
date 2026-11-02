@@ -14,5 +14,5 @@ def add(a: "int", b: "int") -> "int":
 app = mcp.app
 
 if __name__ == "__main__":
-    mcp.run(transport="streamable-http", port=8000)
+    mcp.run(port=8000)
 # [end-run]

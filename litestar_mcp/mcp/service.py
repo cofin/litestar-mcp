@@ -185,7 +185,12 @@ def _is_resource_text_media_type(mime_type: "str") -> "bool":
 
 
 def _resource_mime_type(handler: "BaseRouteHandler", config: "MCPConfig") -> "str":
-    """Resolve resource MIME metadata from opt keys or decorator metadata."""
+    """Resolve resource MIME metadata.
+
+    Precedence: the ``resource_mime_type`` opt key, decorator ``mime_type``
+    metadata, then the route handler's own ``media_type`` (so
+    ``@get(..., media_type="application/pdf")`` needs no MCP-specific override).
+    """
     opt = getattr(handler, "opt", None) or {}
     opt_mime_type = opt.get(config.opt_keys.resource_mime_type)
     if isinstance(opt_mime_type, str) and opt_mime_type:
@@ -195,6 +200,10 @@ def _resource_mime_type(handler: "BaseRouteHandler", config: "MCPConfig") -> "st
     metadata_mime_type = metadata.get("mime_type")
     if isinstance(metadata_mime_type, str) and metadata_mime_type:
         return metadata_mime_type
+    media_type = getattr(handler, "media_type", None)
+    handler_media_type = getattr(media_type, "value", media_type)
+    if isinstance(handler_media_type, str) and handler_media_type:
+        return handler_media_type
     return "application/json"
 
 

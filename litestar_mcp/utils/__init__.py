@@ -19,10 +19,14 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
+from litestar.stores.registry import StoreRegistry
+
 from litestar_mcp.mcp.config import MCPOptKeys
 
 if TYPE_CHECKING:
+    from litestar.config.app import AppConfig
     from litestar.handlers import BaseRouteHandler
+    from litestar.stores.base import Store
 
     from litestar_mcp.mcp.config import MCPConfig
 
@@ -213,7 +217,7 @@ def should_include_handler(name: "str", tags: "set[str]", config: "MCPConfig") -
 
 
 def mcp_tool(
-    name: "str",
+    name: "str | None" = None,
     *,
     description: "str | None" = None,
     agent_instructions: "str | None" = None,
@@ -230,7 +234,7 @@ def mcp_tool(
     """Decorator to mark a route handler as an MCP tool.
 
     Args:
-        name: The name of the MCP tool.
+        name: The name of the MCP tool. Defaults to the function name.
         description: LLM-facing description. Overrides ``fn.__doc__``.
             Ignored when ``handler.opt["mcp_description"]`` is set (opt wins).
             Empty string is treated as absent so the docstring fallback still
@@ -278,7 +282,7 @@ def mcp_tool(
     """
 
     def decorator(fn: "F") -> "F":
-        metadata: dict[str, Any] = {"type": "tool", "name": name}
+        metadata: dict[str, Any] = {"type": "tool", "name": name or _callable_name(fn)}
         if description is not None:
             metadata["description"] = description
         if agent_instructions is not None:
@@ -314,7 +318,7 @@ def mcp_tool(
 
 
 def mcp_resource(
-    name: "str",
+    name: "str | None" = None,
     *,
     uri_template: "str | None" = None,
     mime_type: "str | None" = None,
@@ -326,7 +330,7 @@ def mcp_resource(
     """Decorator to mark a route handler as an MCP resource.
 
     Args:
-        name: The name of the MCP resource.
+        name: The name of the MCP resource. Defaults to the function name.
         uri_template: Optional RFC 6570 Level 1 URI template
             (e.g. ``"app://workspaces/{workspace_id}/files/{file_id}"``).
             Concrete URIs matching the template dispatch to this handler
@@ -369,7 +373,7 @@ def mcp_resource(
         parse_template(uri_template)
 
     def decorator(fn: "F") -> "F":
-        metadata: dict[str, Any] = {"type": "resource", "name": name}
+        metadata: dict[str, Any] = {"type": "resource", "name": name or _callable_name(fn)}
         if uri_template is not None:
             metadata["resource_template"] = uri_template
         if mime_type is not None:
@@ -389,7 +393,7 @@ def mcp_resource(
 
 
 def mcp_prompt(
-    name: "str",
+    name: "str | None" = None,
     *,
     title: "str | None" = None,
     description: "str | None" = None,
@@ -442,7 +446,7 @@ def mcp_prompt(
     """
 
     def decorator(fn: "F") -> "F":
-        metadata: dict[str, Any] = {"type": "prompt", "name": name}
+        metadata: dict[str, Any] = {"type": "prompt", "name": name or _callable_name(fn)}
         if title is not None:
             metadata["title"] = title
         if description is not None:
@@ -653,7 +657,38 @@ def expand_template(template: "str", values: "dict[str, str]") -> "str":
     return "".join(parts)
 
 
+def resolve_app_store(app_config: "AppConfig", name: "str") -> "Store":
+    """Return the named store from the application's store registry.
+
+    Integrations call this from ``on_app_init`` when the user did not pass an
+    explicit store, so configuring ``Litestar(stores=...)`` once (for example a
+    ``StoreRegistry`` whose ``default_factory`` returns namespaced Redis stores)
+    covers them too. A plain ``stores`` mapping is promoted to the
+    ``StoreRegistry`` that Litestar would build from it, so the integration and
+    ``app.stores`` share the same instance.
+
+    Args:
+        app_config: Application configuration being initialized.
+        name: Store registry name.
+
+    Returns:
+        The registered store, or the registry's default store for ``name``.
+    """
+    stores = app_config.stores
+    registry = stores if isinstance(stores, StoreRegistry) else StoreRegistry(stores)
+    app_config.stores = registry
+    return registry.get(name)
+
+
 # Private helper functions and classes
+
+
+def _callable_name(fn: "Any") -> "str":
+    """Return the name of a plain callable or of the function wrapped by a route handler."""
+    plain_name = getattr(fn, "__name__", None)
+    if isinstance(plain_name, str):
+        return plain_name
+    return str(get_handler_function(fn).__name__)
 
 
 def _clean(value: "Any") -> "str | None":
@@ -710,6 +745,7 @@ __all__ = (
     "mcp_tool",
     "parse_template",
     "render_description",
+    "resolve_app_store",
     "set_mcp_metadata",
     "should_include_handler",
     "strip_docstring_sections",

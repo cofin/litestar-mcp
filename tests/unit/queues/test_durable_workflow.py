@@ -1,7 +1,7 @@
 """Unit tests for WorkflowStore, durable run models, and DurableWorkflowEngine."""
 
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, cast
 
 import anyio
 import pytest
@@ -23,6 +23,7 @@ from litestar_mcp.agent.workflow import (
     WorkflowContext,
     WorkflowNode,
 )
+from litestar_mcp.queues.dependencies import TaskDependencyChain
 from litestar_mcp.queues.workflow import (
     DurableWorkflowEngine,
     WorkflowRegistry,
@@ -57,31 +58,24 @@ class RecordingStore(MemoryStore):
 
 def _make_engine_and_app(
     workflows: list[DynamicWorkflow],
-    store: WorkflowStore | None = None,
     runtime_factory: Any = None,
     watchdog_interval: float | None = 30.0,
     run_timeout_seconds: float = 86_400.0,
     execution_backend: Any = "local",
 ) -> tuple[Litestar, DurableWorkflowEngine, QueuePlugin]:
-    """Create a Litestar test application with configured DurableWorkflowEngine and QueuePlugin."""
-    registry = WorkflowRegistry(workflows)
-    wf_store = store or WorkflowStore(MemoryStore())
+    """Create a Litestar test application with DurableWorkflowEngine registered next to QueuePlugin."""
     engine = DurableWorkflowEngine(
-        registry=registry,
-        store=wf_store,
+        workflows,
         runtime_factory=runtime_factory,
         watchdog_interval=watchdog_interval,
         run_timeout_seconds=run_timeout_seconds,
     )
     plugin = QueuePlugin(
         QueueConfig(
-            queue_backend="memory",
-            execution_backend=execution_backend,
-            worker=WorkerConfig(placement="external"),
-            task_dependency_resolver=engine.dependencies(),
-        )
+            queue_backend="memory", execution_backend=execution_backend, worker=WorkerConfig(placement="external")
+        ),
     )
-    app = Litestar(plugins=[plugin])
+    app = Litestar(plugins=[plugin, engine])
     return app, engine, plugin
 
 
@@ -467,15 +461,65 @@ async def test_reservations_released_on_terminal() -> None:
 
 
 @pytest.mark.anyio
-async def test_start_without_queue_plugin_raises() -> None:
-    """Starting an engine without an active QueuePlugin raises ImproperlyConfiguredException."""
+async def test_start_without_registering_engine_raises() -> None:
+    """An engine that was never registered as a plugin refuses to start runs."""
     wf = DynamicWorkflow(name="no_plugin")
     wf.add_node("step1", handler=lambda _c: "ok")
-    registry = WorkflowRegistry([wf])
-    engine = DurableWorkflowEngine(registry=registry, store=WorkflowStore(MemoryStore()))
+    engine = DurableWorkflowEngine([wf], store=MemoryStore())
+
+    with pytest.raises(ImproperlyConfiguredException, match="is not registered"):
+        await engine.start("no_plugin")
+
+
+def test_engine_without_queue_plugin_fails_at_app_init() -> None:
+    """Registering the engine without QueuePlugin fails while building the app."""
+    wf = DynamicWorkflow(name="no_queue")
+    wf.add_node("step1", handler=lambda _c: "ok")
 
     with pytest.raises(ImproperlyConfiguredException, match="requires QueuePlugin"):
-        await engine.start("no_plugin")
+        Litestar(plugins=[DurableWorkflowEngine([wf])])
+
+
+def test_engine_wiring_defaults_and_preserves_user_resolver() -> None:
+    """App init chains the engine after a user resolver, resolves the app store, and provides the engine."""
+    wf = DynamicWorkflow(name="wired")
+    wf.add_node("step1", handler=lambda _c: "ok")
+
+    async def user_resolver(_task: Any, _record: Any, _context: Any) -> dict[str, object]:
+        return {"user_dep": 1}
+
+    shared_store = MemoryStore()
+    engine = DurableWorkflowEngine([wf])
+    plugin = QueuePlugin(
+        QueueConfig(
+            queue_backend="memory", worker=WorkerConfig(placement="external"), task_dependency_resolver=user_resolver
+        )
+    )
+    app = Litestar(plugins=[plugin, engine], stores={"litestar_mcp_workflows": shared_store})
+    Litestar(plugins=[plugin, engine])
+
+    resolver = plugin.config.task_dependency_resolver
+    assert isinstance(resolver, TaskDependencyChain)
+    assert resolver.resolvers == (user_resolver, engine.resolve_task_dependencies)
+    assert engine.store.store is shared_store
+    assert app.stores.get("litestar_mcp_workflows") is shared_store
+    assert "workflow_engine" in app.dependencies
+
+
+def test_engine_rejects_queue_task_dependency_provider() -> None:
+    """A queue configured with task_dependency_provider cannot also take the engine's resolver."""
+    wf = DynamicWorkflow(name="provider")
+    wf.add_node("step1", handler=lambda _c: "ok")
+    plugin = QueuePlugin(
+        QueueConfig(
+            queue_backend="memory",
+            worker=WorkerConfig(placement="external"),
+            task_dependency_provider=cast("Any", object()),
+        )
+    )
+
+    with pytest.raises(ImproperlyConfiguredException, match="task_dependency_provider"):
+        Litestar(plugins=[plugin, DurableWorkflowEngine([wf])])
 
 
 def test_workflow_registry_validates_and_rejects_duplicates() -> None:

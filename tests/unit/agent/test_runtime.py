@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import anyio
 import pytest
+from litestar import Litestar
 
 from litestar_mcp.agent.guards import BudgetExceededError, TurnBudget
 from litestar_mcp.agent.models import GoogleGenAIClient, MockModelClient, ModelDelta
@@ -273,3 +274,11 @@ def test_string_model_clients_cached() -> None:
     assert client1 is client2
     assert isinstance(client1, GoogleGenAIClient)
     assert client1.model == "gemini-3.8-flash"
+
+
+def test_runtime_plugin_provides_runtime_dependency() -> None:
+    """Registering AgentRuntime as a plugin exposes it as the ``runtime`` dependency."""
+    runtime = AgentRuntime(Agent(name="helper", model=MockModelClient(responses=[])))
+    app = Litestar(plugins=[runtime])
+
+    assert "runtime" in app.dependencies

@@ -11,6 +11,8 @@ from uuid import uuid4
 
 import anyio
 import msgspec
+from litestar.di import Provide
+from litestar.plugins import InitPluginProtocol
 
 from litestar_mcp.agent.guards import BudgetExceededError, TurnBudget
 from litestar_mcp.agent.models import GoogleGenAIClient, ModelClient, ModelDelta
@@ -22,6 +24,7 @@ from litestar_mcp.core.tools import Tool, ToolCall, ToolResult, execute_tool_cal
 
 if TYPE_CHECKING:
     from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+    from litestar.config.app import AppConfig
 
     from litestar_mcp.core.context import ToolContext
 
@@ -144,8 +147,12 @@ def _check_agent_transfer(
     return None, None
 
 
-class AgentRuntime:
-    """Runs agent turns with budgets, owner-scoped sessions, and streamed frames."""
+class AgentRuntime(InitPluginProtocol):
+    """Runs agent turns with budgets, owner-scoped sessions, and streamed frames.
+
+    Register the runtime in ``Litestar(plugins=[...])`` to provide it as the
+    ``runtime`` dependency used by :class:`~litestar_mcp.agent.AgentChatController`.
+    """
 
     def __init__(
         self,
@@ -167,6 +174,20 @@ class AgentRuntime:
         self.compaction_hook = compaction_hook
         self.stream_buffer = stream_buffer
         self._model_cache: dict[str, ModelClient] = {}
+
+    def on_app_init(self, app_config: "AppConfig") -> "AppConfig":
+        """Provide this runtime as the application's ``runtime`` dependency.
+
+        Returns:
+            The updated application configuration.
+        """
+        app_config.dependencies.setdefault("runtime", Provide(self._provide_runtime, sync_to_thread=False))
+        app_config.signature_namespace.setdefault("AgentRuntime", AgentRuntime)
+        return app_config
+
+    def _provide_runtime(self) -> "AgentRuntime":
+        """Return this runtime for the ``runtime`` dependency."""
+        return self
 
     def _resolve_model(self, agent: "Agent") -> "ModelClient":
         """Resolve active model client for an agent."""
