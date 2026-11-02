@@ -165,7 +165,12 @@ class TestServerDiscover:
 
 class TestPing:
     def test_ping_returns_empty_result(self, client: "TestClient[Any]") -> "None":
-        result = _rpc(client, "ping")
+        resp = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "ping"},
+            headers={"MCP-Protocol-Version": "2025-06-18"},
+        )
+        result = resp.json()
         assert "result" in result
 
 

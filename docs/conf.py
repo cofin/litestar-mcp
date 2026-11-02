@@ -78,7 +78,7 @@ intersphinx_mapping = {
     "anyio": ("https://anyio.readthedocs.io/en/stable/", None),
     "multidict": ("https://multidict.aio-libs.org/en/stable/", None),
     "cryptography": ("https://cryptography.io/en/latest/", None),
-    "pydantic": ("https://docs.pydantic.dev/latest/", None),
+    "pydantic": ("https://pydantic.dev/docs/validation/latest/", None),
     "typing_extensions": ("https://typing-extensions.readthedocs.io/en/stable/", None),
 }
 

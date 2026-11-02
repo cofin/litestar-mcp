@@ -12,7 +12,8 @@ from dishka import Provider, Scope, make_async_container, provide
 from dishka.integrations.litestar import FromDishka, LitestarProvider, inject, setup_dishka
 from dishka.integrations.litestar import FromDishka as Inject  # Phase 2.7: annotation alias
 from litestar import Controller, Litestar, get
-from litestar.di import Provide
+from litestar.di import NamedDependency, Provide
+from litestar.params import FromQuery  # noqa: TC002
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlspec import SQLSpec
 from sqlspec.adapters.asyncpg import AsyncpgConfig, AsyncpgDriver
@@ -175,12 +176,14 @@ def build_advanced_alchemy_app(
         )
 
         @get("/", opt={"mcp_tool": "aa_create_widget"})
-        async def create_widget(self, name: "str", widget_service: "AlchemyWidgetService") -> "dict[str, str]":
+        async def create_widget(
+            self, name: "FromQuery[str]", widget_service: "NamedDependency[AlchemyWidgetService]"
+        ) -> "dict[str, str]":
             widget = await widget_service.create({"name": name}, auto_commit=True)
             return {"id": str(widget.id), "name": widget.name}
 
         @get("/resource", opt={"mcp_resource": "aa_widget_snapshot"})
-        async def list_widgets(self, widget_service: "AlchemyWidgetService") -> "list[dict[str, str]]":
+        async def list_widgets(self, widget_service: "NamedDependency[AlchemyWidgetService]") -> "list[dict[str, str]]":
             widgets = await widget_service.list()
             return [{"id": str(widget.id), "name": widget.name} for widget in widgets]
 
@@ -214,7 +217,9 @@ def build_sqlspec_asyncpg_app(
         opt={"mcp_tool": "sqlspec_create_report"},
         dependencies={"report_service": Provide(provide_report_service)},
     )
-    async def create_report(title: "str", report_service: "SQLSpecReportService") -> "dict[str, str]":
+    async def create_report(
+        title: "FromQuery[str]", report_service: "NamedDependency[SQLSpecReportService]"
+    ) -> "dict[str, str]":
         record = await report_service.create_report(title)
         return {"title": record.title, "source": record.source}
 
@@ -260,7 +265,9 @@ def build_advanced_alchemy_dishka_app(
 
     @get("/alchemy/dishka/widgets", opt={"mcp_tool": "aa_dishka_create_widget"})
     @inject
-    async def create_widget(name: "str", widget_service: "Inject[AlchemyDishkaWidgetService]") -> "dict[str, str]":
+    async def create_widget(
+        name: "FromQuery[str]", widget_service: "Inject[AlchemyDishkaWidgetService]"
+    ) -> "dict[str, str]":
         widget = await widget_service.create({"name": name}, auto_commit=True)
         return {"id": str(widget.id), "name": widget.name, "source": "dishka"}
 
@@ -307,7 +314,9 @@ def build_sqlspec_dishka_app(
 
     @get("/sqlspec/dishka/reports", opt={"mcp_tool": "sqlspec_dishka_create_report"})
     @inject
-    async def create_report(title: "str", report_service: "FromDishka[SQLSpecReportService]") -> "dict[str, str]":
+    async def create_report(
+        title: "FromQuery[str]", report_service: "FromDishka[SQLSpecReportService]"
+    ) -> "dict[str, str]":
         record = await report_service.create_report(title)
         return {"title": record.title, "source": record.source}
 
@@ -349,7 +358,9 @@ def build_sqlspec_duckdb_app(
         dependencies={"report_service": Provide(provide_report_service)},
         sync_to_thread=False,
     )
-    def create_report(title: "str", report_service: "DuckDBReportService") -> "dict[str, str]":
+    def create_report(
+        title: "FromQuery[str]", report_service: "NamedDependency[DuckDBReportService]"
+    ) -> "dict[str, str]":
         record = report_service.create_report(title)
         return {"title": record.title, "source": record.source}
 

@@ -1,12 +1,13 @@
 """Wire JSON encoding shared by the MCP and A2A transports."""
 
-import datetime
+import datetime as dt
 import enum
 import uuid
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import PurePath
 
+import attrs
 import msgspec
 import pytest
 from litestar.exceptions import SerializationException
@@ -39,8 +40,8 @@ class Struct(msgspec.Struct):
 
 def test_to_json_normalises_common_python_types() -> None:
     payload = {
-        "when": datetime.datetime(2026, 8, 29, 12, 0, tzinfo=datetime.timezone.utc),
-        "day": datetime.date(2026, 8, 29),
+        "when": dt.datetime(2026, 8, 29, 12, 0, tzinfo=dt.timezone.utc),
+        "day": dt.date(2026, 8, 29),
         "id": uuid.UUID("12345678-1234-5678-1234-567812345678"),
         "amount": Decimal("1.5"),
         "path": PurePath("a/b"),
@@ -96,8 +97,6 @@ def test_to_json_preserves_struct_tags_and_wire_names() -> None:
 
 
 def test_to_json_encodes_attrs_models() -> None:
-    import attrs
-
     @attrs.define
     class AttrsPoint:
         x: int

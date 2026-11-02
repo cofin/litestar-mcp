@@ -5,9 +5,10 @@ from typing import TYPE_CHECKING, Annotated, Any, get_type_hints
 
 from litestar import Request
 from litestar.constants import RESERVED_KWARGS
+from litestar.di import NamedDependency
 from litestar.exceptions import ImproperlyConfiguredException
 from litestar.handlers import HTTPRouteHandler, post
-from litestar.params import Dependency, Parameter
+from litestar.params import QueryParameter
 
 from litestar_mcp.core.context import ToolContext
 from litestar_mcp.core.tools import Tool
@@ -63,7 +64,7 @@ def _build_tool_endpoint_signature(
         di_spec = di_params.get(pname)
         if di_spec is not None:
             if di_spec.source_kind == "litestar":
-                litestar_ann = Annotated[Any, Dependency(skip_validation=True)]
+                litestar_ann = NamedDependency[Any]
                 params.append(
                     inspect.Parameter(
                         name=pname,
@@ -83,11 +84,12 @@ def _build_tool_endpoint_signature(
             ann = Any
 
         endpoint_name = pname
-        endpoint_ann: Any = ann
         if pname in RESERVED_KWARGS:
             endpoint_name = f"_mcp_param_{pname}"
-            endpoint_ann = Annotated[ann, Parameter(query=pname)]
+            endpoint_ann: Any = Annotated[ann, QueryParameter(name=pname)]
             renamed_params[endpoint_name] = pname
+        else:
+            endpoint_ann = Annotated[ann, QueryParameter(name=pname)]
 
         params.append(
             inspect.Parameter(

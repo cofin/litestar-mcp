@@ -23,13 +23,6 @@ def _postgres_dsn(postgres_service: "PostgresService") -> "str":
     )
 
 
-@pytest.fixture(scope="session", autouse=True)
-def _ensure_postgres_tables(postgres_service: "PostgresService") -> "None":
-    """Ensure the Postgres service is ready. Tables are created by the apps."""
-    # This fixture now just acts as a session-level dependency on the service
-    _ = _postgres_dsn(postgres_service)
-
-
 @pytest.fixture(autouse=True)
 def reset_postgres_tables(request: "pytest.FixtureRequest") -> "None":
     """Delete all data from shared Postgres test tables before each integration test."""

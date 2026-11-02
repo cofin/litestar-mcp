@@ -233,47 +233,50 @@ class WorkflowEngine:
             for dep in node.depends_on:
                 dependents[dep].append(name)
 
-        send_channel, receive_channel = anyio.create_memory_object_stream[str](max_buffer_size=len(workflow.nodes) + 1)
-        completed: set[str] = set()
-
-        for name, deg in in_degrees.items():
-            if deg == 0:
-                await send_channel.send(name)
-
         if not workflow.nodes:
             return ctx
 
-        async with anyio.create_task_group() as tg:
+        send_channel, receive_channel = anyio.create_memory_object_stream[str](max_buffer_size=len(workflow.nodes) + 1)
+        completed: set[str] = set()
 
-            async def _worker(node_name: str) -> None:
-                try:
-                    out = await self.execute_node(workflow, node_name, ctx)
-                    if node_name not in ctx.step_results:
-                        ctx.step_results[node_name] = StepResult(node_name=node_name, output=out, status="completed")
-                    ctx.node_outputs[node_name] = out
-                    ctx.state[node_name] = out
-                    completed.add(node_name)
+        with send_channel, receive_channel:
+            for name, deg in in_degrees.items():
+                if deg == 0:
+                    await send_channel.send(name)
 
-                    for dep in dependents[node_name]:
-                        in_degrees[dep] -= 1
-                        if in_degrees[dep] == 0:
-                            await send_channel.send(dep)
-                except Exception:
-                    ctx.step_results[node_name] = StepResult(node_name=node_name, output=None, status="failed")
-                    tg.cancel_scope.cancel()
-                    raise
+            async with anyio.create_task_group() as tg:
 
-            for _ in range(len(workflow.nodes)):
-                if len(completed) + 1 > len(workflow.nodes):
-                    break
-                try:
-                    with anyio.fail_after(3600.0):
-                        next_node = await receive_channel.receive()
-                except TimeoutError as exc:
-                    unresolved = set(workflow.nodes.keys()) - completed
-                    msg = f"Workflow stalled: circular or unresolved dependencies in {unresolved}"
-                    raise RuntimeError(msg) from exc
-                tg.start_soon(_worker, next_node)
+                async def _worker(node_name: str) -> None:
+                    try:
+                        out = await self.execute_node(workflow, node_name, ctx)
+                        if node_name not in ctx.step_results:
+                            ctx.step_results[node_name] = StepResult(
+                                node_name=node_name, output=out, status="completed"
+                            )
+                        ctx.node_outputs[node_name] = out
+                        ctx.state[node_name] = out
+                        completed.add(node_name)
+
+                        for dep in dependents[node_name]:
+                            in_degrees[dep] -= 1
+                            if in_degrees[dep] == 0:
+                                await send_channel.send(dep)
+                    except Exception:
+                        ctx.step_results[node_name] = StepResult(node_name=node_name, output=None, status="failed")
+                        tg.cancel_scope.cancel()
+                        raise
+
+                for _ in range(len(workflow.nodes)):
+                    if len(completed) + 1 > len(workflow.nodes):
+                        break
+                    try:
+                        with anyio.fail_after(3600.0):
+                            next_node = await receive_channel.receive()
+                    except TimeoutError as exc:
+                        unresolved = set(workflow.nodes.keys()) - completed
+                        msg = f"Workflow stalled: circular or unresolved dependencies in {unresolved}"
+                        raise RuntimeError(msg) from exc
+                    tg.start_soon(_worker, next_node)
 
         return ctx
 

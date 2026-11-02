@@ -27,6 +27,7 @@ from typing import Any
 from litestar import Litestar, delete, get, post
 from litestar.exceptions import NotFoundException
 from litestar.openapi.config import OpenAPIConfig
+from litestar.params import FromPath, FromQuery, JSONBody
 from litestar.status_codes import HTTP_201_CREATED
 from pydantic import BaseModel
 
@@ -121,21 +122,21 @@ def register_tools(store: "dict[int, Task]") -> "list[Any]":
 
     # start-example
     @get("/tasks", mcp_tool="list_tasks")
-    async def list_tasks(completed: "bool | None" = None) -> "list[Task]":
+    async def list_tasks(completed: "FromQuery[bool | None]" = None) -> "list[Task]":
         """List all tasks, optionally filtered by completion status."""
         if completed is None:
             return list(store.values())
         return [task for task in store.values() if task.completed == completed]
 
     @get("/tasks/{task_id:int}", mcp_tool="get_task")
-    async def get_task(task_id: "int") -> "Task":
+    async def get_task(task_id: "FromPath[int]") -> "Task":
         """Get a specific task by ID."""
         if task_id not in store:
             raise NotFoundException(detail=f"Task {task_id} not found")
         return store[task_id]
 
     @post("/tasks", status_code=HTTP_201_CREATED, mcp_tool="create_task")
-    async def create_task(data: "CreateTaskRequest") -> "Task":
+    async def create_task(data: "JSONBody[CreateTaskRequest]") -> "Task":
         """Create a new task."""
         new_id = max(store.keys(), default=0) + 1
         new_task = Task(id=new_id, title=data.title, description=data.description, completed=False)
@@ -143,7 +144,7 @@ def register_tools(store: "dict[int, Task]") -> "list[Any]":
         return new_task
 
     @post("/tasks/{task_id:int}/complete", mcp_tool="complete_task")
-    async def complete_task(task_id: "int") -> "Task":
+    async def complete_task(task_id: "FromPath[int]") -> "Task":
         """Mark a task as completed."""
         if task_id not in store:
             raise NotFoundException(detail=f"Task {task_id} not found")
@@ -151,7 +152,7 @@ def register_tools(store: "dict[int, Task]") -> "list[Any]":
         return store[task_id]
 
     @delete("/tasks/{task_id:int}", mcp_tool="delete_task")
-    async def delete_task(task_id: "int") -> "None":
+    async def delete_task(task_id: "FromPath[int]") -> "None":
         """Delete a task by ID."""
         if task_id not in store:
             raise NotFoundException(detail=f"Task {task_id} not found")

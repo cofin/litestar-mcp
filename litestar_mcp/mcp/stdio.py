@@ -86,13 +86,16 @@ class _ASGIResponseStream(httpx2.AsyncByteStream):
         self._request = request
 
     async def __aiter__(self) -> "AsyncIterator[bytes]":
-        while True:
-            try:
-                chunk = await _wait(self._state.receiver.receive(), self._read_timeout, self._request)
-            except anyio.EndOfStream:
-                break
-            yield chunk
-        await asyncio.shield(self._task)
+        try:
+            while True:
+                try:
+                    chunk = await _wait(self._state.receiver.receive(), self._read_timeout, self._request)
+                except anyio.EndOfStream:
+                    break
+                yield chunk
+            await asyncio.shield(self._task)
+        finally:
+            self._state.receiver.close()
 
     async def aclose(self) -> None:
         await _shutdown_app_task(self._state, self._task, self._shutdown_timeout)
@@ -212,22 +215,7 @@ class ASGIStreamingTransport(httpx2.AsyncBaseTransport):
             return {"type": "http.request", "body": body, "more_body": True}
 
         async def send(message: "Mapping[str, Any]") -> None:
-            message_type = message["type"]
-            if message_type == "http.response.start":
-                state.status_code = int(message["status"])
-                state.headers = [(bytes(key), bytes(value)) for key, value in message.get("headers", [])]
-                state.started.set()
-            elif message_type == "http.response.body":
-                body = message.get("body", b"")
-                if body:
-                    try:
-                        await state.sender.send(body)
-                    except (anyio.BrokenResourceError, anyio.ClosedResourceError) as exc:
-                        if state.closed:
-                            raise asyncio.CancelledError from exc
-                        raise
-                if not message.get("more_body", False):
-                    state.sender.close()
+            await self._send_message(state, message)
 
         async def run_app() -> None:
             try:
@@ -244,7 +232,10 @@ class ASGIStreamingTransport(httpx2.AsyncBaseTransport):
             await _shutdown_app_task(state, task, self._shutdown_timeout)
             raise
         if state.status_code is None:
-            await task
+            try:
+                await task
+            finally:
+                state.receiver.close()
             msg = "ASGI application completed without sending http.response.start"
             raise RuntimeError(msg)
         return httpx2.Response(
@@ -255,6 +246,25 @@ class ASGIStreamingTransport(httpx2.AsyncBaseTransport):
             ),
             request=request,
         )
+
+    @staticmethod
+    async def _send_message(state: "_ASGIResponseState", message: "Mapping[str, Any]") -> None:
+        message_type = message["type"]
+        if message_type == "http.response.start":
+            state.status_code = int(message["status"])
+            state.headers = [(bytes(key), bytes(value)) for key, value in message.get("headers", [])]
+            state.started.set()
+        elif message_type == "http.response.body":
+            body = message.get("body", b"")
+            if body:
+                try:
+                    await state.sender.send(body)
+                except (anyio.BrokenResourceError, anyio.ClosedResourceError) as exc:
+                    if state.closed:
+                        raise asyncio.CancelledError from exc
+                    raise
+            if not message.get("more_body", False):
+                state.sender.close()
 
 
 def _seed_stdio_identity(app: "ASGIApp", context: "MCPStdioContext") -> "ASGIApp":

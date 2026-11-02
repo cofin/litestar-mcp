@@ -9,6 +9,49 @@ notes, and important protocol fixes.
 Recent Updates
 ==============
 
+.. changelog:: 0.17.0
+
+    .. change:: support MCP ToolAnnotations via route opt keys and HTTP method inference
+        :type: feature
+
+        Added ``ToolAnnotations``, ``MCPOptKeys.annotations`` (``mcp_annotations``),
+        ``MCPOptKeys.read_only`` (``mcp_read_only``), and
+        ``MCPConfig.infer_http_method_annotations`` so Litestar routes and ``@tool``
+        callables serialize ``readOnlyHint``, ``destructiveHint``,
+        ``idempotentHint``, ``openWorldHint``, and ``title`` under
+        ``tools/list`` ``annotations`` (`#103 <https://github.com/cofin/litestar-mcp/pull/103>`_).
+
+    .. change:: support dual-version stateless Streamable HTTP negotiation
+        :type: feature
+
+        Added ``SUPPORTED_PROTOCOL_VERSIONS`` (``2026-07-28``, ``2025-06-18``,
+        ``2025-03-26``) so ``/mcp`` negotiates both ``2026-07-28`` (``server/discover``
+        with SEP-2575 request header validation) and ``2025-06-18`` / ``2025-03-26``
+        (``initialize``, ``notifications/initialized``, ``ping``, ``202 Accepted``
+        notifications, and ``204 No Content`` on ``DELETE /mcp``) on a single
+        stateless endpoint (`#103 <https://github.com/cofin/litestar-mcp/pull/103>`_).
+
+    .. change:: honor route handler description, strip docstring DI sections, and add export-tool-spec CLI
+        :type: feature
+
+        Updated ``extract_description_sources`` and ``strip_docstring_sections`` to
+        honor ``handler.description`` / ``handler.summary`` and strip Google, Sphinx,
+        and NumPy parameter/return/raises docstring sections from top-level tool,
+        resource, and prompt descriptions while preserving per-parameter descriptions
+        in ``inputSchema.properties``. Added ``litestar mcp export-tool-spec`` to export
+        static ``{"tools": [...]}`` manifests without booting the ASGI server
+        (`#103 <https://github.com/cofin/litestar-mcp/pull/103>`_).
+
+    .. change:: support LitestarA2A route opt discovery, tenant resolution, and HTTP+JSON transport
+        :type: feature
+
+        Added ``A2AConfig.agent_card_route_opt``, ``A2AConfig.tenant_header``, and
+        ``A2AConfig.enable_http_json`` so ``LitestarA2A`` discovers ``AgentCard``
+        metadata from route ``opt`` dictionaries, propagates tenant context from
+        ``X-A2A-Tenant`` headers and ``/{tenant}/...`` routes into
+        ``ServerCallContext.state["tenant"]``, and serves the A2A v1.0 HTTP+JSON
+        REST binding alongside JSON-RPC 2.0 (`#103 <https://github.com/cofin/litestar-mcp/pull/103>`_).
+
 .. changelog:: 0.16.0
 
     .. change:: add request-aware SkillSource protocol and dynamic skill composition

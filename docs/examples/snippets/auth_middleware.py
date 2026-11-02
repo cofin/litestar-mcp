@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from litestar import Litestar, get
+from litestar import Litestar, Request, get
 from litestar.connection import ASGIConnection
 from litestar.exceptions import NotAuthorizedException
 from litestar.middleware import AbstractAuthenticationMiddleware, AuthenticationResult, DefineMiddleware
@@ -25,7 +25,7 @@ class ApiKeyAuthenticationMiddleware(AbstractAuthenticationMiddleware):
 
 
 @get("/whoami", mcp_tool="whoami", sync_to_thread=False)
-def whoami(request: "Any") -> "dict[str, Any]":
+def whoami(request: "Request[Any, Any, Any]") -> "dict[str, Any]":
     return {"user": request.user, "roles": request.auth["roles"]}
 
 

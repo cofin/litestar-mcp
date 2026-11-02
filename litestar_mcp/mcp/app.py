@@ -15,6 +15,7 @@ from litestar.types import Empty, TypeDecodersSequence
 from litestar_mcp.mcp.config import MCPConfig
 from litestar_mcp.mcp.plugin import LitestarMCP
 from litestar_mcp.mcp.stdio import MCPStdioContext, run_stdio
+from litestar_mcp.utils.handler_signature import normalize_synthesized_handler_signature
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -235,7 +236,12 @@ def _resolve_litestar_app_env(app: "Litestar") -> "str | None":
     return f"{module_name}:{app_var_name}"
 
 
-def _json_response_wrapper(fn: "Callable[..., Any]") -> "Callable[..., Any]":
+def _json_response_wrapper(
+    fn: "Callable[..., Any]",
+    *,
+    path: "str" = "",
+    dependencies: "Mapping[str, Any] | None" = None,
+) -> "Callable[..., Any]":
     """Wrap a handler function to always return a JSON Response.
 
     This ensures that primitive return types like strings are serialized
@@ -250,13 +256,13 @@ def _json_response_wrapper(fn: "Callable[..., Any]") -> "Callable[..., Any]":
         async def async_wrapped(*args: "Any", **kwargs: "Any") -> "Any":
             return _to_json_response(await fn(*args, **kwargs))
 
-        return async_wrapped
+        return normalize_synthesized_handler_signature(async_wrapped, fn, path=path, dependencies=dependencies)
 
     @wraps(fn)
     def sync_wrapped(*args: "Any", **kwargs: "Any") -> "Any":
         return _to_json_response(fn(*args, **kwargs))
 
-    return sync_wrapped
+    return normalize_synthesized_handler_signature(sync_wrapped, fn, path=path, dependencies=dependencies)
 
 
 def _to_json_response(res: "Any") -> "Response[Any]":
@@ -397,7 +403,7 @@ class MCP:
                     forced_opt={opt_keys.tool: tool_name, "_mcp_synthesized_tool": True},
                     default_opt={opt_keys.description: description or fn.__doc__ or ""},
                 ),
-            )(_json_response_wrapper(fn))
+            )(_json_response_wrapper(fn, path=path, dependencies=route_kwargs.get("dependencies")))
 
             self.plugin.register_dynamic_handler(handler)
             return fn
@@ -480,7 +486,7 @@ class MCP:
                         opt_keys.resource_mime_type: mime_type,
                     },
                 ),
-            )(_json_response_wrapper(fn))
+            )(_json_response_wrapper(fn, path=path, dependencies=route_kwargs.get("dependencies")))
             self.plugin.register_dynamic_handler(handler)
             return fn
 
@@ -551,7 +557,7 @@ class MCP:
                     forced_opt={opt_keys.prompt: prompt_name},
                     default_opt={opt_keys.prompt_description: description or fn.__doc__ or ""},
                 ),
-            )(_json_response_wrapper(fn))
+            )(_json_response_wrapper(fn, path=path, dependencies=route_kwargs.get("dependencies")))
             self.plugin.register_dynamic_handler(handler)
             return fn
 

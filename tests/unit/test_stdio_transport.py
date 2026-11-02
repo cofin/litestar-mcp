@@ -11,6 +11,7 @@ import httpx2
 import pytest
 from litestar import Litestar, Request, get, post
 from litestar.events import listener
+from litestar.params import JSONBody  # noqa: TC002
 
 from litestar_mcp import LitestarMCP, get_mcp_request_context
 from litestar_mcp.mcp.bridge import run_stdio_streamable_http_bridge
@@ -570,7 +571,7 @@ async def test_transport_raises_app_exception_before_response_start() -> None:
 @pytest.mark.anyio
 async def test_transport_round_trips_a_litestar_app() -> None:
     @post("/echo", sync_to_thread=False)
-    def echo(request: "Request[Any, Any, Any]", data: "dict[str, Any]") -> "dict[str, Any]":
+    def echo(request: "Request[Any, Any, Any]", data: "JSONBody[dict[str, Any]]") -> "dict[str, Any]":
         client = request.scope["client"]
         return {"data": data, "host": request.url.hostname, "client": list(client) if client else None}
 

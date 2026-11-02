@@ -10,6 +10,7 @@ from litestar import Controller, get, post
 from litestar.connection import Request  # noqa: TC002
 from litestar.di import NamedDependency  # noqa: TC002
 from litestar.exceptions import HTTPException, NotFoundException
+from litestar.params import FromPath, JSONBody  # noqa: TC002
 from litestar.response import ServerSentEvent
 from litestar.status_codes import HTTP_200_OK
 
@@ -89,7 +90,7 @@ class AgentChatController(Controller):
     async def chat(
         self,
         request: "Request[Any, Any, Any]",
-        data: "ChatRequest",
+        data: "JSONBody[ChatRequest]",
         runtime: "NamedDependency[AgentRuntime]",
     ) -> "ServerSentEvent":
         """Stream an agent turn over Server-Sent Events from a typed chat payload."""
@@ -138,7 +139,7 @@ class AgentChatController(Controller):
     async def create_turn(
         self,
         request: "Request[Any, Any, Any]",
-        data: "ChatRequest",
+        data: "JSONBody[ChatRequest]",
         runtime: "NamedDependency[AgentRuntime]",
     ) -> "TurnResult":
         """Execute an agent turn synchronously returning final TurnResult."""
@@ -160,7 +161,7 @@ class AgentChatController(Controller):
     async def get_session(
         self,
         request: "Request[Any, Any, Any]",
-        session_id: "str",
+        session_id: "FromPath[str]",
         runtime: "NamedDependency[AgentRuntime]",
     ) -> "SessionHistory":
         """Return conversation history for a session scoped to caller identity."""

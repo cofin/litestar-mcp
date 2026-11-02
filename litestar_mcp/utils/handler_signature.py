@@ -8,12 +8,14 @@ from collections import deque
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from types import UnionType
-from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin, get_type_hints
+from typing import TYPE_CHECKING, Annotated, Any, Union, cast, get_args, get_origin, get_type_hints
 
+from litestar.connection import ASGIConnection
 from litestar.constants import RESERVED_KWARGS
-from litestar.di import Provide
+from litestar.di import Dependency as DiDependency
+from litestar.di import NamedDependency, Provide
 from litestar.enums import ParamType
-from litestar.params import DependencyKwarg, ParameterKwarg
+from litestar.params import DependencyKwarg, FromPath, FromQuery, JSONBody, KwargDefinition, ParameterKwarg
 from litestar.types import Empty
 
 from litestar_mcp.core.typing import DISHKA_INSTALLED, DishkaDependencyKey
@@ -85,7 +87,7 @@ def extract_di_parameter(
         candidates.append(default)
 
     for marker in candidates:
-        if isinstance(marker, DependencyKwarg):
+        if isinstance(marker, (DependencyKwarg, DiDependency)):
             marker_default = getattr(marker, "default", Empty)
             effective_default = marker_default if marker_default is not Empty else default
             if effective_default is marker:
@@ -635,7 +637,8 @@ def _dishka_can_resolve(container: "Any", annotation: "Any") -> "bool":
 def _unwrap_annotated(annotation: "Any") -> "tuple[Any, list[ParameterKwarg]]":
     if get_origin(annotation) is Annotated:
         args = get_args(annotation)
-        return args[0], [m for m in args[1:] if isinstance(m, ParameterKwarg)]
+        inner, nested_metas = _unwrap_annotated(args[0])
+        return inner, [*nested_metas, *(m for m in args[1:] if isinstance(m, ParameterKwarg))]
     if get_origin(annotation) in {Union, UnionType}:
         args = get_args(annotation)
         stripped_args: list[Any] = []
@@ -729,6 +732,112 @@ def _record_alias(
     raise ValueError(msg)
 
 
+_PATH_PARAM_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)(?::[^}]*)?\}")
+
+
+def normalize_synthesized_handler_signature(
+    wrapper_fn: "Callable[..., Any]",
+    source_fn: "Callable[..., Any] | None" = None,
+    *,
+    path: "str" = "",
+    dependencies: "Mapping[str, Any] | None" = None,
+) -> "Callable[..., Any]":
+    """Annotate plain parameters on a synthesized internal route handler for Litestar 2.25+."""
+    target = source_fn or wrapper_fn
+    try:
+        hints = get_type_hints(target, include_extras=True)
+    except Exception:  # noqa: BLE001
+        hints = dict(getattr(target, "__annotations__", {}) or {})
+
+    try:
+        raw_sig = inspect.signature(wrapper_fn)
+    except (TypeError, ValueError):
+        return wrapper_fn
+
+    path_param_names = set(_PATH_PARAM_RE.findall(path)) if path else set()
+    explicit_deps: dict[str, Any] = dict(dependencies) if isinstance(dependencies, Mapping) else {}
+    if not explicit_deps:
+        explicit_deps = _capture_class_dependencies()
+
+    new_params: list[inspect.Parameter] = []
+    new_annotations: dict[str, Any] = dict(getattr(wrapper_fn, "__annotations__", {}) or {})
+    changed = False
+
+    for pname, param in raw_sig.parameters.items():
+        ann = hints.get(pname, param.annotation)
+        wrapped_ann = _resolve_synthesized_parameter_annotation(pname, param, ann, path_param_names, explicit_deps)
+        if wrapped_ann is None:
+            new_params.append(param)
+            continue
+        new_params.append(param.replace(annotation=wrapped_ann))
+        new_annotations[pname] = wrapped_ann
+        changed = True
+
+    if changed:
+        wrapper_fn.__annotations__ = new_annotations
+        setattr(wrapper_fn, "__signature__", raw_sig.replace(parameters=new_params))
+    return wrapper_fn
+
+
+def _has_litestar_kwarg_marker(annotation: "Any") -> "bool":
+    _, metas = _unwrap_all_annotated_metadata(annotation)
+    return any(isinstance(m, (KwargDefinition, DiDependency)) for m in metas)
+
+
+def _is_context_or_connection_type(annotation: "Any") -> "bool":
+    inner, _ = _unwrap_all_annotated_metadata(annotation)
+    if not isinstance(inner, type):
+        return False
+    return issubclass(inner, ASGIConnection) or inner.__name__ == "ToolContext"
+
+
+def _capture_class_dependencies() -> "dict[str, Any]":
+    frame = inspect.currentframe()
+    try:
+        caller = frame.f_back if frame is not None else None
+        while caller is not None:
+            deps = caller.f_locals.get("dependencies")
+            if isinstance(deps, Mapping):
+                return dict(deps)
+            caller = caller.f_back
+    finally:
+        del frame
+    return {}
+
+
+def _resolve_synthesized_parameter_annotation(
+    pname: "str",
+    param: "inspect.Parameter",
+    ann: "Any",
+    path_param_names: "set[str]",
+    explicit_deps: "Mapping[str, Any]",
+) -> "Any | None":
+    if (
+        pname == "self"
+        or param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+        or (pname in RESERVED_KWARGS and pname != "data")
+        or ann is inspect.Parameter.empty
+        or isinstance(ann, str)
+        or _has_litestar_kwarg_marker(ann)
+    ):
+        return None
+
+    di_spec = extract_di_parameter(
+        pname,
+        ann,
+        default=param.default,
+        explicit_dependencies=explicit_deps,
+    )
+    if di_spec is not None:
+        return cast("Any", NamedDependency)[ann] if di_spec.source_kind == "litestar" else None
+
+    if _is_context_or_connection_type(ann):
+        return None
+    if pname in path_param_names:
+        return cast("Any", FromPath)[ann]
+    return cast("Any", JSONBody)[ann] if pname == "data" else cast("Any", FromQuery)[ann]
+
+
 __all__ = (
     "AdvertisedHandlerParameter",
     "DIParameterSpec",
@@ -737,6 +846,7 @@ __all__ = (
     "get_advertised_handler_parameters",
     "has_dishka_parameters",
     "iter_dependency_input_parameters",
+    "normalize_synthesized_handler_signature",
     "parameter_aliases",
     "resolve_tool_argument_aliases",
     "strip_docstring_sections",

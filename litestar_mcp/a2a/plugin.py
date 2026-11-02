@@ -49,6 +49,7 @@ from a2a.utils.errors import (
 from google.protobuf.json_format import MessageToDict, Parse, ParseDict, ParseError  # type: ignore[import-untyped]
 from litestar import Litestar, MediaType, Request, Response, Router, delete, get, post, route
 from litestar.exceptions import HTTPException, SerializationException
+from litestar.params import FromPath  # noqa: TC002
 from litestar.plugins import InitPluginProtocol
 from litestar.response import ServerSentEvent, ServerSentEventMessage
 from litestar.status_codes import HTTP_204_NO_CONTENT, HTTP_304_NOT_MODIFIED, HTTP_404_NOT_FOUND
@@ -739,9 +740,7 @@ class LitestarA2A(InitPluginProtocol):
         @post(_paths("/message:send"), status_code=200, **common_kwargs)
         async def a2a_rest_message_send(
             request: "Request[Any, Any, Any]",
-            tenant: "str | None" = None,
         ) -> "Response[Any]":
-            del tenant
             return await rest_transport.send_message(request)
 
         @post(
@@ -752,9 +751,7 @@ class LitestarA2A(InitPluginProtocol):
         )
         async def a2a_rest_message_stream(
             request: "Request[Any, Any, Any]",
-            tenant: "str | None" = None,
         ) -> "Response[Any] | ServerSentEvent":
-            del tenant
             return await rest_transport.send_message_stream(request)
 
         @route(
@@ -766,46 +763,36 @@ class LitestarA2A(InitPluginProtocol):
         )
         async def a2a_rest_task_segment(
             request: "Request[Any, Any, Any]",
-            task_segment: "str",
-            tenant: "str | None" = None,
+            task_segment: "FromPath[str]",
         ) -> "Response[Any] | ServerSentEvent":
-            del tenant
             return await rest_transport.handle_task_segment(request, task_segment)
 
         @get(_paths("/tasks"), **common_kwargs)
         async def a2a_rest_list_tasks(
             request: "Request[Any, Any, Any]",
-            tenant: "str | None" = None,
         ) -> "Response[Any]":
-            del tenant
             return await rest_transport.list_tasks(request)
 
         @post(_paths("/tasks/{id:str}/pushNotificationConfigs"), status_code=200, **common_kwargs)
         async def a2a_rest_create_push_config(
             request: "Request[Any, Any, Any]",
-            id: "str",  # noqa: A002
-            tenant: "str | None" = None,
+            id: "FromPath[str]",  # noqa: A002
         ) -> "Response[Any]":
-            del tenant
             return await rest_transport.create_push_config(request, id)
 
         @get(_paths("/tasks/{id:str}/pushNotificationConfigs"), **common_kwargs)
         async def a2a_rest_list_push_configs(
             request: "Request[Any, Any, Any]",
-            id: "str",  # noqa: A002
-            tenant: "str | None" = None,
+            id: "FromPath[str]",  # noqa: A002
         ) -> "Response[Any]":
-            del tenant
             return await rest_transport.list_push_configs(request, id)
 
         @get(_paths("/tasks/{id:str}/pushNotificationConfigs/{push_id:str}"), **common_kwargs)
         async def a2a_rest_get_push_config(
             request: "Request[Any, Any, Any]",
-            id: "str",  # noqa: A002
-            push_id: "str",
-            tenant: "str | None" = None,
+            id: "FromPath[str]",  # noqa: A002
+            push_id: "FromPath[str]",
         ) -> "Response[Any]":
-            del tenant
             return await rest_transport.get_push_config(request, id, push_id)
 
         @delete(
@@ -815,19 +802,15 @@ class LitestarA2A(InitPluginProtocol):
         )
         async def a2a_rest_delete_push_config(
             request: "Request[Any, Any, Any]",
-            id: "str",  # noqa: A002
-            push_id: "str",
-            tenant: "str | None" = None,
+            id: "FromPath[str]",  # noqa: A002
+            push_id: "FromPath[str]",
         ) -> "Response[Any]":
-            del tenant
             return await rest_transport.delete_push_config(request, id, push_id)
 
         @get(_paths("/extendedAgentCard"), **common_kwargs)
         async def a2a_rest_extended_agent_card(
             request: "Request[Any, Any, Any]",
-            tenant: "str | None" = None,
         ) -> "Response[Any]":
-            del tenant
             return await rest_transport.extended_agent_card(request)
 
         return [
@@ -871,9 +854,7 @@ class LitestarA2A(InitPluginProtocol):
         )
         async def a2a_endpoint(
             request: "Request[Any, Any, Any]",
-            tenant: "str | None" = None,
         ) -> "Response[Any]":
-            del tenant
             result = await transport.handle(request)
             if isinstance(result, Response):
                 return result
