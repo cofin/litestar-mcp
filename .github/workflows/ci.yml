@@ -145,7 +145,7 @@ jobs:
           node-version: "24.18.1"
           cache: npm
       - run: uv python install 3.14
-      - run: uv sync --group test --python 3.14
+      - run: uv sync --group test --extra queues --python 3.14
       - run: make conformance-queue NODE_VERSION=24.18.1
 
   sonar:

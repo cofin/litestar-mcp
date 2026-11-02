@@ -7,8 +7,6 @@ from typing import Annotated, Any
 from litestar import Litestar, get
 from litestar.params import Parameter
 from litestar.response import Response
-from litestar_queues import QueueConfig, QueuePlugin
-from litestar_queues.config import WorkerConfig
 
 from litestar_mcp import (
     LitestarMCP,
@@ -21,7 +19,6 @@ from litestar_mcp import (
     mcp_tool,
 )
 from litestar_mcp.core.jsonrpc import INTERNAL_ERROR, INVALID_PARAMS, JSONRPCError, JSONRPCErrorException
-from litestar_mcp.queues import QueueTaskExecutor
 
 _PIXEL = b"\x89PNG\r\n\x1a\n"
 _TASK_EXECUTOR = os.getenv("MCP_CONFORMANCE_TASK_EXECUTOR", "process")
@@ -569,9 +566,14 @@ def prompt_with_image() -> list[dict[str, Any]]:
     ]
 
 
-executor: QueueTaskExecutor | None = None
+executor: Any = None
 queue_plugins: list[Any] = []
 if _TASK_EXECUTOR == "queue":
+    from litestar_queues import QueueConfig, QueuePlugin
+    from litestar_queues.config import WorkerConfig
+
+    from litestar_mcp.queues import QueueTaskExecutor
+
     executor = QueueTaskExecutor()
     queue_plugins = [
         QueuePlugin(
