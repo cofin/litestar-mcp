@@ -809,9 +809,6 @@ def blank_http_scope(app: "Litestar") -> "dict[str, Any]":
     }
 
 
-_blank_http_scope = blank_http_scope
-
-
 def _build_dispatch_scope(
     handler: "BaseRouteHandler",
     tool_args: "dict[str, Any]",
@@ -833,7 +830,7 @@ def _build_dispatch_scope(
     path = _substitute_path(path_template, coerced_path_values)
     query_string = urlencode(query_values, doseq=True).encode("ascii") if query_values else b""
 
-    scope = _blank_http_scope(app)
+    scope = blank_http_scope(app)
     if base_scope is not None:
         # Cherry-pick middleware-populated keys from the inbound request so
         # auth / Dishka / session context flows through, but skip cached body

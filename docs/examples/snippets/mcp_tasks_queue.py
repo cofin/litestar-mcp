@@ -1,20 +1,16 @@
 """Snippet: distributed MCP Tasks using litestar-queues."""
 
 from litestar import Litestar
-from litestar.connection import ASGIConnection
 from litestar.stores.memory import MemoryStore
 from litestar_queues import QueueConfig, QueuePlugin, WorkerConfig
 
 from litestar_mcp import LitestarMCP, MCPConfig, MCPTaskConfig
-from litestar_mcp.queues import (
-    QueueTaskExecutor,
-    chain_task_dependencies,
-)
+from litestar_mcp.queues import QueueTaskExecutor
 
 
-async def load_user(connection: ASGIConnection, principal_id: str) -> dict[str, str]:
-    """Load user context for the given principal identifier."""
-    return {"user_id": principal_id, "scope": "task_runner"}
+async def load_user(owner_id: str) -> dict[str, str]:
+    """Rehydrate the request principal in the worker from the task's ``owner_id``."""
+    return {"user_id": owner_id, "scope": "task_runner"}
 
 
 def build() -> Litestar:
@@ -32,7 +28,7 @@ def build() -> Litestar:
             queue_backend="memory",
             execution_backend="local",
             worker=WorkerConfig(placement="external"),
-            task_dependency_resolver=chain_task_dependencies(executor.dependencies()),
+            task_dependency_resolver=executor.dependencies(),
         )
     )
     return Litestar(

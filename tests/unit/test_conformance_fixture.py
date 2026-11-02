@@ -3,24 +3,24 @@
 import importlib
 
 import pytest
-from litestar_queues import QueuePlugin
 
 from litestar_mcp import MCPTaskConfig
-from litestar_mcp.queues import QueueTaskExecutor
 from tests.conformance import server
 
 
 @pytest.mark.anyio
 async def test_conformance_server_queue_mode_wires_executor(monkeypatch: pytest.MonkeyPatch) -> None:
     """When MCP_CONFORMANCE_TASK_EXECUTOR is 'queue', QueuePlugin and QueueTaskExecutor are wired."""
+    litestar_queues = pytest.importorskip("litestar_queues")
+    mcp_queues = pytest.importorskip("litestar_mcp.queues")
     try:
         monkeypatch.setenv("MCP_CONFORMANCE_TASK_EXECUTOR", "queue")
         importlib.reload(server)
 
-        assert any(isinstance(plugin, QueuePlugin) for plugin in server.app.plugins)
+        assert any(isinstance(plugin, litestar_queues.QueuePlugin) for plugin in server.app.plugins)
         task_config = server.plugin._config.tasks
         assert isinstance(task_config, MCPTaskConfig)
-        assert isinstance(task_config.executor, QueueTaskExecutor)
+        assert isinstance(task_config.executor, mcp_queues.QueueTaskExecutor)
     finally:
         monkeypatch.delenv("MCP_CONFORMANCE_TASK_EXECUTOR", raising=False)
         importlib.reload(server)
@@ -28,12 +28,12 @@ async def test_conformance_server_queue_mode_wires_executor(monkeypatch: pytest.
 
 @pytest.mark.anyio
 async def test_conformance_server_process_mode_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Default process mode leaves executor unset and omits QueuePlugin."""
+    """Default process mode leaves the executor unset and registers only the MCP plugin."""
     try:
         monkeypatch.delenv("MCP_CONFORMANCE_TASK_EXECUTOR", raising=False)
         importlib.reload(server)
 
-        assert not any(isinstance(plugin, QueuePlugin) for plugin in server.app.plugins)
+        assert server.queue_plugins == []
         task_config = server.plugin._config.tasks
         assert isinstance(task_config, MCPTaskConfig)
         assert task_config.executor is None

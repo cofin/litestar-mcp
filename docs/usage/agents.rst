@@ -134,7 +134,11 @@ Durable Workflows
 
 For multi-step, stateful agent pipelines that survive worker crashes, node retries,
 and distributed scaling, Litestar MCP provides durable workflow orchestration
-on top of ``litestar-queues``:
+on top of ``litestar-queues``. Install the optional ``queues`` extra to use it:
+
+.. code-block:: bash
+
+    pip install "litestar-mcp[queues]"
 
 .. literalinclude:: /examples/snippets/durable_workflow.py
     :language: python

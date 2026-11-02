@@ -77,7 +77,15 @@ MCP Tasks on litestar-queues
 
 When deploying across multiple server processes or replicas, configure
 :class:`~litestar_mcp.queues.QueueTaskExecutor` to distribute long-running
-MCP Tasks across workers managed by ``litestar-queues``:
+MCP Tasks across workers managed by ``litestar-queues``. The queue integration
+is optional; install it with the ``queues`` extra:
+
+.. code-block:: bash
+
+    pip install "litestar-mcp[queues]"
+
+Without an executor, MCP Tasks run as in-process background tasks and
+``litestar-queues`` is never imported.
 
 .. literalinclude:: /examples/snippets/mcp_tasks_queue.py
     :language: python
@@ -85,14 +93,14 @@ MCP Tasks across workers managed by ``litestar-queues``:
 
 Guarantees and Execution Semantics:
 
-- **Fail-closed principal loader**: If the original request authenticated as a
-  named principal, ``principal_loader`` must be provided on ``QueueTaskExecutor``.
-  Attempting to execute an authenticated task without a loader immediately fails
-  closed (marking the attempt failed) to prevent running tasks without verified
-  principal permissions.
-- **Cooperative cancellation**: Emitting ``tasks/cancel`` updates the task state
-  in the backing store and posts to the cancellation channel. Running worker attempts
-  receive cancellation notifications cooperatively at turn boundaries.
+- **Fail-closed principal loader**: Workers rebuild ``scope["user"]`` by calling
+  ``principal_loader(owner_id)``. Without a loader the attempt runs with
+  ``scope["user"] = None``, so guarded tools reject the call and the task completes
+  with an ``isError`` result instead of running as the original principal.
+- **Cooperative cancellation**: ``tasks/cancel`` cancels the current queue job with
+  ``include_running=True``. A running attempt races the job's cancellation signal
+  and is cancelled at its next await; the replica that wins the cancellation marks
+  the task ``cancelled``.
 - **Resuming after input_required**: When a task returns ``input_required``, its current
   worker execution finishes cleanly. When the client calls ``tasks/update`` with
   the required input, a subsequent attempt is enqueued to litestar-queues and can be

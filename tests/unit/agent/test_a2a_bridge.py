@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+pytest.importorskip("a2a")
+
 from litestar_mcp.a2a import LitestarA2A
 from litestar_mcp.agent.bridges.a2a import agent_to_a2a
 from litestar_mcp.agent.runtime import AgentRuntime, TurnResponse

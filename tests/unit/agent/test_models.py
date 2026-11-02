@@ -6,6 +6,9 @@ from typing import Any, cast
 
 import httpx2
 import pytest
+
+pytest.importorskip("google.genai")
+
 from google.genai import types
 
 from litestar_mcp.agent.models import (

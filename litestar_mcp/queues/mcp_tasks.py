@@ -79,30 +79,12 @@ class QueueTaskExecutor:
         return _resolve_dependencies
 
     async def submit(self, record: "TaskRecord", call: ToolTaskCall) -> None:
-        """Enqueue one tool call attempt on litestar-queues."""
-        service = self._queue_service()
-        key = f"mcp-task:{call.task_id}:{call.attempt}"
-        result = await service.enqueue(
-            run_mcp_tool_task,
-            call=msgspec.to_builtins(call),
-            key=key,
-            queue=self._queue,
-            timeout=self._timeout,
-        )
-        await self.runtime.task_store.set_job_id(call.task_id, str(result.id))
+        """Enqueue the first tool call attempt on litestar-queues."""
+        await self._enqueue_attempt(call)
 
     async def resume(self, call: ToolTaskCall) -> None:
         """Enqueue the next attempt after client input responses arrive."""
-        service = self._queue_service()
-        key = f"mcp-task:{call.task_id}:{call.attempt}"
-        result = await service.enqueue(
-            run_mcp_tool_task,
-            call=msgspec.to_builtins(call),
-            key=key,
-            queue=self._queue,
-            timeout=self._timeout,
-        )
-        await self.runtime.task_store.set_job_id(call.task_id, str(result.id))
+        await self._enqueue_attempt(call)
 
     async def cancel(self, record: "TaskRecord") -> None:
         """Cancel the task's current attempt and persist ``cancelled`` when this replica wins."""
@@ -122,6 +104,17 @@ class QueueTaskExecutor:
         if owner_id is None or self._principal_loader is None:
             return None
         return await self._principal_loader(owner_id)
+
+    async def _enqueue_attempt(self, call: ToolTaskCall) -> None:
+        """Enqueue one attempt keyed by task id and attempt number, then record its job id."""
+        result = await self._queue_service().enqueue(
+            run_mcp_tool_task,
+            call=msgspec.to_builtins(call),
+            key=f"mcp-task:{call.task_id}:{call.attempt}",
+            queue=self._queue,
+            timeout=self._timeout,
+        )
+        await self.runtime.task_store.set_job_id(call.task_id, str(result.id))
 
     def _queue_service(self) -> "QueueService":
         app = self.runtime.app

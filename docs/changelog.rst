@@ -16,7 +16,9 @@ Recent Updates
 
         Added ``QueueTaskExecutor``, ``chain_task_dependencies``, and task worker
         integration so long-running MCP Tasks can be distributed across workers
-        managed by ``litestar-queues``. Supports fail-closed principal context
+        managed by ``litestar-queues`` (optional ``queues`` extra). Added the
+        ``MCPTaskConfig.executor`` field typed by the ``MCPTaskExecutor`` protocol,
+        so the core package never imports ``litestar-queues``. Supports fail-closed principal context
         loading (``principal_loader``), cooperative cancellation, cross-replica
         resumption on ``input_required``, and internal job dispatch decoupling.
         Updated ``MCPTaskStore.update`` to return merged responses and added

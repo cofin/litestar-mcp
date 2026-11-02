@@ -9,6 +9,7 @@ from litestar.stores.base import Store  # noqa: TC002
 
 from litestar_mcp.core._streaming import DEFAULT_STREAM_CLEANUP_TIMEOUT, validate_stream_cleanup_timeout
 from litestar_mcp.mcp.skills import SkillSource
+from litestar_mcp.mcp.tasks import MCPTaskExecutor  # noqa: TC001
 
 SUPPORTED_PROTOCOL_VERSIONS: tuple[str, ...] = ("2026-07-28", "2025-06-18", "2025-03-26")
 
@@ -128,14 +129,26 @@ class MCPOptKeys:
 
 @dataclass
 class MCPTaskConfig:
-    """Configuration for the opt-in MCP Tasks extension."""
+    """Configuration for the opt-in MCP Tasks extension.
+
+    Attributes:
+        store: Litestar ``Store`` persisting task records; defaults to an in-memory store.
+        default_ttl_ms: TTL applied when a client does not request one.
+        max_ttl_ms: Upper bound for client-requested TTLs.
+        poll_interval_ms: Poll interval advertised on task records.
+        status_callback: Optional coroutine invoked with every task status transition.
+        executor: Optional :class:`~litestar_mcp.mcp.tasks.MCPTaskExecutor` that runs
+            task-augmented tool calls outside the creating request. ``None`` runs them
+            as in-process background tasks. ``litestar_mcp.queues.QueueTaskExecutor``
+            (``litestar-mcp[queues]``) is the bundled distributed implementation.
+    """
 
     store: "Store | None" = None
     default_ttl_ms: "int" = 300_000
     max_ttl_ms: "int" = 3_600_000
     poll_interval_ms: "int" = 1_000
     status_callback: "Callable[[Any], Awaitable[None]] | None" = None
-    executor: "Any | None" = None
+    executor: "MCPTaskExecutor | None" = None
 
     def __post_init__(self) -> "None":
         if self.default_ttl_ms < 0:

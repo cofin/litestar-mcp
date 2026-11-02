@@ -178,20 +178,20 @@ class MCPTaskStore:
             self._runners[task_id] = runner
 
     async def set_job_id(self, task_id: str, job_id: str) -> None:
-        """Persist the background queue job id under a separate key."""
+        """Persist the executor's job id for the task's current attempt under a separate key."""
         record = await self.get(task_id, None)
         expires_in = None if record.ttl_ms is None else max(1, (record.ttl_ms + 999) // 1000)
         await self.store.set(f"mcp-task:{task_id}:job", job_id.encode("utf-8"), expires_in=expires_in)
 
     async def get_job_id(self, task_id: str) -> str | None:
-        """Retrieve the background queue job id."""
+        """Retrieve the executor's job id for the task's current attempt."""
         value = await self.store.get(f"mcp-task:{task_id}:job")
         if value is None:
             return None
         return value.decode("utf-8") if isinstance(value, (bytes, bytearray)) else str(value)
 
     async def set_dispatch(self, task_id: str, call: ToolTaskCall) -> None:
-        """Save the serializable dispatch envelope on the record before queue submission."""
+        """Save the serializable dispatch envelope on the record before executor submission."""
         async with self._lock:
             record = await self._lookup(task_id, None)
             record.dispatch = msgspec.to_builtins(call)

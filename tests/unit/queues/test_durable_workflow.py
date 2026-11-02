@@ -5,6 +5,9 @@ from typing import Any
 
 import anyio
 import pytest
+
+pytest.importorskip("litestar_queues")
+
 from litestar import Litestar
 from litestar.exceptions import ImproperlyConfiguredException
 from litestar.stores.memory import MemoryStore

@@ -5,6 +5,9 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock
 
 import pytest
+
+pytest.importorskip("litestar_queues")
+
 from litestar import Litestar
 from litestar.di import Provide
 from litestar.testing import AsyncTestClient

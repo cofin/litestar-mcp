@@ -6,6 +6,9 @@ from uuid import UUID
 
 import anyio
 import pytest
+
+pytest.importorskip("litestar_queues")
+
 from litestar import Litestar, Request, get
 from litestar.connection import ASGIConnection
 from litestar.status_codes import HTTP_200_OK

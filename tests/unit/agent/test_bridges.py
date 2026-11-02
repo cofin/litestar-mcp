@@ -4,6 +4,9 @@ from typing import Any, cast
 
 import httpx2
 import pytest
+
+pytest.importorskip("a2a")
+
 from litestar import Litestar
 
 from litestar_mcp.a2a.plugin import LitestarA2A

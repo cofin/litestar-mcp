@@ -59,9 +59,9 @@ infrastructure for persistent state, notifications, and queue execution:
   in-process background workers alongside the web server. In production, configure
   ``WorkerConfig(placement="external")`` and run separate worker processes executing
   the same Litestar application via ``litestar workers run``.
-- **Conformance Testing**: Contributors running the MCP conformance suite can set
-  the environment variable ``MCP_CONFORMANCE_TASK_EXECUTOR=queues`` to test distributed
-  queue-backed task execution against the official MCP conformance test suite.
+- **Conformance Testing**: Contributors can run ``make conformance-queue`` (which sets
+  ``MCP_CONFORMANCE_TASK_EXECUTOR=queue``) to run the official MCP conformance suite
+  against queue-backed task execution.
 
 .. seealso::
 

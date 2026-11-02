@@ -8,12 +8,19 @@ handler-only fragments are import-smoked separately.
 import importlib
 import pkgutil
 
+import anyio
 import pytest
 from litestar import Litestar
+from litestar.testing import AsyncTestClient
 
 import docs.examples.snippets as snippets_pkg
 from litestar_mcp import MCPConfig
 
+OPTIONAL_SNIPPET_DEPENDENCIES = {
+    "a2a_plugin": "a2a",
+    "durable_workflow": "litestar_queues",
+    "mcp_tasks_queue": "litestar_queues",
+}
 CONFIG_SNIPPET_MODULES = {"configuration_stateless"}
 HANDLER_ONLY_SNIPPET_MODULES = {"tool_explicit_input_schema", "tool_task_input_before_start"}
 NON_APP_SNIPPET_MODULES = CONFIG_SNIPPET_MODULES | HANDLER_ONLY_SNIPPET_MODULES
@@ -28,6 +35,8 @@ SNIPPET_MODULES = [
 @pytest.mark.parametrize("module_name", SNIPPET_MODULES)
 def test_snippet_build_returns_litestar(module_name: "str") -> "None":
     """Import the snippet module and verify it defines or builds a Litestar application."""
+    if module_name in OPTIONAL_SNIPPET_DEPENDENCIES:
+        pytest.importorskip(OPTIONAL_SNIPPET_DEPENDENCIES[module_name])
     mod = importlib.import_module(f"docs.examples.snippets.{module_name}")
     if hasattr(mod, "build"):
         app = mod.build()
@@ -56,18 +65,15 @@ def test_config_snippet_exposes_mcp_config(module_name: "str") -> "None":
 @pytest.mark.anyio
 async def test_durable_workflow_snippet_runs_to_completion() -> None:
     """Run the durable workflow snippet to completion and assert node outputs."""
-    import anyio
-    from litestar.testing import AsyncTestClient
-    from litestar_queues.worker import Worker
-
-    from docs.examples.snippets import durable_workflow
+    worker_module = pytest.importorskip("litestar_queues.worker")
+    durable_workflow = importlib.import_module("docs.examples.snippets.durable_workflow")
 
     engine, queue_plugin = durable_workflow.create_engine()
     app = Litestar(plugins=[queue_plugin])
     async with AsyncTestClient(app):
         service = queue_plugin.config.get_service(app.state)
         run_id = await engine.start("metrics_pipeline", queue_service=service)
-        worker = Worker(service, queue_plugin.config.worker)
+        worker = worker_module.Worker(service, queue_plugin.config.worker)
         for _ in range(50):
             run, _ = await engine.snapshot(run_id)
             if run.status != "running":
@@ -85,9 +91,8 @@ async def test_durable_workflow_snippet_runs_to_completion() -> None:
 @pytest.mark.anyio
 async def test_mcp_tasks_queue_snippet_initializes() -> None:
     """Verify the distributed MCP Tasks queue snippet builds and initializes correctly."""
-    from litestar.testing import AsyncTestClient
-
-    from docs.examples.snippets import mcp_tasks_queue
+    pytest.importorskip("litestar_queues")
+    mcp_tasks_queue = importlib.import_module("docs.examples.snippets.mcp_tasks_queue")
 
     app = mcp_tasks_queue.build()
     async with AsyncTestClient(app):
