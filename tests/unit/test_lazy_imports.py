@@ -5,20 +5,27 @@ import sys
 
 def test_root_import_does_not_load_agent_runtime_or_heavy_dependencies() -> None:
     """Importing litestar_mcp does not import google.genai, litestar_queues, or agent runtime."""
-    for mod in list(sys.modules.keys()):
-        if mod.startswith(("google.genai", "litestar_queues", "litestar_mcp.agent.runtime")):
-            sys.modules.pop(mod, None)
+    saved_modules = {
+        mod: sys.modules[mod]
+        for mod in list(sys.modules.keys())
+        if mod.startswith(("google.genai", "litestar_queues", "litestar_mcp.agent.runtime"))
+    }
+    for mod in saved_modules:
+        sys.modules.pop(mod, None)
 
-    import litestar_mcp
+    try:
+        import litestar_mcp
 
-    assert hasattr(litestar_mcp, "PromptController")
-    assert hasattr(litestar_mcp, "SkillController")
-    assert hasattr(litestar_mcp, "tool")
-    assert hasattr(litestar_mcp, "prompt")
+        assert hasattr(litestar_mcp, "PromptController")
+        assert hasattr(litestar_mcp, "SkillController")
+        assert hasattr(litestar_mcp, "tool")
+        assert hasattr(litestar_mcp, "prompt")
 
-    assert "google.genai" not in sys.modules
-    assert "litestar_queues" not in sys.modules
-    assert "litestar_mcp.agent.runtime" not in sys.modules
+        assert "google.genai" not in sys.modules
+        assert "litestar_queues" not in sys.modules
+        assert "litestar_mcp.agent.runtime" not in sys.modules
+    finally:
+        sys.modules.update(saved_modules)
 
 
 def test_agent_lazy_attribute_resolution() -> None:

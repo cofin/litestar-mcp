@@ -9,7 +9,7 @@ SHELL := /bin/bash
 .SHELLFLAGS := -e -o pipefail -c
 .EXPORT_ALL_VARIABLES:
 MAKEFLAGS += --no-print-directory
-UV_RUN_PY310 := uv run --python 3.10
+UV_RUN_PY310 ?= uv run --python 3.10
 NODE_VERSION ?= 24.18.1
 
 # Detect Rodete and configure index URLs for Python tools

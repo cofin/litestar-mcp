@@ -127,7 +127,7 @@ jobs:
           cache: npm
       - run: uv python install 3.14
       - run: uv sync --group test --python 3.14
-      - run: make conformance NODE_VERSION=24.18.1
+      - run: make conformance NODE_VERSION=24.18.1 UV_RUN_PY310="uv run --no-sync"
 
   conformance_queue:
     name: MCP 2026-07-28 conformance (queue executor)
@@ -146,7 +146,7 @@ jobs:
           cache: npm
       - run: uv python install 3.14
       - run: uv sync --group test --extra queues --python 3.14
-      - run: make conformance-queue NODE_VERSION=24.18.1
+      - run: make conformance-queue NODE_VERSION=24.18.1 UV_RUN_PY310="uv run --no-sync"
 
   sonar:
     needs:
