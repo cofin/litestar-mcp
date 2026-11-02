@@ -1290,7 +1290,11 @@ class MCPHandlerService:
         if not task_id:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'taskId'"))
         try:
-            await self.task_store.cancel(task_id, context.owner_id)
+            if self.task_config is not None and self.task_config.executor is not None:
+                record = await self.task_store.get(task_id, context.owner_id)
+                await self.task_config.executor.cancel(record)
+            else:
+                await self.task_store.cancel(task_id, context.owner_id)
         except TaskLookupError as exc:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
         return {}

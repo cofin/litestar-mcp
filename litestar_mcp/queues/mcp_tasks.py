@@ -2,11 +2,14 @@
 
 from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
+import anyio
 import msgspec
 from litestar.exceptions import ImproperlyConfiguredException
 from litestar_queues import QueuePlugin
 from litestar_queues.config import TaskDependencyResolver
+from litestar_queues.events.context import get_current_task_context
 from litestar_queues.task import task
 
 from litestar_mcp.mcp.tasks import ToolTaskCall
@@ -102,9 +105,17 @@ class QueueTaskExecutor:
         await self.runtime.task_store.set_job_id(call.task_id, str(result.id))
 
     async def cancel(self, record: "TaskRecord") -> None:
-        """Cooperative cancel for queued task."""
-        msg = "QueueTaskExecutor.cancel is not implemented yet"
-        raise NotImplementedError(msg)
+        """Cancel the task's current attempt and persist ``cancelled`` when this replica wins."""
+        if record.is_terminal():
+            return
+        store = self.runtime.task_store
+        job_id = await store.get_job_id(record.task_id)
+        won = False
+        if job_id is not None:
+            service = self._queue_service()
+            won = await service.cancel_task(UUID(job_id), include_running=True)
+        if won or job_id is None or record.status == "input_required":
+            await store.mark_cancelled(record.task_id)
 
     async def load_principal(self, owner_id: str | None) -> Any:
         """Rehydrate user principal from owner_id."""
@@ -127,6 +138,18 @@ async def run_mcp_tool_task(call: dict[str, Any], mcp_task_executor: QueueTaskEx
     """Run one MCP Tasks attempt in the worker and return the record status."""
     tool_call = msgspec.convert(call, ToolTaskCall)
     user = await mcp_task_executor.load_principal(tool_call.owner_id)
-    await mcp_task_executor.runtime.run_attempt(tool_call, user)
-    record = await mcp_task_executor.runtime.task_store.get(tool_call.task_id, None)
-    return {"task_id": tool_call.task_id, "status": record.status}
+    context = get_current_task_context()
+    async with anyio.create_task_group() as group:
+        if context is not None:
+            group.start_soon(_cancel_on_signal, context, group.cancel_scope)
+        await mcp_task_executor.runtime.run_attempt(tool_call, user)
+        group.cancel_scope.cancel()
+    task_id = tool_call.task_id
+    record = await mcp_task_executor.runtime.task_store.get(task_id, None)
+    return {"task_id": task_id, "status": record.status}
+
+
+async def _cancel_on_signal(context: Any, scope: anyio.CancelScope) -> None:
+    """Wait for durable cancellation signal on the task context and cancel the attempt scope."""
+    await context.wait_cancelled()
+    scope.cancel()

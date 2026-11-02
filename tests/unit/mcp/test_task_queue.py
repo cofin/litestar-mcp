@@ -4,6 +4,7 @@ import asyncio
 from typing import Any, cast
 from uuid import UUID
 
+import anyio
 import pytest
 from litestar import Litestar, Request, get
 from litestar.connection import ASGIConnection
@@ -44,6 +45,7 @@ def _make_queued_app(
     execution_backend: str = "immediate",
     include_queue_plugin: bool = True,
     status_callback: Any = None,
+    extra_handlers: list[Any] | None = None,
 ) -> tuple[Litestar, QueueTaskExecutor | None]:
     @get("/slow-echo")
     @mcp_tool(name="slow_echo", task_support="optional")
@@ -93,7 +95,7 @@ def _make_queued_app(
         return asgi_handler
 
     app = Litestar(
-        route_handlers=[slow_echo, whoami, ask],
+        route_handlers=[slow_echo, whoami, ask, *(extra_handlers or [])],
         plugins=plugins,
         middleware=[user_header_middleware],
     )
@@ -107,6 +109,7 @@ async def _mcp_post(
     *,
     headers: dict[str, str] | None = None,
     tasks_capable: bool = True,
+    expected_status: int | None = None,
 ) -> dict[str, Any]:
     from tests.unit.conftest import mcp_envelope
 
@@ -127,7 +130,10 @@ async def _mcp_post(
         json=body,
         headers=req_headers,
     )
-    assert response.status_code == HTTP_200_OK
+    if expected_status is not None:
+        assert response.status_code == expected_status
+    else:
+        assert response.status_code in (HTTP_200_OK, 400)
     return cast("dict[str, Any]", response.json())
 
 
@@ -307,3 +313,151 @@ async def test_dispatch_not_on_wire() -> None:
 
         for forbidden_key in ("dispatch", "jobId", "dispatchInternal", "inputResponsesInternal"):
             assert forbidden_key not in record
+
+
+@pytest.mark.anyio
+async def test_cancel_pending_job() -> None:
+    """Cancelling a pending job marks record cancelled and prevents worker from executing it."""
+    call_count = 0
+
+    @get("/countable")
+    @mcp_tool(name="countable", task_support="optional")
+    async def countable() -> dict[str, str]:
+        nonlocal call_count
+        call_count += 1
+        return {"counted": "yes"}
+
+    executor = QueueTaskExecutor()
+    app, _ = _make_queued_app(executor=executor, execution_backend="local", extra_handlers=[countable])
+    async with AsyncTestClient(app) as client:
+        result = await _mcp_post(
+            client,
+            "tools/call",
+            {"name": "countable", "arguments": {}},
+        )
+        task_id = result["result"]["taskId"]
+
+        cancel_result = await _mcp_post(client, "tasks/cancel", {"taskId": task_id})
+        assert "error" not in cancel_result
+
+        status_result = await _mcp_post(client, "tasks/get", {"taskId": task_id})
+        assert status_result["result"]["status"] == "cancelled"
+
+        queue_plugin = app.plugins.get(QueuePlugin)
+        service = queue_plugin.config.get_service(app.state)
+        worker = Worker(service, queue_plugin.config.worker)
+        await worker.run_once()
+        await worker.stop()
+
+        assert call_count == 0
+
+
+@pytest.mark.anyio
+async def test_cancel_reaches_running_worker() -> None:
+    """Durable cancellation stops running worker attempt cooperatively."""
+    started_event = asyncio.Event()
+    block_event = asyncio.Event()
+
+    @get("/blocking-tool")
+    @mcp_tool(name="blocking_tool", task_support="optional")
+    async def blocking_tool() -> dict[str, str]:
+        started_event.set()
+        await block_event.wait()
+        return {"result": "done"}
+
+    executor = QueueTaskExecutor()
+    app, _ = _make_queued_app(executor=executor, execution_backend="local", extra_handlers=[blocking_tool])
+    async with AsyncTestClient(app) as client:
+        result = await _mcp_post(
+            client,
+            "tools/call",
+            {"name": "blocking_tool", "arguments": {}},
+        )
+        task_id = result["result"]["taskId"]
+
+        queue_plugin = app.plugins.get(QueuePlugin)
+        service = queue_plugin.config.get_service(app.state)
+        worker = Worker(service, queue_plugin.config.worker)
+
+        with anyio.fail_after(2):
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(worker.run_once)
+                await started_event.wait()
+
+                cancel_result = await _mcp_post(client, "tasks/cancel", {"taskId": task_id})
+                assert "error" not in cancel_result
+
+        await worker.stop()
+
+        status_result = await _mcp_post(client, "tasks/get", {"taskId": task_id})
+        assert status_result["result"]["status"] == "cancelled"
+
+
+@pytest.mark.anyio
+async def test_cancel_input_required_task() -> None:
+    """Cancelling a task in input_required state marks it cancelled without active queue job."""
+    executor = QueueTaskExecutor()
+    app, _ = _make_queued_app(executor=executor, execution_backend="immediate")
+    async with AsyncTestClient(app) as client:
+        result = await _mcp_post(
+            client,
+            "tools/call",
+            {"name": "ask", "arguments": {}},
+        )
+        task_id = result["result"]["taskId"]
+
+        status_result = await _mcp_post(client, "tasks/get", {"taskId": task_id})
+        assert status_result["result"]["status"] == "input_required"
+
+        cancel_result = await _mcp_post(client, "tasks/cancel", {"taskId": task_id})
+        assert "error" not in cancel_result
+
+        status_result = await _mcp_post(client, "tasks/get", {"taskId": task_id})
+        assert status_result["result"]["status"] == "cancelled"
+
+
+@pytest.mark.anyio
+async def test_cancel_terminal_is_noop() -> None:
+    """Cancelling an already completed task leaves status as completed."""
+    executor = QueueTaskExecutor()
+    app, _ = _make_queued_app(executor=executor, execution_backend="immediate")
+    async with AsyncTestClient(app) as client:
+        result = await _mcp_post(
+            client,
+            "tools/call",
+            {"name": "slow_echo", "arguments": {"text": "terminal-test"}},
+        )
+        task_id = result["result"]["taskId"]
+
+        status_result = await _mcp_post(client, "tasks/get", {"taskId": task_id})
+        assert status_result["result"]["status"] == "completed"
+
+        cancel_result = await _mcp_post(client, "tasks/cancel", {"taskId": task_id})
+        assert "error" not in cancel_result
+
+        status_result = await _mcp_post(client, "tasks/get", {"taskId": task_id})
+        assert status_result["result"]["status"] == "completed"
+
+
+@pytest.mark.anyio
+async def test_cancel_other_owner_rejected() -> None:
+    """Cancelling a task with a mismatched owner returns INVALID_PARAMS error."""
+    executor = QueueTaskExecutor(principal_loader=_load_user)
+    app, _ = _make_queued_app(executor=executor, execution_backend="immediate")
+    async with AsyncTestClient(app) as client:
+        result = await _mcp_post(
+            client,
+            "tools/call",
+            {"name": "whoami", "arguments": {}},
+            headers={"X-User-Id": "alice"},
+        )
+        task_id = result["result"]["taskId"]
+
+        cancel_result = await _mcp_post(
+            client,
+            "tasks/cancel",
+            {"taskId": task_id},
+            headers={"X-User-Id": "bob"},
+        )
+        assert "error" in cancel_result
+        assert cancel_result["error"]["code"] == -32602
