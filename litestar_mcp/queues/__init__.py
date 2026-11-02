@@ -39,10 +39,12 @@ from litestar_mcp.queues.tasks import (
 from litestar_mcp.queues.workflow import (
     ADVANCE_TASK,
     EXECUTE_NODE_TASK,
+    WATCHDOG_TASK,
     DurableWorkflowEngine,
     WorkflowRegistry,
     advance_workflow,
     execute_workflow_node,
+    watch_workflow,
 )
 from litestar_mcp.queues.workflow_store import (
     NodeRecord,
@@ -56,6 +58,7 @@ __all__ = (
     "EXECUTE_NODE_TASK",
     "QUEUES_INSTALLED",
     "RUN_TOOL_TASK",
+    "WATCHDOG_TASK",
     "AgentRegistry",
     "DurableWorkflowEngine",
     "NamedDependency",
@@ -82,4 +85,5 @@ __all__ = (
     "run_mcp_tool_task",
     "set_agent_registry",
     "set_channels_service",
+    "watch_workflow",
 )

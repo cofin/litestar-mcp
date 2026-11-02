@@ -1,6 +1,6 @@
 """Unit tests for WorkflowStore, durable run models, and DurableWorkflowEngine."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import anyio
@@ -24,6 +24,7 @@ from litestar_mcp.queues.workflow import (
     DurableWorkflowEngine,
     WorkflowRegistry,
     execute_workflow_node,
+    watch_workflow,
 )
 from litestar_mcp.queues.workflow_store import (
     NodeRecord,
@@ -55,15 +56,24 @@ def _make_engine_and_app(
     workflows: list[DynamicWorkflow],
     store: WorkflowStore | None = None,
     runtime_factory: Any = None,
+    watchdog_interval: float | None = 30.0,
+    run_timeout_seconds: float = 86_400.0,
+    execution_backend: Any = "local",
 ) -> tuple[Litestar, DurableWorkflowEngine, QueuePlugin]:
     """Create a Litestar test application with configured DurableWorkflowEngine and QueuePlugin."""
     registry = WorkflowRegistry(workflows)
     wf_store = store or WorkflowStore(MemoryStore())
-    engine = DurableWorkflowEngine(registry=registry, store=wf_store, runtime_factory=runtime_factory)
+    engine = DurableWorkflowEngine(
+        registry=registry,
+        store=wf_store,
+        runtime_factory=runtime_factory,
+        watchdog_interval=watchdog_interval,
+        run_timeout_seconds=run_timeout_seconds,
+    )
     plugin = QueuePlugin(
         QueueConfig(
             queue_backend="memory",
-            execution_backend="local",
+            execution_backend=execution_backend,
             worker=WorkerConfig(placement="external"),
             task_dependency_resolver=engine.dependencies(),
         )
@@ -478,3 +488,151 @@ def test_workflow_registry_validates_and_rejects_duplicates() -> None:
     registry = WorkflowRegistry([wf1])
     with pytest.raises(KeyError, match="Unknown workflow"):
         registry.get("nonexistent")
+
+
+@pytest.mark.anyio
+async def test_watchdog_reenqueues_stalled_advance() -> None:
+    """A run whose advance was lost completes after a watchdog tick."""
+    counter = {"a": 0, "b": 0}
+
+    def _step_a(_c: WorkflowContext) -> str:
+        counter["a"] += 1
+        return "a_val"
+
+    def _step_b(c: WorkflowContext) -> str:
+        counter["b"] += 1
+        return f"b_{c.node_outputs['a']}"
+
+    wf = DynamicWorkflow(name="stalled_wf")
+    wf.add_node("a", handler=_step_a)
+    wf.add_node("b", handler=_step_b, depends_on=["a"])
+
+    app, engine, plugin = _make_engine_and_app([wf], watchdog_interval=None)
+    async with AsyncTestClient(app):
+        service = plugin.config.get_service(app.state)
+        run_id = await engine.start("stalled_wf")
+        backend = service.get_queue_backend()
+        await backend.cancel_tasks(queue="workflow")
+
+        await engine.store.put_node(run_id, NodeRecord(node="a", status="completed", output="a_val"))
+        await service.reset_task_identity(f"wf-node:{run_id}:a")
+
+        status = await watch_workflow(run_id=run_id, tick=1, workflow_engine=engine)
+        assert status == "running"
+
+        await _drain(service, plugin.config.worker, engine, run_id)
+        run, ctx = await engine.snapshot(run_id)
+        assert run.status == "completed"
+        assert counter["a"] == 0
+        assert counter["b"] == 1
+        assert ctx.node_outputs["b"] == "b_a_val"
+
+
+@pytest.mark.anyio
+async def test_watchdog_schedules_next_tick() -> None:
+    """Watchdog schedules the next tick with run_after when run is still running."""
+    counter = {"steps": 0}
+
+    async def _long_step(_c: WorkflowContext) -> str:
+        counter["steps"] += 1
+        return "step_done"
+
+    wf = DynamicWorkflow(name="long_wf")
+    wf.add_node("step1", handler=_long_step)
+
+    app, engine, plugin = _make_engine_and_app([wf], watchdog_interval=60.0)
+    async with AsyncTestClient(app):
+        service = plugin.config.get_service(app.state)
+        run_id = await engine.start("long_wf")
+
+        backend = service.get_queue_backend()
+        tick1_task = await backend.get_task_by_key(f"wf-watchdog:{run_id}:1")
+        assert tick1_task is not None
+        assert tick1_task.scheduled_at is not None
+        now = datetime.now(timezone.utc)
+        diff1 = abs((tick1_task.scheduled_at - (now + timedelta(seconds=60))).total_seconds())
+        assert diff1 < 5.0
+
+        status = await watch_workflow(run_id=run_id, tick=1, workflow_engine=engine)
+        assert status == "running"
+
+        tick2_task = await backend.get_task_by_key(f"wf-watchdog:{run_id}:2")
+        assert tick2_task is not None
+        assert tick2_task.scheduled_at is not None
+        diff2 = abs((tick2_task.scheduled_at - (now + timedelta(seconds=60))).total_seconds())
+        assert diff2 < 5.0
+
+
+@pytest.mark.anyio
+async def test_watchdog_stops_on_terminal_run() -> None:
+    """Watchdog tick returns terminal status and does not enqueue another tick."""
+    wf = DynamicWorkflow(name="quick_wf")
+    wf.add_node("n1", handler=lambda _c: "quick")
+
+    app, engine, plugin = _make_engine_and_app([wf], watchdog_interval=30.0)
+    async with AsyncTestClient(app):
+        service = plugin.config.get_service(app.state)
+        run_id = await engine.start("quick_wf")
+        await _drain(service, plugin.config.worker, engine, run_id)
+
+        run, _ = await engine.snapshot(run_id)
+        assert run.status == "completed"
+
+        assert await watch_workflow(run_id="nonexistent", tick=1, workflow_engine=engine) is None
+
+        tick_result = await watch_workflow(run_id=run_id, tick=2, workflow_engine=engine)
+        assert tick_result == "completed"
+
+        backend = service.get_queue_backend()
+        tick3_task = await backend.get_task_by_key(f"wf-watchdog:{run_id}:3")
+        assert tick3_task is None
+
+
+@pytest.mark.anyio
+async def test_watchdog_times_out_old_run() -> None:
+    """Watchdog marks runs older than run_timeout_seconds as failed and releases reservations."""
+    wf = DynamicWorkflow(name="timeout_wf")
+    wf.add_node("slow_node", handler=lambda _c: "ok")
+
+    app, engine, plugin = _make_engine_and_app([wf], watchdog_interval=30.0, run_timeout_seconds=0.0)
+    async with AsyncTestClient(app):
+        service = plugin.config.get_service(app.state)
+        run_id = await engine.start("timeout_wf")
+
+        status = await watch_workflow(run_id=run_id, tick=1, workflow_engine=engine)
+        assert status == "failed"
+
+        run, _ = await engine.snapshot(run_id)
+        assert run.status == "failed"
+        assert run.error == "workflow timed out"
+
+        identity = await service.get_task_identity(f"wf-node:{run_id}:slow_node")
+        assert identity is None
+
+
+@pytest.mark.anyio
+async def test_watchdog_immediate_backend_behavior() -> None:
+    """Immediate backend rejects start when watchdog is enabled, but succeeds when disabled."""
+    wf = DynamicWorkflow(name="imm_wf")
+    wf.add_node("step1", handler=lambda _c: "done")
+
+    app_rejected, engine_rejected, _ = _make_engine_and_app(
+        [wf],
+        watchdog_interval=30.0,
+        execution_backend="immediate",
+    )
+    async with AsyncTestClient(app_rejected):
+        with pytest.raises(ImproperlyConfiguredException, match="watchdog requires a non-immediate execution backend"):
+            await engine_rejected.start("imm_wf")
+
+    app_allowed, engine_allowed, _ = _make_engine_and_app(
+        [wf],
+        watchdog_interval=None,
+        execution_backend="immediate",
+    )
+    async with AsyncTestClient(app_allowed):
+        run_id = await engine_allowed.start("imm_wf")
+        assert run_id is not None
+        run, ctx = await engine_allowed.snapshot(run_id)
+        assert run.status == "completed"
+        assert ctx.node_outputs["step1"] == "done"

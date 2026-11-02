@@ -1,5 +1,6 @@
 """Durable workflow execution engine and tasks for litestar-queues."""
 
+import time
 from collections.abc import Callable, Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -34,14 +35,17 @@ if TYPE_CHECKING:
 __all__ = (
     "ADVANCE_TASK",
     "EXECUTE_NODE_TASK",
+    "WATCHDOG_TASK",
     "DurableWorkflowEngine",
     "WorkflowRegistry",
     "advance_workflow",
     "execute_workflow_node",
+    "watch_workflow",
 )
 
 ADVANCE_TASK = "litestar_mcp.workflow.advance"
 EXECUTE_NODE_TASK = "litestar_mcp.workflow.execute_node"
+WATCHDOG_TASK = "litestar_mcp.workflow.watchdog"
 
 
 class WorkflowRegistry:
@@ -92,6 +96,8 @@ class DurableWorkflowEngine:
         store: WorkflowStore,
         runtime_factory: Callable[[Agent], "AgentRuntime"] | None = None,
         queue: str = "workflow",
+        watchdog_interval: float | None = 30.0,
+        run_timeout_seconds: float = 86_400.0,
     ) -> None:
         """Initialize DurableWorkflowEngine.
 
@@ -100,11 +106,15 @@ class DurableWorkflowEngine:
             store: WorkflowStore instance for durable state persistence.
             runtime_factory: Optional callable mapping Agent to AgentRuntime.
             queue: Target queue name for workflow tasks.
+            watchdog_interval: Optional delay in seconds between watchdog checks.
+            run_timeout_seconds: Maximum total duration before timing out a run.
         """
         self.registry = registry
         self.store = store
         self.runtime_factory = runtime_factory
         self._queue = queue
+        self.watchdog_interval = watchdog_interval
+        self.run_timeout_seconds = run_timeout_seconds
 
     def dependencies(self) -> TaskDependencyResolver:
         """Create a TaskDependencyResolver providing workflow_engine for workflow tasks.
@@ -112,7 +122,7 @@ class DurableWorkflowEngine:
         Returns:
             TaskDependencyResolver callable injecting workflow_engine.
         """
-        target_tasks = {ADVANCE_TASK, EXECUTE_NODE_TASK, "litestar_mcp.workflow.watchdog"}
+        target_tasks = {ADVANCE_TASK, EXECUTE_NODE_TASK, WATCHDOG_TASK}
 
         async def _resolve_workflow_deps(
             task_obj: Any,
@@ -150,8 +160,19 @@ class DurableWorkflowEngine:
 
         Returns:
             The generated run_id string.
+
+        Raises:
+            ImproperlyConfiguredException: If immediate execution backend is used with watchdog.
         """
         self.registry.get(workflow)
+        service = self._queue_service()
+        execution_backend = getattr(service.config, "execution_backend", None)
+        if execution_backend == "immediate" and self.watchdog_interval is not None:
+            msg = (
+                "DurableWorkflowEngine watchdog requires a non-immediate execution backend (e.g. local, redis, sqlspec)"
+            )
+            raise ImproperlyConfiguredException(msg)
+
         run_id = uuid4().hex
         run = WorkflowRun(
             run_id=run_id,
@@ -159,8 +180,16 @@ class DurableWorkflowEngine:
             state=dict(initial_state or {}),
         )
         await self.store.create_run(run)
-        service = self._queue_service()
         await service.enqueue(advance_workflow, run_id=run_id, queue=self._queue)
+        if self.watchdog_interval is not None:
+            await service.enqueue(
+                watch_workflow,
+                run_id=run_id,
+                tick=1,
+                key=f"wf-watchdog:{run_id}:1",
+                run_after=self.watchdog_interval,
+                queue=self._queue,
+            )
         return run_id
 
     async def snapshot(self, run_id: str) -> tuple[WorkflowRun, WorkflowContext]:
@@ -290,6 +319,42 @@ class DurableWorkflowEngine:
         service = self._queue_service()
         await service.enqueue(advance_workflow, run_id=run_id, queue=self._queue)
 
+    async def watch(self, run_id: str, tick: int = 1) -> RunStatus | None:
+        """Execute one watchdog tick for a durable run.
+
+        Args:
+            run_id: Unique workflow run identifier.
+            tick: Current tick iteration number.
+
+        Returns:
+            The resulting RunStatus, or None if run does not exist.
+        """
+        run = await self.store.get_run(run_id)
+        if run is None:
+            return None
+        if run.status in ("completed", "failed"):
+            return run.status
+
+        service = self._queue_service()
+        if time.time() - run.created_at >= self.run_timeout_seconds:
+            updated_run = await self.store.set_run_status(run_id, "failed", error="workflow timed out")
+            wf = self.registry.get(run.workflow)
+            for name in wf.nodes:
+                await service.reset_task_identity(f"wf-node:{run_id}:{name}")
+            return updated_run.status
+
+        current_status = await self.advance(run_id)
+        if current_status == "running" and self.watchdog_interval is not None:
+            await service.enqueue(
+                watch_workflow,
+                run_id=run_id,
+                tick=tick + 1,
+                key=f"wf-watchdog:{run_id}:{tick + 1}",
+                run_after=self.watchdog_interval,
+                queue=self._queue,
+            )
+        return current_status
+
 
 @task(ADVANCE_TASK, queue="workflow", retries=3)
 async def advance_workflow(run_id: str, workflow_engine: DurableWorkflowEngine) -> str | None:
@@ -315,3 +380,18 @@ async def execute_workflow_node(run_id: str, node: str, workflow_engine: Durable
         workflow_engine: Injected DurableWorkflowEngine instance.
     """
     await workflow_engine.execute_node(run_id, node)
+
+
+@task(WATCHDOG_TASK, queue="workflow", retries=3)
+async def watch_workflow(run_id: str, tick: int, workflow_engine: DurableWorkflowEngine) -> str | None:
+    """Re-advance a non-terminal run and schedule the next tick.
+
+    Args:
+        run_id: Unique workflow run identifier.
+        tick: Current tick iteration number.
+        workflow_engine: Injected DurableWorkflowEngine instance.
+
+    Returns:
+        The updated run status string, or None.
+    """
+    return await workflow_engine.watch(run_id, tick)
