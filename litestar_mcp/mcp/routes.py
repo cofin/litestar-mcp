@@ -212,6 +212,13 @@ def _request_metadata_error(
                     "requested": body_version,
                 },
             )
+        if rpc_request.method in {"initialize", "ping"}:
+            return _error(
+                rpc_request.id,
+                code=METHOD_NOT_FOUND,
+                message=f"Method not found: {rpc_request.method}",
+                status_code=HTTP_404_NOT_FOUND,
+            )
 
         name_field = MCP_NAME_FIELDS.get(rpc_request.method)
         if name_field is not None:

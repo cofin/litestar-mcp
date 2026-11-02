@@ -2,6 +2,7 @@
 
 from typing import Annotated, Any
 
+import pytest
 from litestar import Litestar, get
 from litestar.params import Parameter
 from litestar.testing import TestClient
@@ -95,9 +96,20 @@ def test_method_header_mismatch_is_header_mismatch() -> None:
     assert response.json()["error"]["code"] == -32020
 
 
-def test_unknown_method_uses_http_404_and_jsonrpc_method_not_found() -> None:
+@pytest.mark.parametrize(
+    "method",
+    [
+        "initialize",
+        "ping",
+        "unknown/method",
+        "logging/setLevel",
+        "resources/subscribe",
+        "resources/unsubscribe",
+    ],
+)
+def test_unknown_method_uses_http_404_and_jsonrpc_method_not_found(method: str) -> None:
     with TestClient(app=_app()) as client:
-        response = _request(client, "unknown/method")
+        response = _request(client, method)
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == -32601
