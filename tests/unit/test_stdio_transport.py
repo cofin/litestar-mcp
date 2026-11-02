@@ -11,6 +11,7 @@ import httpx2
 import pytest
 from litestar import Litestar, Request, get, post
 from litestar.events import listener
+from litestar.params import JSONBody  # noqa: TC002
 
 from litestar_mcp import LitestarMCP, get_mcp_request_context
 from litestar_mcp.mcp.bridge import run_stdio_streamable_http_bridge
@@ -570,7 +571,7 @@ async def test_transport_raises_app_exception_before_response_start() -> None:
 @pytest.mark.anyio
 async def test_transport_round_trips_a_litestar_app() -> None:
     @post("/echo", sync_to_thread=False)
-    def echo(request: "Request[Any, Any, Any]", data: "dict[str, Any]") -> "dict[str, Any]":
+    def echo(request: "Request[Any, Any, Any]", data: "JSONBody[dict[str, Any]]") -> "dict[str, Any]":
         client = request.scope["client"]
         return {"data": data, "host": request.url.hostname, "client": list(client) if client else None}
 
@@ -672,3 +673,35 @@ async def test_stdio_logs_hook_failure_raised_after_the_cleanup_deadline(caplog:
     ]
     assert "Lifespan shutdown failed after a body error" in messages
     assert "Lifespan shutdown incomplete after 0.02 seconds" in messages
+
+
+@pytest.mark.anyio
+async def test_stdio_bridge_handles_2025_initialize_and_notifications_without_stdout_frame() -> None:
+    @get("/ping_tool", mcp_tool="ping_tool", sync_to_thread=False)
+    def ping_tool() -> "dict[str, str]":
+        return {"pong": "yes"}
+
+    app = Litestar(route_handlers=[ping_tool], plugins=[LitestarMCP()])
+    notif_line = json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}).encode() + b"\n"
+    stdin = BridgeQueuedBytesSource(
+        _rpc_line(
+            "initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "cli"}}, msg_id=1
+        ),
+        notif_line,
+        _rpc_line("ping", {}, msg_id=2),
+        _rpc_line("tools/list", {}, msg_id=3),
+    )
+    stdout = BridgeBytesSink()
+
+    exit_code = await run_stdio_streamable_http_bridge(
+        "http://mcp-stdio/mcp",
+        transport=ASGIStreamingTransport(app),
+        stdin=stdin,
+        stdout=stdout,
+    )
+
+    assert exit_code == 0
+    lines = [json.loads(line) for line in stdout.buffer.splitlines() if line.strip()]
+    assert [msg["id"] for msg in lines] == [1, 2, 3]
+    assert lines[0]["result"]["protocolVersion"] == "2025-06-18"
+    assert "tools" in lines[2]["result"]

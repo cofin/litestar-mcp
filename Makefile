@@ -72,7 +72,7 @@ destroy:                                            ## Destroy the virtual envir
 # =============================================================================
 
 .PHONY: upgrade
-upgrade:                                            ## Upgrade all dependencies to latest stable versions
+upgrade: setup-env                                  ## Upgrade all dependencies to latest stable versions
 	@echo "${INFO} Updating all dependencies... 🔄"
 	@uv lock --upgrade
 	@echo "${OK} Dependencies updated 🔄"
@@ -80,7 +80,7 @@ upgrade:                                            ## Upgrade all dependencies 
 	@echo "${OK} Updated Pre-commit hooks 🔄"
 
 .PHONY: lock
-lock:                                               ## Rebuild lockfiles from scratch
+lock: setup-env                                     ## Rebuild lockfiles from scratch
 	@echo "${INFO} Rebuilding lockfiles... 🔄"
 	@uv lock --upgrade >/dev/null 2>&1
 	@echo "${OK} Lockfiles updated"

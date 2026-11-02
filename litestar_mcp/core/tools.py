@@ -20,8 +20,10 @@ from litestar.serialization import decode_json, encode_json, get_serializer
 from litestar_mcp.core.context import ToolContext
 from litestar_mcp.core.exceptions import LitestarMCPError
 from litestar_mcp.core.schema_builder import hoist_definitions, type_to_json_schema
+from litestar_mcp.utils import strip_docstring_sections
 from litestar_mcp.utils.handler_signature import (
     DIParameterSpec,
+    _parse_docstring_args,
     extract_di_parameter,
     has_dishka_parameters,
 )
@@ -85,6 +87,7 @@ class Tool:
         "_args_model",
         "_di_injected",
         "_injected",
+        "annotations",
         "bound_instance",
         "dependencies",
         "description",
@@ -96,6 +99,7 @@ class Tool:
     name: str
     description: str
     parameters: dict[str, Any]
+    annotations: dict[str, Any]
     bound_instance: Any | None
     fn: Callable[..., Any]
     dependencies: dict[str, Any]
@@ -108,6 +112,8 @@ class Tool:
         name: "str | None" = None,
         description: "str | None" = None,
         dependencies: "Mapping[str, Any] | None" = None,
+        annotations: "Mapping[str, Any] | None" = None,
+        read_only: "bool | None" = None,
         bound_instance: "Any | None" = None,
         _args_model: "type[Any] | None" = None,
         _injected: "dict[str, Callable[[ToolContext], Any]] | None" = None,
@@ -118,9 +124,16 @@ class Tool:
         self.fn = fn
         self.bound_instance = bound_instance
         self.name = str(name or getattr(fn, "__name__", "tool"))
-        resolved_desc = description if description is not None else getattr(fn, "__doc__", None)
-        self.description = (resolved_desc or "").strip()
+        if description is not None:
+            self.description = description.strip()
+        else:
+            raw_doc = inspect.getdoc(fn)
+            self.description = strip_docstring_sections(raw_doc) if raw_doc else ""
         self.dependencies = dict(dependencies) if dependencies is not None else {}
+        merged_annotations: dict[str, Any] = dict(annotations) if annotations is not None else {}
+        if read_only is not None:
+            merged_annotations["readOnlyHint"] = bool(read_only)
+        self.annotations = merged_annotations
 
         if parameters is not None and _injected is not None:
             self._args_model = _args_model
@@ -154,6 +167,7 @@ class Tool:
             name=self.name,
             description=self.description,
             dependencies=self.dependencies,
+            annotations=self.annotations,
             bound_instance=instance,
             _args_model=self._args_model,
             _injected=self._injected,
@@ -204,6 +218,9 @@ class Tool:
         description: "str | None" = None,
         parameters: "dict[str, Any] | None" = None,
         call: "Callable[..., Any] | None" = None,
+        *,
+        annotations: "Mapping[str, Any] | None" = None,
+        read_only: "bool | None" = None,
     ) -> "Tool":
         """Construct a tool instance from an explicit JSON schema and callable."""
         param_schema = dict(parameters) if parameters is not None else {"type": "object", "properties": {}}
@@ -219,6 +236,8 @@ class Tool:
             target_call,
             name=name,
             description=description,
+            annotations=annotations,
+            read_only=read_only,
             parameters=param_schema,
             _args_model=None,
             _injected={},
@@ -307,6 +326,7 @@ class Tool:
             type_hints = getattr(fn, "__annotations__", {})
 
         sig = inspect.signature(fn)
+        doc_param_descriptions = _parse_docstring_args(inspect.getdoc(fn))
         injected: dict[str, Callable[[ToolContext], Any]] = {}
         di_injected: dict[str, DIParameterSpec] = {}
         properties: dict[str, Any] = {}
@@ -338,6 +358,8 @@ class Tool:
                 continue
 
             prop_schema = type_to_json_schema(hint)
+            if "description" not in prop_schema and param.name in doc_param_descriptions:
+                prop_schema["description"] = doc_param_descriptions[param.name]
             properties[param.name] = prop_schema
             if param.default is inspect.Parameter.empty:
                 required.append(param.name)
@@ -358,6 +380,16 @@ class Tool:
         if defs:
             param_schema["$defs"] = defs
 
+        args_model = cls._build_args_model(name, fields, defer_unknown_types=defer_unknown_types)
+        return param_schema, args_model, injected, di_injected
+
+    @staticmethod
+    def _build_args_model(
+        name: str,
+        fields: "list[tuple[str, Any] | tuple[str, Any, Any]]",
+        *,
+        defer_unknown_types: bool,
+    ) -> "type[Any] | None":
         try:
             args_model = msgspec.defstruct(
                 f"{name}_arguments",
@@ -368,11 +400,10 @@ class Tool:
             msgspec.inspect.type_info(args_model)
         except TypeError as exc:
             if defer_unknown_types:
-                return param_schema, None, injected, di_injected
+                return None
             msg = f"Tool {name!r} has invalid parameter types: {exc}"
             raise ImproperlyConfiguredException(msg) from exc
-
-        return param_schema, args_model, injected, di_injected
+        return args_model
 
 
 def tool(
@@ -381,6 +412,8 @@ def tool(
     name: "str | None" = None,
     description: "str | None" = None,
     dependencies: "Mapping[str, Any] | None" = None,
+    annotations: "Mapping[str, Any] | None" = None,
+    read_only: "bool | None" = None,
 ) -> "Any":
     """Decorate a callable as an executable tool."""
     enclosing_deps = _capture_enclosing_class_dependencies()
@@ -390,6 +423,8 @@ def tool(
             name=name,
             description=description,
             dependencies=dependencies,
+            annotations=annotations,
+            read_only=read_only,
             _enclosing_dependencies=enclosing_deps,
         )
 
@@ -402,6 +437,8 @@ def tool(
             name=resolved_name,
             description=description,
             dependencies=dependencies,
+            annotations=annotations,
+            read_only=read_only,
             _enclosing_dependencies=captured,
         )
 

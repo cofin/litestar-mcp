@@ -10,6 +10,7 @@ from litestar_mcp.core._typing import DISHKA_INSTALLED, dishka_inject
 from litestar_mcp.core.tools import has_dishka_parameters
 from litestar_mcp.mcp.executor import require_internal_dispatch
 from litestar_mcp.utils import set_mcp_metadata
+from litestar_mcp.utils.handler_signature import normalize_synthesized_handler_signature
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -50,6 +51,7 @@ def prompt(
         target_fn = _wrap_dishka_if_needed(fn)
         if target_fn is not fn:
             set_mcp_metadata(target_fn, metadata)
+        normalize_synthesized_handler_signature(target_fn, fn, path=f"/prompts/{prompt_name}")
         sync_option = None if inspect.iscoroutinefunction(target_fn) else False
         return post(
             f"/prompts/{prompt_name}",

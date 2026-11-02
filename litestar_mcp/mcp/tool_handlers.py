@@ -5,9 +5,10 @@ from typing import TYPE_CHECKING, Annotated, Any, get_type_hints
 
 from litestar import Request
 from litestar.constants import RESERVED_KWARGS
+from litestar.di import NamedDependency
 from litestar.exceptions import ImproperlyConfiguredException
 from litestar.handlers import HTTPRouteHandler, post
-from litestar.params import Dependency, Parameter
+from litestar.params import QueryParameter
 
 from litestar_mcp.core.context import ToolContext
 from litestar_mcp.core.tools import Tool
@@ -63,7 +64,7 @@ def _build_tool_endpoint_signature(
         di_spec = di_params.get(pname)
         if di_spec is not None:
             if di_spec.source_kind == "litestar":
-                litestar_ann = Annotated[Any, Dependency(skip_validation=True)]
+                litestar_ann = NamedDependency[Any]
                 params.append(
                     inspect.Parameter(
                         name=pname,
@@ -83,11 +84,12 @@ def _build_tool_endpoint_signature(
             ann = Any
 
         endpoint_name = pname
-        endpoint_ann: Any = ann
         if pname in RESERVED_KWARGS:
             endpoint_name = f"_mcp_param_{pname}"
-            endpoint_ann = Annotated[ann, Parameter(query=pname)]
+            endpoint_ann: Any = Annotated[ann, QueryParameter(name=pname)]
             renamed_params[endpoint_name] = pname
+        else:
+            endpoint_ann = Annotated[ann, QueryParameter(name=pname)]
 
         params.append(
             inspect.Parameter(
@@ -136,10 +138,14 @@ def build_controller_tool_handler(tool: Tool) -> HTTPRouteHandler:
     _controller_tool_endpoint.__annotations__ = annotations
     setattr(_controller_tool_endpoint, "__signature__", sig)
 
-    set_mcp_metadata(
-        _controller_tool_endpoint,
-        {"type": "tool", "name": tool.name, "description": tool.description},
-    )
+    metadata: dict[str, Any] = {"type": "tool", "name": tool.name, "description": tool.description}
+    if tool.annotations:
+        metadata["annotations"] = dict(tool.annotations)
+    set_mcp_metadata(_controller_tool_endpoint, metadata)
+
+    route_opt: dict[str, Any] = {"_mcp_synthesized_tool": True}
+    if tool.annotations:
+        route_opt["mcp_annotations"] = dict(tool.annotations)
 
     handler_deps = {k: v for k, v in tool.dependencies.items() if k in tool.di_parameters}
     return post(
@@ -147,6 +153,7 @@ def build_controller_tool_handler(tool: Tool) -> HTTPRouteHandler:
         guards=[require_internal_dispatch],
         dependencies=handler_deps or None,
         include_in_schema=False,
+        opt=route_opt,
     )(_controller_tool_endpoint)
 
 
@@ -176,10 +183,10 @@ def build_tool_route_handler(
     _standalone_tool_endpoint.__annotations__ = annotations
     setattr(_standalone_tool_endpoint, "__signature__", sig)
 
-    set_mcp_metadata(
-        _standalone_tool_endpoint,
-        {"type": "tool", "name": tool.name, "description": tool.description},
-    )
+    metadata: dict[str, Any] = {"type": "tool", "name": tool.name, "description": tool.description}
+    if tool.annotations:
+        metadata["annotations"] = dict(tool.annotations)
+    set_mcp_metadata(_standalone_tool_endpoint, metadata)
 
     clean_base = base_path.rstrip("/")
     path = f"{clean_base}/internal/tools/{tool.name}"
@@ -188,10 +195,15 @@ def build_tool_route_handler(
     if dependencies:
         merged_deps.update(dependencies)
 
+    route_opt: dict[str, Any] = {"_mcp_synthesized_tool": True}
+    if tool.annotations:
+        route_opt["mcp_annotations"] = dict(tool.annotations)
+
     route_guards = [require_internal_dispatch, *(guards or ())]
     return post(
         path=path,
         guards=route_guards,
         dependencies=merged_deps or None,
         include_in_schema=False,
+        opt=route_opt,
     )(_standalone_tool_endpoint)

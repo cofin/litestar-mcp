@@ -13,8 +13,9 @@ these lived in separate modules (``filters.py``, ``decorators.py``,
 this single module.
 """
 
+import inspect
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
@@ -31,6 +32,77 @@ Kind = Literal["tool", "resource", "prompt"]
 _STRUCTURED_FIELDS: "tuple[str, str, str]" = ("when_to_use", "returns", "agent_instructions")
 _VAR_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_GOOGLE_HEADER_LOWER = frozenset(
+    {
+        "args:",
+        "arguments:",
+        "params:",
+        "parameters:",
+        "keyword args:",
+        "keyword arguments:",
+        "other parameters:",
+        "returns:",
+        "return:",
+        "raises:",
+        "yields:",
+        "yield:",
+        "notes:",
+        "note:",
+        "examples:",
+        "example:",
+        "attributes:",
+        "references:",
+        "see also:",
+        "warnings:",
+        "warning:",
+        "todo:",
+        "todos:",
+    }
+)
+_NUMPY_SECTION_TITLES = frozenset(
+    {
+        "parameters",
+        "args",
+        "arguments",
+        "other parameters",
+        "returns",
+        "yields",
+        "raises",
+        "attributes",
+        "see also",
+        "notes",
+        "references",
+        "examples",
+        "warnings",
+    }
+)
+_SPHINX_FIELD_RE = re.compile(
+    r"^:(?:param|parameter|arg|argument|key|keyword|type|vartype|returns|return|rtype|raises|raise|except|exception)\b",
+    re.IGNORECASE,
+)
+
+
+def strip_docstring_sections(docstring: "str | None") -> "str":
+    """Return docstring summary and body prose with Google, NumPy, and Sphinx sections stripped."""
+    if not docstring:
+        return ""
+    cleaned = inspect.cleandoc(docstring)
+    lines = cleaned.splitlines()
+    prose_lines: list[str] = []
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.lower() in _GOOGLE_HEADER_LOWER:
+            break
+        if _SPHINX_FIELD_RE.match(stripped):
+            break
+        if (
+            stripped.lower() in _NUMPY_SECTION_TITLES
+            and idx + 1 < len(lines)
+            and re.match(r"^-{3,}\s*$", lines[idx + 1].strip())
+        ):
+            break
+        prose_lines.append(line)
+    return "\n".join(prose_lines).strip()
 
 
 # Public MetadataRegistry and DescriptionSources
@@ -150,6 +222,7 @@ def mcp_tool(
     input_schema: "dict[str, Any] | None" = None,
     output_schema: "dict[str, Any] | None" = None,
     annotations: "dict[str, Any] | None" = None,
+    read_only: "bool | None" = None,
     scopes: "list[str] | None" = None,
     task_support: "str | None" = None,
     task_input_before_start: "bool" = False,
@@ -171,6 +244,7 @@ def mcp_tool(
         input_schema: Optional explicit JSON Schema for the tool input.
         output_schema: Optional JSON Schema for the tool's structured output.
         annotations: Optional metadata annotations (audience, priority, etc.).
+        read_only: Optional shorthand setting ``annotations["readOnlyHint"]``.
         scopes: Optional list of OAuth scopes advertised as discovery
             metadata (surfaced under ``tools[].annotations.scopes`` in
             ``tools/list``). Scopes are **not** enforced inline — attach a
@@ -217,8 +291,13 @@ def mcp_tool(
             metadata["input_schema"] = input_schema
         if output_schema is not None:
             metadata["output_schema"] = output_schema
-        if annotations is not None:
-            metadata["annotations"] = annotations
+        if annotations is not None or read_only is not None:
+            merged_annotations = dict(annotations or {})
+            if read_only is not None:
+                merged_annotations["readOnlyHint"] = bool(read_only)
+            metadata["annotations"] = merged_annotations
+        if read_only is not None:
+            metadata["read_only"] = bool(read_only)
         if scopes is not None:
             metadata["scopes"] = scopes
         if task_support is not None:
@@ -412,14 +491,66 @@ def extract_description_sources(
     keys = opt_keys if opt_keys is not None else _default_opt_keys()
     description = _read_field(handler, fn, "description", kind, keys)
     if description is None:
-        doc = _clean(getattr(fn, "__doc__", None))
-        description = doc if doc is not None else f"{kind.title()}: {fallback_name}"
+        handler_desc = _clean(getattr(handler, "description", None)) or _clean(getattr(handler, "summary", None))
+        if handler_desc is not None:
+            description = handler_desc
+        else:
+            raw_doc = getattr(fn, "__doc__", None)
+            doc = _clean(strip_docstring_sections(raw_doc)) if isinstance(raw_doc, str) else None
+            description = doc if doc is not None else f"{kind.title()}: {fallback_name}"
     return DescriptionSources(
         description=description,
         when_to_use=_read_field(handler, fn, "when_to_use", kind, keys),
         returns=_read_field(handler, fn, "returns", kind, keys),
         agent_instructions=_read_field(handler, fn, "agent_instructions", kind, keys),
     )
+
+
+def validate_tool_descriptions(
+    tools: "Sequence[Mapping[str, Any]]",
+    *,
+    max_tool_description_length: "int | None" = 1000,
+    max_param_description_length: "int | None" = 750,
+    max_output_field_description_length: "int | None" = 300,
+) -> "list[str]":
+    """Validate tool, input parameter, and output schema field description lengths."""
+    violations: list[str] = []
+    for tool_entry in tools:
+        tool_name = str(tool_entry.get("name", "<unnamed>"))
+        tool_desc = tool_entry.get("description")
+        if (
+            max_tool_description_length is not None
+            and isinstance(tool_desc, str)
+            and len(tool_desc) > max_tool_description_length
+        ):
+            violations.append(
+                f"Tool '{tool_name}' description length {len(tool_desc)} exceeds maximum {max_tool_description_length}"
+            )
+        input_schema = tool_entry.get("inputSchema")
+        if max_param_description_length is not None and isinstance(input_schema, Mapping):
+            props = input_schema.get("properties")
+            if isinstance(props, Mapping):
+                for param_name, prop_schema in props.items():
+                    if isinstance(prop_schema, Mapping):
+                        param_desc = prop_schema.get("description")
+                        if isinstance(param_desc, str) and len(param_desc) > max_param_description_length:
+                            violations.append(
+                                f"Tool '{tool_name}' parameter '{param_name}' description length {len(param_desc)} "
+                                f"exceeds maximum {max_param_description_length}"
+                            )
+        output_schema = tool_entry.get("outputSchema")
+        if max_output_field_description_length is not None and isinstance(output_schema, Mapping):
+            out_props = output_schema.get("properties")
+            if isinstance(out_props, Mapping):
+                for field_name, field_schema in out_props.items():
+                    if isinstance(field_schema, Mapping):
+                        field_desc = field_schema.get("description")
+                        if isinstance(field_desc, str) and len(field_desc) > max_output_field_description_length:
+                            violations.append(
+                                f"Tool '{tool_name}' output field '{field_name}' description length {len(field_desc)} "
+                                f"exceeds maximum {max_output_field_description_length}"
+                            )
+    return violations
 
 
 def render_description(
@@ -581,4 +712,6 @@ __all__ = (
     "render_description",
     "set_mcp_metadata",
     "should_include_handler",
+    "strip_docstring_sections",
+    "validate_tool_descriptions",
 )

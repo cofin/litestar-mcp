@@ -19,7 +19,7 @@ from litestar_mcp.core.typing import (
     is_msgspec_struct,
     is_pydantic_model,
 )
-from litestar_mcp.utils import get_handler_function
+from litestar_mcp.utils import get_handler_function, strip_docstring_sections
 from litestar_mcp.utils.handler_signature import (
     _unwrap_annotated,
     get_advertised_handler_parameters,
@@ -243,6 +243,8 @@ def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]"
         _, metas = _unwrap_annotated(param.annotation)
         if param.default is not inspect.Parameter.empty and any(getattr(m, "const", False) for m in metas):
             prop_schema["const"] = param.default
+        if param.description and "description" not in prop_schema:
+            prop_schema["description"] = param.description
         properties[param.wire_name] = prop_schema
 
         if param.required:
@@ -259,9 +261,15 @@ def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]"
         schema["required"] = required
 
     fn_name = getattr(fn, "__name__", "unknown_function")
+    handler_desc = getattr(handler, "description", None) or getattr(handler, "summary", None)
     fn_doc = getattr(fn, "__doc__", None)
-    if fn_doc:
-        schema["description"] = "Input parameters for " + str(fn_name) + ": " + str(fn_doc.strip())
+    cleaned_doc = (
+        handler_desc.strip()
+        if isinstance(handler_desc, str) and handler_desc.strip()
+        else (strip_docstring_sections(fn_doc) if isinstance(fn_doc, str) else "")
+    )
+    if cleaned_doc:
+        schema["description"] = "Input parameters for " + str(fn_name) + ": " + cleaned_doc
     else:
         schema["description"] = "Input parameters for " + str(fn_name)
 

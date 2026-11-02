@@ -10,6 +10,9 @@ from litestar.stores.base import Store  # noqa: TC002
 from litestar_mcp.core._streaming import DEFAULT_STREAM_CLEANUP_TIMEOUT, validate_stream_cleanup_timeout
 from litestar_mcp.mcp.skills import SkillSource
 
+SUPPORTED_PROTOCOL_VERSIONS: tuple[str, ...] = ("2026-07-28", "2025-06-18", "2025-03-26")
+
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable
 
@@ -84,6 +87,8 @@ class MCPOptKeys:
         agent_instructions: Opt key for the ``## Instructions`` section.
         when_to_use: Opt key for the ``## When to use`` section.
         returns: Opt key for the ``## Returns`` section.
+        annotations: Opt key carrying MCP ``ToolAnnotations`` mapping.
+        read_only: Opt key shorthand setting ``annotations.readOnlyHint``.
     """
 
     tool: "str" = "mcp_tool"
@@ -103,6 +108,8 @@ class MCPOptKeys:
     agent_instructions: "str" = "mcp_agent_instructions"
     when_to_use: "str" = "mcp_when_to_use"
     returns: "str" = "mcp_returns"
+    annotations: "str" = "mcp_annotations"
+    read_only: "str" = "mcp_read_only"
 
     def for_field(self, field_name: "str", kind: "Literal['tool', 'resource', 'prompt']") -> "str":
         """Return the opt key for ``(field_name, kind)``.
@@ -251,6 +258,17 @@ class MCPConfig:
             instances to register on startup.
         skill_controllers: Optional sequence of SkillController classes or
             instances to register on startup.
+        infer_http_method_annotations: Automatically infer default MCP
+            ``ToolAnnotations`` hints (``readOnlyHint``, ``destructiveHint``,
+            ``idempotentHint``) from the route handler's HTTP method when not
+            explicitly overridden.
+        max_tool_description_length: Optional maximum character length for
+            tool descriptions enforced during tool-spec validation.
+        max_param_description_length: Optional maximum character length for
+            input parameter descriptions enforced during tool-spec validation.
+        max_output_field_description_length: Optional maximum character length
+            for output schema property descriptions enforced during tool-spec
+            validation.
     """
 
     base_path: "str" = "/mcp"
@@ -280,6 +298,10 @@ class MCPConfig:
     route_opt: "dict[str, Any] | None" = None
     prompt_controllers: "Sequence[type[Any]]" = ()
     skill_controllers: "Sequence[type[Any]]" = ()
+    infer_http_method_annotations: "bool" = True
+    max_tool_description_length: "int | None" = None
+    max_param_description_length: "int | None" = None
+    max_output_field_description_length: "int | None" = None
 
     def __post_init__(self) -> "None":
         validate_stream_cleanup_timeout(self.stream_cleanup_timeout)
@@ -300,6 +322,18 @@ class MCPConfig:
             raise ValueError(msg)
         if self.stream_queue_capacity <= 0:
             msg = f"stream_queue_capacity must be positive, got {self.stream_queue_capacity}"
+            raise ValueError(msg)
+        if self.max_tool_description_length is not None and self.max_tool_description_length <= 0:
+            msg = f"max_tool_description_length must be positive or None, got {self.max_tool_description_length}"
+            raise ValueError(msg)
+        if self.max_param_description_length is not None and self.max_param_description_length <= 0:
+            msg = f"max_param_description_length must be positive or None, got {self.max_param_description_length}"
+            raise ValueError(msg)
+        if self.max_output_field_description_length is not None and self.max_output_field_description_length <= 0:
+            msg = (
+                "max_output_field_description_length must be positive or None, "
+                f"got {self.max_output_field_description_length}"
+            )
             raise ValueError(msg)
 
     @property

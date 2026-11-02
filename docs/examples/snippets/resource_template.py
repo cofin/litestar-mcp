@@ -2,6 +2,7 @@
 
 # start-example
 from litestar import Litestar, get
+from litestar.params import FromPath
 
 from litestar_mcp import LitestarMCP
 
@@ -12,7 +13,7 @@ from litestar_mcp import LitestarMCP
     mcp_resource_template="app://workspaces/{workspace_id}/files/{file_id}",
     sync_to_thread=False,
 )
-def read_workspace_file(workspace_id: "str", file_id: "str") -> "dict[str, str]":
+def read_workspace_file(workspace_id: "FromPath[str]", file_id: "FromPath[str]") -> "dict[str, str]":
     """Return the concrete workspace/file payload."""
     return {"workspace": workspace_id, "file": file_id}
 

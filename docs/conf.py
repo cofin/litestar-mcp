@@ -1,5 +1,5 @@
 # Configuration file for the Sphinx documentation builder.
-import datetime
+import datetime as dt
 import os
 import warnings
 from typing import TYPE_CHECKING, Any
@@ -20,7 +20,7 @@ except ImportError:
 
 
 # -- Project information -----------------------------------------------------
-current_year = datetime.datetime.now().year
+current_year = dt.datetime.now().year
 project = "Litestar MCP"
 copyright = f"{current_year}, Litestar Organization"
 release = os.getenv("_LITESTAR_MCP_DOCS_BUILD_VERSION", __version__.rsplit(".")[0])
@@ -78,7 +78,7 @@ intersphinx_mapping = {
     "anyio": ("https://anyio.readthedocs.io/en/stable/", None),
     "multidict": ("https://multidict.aio-libs.org/en/stable/", None),
     "cryptography": ("https://cryptography.io/en/latest/", None),
-    "pydantic": ("https://docs.pydantic.dev/latest/", None),
+    "pydantic": ("https://pydantic.dev/docs/validation/latest/", None),
     "typing_extensions": ("https://typing-extensions.readthedocs.io/en/stable/", None),
 }
 

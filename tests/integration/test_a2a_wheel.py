@@ -1,5 +1,7 @@
+import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -36,7 +38,16 @@ else:
 
 
 def _run(*command: str, cwd: Path) -> None:
-    subprocess.run(command, cwd=cwd, check=True)  # noqa: S603
+    env = os.environ.copy()
+    os_release = Path("/etc/os-release")
+    if "127.0.0.1" in env.get("HTTP_PROXY", ""):
+        env.setdefault("UV_OFFLINE", "1")
+        env.setdefault("UV_NO_CONFIG", "1")
+    elif os_release.is_file() and "rodete" in os_release.read_text(errors="ignore"):
+        env.setdefault("PIP_INDEX_URL", "https://pypi.org/simple")
+        env.setdefault("UV_INDEX_URL", "https://pypi.org/simple")
+        env.setdefault("UV_NO_CONFIG", "1")
+    subprocess.run(command, cwd=cwd, env=env, check=True)  # noqa: S603
 
 
 def _find_uv() -> str:
@@ -57,7 +68,7 @@ def test_clean_wheel_base_and_a2a_extra(tmp_path: Path) -> None:
     wheel = next(wheel_dir.glob("litestar_mcp-*.whl"))
 
     base_environment = tmp_path / "base"
-    _run(uv, "venv", str(base_environment), cwd=repository)
+    _run(uv, "venv", "--python", sys.executable, str(base_environment), cwd=repository)
     base_python = base_environment / "bin" / "python"
     _run(uv, "pip", "install", "--python", str(base_python), str(wheel), cwd=repository)
     probe = tmp_path / "probe_base.py"
@@ -65,7 +76,7 @@ def test_clean_wheel_base_and_a2a_extra(tmp_path: Path) -> None:
     _run(str(base_python), "-I", str(probe), cwd=tmp_path)
 
     a2a_environment = tmp_path / "a2a"
-    _run(uv, "venv", str(a2a_environment), cwd=repository)
+    _run(uv, "venv", "--python", sys.executable, str(a2a_environment), cwd=repository)
     a2a_python = a2a_environment / "bin" / "python"
     _run(uv, "pip", "install", "--python", str(a2a_python), f"{wheel}[a2a]", cwd=repository)
     snippet = repository / "docs" / "examples" / "snippets" / "a2a_plugin.py"

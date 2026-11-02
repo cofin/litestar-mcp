@@ -8,16 +8,18 @@ from collections import deque
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from types import UnionType
-from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin, get_type_hints
+from typing import TYPE_CHECKING, Annotated, Any, Union, cast, get_args, get_origin, get_type_hints
 
+from litestar.connection import ASGIConnection
 from litestar.constants import RESERVED_KWARGS
-from litestar.di import Provide
+from litestar.di import Dependency as DiDependency
+from litestar.di import NamedDependency, Provide
 from litestar.enums import ParamType
-from litestar.params import DependencyKwarg, ParameterKwarg
+from litestar.params import DependencyKwarg, FromPath, FromQuery, JSONBody, KwargDefinition, ParameterKwarg
 from litestar.types import Empty
 
 from litestar_mcp.core.typing import DISHKA_INSTALLED, DishkaDependencyKey
-from litestar_mcp.utils import get_handler_function
+from litestar_mcp.utils import get_handler_function, strip_docstring_sections
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -85,7 +87,7 @@ def extract_di_parameter(
         candidates.append(default)
 
     for marker in candidates:
-        if isinstance(marker, DependencyKwarg):
+        if isinstance(marker, (DependencyKwarg, DiDependency)):
             marker_default = getattr(marker, "default", Empty)
             effective_default = marker_default if marker_default is not Empty else default
             if effective_default is marker:
@@ -232,6 +234,9 @@ _GOOGLE_SECTION_HEADERS = frozenset(
         "Arguments:",
         "Params:",
         "Parameters:",
+        "Keyword Args:",
+        "Keyword Arguments:",
+        "Other Parameters:",
         "Returns:",
         "Return:",
         "Raises:",
@@ -251,9 +256,28 @@ _GOOGLE_SECTION_HEADERS = frozenset(
     }
 )
 
+_NUMPY_SECTION_TITLES = frozenset(
+    {
+        "parameters",
+        "args",
+        "arguments",
+        "other parameters",
+        "returns",
+        "yields",
+        "raises",
+        "attributes",
+        "see also",
+        "notes",
+        "references",
+        "examples",
+        "warnings",
+    }
+)
+_SPHINX_PARAM_RE = re.compile(r"^:(?:param|parameter|arg|argument)(?:\s+[^:]+)?\s+(\w+)\s*:\s*(.+)$")
+
 
 def _parse_docstring_args(docstring: "str | None") -> "dict[str, str]":
-    """Extract parameter descriptions from a Google-style docstring."""
+    """Extract parameter descriptions from Google, Sphinx, or NumPy docstrings."""
     if not docstring:
         return {}
     lines = docstring.splitlines()
@@ -266,7 +290,7 @@ def _parse_docstring_args(docstring: "str | None") -> "dict[str, str]":
 
     for line in lines:
         stripped = line.strip()
-        if stripped in ("Args:", "Arguments:", "Params:", "Parameters:"):
+        if stripped in ("Args:", "Arguments:", "Params:", "Parameters:", "Keyword Args:", "Keyword Arguments:"):
             in_args = True
             continue
         if not in_args:
@@ -298,7 +322,55 @@ def _parse_docstring_args(docstring: "str | None") -> "dict[str, str]":
 
     if current_name is not None:
         result[current_name] = " ".join(current_desc).strip()
+
+    _parse_sphinx_docstring_args(lines, result)
+    _parse_numpy_docstring_args(docstring, result)
     return result
+
+
+def _parse_sphinx_docstring_args(lines: "list[str]", result: "dict[str, str]") -> "None":
+    for line in lines:
+        sphinx_match = _SPHINX_PARAM_RE.match(line.strip())
+        if sphinx_match:
+            pname, pdesc = sphinx_match.group(1), sphinx_match.group(2).strip()
+            if pname not in result and pdesc:
+                result[pname] = pdesc
+
+
+def _parse_numpy_docstring_args(docstring: "str", result: "dict[str, str]") -> "None":
+    cleaned_lines = inspect.cleandoc(docstring).splitlines()
+    in_numpy_params = False
+    numpy_name: str | None = None
+    numpy_desc: list[str] = []
+    idx = 0
+    while idx < len(cleaned_lines):
+        sline = cleaned_lines[idx].strip()
+        is_section_header = (
+            sline.lower() in _NUMPY_SECTION_TITLES
+            and idx + 1 < len(cleaned_lines)
+            and bool(re.match(r"^-{3,}\s*$", cleaned_lines[idx + 1].strip()))
+        )
+        if not in_numpy_params:
+            if is_section_header and sline.lower() in {"parameters", "other parameters"}:
+                in_numpy_params = True
+                idx += 2
+                continue
+            idx += 1
+            continue
+        if is_section_header:
+            break
+        raw_line = cleaned_lines[idx]
+        if sline and not raw_line[0].isspace():
+            if numpy_name is not None and numpy_name not in result and numpy_desc:
+                result[numpy_name] = " ".join(numpy_desc).strip()
+            header_match = re.match(r"^(\w+)(?:\s*:\s*.*)?$", sline)
+            numpy_name = header_match.group(1) if header_match else None
+            numpy_desc = []
+        elif numpy_name is not None and sline:
+            numpy_desc.append(sline)
+        idx += 1
+    if numpy_name is not None and numpy_name not in result and numpy_desc:
+        result[numpy_name] = " ".join(numpy_desc).strip()
 
 
 def _path_parameter_names(path_parameters: "Mapping[str, Any] | Iterable[str] | None") -> "frozenset[str]":
@@ -565,7 +637,8 @@ def _dishka_can_resolve(container: "Any", annotation: "Any") -> "bool":
 def _unwrap_annotated(annotation: "Any") -> "tuple[Any, list[ParameterKwarg]]":
     if get_origin(annotation) is Annotated:
         args = get_args(annotation)
-        return args[0], [m for m in args[1:] if isinstance(m, ParameterKwarg)]
+        inner, nested_metas = _unwrap_annotated(args[0])
+        return inner, [*nested_metas, *(m for m in args[1:] if isinstance(m, ParameterKwarg))]
     if get_origin(annotation) in {Union, UnionType}:
         args = get_args(annotation)
         stripped_args: list[Any] = []
@@ -657,3 +730,124 @@ def _record_alias(
         f"Wire-name collision in handler {handler_name!r}: {wire_name!r} maps to both {existing!r} and {python_name!r}"
     )
     raise ValueError(msg)
+
+
+_PATH_PARAM_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)(?::[^}]*)?\}")
+
+
+def normalize_synthesized_handler_signature(
+    wrapper_fn: "Callable[..., Any]",
+    source_fn: "Callable[..., Any] | None" = None,
+    *,
+    path: "str" = "",
+    dependencies: "Mapping[str, Any] | None" = None,
+) -> "Callable[..., Any]":
+    """Annotate plain parameters on a synthesized internal route handler for Litestar 2.25+."""
+    target = source_fn or wrapper_fn
+    try:
+        hints = get_type_hints(target, include_extras=True)
+    except Exception:  # noqa: BLE001
+        hints = dict(getattr(target, "__annotations__", {}) or {})
+
+    try:
+        raw_sig = inspect.signature(wrapper_fn)
+    except (TypeError, ValueError):
+        return wrapper_fn
+
+    path_param_names = set(_PATH_PARAM_RE.findall(path)) if path else set()
+    explicit_deps: dict[str, Any] = dict(dependencies) if isinstance(dependencies, Mapping) else {}
+    if not explicit_deps:
+        explicit_deps = _capture_class_dependencies()
+
+    new_params: list[inspect.Parameter] = []
+    new_annotations: dict[str, Any] = dict(getattr(wrapper_fn, "__annotations__", {}) or {})
+    changed = False
+
+    for pname, param in raw_sig.parameters.items():
+        ann = hints.get(pname, param.annotation)
+        wrapped_ann = _resolve_synthesized_parameter_annotation(pname, param, ann, path_param_names, explicit_deps)
+        if wrapped_ann is None:
+            new_params.append(param)
+            continue
+        new_params.append(param.replace(annotation=wrapped_ann))
+        new_annotations[pname] = wrapped_ann
+        changed = True
+
+    if changed:
+        wrapper_fn.__annotations__ = new_annotations
+        setattr(wrapper_fn, "__signature__", raw_sig.replace(parameters=new_params))
+    return wrapper_fn
+
+
+def _has_litestar_kwarg_marker(annotation: "Any") -> "bool":
+    _, metas = _unwrap_all_annotated_metadata(annotation)
+    return any(isinstance(m, (KwargDefinition, DiDependency)) for m in metas)
+
+
+def _is_context_or_connection_type(annotation: "Any") -> "bool":
+    inner, _ = _unwrap_all_annotated_metadata(annotation)
+    if not isinstance(inner, type):
+        return False
+    return issubclass(inner, ASGIConnection) or inner.__name__ == "ToolContext"
+
+
+def _capture_class_dependencies() -> "dict[str, Any]":
+    frame = inspect.currentframe()
+    try:
+        caller = frame.f_back if frame is not None else None
+        while caller is not None:
+            deps = caller.f_locals.get("dependencies")
+            if isinstance(deps, Mapping):
+                return dict(deps)
+            caller = caller.f_back
+    finally:
+        del frame
+    return {}
+
+
+def _resolve_synthesized_parameter_annotation(
+    pname: "str",
+    param: "inspect.Parameter",
+    ann: "Any",
+    path_param_names: "set[str]",
+    explicit_deps: "Mapping[str, Any]",
+) -> "Any | None":
+    if (
+        pname == "self"
+        or param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+        or (pname in RESERVED_KWARGS and pname != "data")
+        or ann is inspect.Parameter.empty
+        or isinstance(ann, str)
+        or _has_litestar_kwarg_marker(ann)
+    ):
+        return None
+
+    di_spec = extract_di_parameter(
+        pname,
+        ann,
+        default=param.default,
+        explicit_dependencies=explicit_deps,
+    )
+    if di_spec is not None:
+        return cast("Any", NamedDependency)[ann] if di_spec.source_kind == "litestar" else None
+
+    if _is_context_or_connection_type(ann):
+        return None
+    if pname in path_param_names:
+        return cast("Any", FromPath)[ann]
+    return cast("Any", JSONBody)[ann] if pname == "data" else cast("Any", FromQuery)[ann]
+
+
+__all__ = (
+    "AdvertisedHandlerParameter",
+    "DIParameterSpec",
+    "extract_advertised_handler_arguments",
+    "extract_di_parameter",
+    "get_advertised_handler_parameters",
+    "has_dishka_parameters",
+    "iter_dependency_input_parameters",
+    "normalize_synthesized_handler_signature",
+    "parameter_aliases",
+    "resolve_tool_argument_aliases",
+    "strip_docstring_sections",
+)

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 import msgspec
+from litestar.di import NamedDependency
 
 from litestar_mcp.core.context import ToolContext
 from litestar_mcp.core.exceptions import MissingDependencyError
@@ -163,7 +164,11 @@ run_agent_turn_task = run_agent_turn
 class QueuedTurnManager:
     """Manages queuing agent turns and publishing realtime frames to Channels."""
 
-    def __init__(self, queue_service: Any = None, channels: Any = None) -> None:
+    def __init__(
+        self,
+        queue_service: NamedDependency[Any | None] = None,
+        channels: NamedDependency[Any | None] = None,
+    ) -> None:
         """Initialize QueuedTurnManager with queue_service and channels dependencies."""
         self.queue_service = queue_service
         self.channels = channels

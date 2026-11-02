@@ -2,11 +2,12 @@
 
 from typing import Annotated, Any
 
+import pytest
 from litestar import Litestar, get
 from litestar.params import Parameter
 from litestar.testing import TestClient
 
-from litestar_mcp import LitestarMCP, MCPConfig, MCPToolResult
+from litestar_mcp import SUPPORTED_PROTOCOL_VERSIONS, LitestarMCP, MCPConfig, MCPToolResult
 from tests.unit.conftest import PROTOCOL_VERSION, mcp_envelope
 
 
@@ -46,7 +47,7 @@ def test_server_discover_is_stateless_and_self_describing() -> None:
     assert "mcp-session-id" not in response.headers
     result = response.json()["result"]
     assert result["resultType"] == "complete"
-    assert result["supportedVersions"] == [PROTOCOL_VERSION]
+    assert result["supportedVersions"] == ["2026-07-28", "2025-06-18", "2025-03-26"]
     assert result["ttlMs"] == 0
     assert result["cacheScope"] == "private"
     assert result["_meta"]["io.modelcontextprotocol/serverInfo"]["name"]
@@ -84,7 +85,7 @@ def test_unsupported_protocol_version_lists_supported_versions() -> None:
 
     assert response.status_code == 400
     assert body["error"]["code"] == -32022
-    assert body["error"]["data"]["supportedVersions"] == [PROTOCOL_VERSION]
+    assert body["error"]["data"]["supportedVersions"] == ["2026-07-28", "2025-06-18", "2025-03-26"]
 
 
 def test_method_header_mismatch_is_header_mismatch() -> None:
@@ -95,21 +96,34 @@ def test_method_header_mismatch_is_header_mismatch() -> None:
     assert response.json()["error"]["code"] == -32020
 
 
-def test_unknown_method_uses_http_404_and_jsonrpc_method_not_found() -> None:
+@pytest.mark.parametrize(
+    "method",
+    [
+        "initialize",
+        "ping",
+        "unknown/method",
+        "logging/setLevel",
+        "resources/subscribe",
+        "resources/unsubscribe",
+    ],
+)
+def test_unknown_method_uses_http_404_and_jsonrpc_method_not_found(method: str) -> None:
     with TestClient(app=_app()) as client:
-        response = _request(client, "unknown/method")
+        response = _request(client, method)
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == -32601
 
 
-def test_mcp_endpoint_is_post_only() -> None:
+def test_mcp_endpoint_rejects_get_and_accepts_stateless_delete() -> None:
     with TestClient(app=_app()) as client:
         get_response = client.get("/mcp")
         delete_response = client.delete("/mcp")
+        delete_forbidden = client.delete("/mcp", headers={"Origin": "https://attacker.example"})
 
     assert get_response.status_code == 405
-    assert delete_response.status_code == 405
+    assert delete_response.status_code == 204
+    assert delete_forbidden.status_code == 403
 
 
 def test_same_origin_is_allowed_and_cross_origin_is_forbidden() -> None:
@@ -129,12 +143,81 @@ def test_exact_configured_origin_is_allowed() -> None:
     assert response.status_code == 200
 
 
-def test_removed_core_methods_are_unknown() -> None:
-    with TestClient(app=_app()) as client:
-        for method in ("initialize", "notifications/initialized", "ping"):
-            response = _request(client, method)
-            assert response.status_code == 404
-            assert response.json()["error"]["code"] == -32601
+def test_dual_version_initialize_notifications_and_ping_interoperability() -> None:
+    assert SUPPORTED_PROTOCOL_VERSIONS == ("2026-07-28", "2025-06-18", "2025-03-26")
+
+    config = MCPConfig(instructions="Follow workspace rules.")
+    with TestClient(app=_app(config)) as client:
+        for req_version, expected_version in (
+            ("2026-07-28", "2026-07-28"),
+            ("2025-06-18", "2025-06-18"),
+            ("2025-03-26", "2025-03-26"),
+            ("2024-11-05", "2025-06-18"),
+        ):
+            init_resp = client.post(
+                "/mcp",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": req_version,
+                        "capabilities": {},
+                        "clientInfo": {"name": "test-client", "version": "1.0.0"},
+                    },
+                },
+            )
+            assert init_resp.status_code == 200
+            init_result = init_resp.json()["result"]
+            assert init_result["protocolVersion"] == expected_version
+            assert "tools" in init_result["capabilities"]
+            assert "resources" in init_result["capabilities"]
+            assert "name" in init_result["serverInfo"]
+            assert init_result["instructions"] == "Follow workspace rules."
+
+        notif_resp = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+            headers={"MCP-Protocol-Version": "2025-06-18"},
+        )
+        assert notif_resp.status_code == 202
+        assert notif_resp.content == b""
+
+        cancelled_resp = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 99}},
+        )
+        assert cancelled_resp.status_code == 202
+        assert cancelled_resp.content == b""
+
+        ping_resp = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 2, "method": "ping"},
+            headers={"MCP-Protocol-Version": "2025-06-18"},
+        )
+        assert ping_resp.status_code == 200
+        assert "result" in ping_resp.json()
+
+        tools_resp = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}},
+            headers={"MCP-Protocol-Version": "2025-06-18"},
+        )
+        assert tools_resp.status_code == 200
+        assert [t["name"] for t in tools_resp.json()["result"]["tools"]] == ["a_tool", "z_tool"]
+
+        call_resp = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": {"name": "a_tool", "arguments": {}},
+            },
+            headers={"MCP-Protocol-Version": "2025-03-26"},
+        )
+        assert call_resp.status_code == 200
+        assert call_resp.json()["result"]["content"][0]["type"] == "text"
 
 
 def test_legacy_session_header_is_ignored() -> None:

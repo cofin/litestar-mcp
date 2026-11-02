@@ -1,14 +1,15 @@
 """Litestar Channels SSE streaming bridge and QueuedAgentChatController for queued turns."""
 
 from contextlib import suppress
-from typing import TYPE_CHECKING, Annotated, Any, TypeVar
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 import anyio
 import msgspec
 from litestar import Controller, Request, Response, get, post
+from litestar.di import NamedDependency
 from litestar.exceptions import ImproperlyConfiguredException
-from litestar.params import Dependency
+from litestar.params import FromPath, JSONBody
 from litestar.response import ServerSentEvent
 from litestar.response.sse import ServerSentEventMessage
 from litestar.serialization import decode_json
@@ -23,9 +24,6 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from litestar.types import TypeEncodersMap
-
-T = TypeVar("T")
-NamedDependency = Annotated[T, Dependency(skip_validation=True)]
 
 
 def agent_turn_channel(turn_id: str) -> str:
@@ -61,7 +59,7 @@ class QueuedAgentChatController(Controller):
     @post("/turns", status_code=HTTP_202_ACCEPTED)
     async def enqueue_turn(
         self,
-        data: dict[str, Any],
+        data: JSONBody[dict[str, Any]],
         request: Request[Any, Any, Any],
         turn_manager: NamedDependency[QueuedTurnManager],
     ) -> Response[dict[str, Any]]:
@@ -116,7 +114,7 @@ class QueuedAgentChatController(Controller):
     )
     async def stream_turn(
         self,
-        turn_id: str,
+        turn_id: FromPath[str],
         request: Request[Any, Any, Any],
         channels: NamedDependency[Any | None] = None,
     ) -> ServerSentEvent:

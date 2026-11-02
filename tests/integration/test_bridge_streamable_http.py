@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import logging
+import os
 import socket
 import threading
 import time
@@ -17,6 +18,8 @@ import uvicorn
 from anyio import sleep_forever
 from anyio.to_thread import run_sync as run_sync_in_worker_thread
 from litestar import Litestar, get
+from litestar.connection import Request  # noqa: TC002
+from litestar.params import FromPath  # noqa: TC002
 
 from litestar_mcp import LitestarMCP, MCPConfig, MCPSkillsConfig
 from litestar_mcp.mcp.bridge import run_stdio_streamable_http_bridge
@@ -26,8 +29,6 @@ from tests.integration._auth import FORGED_TOKEN, build_oauth_backend, mint_acce
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
-
-    from litestar.connection import Request
 
 
 def _free_port() -> "int":
@@ -44,6 +45,12 @@ def _run_app(app: "Litestar") -> "Iterator[str]":
 
 @contextlib.contextmanager
 def _run_app_server(app: "Litestar") -> "Iterator[tuple[str, uvicorn.Server]]":
+    existing_no_proxy = os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""
+    bypass_hosts = {host.strip() for host in existing_no_proxy.split(",") if host.strip()} | {"127.0.0.1", "localhost"}
+    merged_no_proxy = ",".join(sorted(bypass_hosts))
+    os.environ["NO_PROXY"] = merged_no_proxy
+    os.environ["no_proxy"] = merged_no_proxy
+
     port = _free_port()
     server = uvicorn.Server(
         uvicorn.Config(
@@ -52,7 +59,7 @@ def _run_app_server(app: "Litestar") -> "Iterator[tuple[str, uvicorn.Server]]":
             port=port,
             log_level="warning",
             lifespan="on",
-            timeout_graceful_shutdown=0,
+            timeout_graceful_shutdown=1,
         )
     )
     thread = threading.Thread(target=server.run, daemon=True)
@@ -61,7 +68,8 @@ def _run_app_server(app: "Litestar") -> "Iterator[tuple[str, uvicorn.Server]]":
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
         try:
-            httpx2.get(base_url, timeout=0.2)
+            with httpx2.Client(trust_env=False) as probe_client:
+                probe_client.get(base_url, timeout=0.2)
             yield base_url, server
             break
         except httpx2.HTTPError:
@@ -70,13 +78,15 @@ def _run_app_server(app: "Litestar") -> "Iterator[tuple[str, uvicorn.Server]]":
         msg = "test MCP server did not start"
         raise RuntimeError(msg)
     server.should_exit = True
-    server.force_exit = True
-    thread.join(timeout=5)
+    thread.join(timeout=2)
+    if thread.is_alive():
+        server.force_exit = True
+        thread.join(timeout=3)
 
 
 def _build_app(*, base_path: "str" = "/mcp") -> "Litestar":
     @get("/hello/{name:str}", mcp_tool="hello", sync_to_thread=False)
-    def hello(name: "str") -> "dict[str, str]":
+    def hello(name: "FromPath[str]") -> "dict[str, str]":
         return {"message": f"hello {name}"}
 
     return Litestar(route_handlers=[hello], plugins=[LitestarMCP(MCPConfig(base_path=base_path))])
@@ -207,7 +217,7 @@ async def test_bridge_stdout_contains_only_json_rpc_when_tool_logs() -> "None":
 async def test_bridge_mid_stream_server_death_exits_non_zero() -> "None":
     tool_started = threading.Event()
 
-    @get("/slow", mcp_tool="slow", sync_to_thread=False)
+    @get("/slow", mcp_tool="slow")
     async def slow_tool() -> "dict[str, str]":
         tool_started.set()
         await sleep_forever()

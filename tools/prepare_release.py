@@ -1,6 +1,6 @@
 import asyncio
 import contextlib
-import datetime
+import datetime as dt
 import os
 import pathlib
 import re
@@ -60,7 +60,7 @@ class PRInfo:
     cc_type: "str"
     number: "int"
     closes: "list[int]"
-    created_at: "datetime.datetime"
+    created_at: "dt.datetime"
     description: "str"
     user: "RepoUser"
 
@@ -161,7 +161,7 @@ class _Thing:
             url=f"{_repository_url}/pull/{pr.number}",
             closes=closes_issues,
             title=pr.title,
-            created_at=datetime.datetime.strptime(pr.created_at, "%Y-%m-%dT%H:%M:%S%z"),
+            created_at=dt.datetime.strptime(pr.created_at, "%Y-%m-%dT%H:%M:%S%z"),
             description=pr.body,
             user=pr.user,
         )
@@ -324,7 +324,7 @@ def build_gh_release_notes(release_info: "ReleaseInfo") -> "str":
 def build_changelog_entry(release_info: "ReleaseInfo", interactive: "bool" = False) -> "str":
     doc = ChangelogEntryWriter()
     with doc.directive("changelog", release_info.version):
-        doc.add_line(f":date: {datetime.datetime.now(tz=datetime.timezone.utc).date().isoformat()}")
+        doc.add_line(f":date: {dt.datetime.now(tz=dt.timezone.utc).date().isoformat()}")
         doc.add_line("")
         change_types = {"fix", "feat"}
         for prs in release_info.pull_requests.values():

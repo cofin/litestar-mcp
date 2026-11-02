@@ -137,7 +137,7 @@ class TestServerDiscover:
     def test_server_discover_returns_capabilities(self, client: "TestClient[Any]") -> "None":
         result = _rpc(client, "server/discover")
         assert "result" in result
-        assert result["result"]["supportedVersions"] == ["2026-07-28"]
+        assert result["result"]["supportedVersions"] == ["2026-07-28", "2025-06-18", "2025-03-26"]
         assert "capabilities" in result["result"]
         assert "io.modelcontextprotocol/serverInfo" in result["result"]["_meta"]
 
@@ -164,9 +164,14 @@ class TestServerDiscover:
 
 
 class TestPing:
-    def test_ping_is_removed(self, client: "TestClient[Any]") -> "None":
-        result = _rpc(client, "ping")
-        assert result["error"]["code"] == -32601
+    def test_ping_returns_empty_result(self, client: "TestClient[Any]") -> "None":
+        resp = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "ping"},
+            headers={"MCP-Protocol-Version": "2025-06-18"},
+        )
+        result = resp.json()
+        assert "result" in result
 
 
 # ---------------------------------------------------------------------------
@@ -374,13 +379,13 @@ class TestErrorHandling:
 
 
 class TestNotifications:
-    def test_notifications_initialized_is_removed(self, client: "TestClient[Any]") -> "None":
-        resp = mcp_post(client, "notifications/initialized")
-        assert resp.status_code == 404
-        assert resp.json()["error"]["code"] == METHOD_NOT_FOUND
-
-    def test_id_less_notification_envelope_is_rejected_before_dispatch(self, client: "TestClient[Any]") -> "None":
+    def test_notifications_initialized_returns_202_accepted_without_id(self, client: "TestClient[Any]") -> "None":
         resp = client.post("/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"})
+        assert resp.status_code == 202
+        assert resp.content == b""
+
+    def test_id_less_non_notification_request_is_rejected_before_dispatch(self, client: "TestClient[Any]") -> "None":
+        resp = client.post("/mcp", json={"jsonrpc": "2.0", "method": "tools/list"})
         assert resp.status_code == 400
         body = resp.json()
         assert body["id"] is None

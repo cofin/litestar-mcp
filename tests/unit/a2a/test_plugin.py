@@ -11,6 +11,7 @@ import pytest
 pytest.importorskip("a2a")
 
 from a2a.client.transports.jsonrpc import JsonRpcTransport
+from a2a.client.transports.rest import RestTransport
 from a2a.server.context import ServerCallContext
 from a2a.server.request_handlers import RequestHandler
 from a2a.types import (
@@ -1223,3 +1224,77 @@ async def test_shutdown_tolerates_sync_or_missing_aclose(close: str) -> None:
 
     if close == "sync":
         handler.aclose.assert_called_once_with()
+
+
+def test_agent_card_route_opt_is_merged_onto_card_route() -> None:
+    config = A2AConfig(agent_card_route_opt={"auth": "public_policy", "custom_flag": True})
+    app = Litestar(plugins=[LitestarA2A(make_card(), StubHandler(), config)])
+
+    handler = app.route_handler_method_map["/.well-known/agent-card.json"]["GET"]
+
+    assert handler.opt["auth"] == "public_policy"
+    assert handler.opt["custom_flag"] is True
+    assert handler.opt["exclude_from_auth"] is True
+    assert handler.opt["exclude_from_csrf"] is True
+
+
+def test_validate_card_accepts_http_json_and_normalizes_underscore_spelling() -> None:
+    card = make_card()
+    card.supported_interfaces[0].protocol_binding = "HTTP_JSON"
+
+    plugin = LitestarA2A(card, AsyncMock())
+    assert plugin.agent_card.supported_interfaces[0].protocol_binding == "HTTP+JSON"
+
+
+@pytest.mark.anyio
+async def test_tenant_resolution_priority_params_then_path_then_header() -> None:
+    handler = StubHandler()
+    app = Litestar(plugins=[LitestarA2A(make_card(), handler)])
+
+    async with AsyncTestClient(app=app) as client:
+        param_payload = send_payload()
+        param_payload["params"]["tenant"] = "param-tenant"
+        await client.post(
+            "/a2a/path-tenant",
+            headers={"A2A-Version": "1.0", "X-A2A-Tenant": "header-tenant"},
+            json=param_payload,
+        )
+        await client.post(
+            "/a2a/path-tenant",
+            headers={"A2A-Version": "1.0", "X-A2A-Tenant": "header-tenant"},
+            json=send_payload(),
+        )
+        await client.post(
+            "/a2a",
+            headers={"A2A-Version": "1.0", "X-A2A-Tenant": "header-tenant"},
+            json=send_payload(),
+        )
+
+    assert [ctx.tenant for ctx in handler.contexts] == ["param-tenant", "path-tenant", "header-tenant"]
+
+
+@pytest.mark.anyio
+async def test_http_json_rest_transport_send_and_stream() -> None:
+    card = make_card()
+    handler = StubHandler()
+    app = Litestar(plugins=[LitestarA2A(card, handler)])
+
+    async with AsyncTestClient(app=app) as http_client:
+        http_client.headers["A2A-Version"] = "1.0"
+        transport = RestTransport(http_client, card, "http://testserver.local/a2a")
+        sent = await transport.send_message(
+            SendMessageRequest(
+                message=Message(message_id="rest-req-1", role=Role.ROLE_USER, parts=[Part(text="hello")])
+            )
+        )
+        events = [
+            event.WhichOneof("payload")
+            async for event in transport.send_message_streaming(
+                SendMessageRequest(
+                    message=Message(message_id="rest-req-2", role=Role.ROLE_USER, parts=[Part(text="stream")])
+                )
+            )
+        ]
+
+    assert sent.message.message_id == "reply"
+    assert events == ["task", "status_update"]

@@ -59,6 +59,10 @@ def agent_to_a2a(
     owner_resolver: "Callable[[ServerCallContext], str] | None" = None,
     security_schemes: dict[str, Any] | None = None,
     security_requirements: list[Any] | None = None,
+    route_opt: dict[str, Any] | None = None,
+    agent_card_route_opt: dict[str, Any] | None = None,
+    tenant_header: str | None = "X-A2A-Tenant",
+    enable_http_json: bool = True,
 ) -> LitestarA2A:
     """Mount an Agent or AgentGroup as an A2A 1.0 Litestar plugin.
 
@@ -74,6 +78,10 @@ def agent_to_a2a(
         owner_resolver: Optional callable resolving owner string from ServerCallContext.
         security_schemes: Optional OpenAPI/A2A security schemes for the AgentCard.
         security_requirements: Optional security requirements for the AgentCard.
+        route_opt: Optional route ``opt`` mapping applied to A2A transport routes.
+        agent_card_route_opt: Optional route ``opt`` mapping applied to the agent card route.
+        tenant_header: Optional HTTP header name used as a fallback tenant source.
+        enable_http_json: Whether to mount and advertise the A2A 1.0 HTTP+JSON transport.
 
     Returns:
         Configured LitestarA2A plugin instance.
@@ -107,6 +115,22 @@ def agent_to_a2a(
                 )
             )
 
+    supported_interfaces = [
+        AgentInterface(
+            url=interface_url,
+            protocol_binding="JSONRPC",
+            protocol_version="1.0",
+        )
+    ]
+    if enable_http_json:
+        supported_interfaces.append(
+            AgentInterface(
+                url=interface_url,
+                protocol_binding="HTTP+JSON",
+                protocol_version="1.0",
+            )
+        )
+
     card_kwargs: dict[str, Any] = {
         "name": agent_name,
         "description": agent_description,
@@ -115,13 +139,7 @@ def agent_to_a2a(
         "default_output_modes": ["text/plain"],
         "skills": skills_list,
         "capabilities": AgentCapabilities(streaming=True),
-        "supported_interfaces": [
-            AgentInterface(
-                url=interface_url,
-                protocol_binding="JSONRPC",
-                protocol_version="1.0",
-            )
-        ],
+        "supported_interfaces": supported_interfaces,
     }
     if security_schemes:
         card_kwargs["security_schemes"] = security_schemes
@@ -191,7 +209,13 @@ def agent_to_a2a(
         task_store=effective_task_store,
         agent_card=card,
     )
-    config = A2AConfig(path=route_path)
+    config = A2AConfig(
+        path=route_path,
+        route_opt=dict(route_opt) if route_opt is not None else {},
+        agent_card_route_opt=dict(agent_card_route_opt) if agent_card_route_opt is not None else {},
+        tenant_header=tenant_header,
+        enable_http_json=enable_http_json,
+    )
     return LitestarA2A(
         agent_card=card,
         request_handler=request_handler,

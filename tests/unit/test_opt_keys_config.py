@@ -4,7 +4,7 @@ discovery (``plugin.py``) and description rendering (routes).
 
 from typing import Any
 
-from litestar import Litestar, get
+from litestar import Litestar, get, post
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP
@@ -109,7 +109,46 @@ def test_modern_tool_policy_opt_keys_can_be_renamed() -> "None":
     opt_keys = MCPOptKeys(
         required_client_capabilities="x_required_capabilities",
         task_input_before_start="x_task_input_before_start",
+        annotations="x_annotations",
+        read_only="x_read_only",
     )
 
     assert opt_keys.required_client_capabilities == "x_required_capabilities"
     assert opt_keys.task_input_before_start == "x_task_input_before_start"
+    assert opt_keys.annotations == "x_annotations"
+    assert opt_keys.read_only == "x_read_only"
+
+
+def test_renamed_annotations_and_read_only_opt_keys_render_through_endpoints() -> "None":
+    opt_keys = MCPOptKeys(
+        tool="x_tool",
+        annotations="x_annotations",
+        read_only="x_read_only",
+    )
+
+    @post(
+        "/search",
+        opt={
+            "x_tool": "search_items",
+            "x_read_only": True,
+            "x_annotations": {"idempotentHint": True, "title": "Search Items"},
+        },
+        sync_to_thread=False,
+    )
+    def search_items() -> "list[dict[str, Any]]":
+        """Search items."""
+        return []
+
+    app = Litestar(
+        route_handlers=[search_items],
+        plugins=[LitestarMCP(MCPConfig(opt_keys=opt_keys))],
+    )
+
+    with TestClient(app=app) as client:
+        tools = _rpc(client, "tools/list")["result"]["tools"]
+        tool_entry = next(t for t in tools if t["name"] == "search_items")
+        assert tool_entry["annotations"] == {
+            "readOnlyHint": True,
+            "idempotentHint": True,
+            "title": "Search Items",
+        }

@@ -6,6 +6,7 @@ import base64
 import contextvars
 import inspect
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar, get_type_hints
 
@@ -80,7 +81,9 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 MCP_PROTOCOL_VERSION = "2026-07-28"
+SUPPORTED_PROTOCOL_VERSIONS: tuple[str, ...] = ("2026-07-28", "2025-06-18", "2025-03-26")
 TASKS_EXTENSION = "io.modelcontextprotocol/tasks"
+
 SKILLS_EXTENSION = "io.modelcontextprotocol/skills"
 MISSING_REQUIRED_CLIENT_CAPABILITY = -32021
 
@@ -510,8 +513,8 @@ class MCPHandlerService:
                 status_message=str(exc),
             )
 
-    async def server_discover(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
-        """Describe the modern protocol versions, capabilities, and extensions."""
+    def _server_capabilities(self) -> "dict[str, Any]":
+        """Build the MCP server capabilities object."""
         capabilities: dict[str, Any] = {
             "tools": {"listChanged": True},
             "resources": {"listChanged": True},
@@ -525,16 +528,109 @@ class MCPHandlerService:
             extensions[SKILLS_EXTENSION] = {"directoryRead": self.skill_catalog.directory_read}
         if extensions:
             capabilities["extensions"] = extensions
+        return capabilities
+
+    def _server_info(self) -> "dict[str, str]":
+        """Return server name and version derived from MCPConfig and Litestar OpenAPI config."""
+        openapi = getattr(self.app_ref, "openapi_config", None)
+        return {
+            "name": self.config.name or (openapi.title if openapi is not None else "Litestar MCP Server"),
+            "version": openapi.version if openapi is not None else "1.0.0",
+        }
+
+    async def server_discover(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
+        """Describe the modern protocol versions, capabilities, and extensions."""
         result: dict[str, Any] = {
-            "supportedVersions": [MCP_PROTOCOL_VERSION],
-            "capabilities": capabilities,
+            "supportedVersions": list(SUPPORTED_PROTOCOL_VERSIONS),
+            "capabilities": self._server_capabilities(),
         }
         if self.config.instructions is not None:
             result["instructions"] = self.config.instructions
         return result
 
-    async def tools_list(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
-        tools = []
+    async def initialize(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
+        """Negotiate MCP protocol version and return server capabilities and info."""
+        requested = params.get("protocolVersion")
+        negotiated = (
+            requested if isinstance(requested, str) and requested in SUPPORTED_PROTOCOL_VERSIONS else "2025-06-18"
+        )
+        result: dict[str, Any] = {
+            "protocolVersion": negotiated,
+            "capabilities": self._server_capabilities(),
+            "serverInfo": self._server_info(),
+        }
+        if self.config.instructions is not None:
+            result["instructions"] = self.config.instructions
+        return result
+
+    async def ping(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
+        """Acknowledge an MCP ping health check."""
+        return {}
+
+    async def notifications_initialized(
+        self, params: "dict[str, Any]", context: "MCPRequestContext"
+    ) -> "dict[str, Any]":
+        """Acknowledge an initialized notification."""
+        return {}
+
+    def _infer_http_method_annotations(self, handler: "BaseRouteHandler") -> "dict[str, Any]":
+        """Infer default MCP ToolAnnotations hints from a route handler's HTTP method."""
+        raw_methods = getattr(handler, "http_methods", None)
+        if not raw_methods:
+            single = getattr(handler, "http_method", None)
+            raw_methods = {single} if single else set()
+        methods: set[str] = set()
+        for method in raw_methods if isinstance(raw_methods, (set, frozenset, list, tuple)) else (raw_methods,):
+            val = getattr(method, "value", method)
+            if isinstance(val, str) and val:
+                methods.add(val.upper())
+        if not methods:
+            return {}
+        if methods <= {"GET", "HEAD"}:
+            return {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True}
+        if methods == {"PUT"}:
+            return {"readOnlyHint": False, "idempotentHint": True}
+        if methods == {"DELETE"}:
+            return {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True}
+        if methods <= {"POST", "PATCH"}:
+            return {"readOnlyHint": False}
+        return {}
+
+    def _resolve_tool_annotations(
+        self,
+        handler: "BaseRouteHandler",
+        metadata: "Mapping[str, Any]",
+    ) -> "dict[str, Any]":
+        """Resolve effective MCP ToolAnnotations for a route handler."""
+        handler_opt = getattr(handler, "opt", None) or {}
+        opt_keys = self.config.opt_keys
+        annotations: dict[str, Any] = {}
+        if self.config.infer_http_method_annotations and not handler_opt.get("_mcp_synthesized_tool"):
+            annotations.update(self._infer_http_method_annotations(handler))
+
+        meta_annotations = metadata.get("annotations")
+        if isinstance(meta_annotations, Mapping):
+            annotations.update(meta_annotations)
+
+        opt_annotations = handler_opt.get(opt_keys.annotations)
+        if isinstance(opt_annotations, Mapping):
+            annotations.update(opt_annotations)
+
+        if metadata.get("read_only") is not None:
+            annotations["readOnlyHint"] = bool(metadata["read_only"])
+
+        opt_read_only = handler_opt.get(opt_keys.read_only)
+        if opt_read_only is not None:
+            annotations["readOnlyHint"] = bool(opt_read_only)
+
+        if "scopes" in metadata and "scopes" not in annotations:
+            annotations["scopes"] = list(metadata["scopes"])
+
+        return annotations
+
+    def build_tool_entries(self) -> "list[dict[str, Any]]":
+        """Build the unpaginated list of advertised MCP tool specifications."""
+        tools: list[dict[str, Any]] = []
         for name, handler in sorted(self.discovered_tools.items()):
             handler_tags = set(getattr(handler, "tags", None) or [])
             if not should_include_handler(name, handler_tags, self.config):
@@ -553,13 +649,14 @@ class MCPHandlerService:
             }
             if "output_schema" in metadata:
                 tool_entry["outputSchema"] = metadata["output_schema"]
-            if "annotations" in metadata:
-                tool_entry["annotations"] = metadata["annotations"]
-            if "scopes" in metadata:
-                annotations = tool_entry.get("annotations") or {}
-                annotations.setdefault("scopes", list(metadata["scopes"]))
+            annotations = self._resolve_tool_annotations(handler, metadata)
+            if annotations:
                 tool_entry["annotations"] = annotations
             tools.append(tool_entry)
+        return tools
+
+    async def tools_list(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
+        tools = self.build_tool_entries()
         try:
             page, next_cursor = _paginate_list(tools, params, self.config.list_page_size)
         except ValueError as exc:

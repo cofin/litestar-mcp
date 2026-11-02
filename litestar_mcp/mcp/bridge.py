@@ -338,6 +338,15 @@ class _StreamableHTTPBridgeClient:
             scope.cancel()
 
     async def _mcp_headers(self, message: dict[str, Any]) -> dict[str, str]:
+        if self._is_legacy_handshake_or_ping(message):
+            params = message.get("params")
+            raw_version = params.get("protocolVersion") if isinstance(params, dict) else None
+            protocol_version = raw_version if isinstance(raw_version, str) else "2025-06-18"
+            return {
+                "Accept": "application/json, text/event-stream",
+                "Content-Type": "application/json",
+                MCP_PROTOCOL_VERSION_HEADER: protocol_version,
+            }
         headers = mcp_request_headers(message)
         method = str(message.get("method", ""))
         params = message.get("params")
@@ -346,7 +355,17 @@ class _StreamableHTTPBridgeClient:
         return headers
 
     def _prepare_message(self, message: dict[str, Any]) -> dict[str, Any]:
+        if self._is_legacy_handshake_or_ping(message):
+            return dict(message)
         return prepare_mcp_request(message, client_info=self._client_info)
+
+    @staticmethod
+    def _is_legacy_handshake_or_ping(message: dict[str, Any]) -> bool:
+        if message.get("method") not in {"initialize", "ping"}:
+            return False
+        params = message.get("params")
+        meta = params.get("_meta") if isinstance(params, dict) else None
+        return not (isinstance(meta, dict) and "io.modelcontextprotocol/protocolVersion" in meta)
 
     async def _custom_tool_headers(self, params: dict[str, Any]) -> dict[str, str]:
         tool_name = params.get("name")

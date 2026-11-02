@@ -46,6 +46,7 @@ __all__ = (
     "DEFAULT_TYPE_ENCODERS",
     "SchemaSerializer",
     "TypeEncodersMap",
+    "format_json",
     "from_json",
     "get_collection_serializer",
     "reset_serializer_cache",
@@ -53,6 +54,7 @@ __all__ = (
     "serialize_collection",
     "to_json",
 )
+
 
 _SerializerKey: TypeAlias = "tuple[type[Any] | None, bool, frozenset[tuple[Any, Any]] | None]"
 _PRIMITIVE_TYPES: "tuple[type[Any], ...]" = (str, bytes, int, float, bool)
@@ -100,6 +102,18 @@ def to_json(
     serializer = get_serializer(type_encoders) if type_encoders else None
     encoded = encode_json(data, serializer=serializer)
     return encoded if as_bytes else encoded.decode("utf-8")
+
+
+def format_json(
+    data: "Any",
+    *,
+    indent: "int" = 2,
+    type_encoders: "TypeEncodersMap | None" = None,
+) -> "str":
+    """Format data as pretty-printed JSON using Litestar's native serializer and msgspec."""
+    serializer = get_serializer(type_encoders) if type_encoders else None
+    encoded = encode_json(data, serializer=serializer)
+    return msgspec.json.format(encoded, indent=indent).decode("utf-8")
 
 
 def schema_dump(

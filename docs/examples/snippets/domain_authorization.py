@@ -4,14 +4,15 @@
 from typing import Any
 
 from litestar import Litestar, Request, get
-from litestar.di import Provide
+from litestar.di import NamedDependency, Provide
 from litestar.exceptions import PermissionDeniedException
+from litestar.params import FromPath
 
 from litestar_mcp import LitestarMCP
 
 
 async def require_workspace_owner(
-    workspace_owner_id: "str",
+    workspace_owner_id: "FromPath[str]",
     request: "Request[Any, Any, Any]",
 ) -> "None":
     """Reject a request for a workspace not owned by the authenticated user."""
@@ -25,9 +26,10 @@ async def require_workspace_owner(
     "/workspaces/{workspace_owner_id:str}/export",
     mcp_tool="export_workspace",
     dependencies={"_owner_check": Provide(require_workspace_owner)},
-    sync_to_thread=False,
 )
-async def export_workspace(workspace_owner_id: "str", _owner_check: "None") -> "dict[str, str]":
+async def export_workspace(
+    workspace_owner_id: "FromPath[str]", _owner_check: "NamedDependency[None]"
+) -> "dict[str, str]":
     """Export a workspace after the dependency authorizes the object ID."""
     return {"workspace_id": workspace_owner_id, "status": "queued"}
 
