@@ -72,6 +72,39 @@ task-handle authorization boundary.
     :end-before: # end-example
     :dedent:
 
+MCP Tasks on litestar-queues
+----------------------------
+
+When deploying across multiple server processes or replicas, configure
+:class:`~litestar_mcp.queues.QueueTaskExecutor` to distribute long-running
+MCP Tasks across workers managed by ``litestar-queues``:
+
+.. literalinclude:: /examples/snippets/mcp_tasks_queue.py
+    :language: python
+    :caption: ``docs/examples/snippets/mcp_tasks_queue.py``
+
+Guarantees and Execution Semantics:
+
+- **Fail-closed principal loader**: If the original request authenticated as a
+  named principal, ``principal_loader`` must be provided on ``QueueTaskExecutor``.
+  Attempting to execute an authenticated task without a loader immediately fails
+  closed (marking the attempt failed) to prevent running tasks without verified
+  principal permissions.
+- **Cooperative cancellation**: Emitting ``tasks/cancel`` updates the task state
+  in the backing store and posts to the cancellation channel. Running worker attempts
+  receive cancellation notifications cooperatively at turn boundaries.
+- **Resuming after input_required**: When a task returns ``input_required``, its current
+  worker execution finishes cleanly. When the client calls ``tasks/update`` with
+  the required input, a subsequent attempt is enqueued to litestar-queues and can be
+  picked up by any healthy replica.
+- **Internal job dispatch**: The underlying queue job ID and worker assignment
+  are kept internal (using key format ``mcp-task:{id}:job``), decoupling MCP client
+  task identifiers from queue backend implementation details.
+- **Partial merge concurrency**: Concurrent partial ``tasks/update`` calls issued
+  simultaneously against different replicas can race, as Litestar's ``Store`` abstraction
+  does not provide compare-and-set (CAS) operations. Applications should serialize
+  updates to a single task from one coordinator.
+
 Skills
 ======
 

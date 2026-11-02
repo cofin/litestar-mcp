@@ -9,6 +9,30 @@ notes, and important protocol fixes.
 Recent Updates
 ==============
 
+.. changelog:: 0.18.0
+
+    .. change:: support distributed MCP Tasks on litestar-queues via QueueTaskExecutor
+        :type: feature
+
+        Added ``QueueTaskExecutor``, ``chain_task_dependencies``, and task worker
+        integration so long-running MCP Tasks can be distributed across workers
+        managed by ``litestar-queues``. Supports fail-closed principal context
+        loading (``principal_loader``), cooperative cancellation, cross-replica
+        resumption on ``input_required``, and internal job dispatch decoupling.
+        Updated ``MCPTaskStore.update`` to return merged responses and added
+        keyword-only ``local`` to ``MCPTaskStore.create`` (`#104 <https://github.com/cofin/litestar-mcp/pull/104>`_).
+
+    .. change:: support durable workflow execution on litestar-queues via DurableWorkflowEngine
+        :type: feature
+
+        Added ``DurableWorkflowEngine``, ``WorkflowRegistry``, ``WorkflowStore``,
+        ``WorkflowRun``, and ``NodeRecord`` in ``litestar_mcp.queues`` to orchestrate
+        durable, distributed DAG workflows on ``litestar-queues``. Provides idempotent
+        task scheduling with unique reservation cleanup, at-least-once node execution,
+        per-run watchdog ticks with ``run_after`` rescheduling to recover lost advances,
+        configurable run timeouts, and validation rejecting immediate execution backends
+        when watchdogs are active (`#104 <https://github.com/cofin/litestar-mcp/pull/104>`_).
+
 .. changelog:: 0.17.0
 
     .. change:: support MCP ToolAnnotations via route opt keys and HTTP method inference

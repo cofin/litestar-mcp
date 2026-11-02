@@ -51,3 +51,44 @@ def test_config_snippet_exposes_mcp_config(module_name: "str") -> "None":
     """Import configuration snippets and verify they define a module-level ``MCPConfig``."""
     mod = importlib.import_module(f"docs.examples.snippets.{module_name}")
     assert isinstance(mod.config, MCPConfig)
+
+
+@pytest.mark.anyio
+async def test_durable_workflow_snippet_runs_to_completion() -> None:
+    """Run the durable workflow snippet to completion and assert node outputs."""
+    import anyio
+    from litestar.testing import AsyncTestClient
+    from litestar_queues.worker import Worker
+
+    from docs.examples.snippets import durable_workflow
+
+    engine, queue_plugin = durable_workflow.create_engine()
+    app = Litestar(plugins=[queue_plugin])
+    async with AsyncTestClient(app):
+        run_id = await engine.start("metrics_pipeline")
+        service = queue_plugin.config.get_service(app.state)
+        worker = Worker(service, queue_plugin.config.worker)
+        for _ in range(50):
+            run, _ = await engine.snapshot(run_id)
+            if run.status != "running":
+                break
+            await worker.run_once()
+            await anyio.sleep(0.01)
+        await worker.stop()
+
+        run, ctx = await engine.snapshot(run_id)
+        assert run.status == "completed"
+        assert ctx.node_outputs["extract"]["raw_count"] == 42
+        assert ctx.node_outputs["transform"]["processed_count"] == 84
+
+
+@pytest.mark.anyio
+async def test_mcp_tasks_queue_snippet_initializes() -> None:
+    """Verify the distributed MCP Tasks queue snippet builds and initializes correctly."""
+    from litestar.testing import AsyncTestClient
+
+    from docs.examples.snippets import mcp_tasks_queue
+
+    app = mcp_tasks_queue.build()
+    async with AsyncTestClient(app):
+        assert app is not None
