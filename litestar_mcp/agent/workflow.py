@@ -12,6 +12,8 @@ import anyio
 from litestar_mcp.agent.runtime import AgentRuntime, TurnRequest
 from litestar_mcp.agent.spec import Agent
 
+StepStatus = Literal["completed", "skipped", "failed"]
+
 
 @dataclass(slots=True)
 class StepResult:
@@ -19,7 +21,8 @@ class StepResult:
 
     node_name: str
     output: Any
-    status: Literal["completed", "skipped", "failed"] = "completed"
+    status: StepStatus = "completed"
+    error: str | None = None
 
 
 @dataclass(slots=True)
@@ -293,6 +296,7 @@ class WorkflowEngine:
 __all__ = (
     "DynamicWorkflow",
     "StepResult",
+    "StepStatus",
     "WorkflowContext",
     "WorkflowEngine",
     "WorkflowNode",

@@ -36,17 +36,27 @@ from litestar_mcp.queues.tasks import (
     set_agent_registry,
     set_channels_service,
 )
+from litestar_mcp.queues.workflow_store import (
+    NodeRecord,
+    RunStatus,
+    WorkflowRun,
+    WorkflowStore,
+)
 
 __all__ = (
     "QUEUES_INSTALLED",
     "RUN_TOOL_TASK",
     "AgentRegistry",
     "NamedDependency",
+    "NodeRecord",
     "PrincipalSnapshot",
     "QueueTaskExecutor",
     "QueuedAgentChatController",
     "QueuedTurn",
     "QueuedTurnManager",
+    "RunStatus",
+    "WorkflowRun",
+    "WorkflowStore",
     "agent_turn_channel",
     "chain_task_dependencies",
     "emit_agent_frame",
