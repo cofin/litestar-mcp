@@ -275,6 +275,7 @@ class MCPTaskStore:
             else:
                 record.status = "working"
                 record.input_requests = None
+                record.input_responses = None
                 record.status_message = "Client input received; processing resumed."
                 should_resume = True
                 resumed_responses = dict(current_responses)

@@ -1277,7 +1277,26 @@ class MCPHandlerService:
                 JSONRPCError(code=INVALID_PARAMS, message="The 'inputResponses' parameter must be an object")
             )
         try:
-            await self.task_store.update(task_id, context.owner_id, input_responses)
+            responses = await self.task_store.update(task_id, context.owner_id, input_responses)
+            executor = self.task_config.executor if self.task_config is not None else None
+            if responses is not None and executor is not None:
+                record = await self.task_store.get(task_id, context.owner_id)
+                dispatch = await self.task_store.get_dispatch(task_id)
+                if dispatch is None:
+                    await self.task_store.fail(
+                        task_id, JSONRPCError(code=INTERNAL_ERROR, message="Task dispatch is missing")
+                    )
+                else:
+                    merged_responses = dict(dispatch.input_responses or {})
+                    merged_responses.update(responses)
+                    call = msgspec.structs.replace(
+                        dispatch,
+                        input_responses=merged_responses,
+                        request_state=record.request_state,
+                        attempt=dispatch.attempt + 1,
+                    )
+                    await self.task_store.set_dispatch(task_id, call)
+                    await executor.resume(call)
         except TaskLookupError as exc:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
         return {}

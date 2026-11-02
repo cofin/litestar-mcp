@@ -19,6 +19,7 @@ from litestar_mcp import (
     MCPConfig,
     MCPInputRequiredResult,
     MCPTaskConfig,
+    get_mcp_request_context,
 )
 from litestar_mcp.mcp.service import TASKS_EXTENSION
 from litestar_mcp.queues import QueueTaskExecutor
@@ -461,3 +462,224 @@ async def test_cancel_other_owner_rejected() -> None:
         )
         assert "error" in cancel_result
         assert cancel_result["error"]["code"] == -32602
+
+
+@pytest.mark.anyio
+async def test_input_required_resumes_on_update() -> None:
+    """Task in input_required resumes with input_responses and request_state when updated."""
+
+    @get("/interactive-calc")
+    @mcp_tool(name="interactive_calc", task_support="optional")
+    async def interactive_calc() -> MCPInputRequiredResult | dict[str, Any]:
+        context = get_mcp_request_context()
+        if context.input_responses is None:
+            return MCPInputRequiredResult(
+                input_requests={"q": {"type": "string", "description": "What is the question?"}},
+                request_state="s1",
+            )
+        assert context.request_state == "s1"
+        return {"answer": context.input_responses["q"]}
+
+    executor = QueueTaskExecutor()
+    app, _ = _make_queued_app(executor=executor, execution_backend="immediate", extra_handlers=[interactive_calc])
+    async with AsyncTestClient(app) as client:
+        result = await _mcp_post(
+            client,
+            "tools/call",
+            {"name": "interactive_calc", "arguments": {}},
+        )
+        task_id = result["result"]["taskId"]
+
+        status_result = await _mcp_post(client, "tasks/get", {"taskId": task_id})
+        assert status_result["result"]["status"] == "input_required"
+
+        update_result = await _mcp_post(
+            client,
+            "tasks/update",
+            {"taskId": task_id, "inputResponses": {"q": "42"}},
+        )
+        assert "error" not in update_result
+
+        status_result = await _mcp_post(client, "tasks/get", {"taskId": task_id})
+        assert status_result["result"]["status"] == "completed"
+        import json
+
+        content = json.loads(status_result["result"]["result"]["content"][0]["text"])
+        assert content == {"answer": "42"}
+
+
+@pytest.mark.anyio
+async def test_partial_update_waits_for_all_responses() -> None:
+    """Partial update persists responses and keeps task at input_required until complete."""
+
+    @get("/multi-input")
+    @mcp_tool(name="multi_input", task_support="optional")
+    async def multi_input() -> MCPInputRequiredResult | dict[str, Any]:
+        context = get_mcp_request_context()
+        if context.input_responses is None:
+            return MCPInputRequiredResult(
+                input_requests={
+                    "first": {"type": "string", "description": "First input"},
+                    "second": {"type": "string", "description": "Second input"},
+                },
+            )
+        return {
+            "first": context.input_responses["first"],
+            "second": context.input_responses["second"],
+        }
+
+    executor = QueueTaskExecutor()
+    app, _ = _make_queued_app(executor=executor, execution_backend="immediate", extra_handlers=[multi_input])
+    async with AsyncTestClient(app) as client:
+        result = await _mcp_post(
+            client,
+            "tools/call",
+            {"name": "multi_input", "arguments": {}},
+        )
+        task_id = result["result"]["taskId"]
+
+        update1 = await _mcp_post(
+            client,
+            "tasks/update",
+            {"taskId": task_id, "inputResponses": {"first": "alpha"}},
+        )
+        assert "error" not in update1
+
+        status1 = await _mcp_post(client, "tasks/get", {"taskId": task_id})
+        assert status1["result"]["status"] == "input_required"
+        assert "second" in status1["result"]["inputRequests"]
+        assert "first" not in status1["result"]["inputRequests"]
+
+        update2 = await _mcp_post(
+            client,
+            "tasks/update",
+            {"taskId": task_id, "inputResponses": {"second": "beta"}},
+        )
+        assert "error" not in update2
+
+        status2 = await _mcp_post(client, "tasks/get", {"taskId": task_id})
+        assert status2["result"]["status"] == "completed"
+        import json
+
+        content = json.loads(status2["result"]["result"]["content"][0]["text"])
+        assert content == {"first": "alpha", "second": "beta"}
+
+
+@pytest.mark.anyio
+async def test_resume_on_other_replica() -> None:
+    """Local worker processes initial input_required attempt, resumes on second worker run."""
+
+    @get("/local-interactive")
+    @mcp_tool(name="local_interactive", task_support="optional")
+    async def local_interactive() -> MCPInputRequiredResult | dict[str, Any]:
+        context = get_mcp_request_context()
+        if context.input_responses is None:
+            return MCPInputRequiredResult(
+                input_requests={"confirm": {"type": "boolean", "description": "Proceed?"}},
+            )
+        return {"proceeded": context.input_responses["confirm"]}
+
+    executor = QueueTaskExecutor()
+    app, _ = _make_queued_app(executor=executor, execution_backend="local", extra_handlers=[local_interactive])
+    async with AsyncTestClient(app) as client:
+        result = await _mcp_post(
+            client,
+            "tools/call",
+            {"name": "local_interactive", "arguments": {}},
+        )
+        task_id = result["result"]["taskId"]
+
+        queue_plugin = app.plugins.get(QueuePlugin)
+        service = queue_plugin.config.get_service(app.state)
+        worker = Worker(service, queue_plugin.config.worker)
+
+        await worker.run_once()
+        await worker.stop()
+
+        status_result = await _mcp_post(client, "tasks/get", {"taskId": task_id})
+        assert status_result["result"]["status"] == "input_required"
+
+        update_result = await _mcp_post(
+            client,
+            "tasks/update",
+            {"taskId": task_id, "inputResponses": {"confirm": True}},
+        )
+        assert "error" not in update_result
+
+        status_before_worker = await _mcp_post(client, "tasks/get", {"taskId": task_id})
+        assert status_before_worker["result"]["status"] == "working"
+
+        worker2 = Worker(service, queue_plugin.config.worker)
+        await worker2.run_once()
+        await worker2.stop()
+
+        status_after_worker = await _mcp_post(client, "tasks/get", {"taskId": task_id})
+        assert status_after_worker["result"]["status"] == "completed"
+        import json
+
+        content = json.loads(status_after_worker["result"]["result"]["content"][0]["text"])
+        assert content == {"proceeded": True}
+
+
+@pytest.mark.anyio
+async def test_resume_attempt_numbers_increase() -> None:
+    """Subsequent input rounds increment the attempt counter on persisted dispatch."""
+    round_count = 0
+
+    @get("/two-round-input")
+    @mcp_tool(name="two_round_input", task_support="optional")
+    async def two_round_input() -> MCPInputRequiredResult | dict[str, Any]:
+        nonlocal round_count
+        context = get_mcp_request_context()
+        if context.input_responses is None:
+            round_count = 1
+            return MCPInputRequiredResult(
+                input_requests={"step1": {"type": "string", "description": "Step 1"}},
+            )
+        if "step1" in context.input_responses and "step2" not in context.input_responses:
+            round_count = 2
+            return MCPInputRequiredResult(
+                input_requests={"step2": {"type": "string", "description": "Step 2"}},
+            )
+        round_count = 3
+        return {"step1": context.input_responses["step1"], "step2": context.input_responses["step2"]}
+
+    executor = QueueTaskExecutor()
+    app, _ = _make_queued_app(executor=executor, execution_backend="immediate", extra_handlers=[two_round_input])
+    async with AsyncTestClient(app) as client:
+        result = await _mcp_post(
+            client,
+            "tools/call",
+            {"name": "two_round_input", "arguments": {}},
+        )
+        task_id = result["result"]["taskId"]
+
+        store = executor.runtime.task_store
+        dispatch1 = await store.get_dispatch(task_id)
+        assert dispatch1 is not None
+        assert dispatch1.attempt == 1
+
+        update1 = await _mcp_post(
+            client,
+            "tasks/update",
+            {"taskId": task_id, "inputResponses": {"step1": "val1"}},
+        )
+        assert "error" not in update1
+
+        dispatch2 = await store.get_dispatch(task_id)
+        assert dispatch2 is not None
+        assert dispatch2.attempt == 2
+
+        update2 = await _mcp_post(
+            client,
+            "tasks/update",
+            {"taskId": task_id, "inputResponses": {"step2": "val2"}},
+        )
+        assert "error" not in update2
+
+        dispatch3 = await store.get_dispatch(task_id)
+        assert dispatch3 is not None
+        assert dispatch3.attempt == 3
+
+        status_result = await _mcp_post(client, "tasks/get", {"taskId": task_id})
+        assert status_result["result"]["status"] == "completed"
