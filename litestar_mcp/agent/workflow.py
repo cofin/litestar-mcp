@@ -135,6 +135,71 @@ class DynamicWorkflow:
         return ready
 
 
+def should_skip(node: WorkflowNode, ctx: WorkflowContext) -> bool:
+    """Determine whether a workflow node should be skipped due to dependency failure or condition.
+
+    Args:
+        node: WorkflowNode to evaluate.
+        ctx: Current WorkflowContext.
+
+    Returns:
+        True if the node should be skipped, False otherwise.
+    """
+    for dep in node.depends_on:
+        dep_result = ctx.step_results.get(dep)
+        if dep_result is not None and dep_result.status != "completed":
+            return True
+    return bool(node.condition is not None and not node.condition(ctx))
+
+
+async def run_workflow_node(
+    node: WorkflowNode,
+    ctx: WorkflowContext,
+    runtime_factory: Callable[[Agent], AgentRuntime] | None = None,
+) -> Any:
+    """Execute a single workflow node handler or agent turn without timeout or status recording.
+
+    Args:
+        node: The WorkflowNode definition to execute.
+        ctx: Current WorkflowContext.
+        runtime_factory: Optional factory callable returning an AgentRuntime for an Agent.
+
+    Returns:
+        The output produced by the node's handler or agent.
+
+    Raises:
+        RuntimeError: If the node has no executable handler or agent target.
+    """
+    if node.handler is not None and callable(node.handler):
+        res = node.handler(ctx)
+        if inspect.isawaitable(res):
+            return await res
+        return res
+
+    if node.agent is not None:
+        runtime = runtime_factory(node.agent) if runtime_factory is not None else AgentRuntime(target=node.agent)
+        if node.prompt is not None:
+            prompt_input = node.prompt(ctx)
+        else:
+            upstream_parts = [
+                str(ctx.node_outputs[dep])
+                for dep in node.depends_on
+                if dep in ctx.node_outputs and ctx.node_outputs[dep] is not None
+            ]
+            prompt_input = "\n\n".join(upstream_parts) if upstream_parts else str(ctx.get("input") or "")
+
+        req = TurnRequest(
+            session_id=f"{ctx.run_id}:{node.name}",
+            turn_id=node.name,
+            user_message=prompt_input,
+        )
+        turn_res = await runtime.run_turn(req)
+        return turn_res.content
+
+    msg = f"Node '{node.name}' has no executable target"
+    raise RuntimeError(msg)
+
+
 class WorkflowEngine:
     """Concurrent in-process DAG execution engine for DynamicWorkflow pipelines."""
 
@@ -156,42 +221,19 @@ class WorkflowEngine:
             else WorkflowContext(state=context_or_state, node_outputs=context_or_state)
         )
 
-        if node.condition is not None and not node.condition(ctx):
+        if should_skip(node, ctx):
             ctx.step_results[node_name] = StepResult(node_name=node_name, output=None, status="skipped")
             return None
 
+        default_rt = self.default_runtime
+        runtime_factory: Callable[[Agent], AgentRuntime] | None = (
+            (lambda _agent: default_rt) if default_rt is not None else None
+        )
         with anyio.fail_after(node.timeout_seconds):
-            if node.handler is not None and callable(node.handler):
-                res = node.handler(ctx)
-                if inspect.isawaitable(res):
-                    return await res
-                return res
-
-            if node.agent is not None:
-                runtime = self.default_runtime or AgentRuntime(target=node.agent)
-                if node.prompt is not None:
-                    prompt_input = node.prompt(ctx)
-                else:
-                    upstream_parts = [
-                        str(ctx.node_outputs[dep])
-                        for dep in node.depends_on
-                        if dep in ctx.node_outputs and ctx.node_outputs[dep] is not None
-                    ]
-                    prompt_input = "\n\n".join(upstream_parts) if upstream_parts else str(ctx.get("input") or "")
-
-                req = TurnRequest(
-                    session_id=f"{ctx.run_id}:{node.name}",
-                    turn_id=node.name,
-                    user_message=prompt_input,
-                )
-                turn_res = await runtime.run_turn(req)
-                return turn_res.content
-
-        msg = f"Node '{node_name}' has no executable target"
-        raise RuntimeError(msg)
+            return await run_workflow_node(node, ctx, runtime_factory=runtime_factory)
 
     @staticmethod
-    def _validate_dependencies(workflow: DynamicWorkflow) -> None:
+    def validate_dependencies(workflow: DynamicWorkflow) -> None:
         """Validate that all node dependencies exist and graph is acyclic."""
         all_nodes = set(workflow.nodes.keys())
         for name, node in workflow.nodes.items():
@@ -221,6 +263,8 @@ class WorkflowEngine:
             msg = f"Workflow stalled: circular or unresolved dependencies in {unresolved}"
             raise RuntimeError(msg)
 
+    _validate_dependencies = validate_dependencies
+
     async def execute_run(
         self,
         workflow: DynamicWorkflow,
@@ -228,7 +272,7 @@ class WorkflowEngine:
     ) -> WorkflowContext:
         """Execute workflow in DAG topological order via ready queue scheduling."""
         ctx = WorkflowContext(state=dict(initial_state or {}))
-        self._validate_dependencies(workflow)
+        self.validate_dependencies(workflow)
 
         in_degrees: dict[str, int] = {name: len(node.depends_on) for name, node in workflow.nodes.items()}
         dependents: dict[str, list[str]] = defaultdict(list)
@@ -300,4 +344,6 @@ __all__ = (
     "WorkflowContext",
     "WorkflowEngine",
     "WorkflowNode",
+    "run_workflow_node",
+    "should_skip",
 )

@@ -10,9 +10,12 @@ from litestar_mcp.agent.runtime import AgentRuntime, TurnRequest
 from litestar_mcp.agent.spec import Agent, AgentMessage
 from litestar_mcp.agent.workflow import (
     DynamicWorkflow,
+    StepResult,
     WorkflowContext,
     WorkflowEngine,
     WorkflowNode,
+    run_workflow_node,
+    should_skip,
 )
 
 
@@ -123,3 +126,44 @@ async def test_workflow_execute_run_skip_condition_and_cycle_error() -> None:
     cyclic.add_node("n2", handler=lambda _s: 2, depends_on=["n1"])
     with pytest.raises(RuntimeError, match="circular or unresolved"):
         await engine.execute_run(cyclic)
+
+
+@pytest.mark.anyio
+async def test_run_workflow_node_handler_and_agent() -> None:
+    """run_workflow_node executes handlers and agents; should_skip enforces conditions."""
+    ctx = WorkflowContext(run_id="run-node-test", state={"input": "Hello agent"})
+
+    sync_node = WorkflowNode(name="sync_step", handler=lambda c: f"sync:{c.state['input']}")
+    sync_out = await run_workflow_node(sync_node, ctx)
+    assert sync_out == "sync:Hello agent"
+
+    async def _async_handler(c: WorkflowContext) -> str:
+        return f"async:{c.state['input']}"
+
+    async_node = WorkflowNode(name="async_step", handler=_async_handler)
+    async_out = await run_workflow_node(async_node, ctx)
+    assert async_out == "async:Hello agent"
+
+    model = MockModelClient(responses=[[ModelDelta(event_type="delta", text="agent response")]])
+    agent = Agent(name="helper", model=model)
+    agent_node = WorkflowNode(name="agent_step", agent=agent)
+
+    agent_out = await run_workflow_node(agent_node, ctx)
+    assert agent_out == "agent response"
+
+    empty_node = WorkflowNode(name="empty_step")
+    with pytest.raises(RuntimeError, match="no executable target"):
+        await run_workflow_node(empty_node, ctx)
+
+    cond_false_node = WorkflowNode(name="cond_step", condition=lambda _c: False)
+    assert should_skip(cond_false_node, ctx) is True
+
+    cond_true_node = WorkflowNode(name="cond_step", condition=lambda _c: True)
+    assert should_skip(cond_true_node, ctx) is False
+
+    dep_node = WorkflowNode(name="dep_step", depends_on=["failed_dep"])
+    assert should_skip(dep_node, ctx) is False
+    ctx.step_results["failed_dep"] = StepResult(node_name="failed_dep", output=None, status="failed")
+    assert should_skip(dep_node, ctx) is True
+    ctx.step_results["failed_dep"] = StepResult(node_name="failed_dep", output="ok", status="completed")
+    assert should_skip(dep_node, ctx) is False

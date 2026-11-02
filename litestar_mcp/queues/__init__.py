@@ -36,6 +36,14 @@ from litestar_mcp.queues.tasks import (
     set_agent_registry,
     set_channels_service,
 )
+from litestar_mcp.queues.workflow import (
+    ADVANCE_TASK,
+    EXECUTE_NODE_TASK,
+    DurableWorkflowEngine,
+    WorkflowRegistry,
+    advance_workflow,
+    execute_workflow_node,
+)
 from litestar_mcp.queues.workflow_store import (
     NodeRecord,
     RunStatus,
@@ -44,9 +52,12 @@ from litestar_mcp.queues.workflow_store import (
 )
 
 __all__ = (
+    "ADVANCE_TASK",
+    "EXECUTE_NODE_TASK",
     "QUEUES_INSTALLED",
     "RUN_TOOL_TASK",
     "AgentRegistry",
+    "DurableWorkflowEngine",
     "NamedDependency",
     "NodeRecord",
     "PrincipalSnapshot",
@@ -55,11 +66,14 @@ __all__ = (
     "QueuedTurn",
     "QueuedTurnManager",
     "RunStatus",
+    "WorkflowRegistry",
     "WorkflowRun",
     "WorkflowStore",
+    "advance_workflow",
     "agent_turn_channel",
     "chain_task_dependencies",
     "emit_agent_frame",
+    "execute_workflow_node",
     "get_agent_registry",
     "get_channels_service",
     "get_queues_module",

@@ -1,11 +1,30 @@
-"""Unit tests for WorkflowStore and durable run models."""
+"""Unit tests for WorkflowStore, durable run models, and DurableWorkflowEngine."""
 
 from datetime import timedelta
+from typing import Any
 
+import anyio
 import pytest
+from litestar import Litestar
+from litestar.exceptions import ImproperlyConfiguredException
 from litestar.stores.memory import MemoryStore
+from litestar.testing import AsyncTestClient
+from litestar_queues import QueueConfig, QueuePlugin, QueueService, WorkerConfig
+from litestar_queues.worker import Worker
 
-from litestar_mcp.agent.workflow import StepResult, WorkflowContext
+from litestar_mcp.agent.models import MockModelClient, ModelDelta
+from litestar_mcp.agent.spec import Agent
+from litestar_mcp.agent.workflow import (
+    DynamicWorkflow,
+    StepResult,
+    WorkflowContext,
+    WorkflowNode,
+)
+from litestar_mcp.queues.workflow import (
+    DurableWorkflowEngine,
+    WorkflowRegistry,
+    execute_workflow_node,
+)
 from litestar_mcp.queues.workflow_store import (
     NodeRecord,
     WorkflowRun,
@@ -30,6 +49,39 @@ class RecordingStore(MemoryStore):
         """Record key and expires_in before delegating to superclass."""
         self.set_calls.append((key, expires_in))
         await super().set(key, value, expires_in=expires_in)
+
+
+def _make_engine_and_app(
+    workflows: list[DynamicWorkflow],
+    store: WorkflowStore | None = None,
+    runtime_factory: Any = None,
+) -> tuple[Litestar, DurableWorkflowEngine, QueuePlugin]:
+    """Create a Litestar test application with configured DurableWorkflowEngine and QueuePlugin."""
+    registry = WorkflowRegistry(workflows)
+    wf_store = store or WorkflowStore(MemoryStore())
+    engine = DurableWorkflowEngine(registry=registry, store=wf_store, runtime_factory=runtime_factory)
+    plugin = QueuePlugin(
+        QueueConfig(
+            queue_backend="memory",
+            execution_backend="local",
+            worker=WorkerConfig(placement="external"),
+            task_dependency_resolver=engine.dependencies(),
+        )
+    )
+    app = Litestar(plugins=[plugin])
+    return app, engine, plugin
+
+
+async def _drain(service: QueueService, config: WorkerConfig, engine: DurableWorkflowEngine, run_id: str) -> None:
+    """Drain queue tasks until workflow run reaches a terminal state or timeout."""
+    worker = Worker(service, config)
+    for _ in range(50):
+        run, _ = await engine.snapshot(run_id)
+        if run.status != "running":
+            break
+        await worker.run_once()
+        await anyio.sleep(0.01)
+    await worker.stop()
 
 
 @pytest.mark.anyio
@@ -195,3 +247,234 @@ async def test_duplicate_run_rejected() -> None:
 
     with pytest.raises(ValueError, match="already exists"):
         await wf_store.create_run(run)
+
+
+@pytest.mark.anyio
+async def test_durable_run_completes_dag() -> None:
+    """DAG runs to completion across worker steps and aggregates state."""
+    counters = {"a": 0, "b": 0, "c": 0, "d": 0}
+
+    def _step_a(c: WorkflowContext) -> int:
+        counters["a"] += 1
+        return 10
+
+    def _step_b(c: WorkflowContext) -> int:
+        counters["b"] += 1
+        return int(c.node_outputs["a"]) * 2
+
+    def _step_c(c: WorkflowContext) -> int:
+        counters["c"] += 1
+        return int(c.node_outputs["a"]) + 5
+
+    def _step_d(c: WorkflowContext) -> int:
+        counters["d"] += 1
+        return int(c.node_outputs["b"]) + int(c.node_outputs["c"])
+
+    wf = DynamicWorkflow(name="dag")
+    wf.add_node("a", handler=_step_a)
+    wf.add_node("b", handler=_step_b, depends_on=["a"])
+    wf.add_node("c", handler=_step_c, depends_on=["a"])
+    wf.add_node("d", handler=_step_d, depends_on=["b", "c"])
+
+    app, engine, plugin = _make_engine_and_app([wf])
+    async with AsyncTestClient(app):
+        run_id = await engine.start("dag")
+        service = plugin.config.get_service(app.state)
+        await _drain(service, plugin.config.worker, engine, run_id)
+
+        run, ctx = await engine.snapshot(run_id)
+        assert run.status == "completed"
+        assert ctx.node_outputs == {"a": 10, "b": 20, "c": 15, "d": 35}
+        assert counters == {"a": 1, "b": 1, "c": 1, "d": 1}
+
+
+@pytest.mark.anyio
+async def test_duplicate_advance_is_idempotent() -> None:
+    """Calling advance multiple times concurrently does not re-execute nodes."""
+    counter = {"a": 0}
+
+    def _step_a(c: WorkflowContext) -> str:
+        counter["a"] += 1
+        return "done"
+
+    wf = DynamicWorkflow(name="single")
+    wf.add_node("a", handler=_step_a)
+
+    app, engine, plugin = _make_engine_and_app([wf])
+    async with AsyncTestClient(app):
+        run_id = await engine.start("single")
+        await engine.advance(run_id)
+        await engine.advance(run_id)
+        await engine.advance(run_id)
+
+        service = plugin.config.get_service(app.state)
+        await _drain(service, plugin.config.worker, engine, run_id)
+
+        run, _ctx = await engine.snapshot(run_id)
+        assert run.status == "completed"
+        assert counter["a"] == 1
+
+
+@pytest.mark.anyio
+async def test_failed_node_skips_dependents_and_fails_run() -> None:
+    """Failed node causes dependents to skip and marks the run failed."""
+
+    def _step_b(c: WorkflowContext) -> None:
+        msg = "boom"
+        raise ValueError(msg)
+
+    wf = DynamicWorkflow(name="fail_wf")
+    wf.add_node("a", handler=lambda _c: "ok")
+    wf.add_node("b", handler=_step_b, depends_on=["a"])
+    wf.add_node("d", handler=lambda _c: "never", depends_on=["b"])
+
+    app, engine, plugin = _make_engine_and_app([wf])
+    async with AsyncTestClient(app):
+        run_id = await engine.start("fail_wf")
+        service = plugin.config.get_service(app.state)
+        await _drain(service, plugin.config.worker, engine, run_id)
+
+        run, ctx = await engine.snapshot(run_id)
+        assert run.status == "failed"
+        assert run.error is not None
+        assert "ValueError: boom" in run.error
+        assert ctx.step_results["b"].status == "failed"
+        assert ctx.step_results["d"].status == "skipped"
+
+
+@pytest.mark.anyio
+async def test_condition_false_skips() -> None:
+    """Node with condition evaluating to False is marked skipped."""
+    wf = DynamicWorkflow(name="cond_wf")
+    wf.add_node("root", handler=lambda _c: "start")
+    wf.add_node(
+        WorkflowNode(
+            name="optional",
+            handler=lambda _c: "not executed",
+            depends_on=["root"],
+            condition=lambda _c: False,
+        )
+    )
+    wf.add_node("final", handler=lambda _c: "end", depends_on=["optional"])
+
+    app, engine, plugin = _make_engine_and_app([wf])
+    async with AsyncTestClient(app):
+        run_id = await engine.start("cond_wf")
+        service = plugin.config.get_service(app.state)
+        await _drain(service, plugin.config.worker, engine, run_id)
+
+        run, ctx = await engine.snapshot(run_id)
+        assert run.status == "completed"
+        assert ctx.step_results["optional"].status == "skipped"
+        assert ctx.step_results["final"].status == "skipped"
+
+
+@pytest.mark.anyio
+async def test_agent_node_uses_upstream_output_and_unique_session() -> None:
+    """Agent node receives joined upstream outputs and uses scoped session ID."""
+    model = MockModelClient(responses=[[ModelDelta(event_type="delta", text="agent output")]])
+    agent = Agent(name="worker_agent", model=model)
+
+    wf = DynamicWorkflow(name="agent_wf")
+    wf.add_node("step1", handler=lambda _c: "upstream data")
+    wf.add_node("agent_step", agent=agent, depends_on=["step1"])
+
+    app, engine, plugin = _make_engine_and_app([wf])
+    async with AsyncTestClient(app):
+        run_id = await engine.start("agent_wf")
+        service = plugin.config.get_service(app.state)
+        await _drain(service, plugin.config.worker, engine, run_id)
+
+        run, ctx = await engine.snapshot(run_id)
+        assert run.status == "completed"
+        assert ctx.node_outputs["agent_step"] == "agent output"
+        node_rec = await engine.store.get_node(run_id, "agent_step")
+        assert node_rec is not None
+        assert node_rec.output == "agent output"
+
+
+@pytest.mark.anyio
+async def test_redelivered_node_does_not_rerun() -> None:
+    """A redelivered node whose record already exists returns immediately."""
+    counter = {"a": 0}
+
+    def _step_a(c: WorkflowContext) -> str:
+        counter["a"] += 1
+        return "val"
+
+    wf = DynamicWorkflow(name="redeliver")
+    wf.add_node("a", handler=_step_a)
+
+    app, engine, plugin = _make_engine_and_app([wf])
+    async with AsyncTestClient(app):
+        run_id = await engine.start("redeliver")
+        service = plugin.config.get_service(app.state)
+        await _drain(service, plugin.config.worker, engine, run_id)
+
+        assert counter["a"] == 1
+        await execute_workflow_node(run_id=run_id, node="a", workflow_engine=engine)
+        await execute_workflow_node(run_id=run_id, node="a", workflow_engine=engine)
+        assert counter["a"] == 1
+
+
+@pytest.mark.anyio
+async def test_unserializable_output_fails_node() -> None:
+    """Node producing non-JSON-serializable output is marked failed."""
+    wf = DynamicWorkflow(name="unserializable")
+    wf.add_node("bad_node", handler=lambda _c: object())
+
+    app, engine, plugin = _make_engine_and_app([wf])
+    async with AsyncTestClient(app):
+        run_id = await engine.start("unserializable")
+        service = plugin.config.get_service(app.state)
+        await _drain(service, plugin.config.worker, engine, run_id)
+
+        run, ctx = await engine.snapshot(run_id)
+        assert run.status == "failed"
+        assert ctx.step_results["bad_node"].status == "failed"
+        assert "not JSON serializable" in str(ctx.step_results["bad_node"].error)
+
+
+@pytest.mark.anyio
+async def test_reservations_released_on_terminal() -> None:
+    """Forever node reservations are released after workflow reaches terminal state."""
+    wf = DynamicWorkflow(name="res_wf")
+    wf.add_node("step1", handler=lambda _c: "ok")
+
+    app, engine, plugin = _make_engine_and_app([wf])
+    async with AsyncTestClient(app):
+        run_id = await engine.start("res_wf")
+        service = plugin.config.get_service(app.state)
+        await _drain(service, plugin.config.worker, engine, run_id)
+
+        run, _ = await engine.snapshot(run_id)
+        assert run.status == "completed"
+        identity = await service.get_task_identity(f"wf-node:{run_id}:step1")
+        assert identity is None
+
+
+@pytest.mark.anyio
+async def test_start_without_queue_plugin_raises() -> None:
+    """Starting an engine without an active QueuePlugin raises ImproperlyConfiguredException."""
+    wf = DynamicWorkflow(name="no_plugin")
+    wf.add_node("step1", handler=lambda _c: "ok")
+    registry = WorkflowRegistry([wf])
+    engine = DurableWorkflowEngine(registry=registry, store=WorkflowStore(MemoryStore()))
+
+    with pytest.raises(ImproperlyConfiguredException, match="requires QueuePlugin"):
+        await engine.start("no_plugin")
+
+
+def test_workflow_registry_validates_and_rejects_duplicates() -> None:
+    """WorkflowRegistry validates DAGs and enforces unique workflow names."""
+    wf1 = DynamicWorkflow(name="dup")
+    wf1.add_node("n1", handler=lambda _c: 1)
+    wf2 = DynamicWorkflow(name="dup")
+    wf2.add_node("n1", handler=lambda _c: 2)
+
+    with pytest.raises(ImproperlyConfiguredException, match="Duplicate workflow name"):
+        WorkflowRegistry([wf1, wf2])
+
+    registry = WorkflowRegistry([wf1])
+    with pytest.raises(KeyError, match="Unknown workflow"):
+        registry.get("nonexistent")
