@@ -53,6 +53,7 @@ __all__ = (
     "MCPPathParamCoercionError",
     "MCPToolErrorResult",
     "NotCallableInCLIContextError",
+    "blank_http_scope",
     "execute_handler",
     "execute_handler_response",
     "execute_tool",
@@ -778,7 +779,7 @@ def _split_tool_args(
     return path_values, query_payload, body
 
 
-def _blank_http_scope(app: "Litestar") -> "dict[str, Any]":
+def blank_http_scope(app: "Litestar") -> "dict[str, Any]":
     """Return a minimum ASGI HTTP scope for stdio-mode dispatch.
 
     Keys mirror :meth:`litestar.testing.RequestFactory._create_scope` so
@@ -806,6 +807,9 @@ def _blank_http_scope(app: "Litestar") -> "dict[str, Any]":
         "auth": None,
         "extensions": {},
     }
+
+
+_blank_http_scope = blank_http_scope
 
 
 def _build_dispatch_scope(

@@ -8,9 +8,11 @@ import inspect
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypeVar, get_type_hints
+from typing import TYPE_CHECKING, Any, TypeVar, cast, get_type_hints
 
+import anyio
 import msgspec
+from litestar import Request
 from litestar.serialization import encode_json
 
 from litestar_mcp.core._cursor import decode_cursor, encode_cursor
@@ -41,6 +43,7 @@ from litestar_mcp.mcp.error_mapping import (
 from litestar_mcp.mcp.executor import (
     MCPHandlerResponse,
     MCPToolErrorResult,
+    blank_http_scope,
     execute_handler,
     execute_handler_response,
     execute_tool,
@@ -55,7 +58,7 @@ from litestar_mcp.mcp.registry import (
     should_include_prompt,
 )
 from litestar_mcp.mcp.skills import SKILL_URI_PREFIX, SkillIntegrityError
-from litestar_mcp.mcp.tasks import MCPTaskStore, TaskLookupError, TaskRecord
+from litestar_mcp.mcp.tasks import MCPTaskStore, TaskLookupError, TaskRecord, ToolTaskCall
 from litestar_mcp.utils import (
     get_handler_function,
     get_mcp_metadata,
@@ -72,7 +75,7 @@ from litestar_mcp.utils.handler_signature import (
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from litestar import Litestar, Request
+    from litestar import Litestar
     from litestar.handlers import BaseRouteHandler
 
     from litestar_mcp.mcp.config import MCPConfig
@@ -439,6 +442,8 @@ class MCPHandlerService:
         handler: "BaseRouteHandler",
         tool_args: "dict[str, Any]",
         context: "MCPRequestContext",
+        *,
+        is_task: "bool" = False,
     ) -> "dict[str, Any]":
         validation_errors = _validate_tool_arguments(handler, tool_args)
         if validation_errors:
@@ -469,7 +474,9 @@ class MCPHandlerService:
             )
         except JSONRPCErrorException:
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
+            if is_task:
+                raise
             return _build_tool_result(
                 {"error": str(exc)},
                 is_error=True,
@@ -477,6 +484,24 @@ class MCPHandlerService:
             )
 
         return _build_tool_result(result, is_error=False, max_blob_bytes=self.config.max_blob_bytes)
+
+    async def _settle_attempt(self, task_id: "str", result: "dict[str, Any]") -> "bool":
+        """Settle a tool execution result onto the task store.
+
+        Returns True if input is required, False if complete.
+        """
+        if self.task_store is None:
+            return False
+        if result.get("resultType") == "input_required":
+            await self.task_store.require_input(
+                task_id,
+                result.get("inputRequests"),
+                result.get("requestState"),
+            )
+            return True
+        result.setdefault("resultType", "complete")
+        await self.task_store.complete(task_id, result)
+        return False
 
     async def _run_task(
         self,
@@ -490,25 +515,62 @@ class MCPHandlerService:
             return
         try:
             while True:
-                result = await self._execute_tool_call(tool_name, handler, tool_args, context)
-                if result.get("resultType") != "input_required":
-                    result.setdefault("resultType", "complete")
-                    await self.task_store.complete(record.task_id, result)
+                result = await self._execute_tool_call(tool_name, handler, tool_args, context, is_task=True)
+                if not await self._settle_attempt(record.task_id, result):
                     return
-                await self.task_store.require_input(
-                    record.task_id,
-                    result.get("inputRequests"),
-                    result.get("requestState"),
-                )
                 context.input_responses = await self.task_store.wait_for_input(record.task_id)
                 context.request_state = result.get("requestState")
         except JSONRPCErrorException as exc:
             await self.task_store.fail(record.task_id, exc.error)
         except asyncio.CancelledError:
-            await self.task_store.mark_cancelled(record.task_id)
+            with anyio.CancelScope(shield=True):
+                await self.task_store.mark_cancelled(record.task_id)
+            raise
         except Exception as exc:  # noqa: BLE001
             await self.task_store.fail(
                 record.task_id,
+                JSONRPCError(code=INTERNAL_ERROR, message=str(exc)),
+                status_message=str(exc),
+            )
+
+    async def run_task_attempt(self, call: "ToolTaskCall", user: "Any") -> "None":
+        """Execute one task-augmented tool call attempt in a background worker."""
+        if self.task_store is None:
+            return
+        scope = blank_http_scope(self.app_ref)
+        if user is not None:
+            scope["user"] = user
+        request: Request[Any, Any, Any] = Request(cast("Any", scope))
+        context = MCPRequestContext(
+            client_id=call.client_id,
+            owner_id=call.owner_id,
+            request=request,
+            protocol_version=call.protocol_version,
+            client_capabilities=call.client_capabilities,
+            client_info=call.client_info,
+            input_responses=call.input_responses,
+            request_state=call.request_state,
+        )
+        handler = self.discovered_tools.get(call.tool_name)
+        if handler is None:
+            await self.task_store.fail(
+                call.task_id,
+                JSONRPCError(code=INVALID_PARAMS, message=f"Tool not found: {call.tool_name}"),
+            )
+            return
+
+        try:
+            result = await self._execute_tool_call(call.tool_name, handler, call.arguments, context, is_task=True)
+            await self._settle_attempt(call.task_id, result)
+        except JSONRPCErrorException as exc:
+            await self.task_store.fail(call.task_id, exc.error)
+        except asyncio.CancelledError:
+            with anyio.CancelScope(shield=True):
+                await self.task_store.mark_cancelled(call.task_id)
+            raise
+        except Exception as exc:  # noqa: BLE001
+            await self.task_store.fail(
+                call.task_id,
                 JSONRPCError(code=INTERNAL_ERROR, message=str(exc)),
                 status_message=str(exc),
             )
@@ -737,9 +799,30 @@ class MCPHandlerService:
         task_store = self.task_store
         if task_store is None:  # pragma: no cover - narrowed by task_enabled
             return await self._execute_tool_call(tool_name, handler, tool_args, context)
+
+        if self.task_config is not None and self.task_config.executor is not None:
+            call = ToolTaskCall(
+                task_id="",
+                tool_name=tool_name,
+                arguments=tool_args,
+                owner_id=context.owner_id,
+                client_id=context.client_id,
+                protocol_version=context.protocol_version,
+                client_capabilities=context.client_capabilities,
+                client_info=context.client_info,
+                input_responses=context.input_responses,
+                request_state=context.request_state,
+            )
+            record = await task_store.create(context.owner_id, local=False)
+            call = msgspec.structs.replace(call, task_id=record.task_id)
+            await task_store.set_dispatch(record.task_id, call)
+            try:
+                await self.task_config.executor.submit(record, call)
+            except Exception as exc:
+                raise JSONRPCErrorException(JSONRPCError(code=INTERNAL_ERROR, message=str(exc))) from exc
+            return {"resultType": "task", **record.to_dict()}
+
         record = await task_store.create(context.owner_id)
-        # The progress stream belongs to the request that returned the task record and
-        # closes with it; progress reported by the background run is discarded.
         if context.progress_reporter is not None:
             context.progress_reporter = _discard_progress
         background_task = asyncio.create_task(self._run_task(record, tool_name, handler, tool_args, context))

@@ -4,15 +4,20 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any, Protocol
 from uuid import uuid4
 
+import msgspec
 from litestar.serialization import decode_json, encode_json
 from litestar.stores.base import Store
 from litestar.stores.memory import MemoryStore
 
 from litestar_mcp.core.jsonrpc import JSONRPCError
 
+if TYPE_CHECKING:
+    from litestar import Litestar
+
+DEFAULT_PROTOCOL_VERSION: str = "2026-07-28"
 TERMINAL_TASK_STATUSES = frozenset({"completed", "failed", "cancelled"})
 
 
@@ -22,6 +27,40 @@ class TaskLookupError(ValueError):
 
 class TaskStateError(ValueError):
     """Raised when a task transition is invalid."""
+
+
+class ToolTaskCall(msgspec.Struct, kw_only=True):
+    """Serializable dispatch envelope for one task-augmented ``tools/call`` attempt."""
+
+    task_id: str
+    tool_name: str
+    arguments: dict[str, Any]
+    owner_id: str | None = None
+    client_id: str = "queue"
+    protocol_version: str = DEFAULT_PROTOCOL_VERSION
+    client_capabilities: dict[str, Any] | None = None
+    client_info: dict[str, Any] | None = None
+    input_responses: dict[str, Any] | None = None
+    request_state: str | None = None
+    attempt: int = 1
+
+
+@dataclass
+class MCPTaskRuntime:
+    """Collaborators an executor needs once the application has started."""
+
+    app: "Litestar"
+    task_store: "MCPTaskStore"
+    run_attempt: Callable[[ToolTaskCall, Any], Awaitable[None]]
+
+
+class MCPTaskExecutor(Protocol):
+    """Runs task-augmented tool calls outside the request that created them."""
+
+    def bind(self, runtime: MCPTaskRuntime) -> None: ...
+    async def submit(self, record: "TaskRecord", call: ToolTaskCall) -> None: ...
+    async def resume(self, call: ToolTaskCall) -> None: ...
+    async def cancel(self, record: "TaskRecord") -> None: ...
 
 
 @dataclass
@@ -40,6 +79,8 @@ class TaskRecord:
     request_state: str | None = None
     result: dict[str, Any] | None = None
     error: JSONRPCError | None = None
+    dispatch: dict[str, Any] | None = None
+    input_responses: dict[str, Any] | None = None
 
     def is_terminal(self) -> bool:
         """Return whether the task has reached a terminal state."""
@@ -87,25 +128,28 @@ class MCPTaskStore:
         max_ttl_ms: int = 3_600_000,
         poll_interval_ms: int = 1_000,
         status_callback: Callable[[TaskRecord], Awaitable[None]] | None = None,
-        queue_service: Any = None,
     ) -> None:
         self.store = store or MemoryStore()
         self.default_ttl_ms = default_ttl_ms
         self.max_ttl_ms = max_ttl_ms
         self.poll_interval_ms = poll_interval_ms
         self.status_callback = status_callback
-        self.queue_service = queue_service
         self._lock = asyncio.Lock()
         self._runners: dict[str, asyncio.Task[Any]] = {}
         self._input_queues: dict[str, asyncio.Queue[dict[str, Any]]] = {}
-        self._input_responses: dict[str, dict[str, Any]] = {}
         self._cancel_events: dict[str, asyncio.Event] = {}
 
     def set_status_callback(self, callback: Callable[[TaskRecord], Awaitable[None]] | None) -> None:
         """Set the task-state notification callback."""
         self.status_callback = callback
 
-    async def create(self, owner_id: str | None, ttl_ms: int | None = None) -> TaskRecord:
+    async def create(
+        self,
+        owner_id: str | None,
+        ttl_ms: int | None = None,
+        *,
+        local: bool = True,
+    ) -> TaskRecord:
         """Durably create a task before returning its handle."""
         resolved_ttl = self._resolve_ttl(ttl_ms)
         now = _utc_now()
@@ -120,8 +164,9 @@ class MCPTaskStore:
             status_message="The operation is now in progress.",
         )
         async with self._lock:
-            self._input_queues[record.task_id] = asyncio.Queue()
-            self._cancel_events[record.task_id] = asyncio.Event()
+            if local:
+                self._input_queues[record.task_id] = asyncio.Queue()
+                self._cancel_events[record.task_id] = asyncio.Event()
             await self._save(record)
         await self._notify(record)
         return record
@@ -132,17 +177,34 @@ class MCPTaskStore:
             await self._lookup(task_id, None)
             self._runners[task_id] = runner
 
-    async def enqueue_tool(
-        self,
-        task_id: str,
-        tool_fn: Callable[..., Any],
-        **kwargs: Any,
-    ) -> Any:
-        """Enqueue a tool execution job onto the configured queue_service."""
-        if self.queue_service is None:
-            msg = "No queue_service configured on MCPTaskStore"
-            raise TaskStateError(msg)
-        return await self.queue_service.enqueue(tool_fn, task_id=task_id, **kwargs)
+    async def set_job_id(self, task_id: str, job_id: str) -> None:
+        """Persist the background queue job id under a separate key."""
+        record = await self.get(task_id, None)
+        expires_in = None if record.ttl_ms is None else max(1, (record.ttl_ms + 999) // 1000)
+        await self.store.set(f"mcp-task:{task_id}:job", job_id.encode("utf-8"), expires_in=expires_in)
+
+    async def get_job_id(self, task_id: str) -> str | None:
+        """Retrieve the background queue job id."""
+        value = await self.store.get(f"mcp-task:{task_id}:job")
+        if value is None:
+            return None
+        return value.decode("utf-8") if isinstance(value, (bytes, bytearray)) else str(value)
+
+    async def set_dispatch(self, task_id: str, call: ToolTaskCall) -> None:
+        """Save the serializable dispatch envelope on the record before queue submission."""
+        async with self._lock:
+            record = await self._lookup(task_id, None)
+            record.dispatch = msgspec.to_builtins(call)
+            record.last_updated_at = _utc_now()
+            await self._save(record)
+
+    async def get_dispatch(self, task_id: str) -> ToolTaskCall | None:
+        """Retrieve and decode the serializable dispatch envelope."""
+        async with self._lock:
+            record = await self._lookup(task_id, None)
+            if record.dispatch is None:
+                return None
+            return msgspec.convert(record.dispatch, ToolTaskCall)
 
     async def get(self, task_id: str, owner_id: str | None) -> TaskRecord:
         """Retrieve a task, enforcing authenticated ownership when present."""
@@ -185,20 +247,26 @@ class MCPTaskStore:
             raise asyncio.CancelledError
         return input_wait.result()
 
-    async def update(self, task_id: str, owner_id: str | None, input_responses: dict[str, Any]) -> None:
+    async def update(
+        self,
+        task_id: str,
+        owner_id: str | None,
+        input_responses: dict[str, Any],
+    ) -> dict[str, Any] | None:
         """Submit client responses to a task waiting for input."""
         should_resume = False
-        merged: dict[str, Any] = {}
+        resumed_responses: dict[str, Any] | None = None
         async with self._lock:
             record = await self._lookup(task_id, owner_id)
             if record.status != "input_required":
-                return
+                return None
             outstanding = record.input_requests or {}
             accepted = {key: value for key, value in input_responses.items() if key in outstanding}
             if not accepted:
-                return
-            merged = self._input_responses.setdefault(task_id, {})
-            merged.update(accepted)
+                return None
+            current_responses = dict(record.input_responses or {})
+            current_responses.update(accepted)
+            record.input_responses = current_responses
             remaining = {key: value for key, value in outstanding.items() if key not in accepted}
             record.last_updated_at = _utc_now()
             if remaining:
@@ -209,12 +277,12 @@ class MCPTaskStore:
                 record.input_requests = None
                 record.status_message = "Client input received; processing resumed."
                 should_resume = True
+                resumed_responses = dict(current_responses)
             await self._save(record)
         await self._notify(record)
-        if should_resume:
-            responses = dict(merged)
-            self._input_responses.pop(task_id, None)
-            await self._input_queues.setdefault(task_id, asyncio.Queue()).put(responses)
+        if should_resume and task_id in self._input_queues:
+            await self._input_queues[task_id].put(resumed_responses or {})
+        return resumed_responses
 
     async def cancel(self, task_id: str, owner_id: str | None) -> None:
         """Request cooperative cancellation and acknowledge immediately."""
@@ -260,6 +328,7 @@ class MCPTaskStore:
             record.request_state = request_state
             record.result = result
             record.error = error
+            record.input_responses = None
             await self._save(record)
         await self._notify(record)
         return record
@@ -300,6 +369,8 @@ def _encode_record(record: TaskRecord) -> bytes:
     payload = record.to_dict()
     payload["ownerId"] = record.owner_id
     payload["requestStateInternal"] = record.request_state
+    payload["dispatchInternal"] = record.dispatch
+    payload["inputResponsesInternal"] = record.input_responses
     return encode_json(payload)
 
 
@@ -327,6 +398,8 @@ def _decode_record(value: bytes) -> TaskRecord:
             if error_payload is not None
             else None
         ),
+        dispatch=payload.get("dispatchInternal"),
+        input_responses=payload.get("inputResponsesInternal"),
     )
 
 

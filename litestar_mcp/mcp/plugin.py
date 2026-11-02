@@ -16,8 +16,9 @@ from litestar_mcp.mcp.config import MCPConfig, MCPSkillsConfig
 from litestar_mcp.mcp.prompt_controller import PromptController
 from litestar_mcp.mcp.registry import PromptRegistration, Registry
 from litestar_mcp.mcp.routes import MCPController
+from litestar_mcp.mcp.service import MCPHandlerService
 from litestar_mcp.mcp.skills import SkillCatalog
-from litestar_mcp.mcp.tasks import MCPTaskStore, TaskRecord
+from litestar_mcp.mcp.tasks import MCPTaskRuntime, MCPTaskStore, TaskRecord
 from litestar_mcp.mcp.tool_handlers import build_tool_route_handler
 from litestar_mcp.utils import get_handler_function, get_mcp_metadata
 
@@ -87,6 +88,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                 default_ttl_ms=task_config.default_ttl_ms,
                 max_ttl_ms=task_config.max_ttl_ms,
                 poll_interval_ms=task_config.poll_interval_ms,
+                status_callback=task_config.status_callback,
             )
         self._skill_catalog: SkillCatalog | None = (
             SkillCatalog.from_config(self._config.skills) if isinstance(self._config.skills, MCPSkillsConfig) else None
@@ -172,8 +174,11 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         self._registry.set_subscription_manager(self._subscription_manager)
 
         if self._task_store is not None:
+            user_status_callback = self._task_store.status_callback
 
             async def publish_task_status(record: "TaskRecord") -> "None":
+                if user_status_callback is not None:
+                    await user_status_callback(record)
                 await self._registry.publish_notification(
                     "notifications/tasks",
                     record.to_dict(),
@@ -230,6 +235,28 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         self._discover_mcp_routes(all_handlers)
         for handler in self._registry.tools.values():
             validate_mcp_header_schema(generate_schema_for_handler(handler))
+
+        if (
+            self._config.task_config is not None
+            and self._config.task_config.executor is not None
+            and self._task_store is not None
+        ):
+            service = MCPHandlerService(
+                config=self._config,
+                discovered_tools=self._registry.tools,
+                discovered_resources=self._registry.resources,
+                discovered_prompts=self._registry.prompts,
+                app_ref=app,
+                registry=self._registry,
+                task_store=self._task_store,
+                skill_catalog=self._skill_catalog,
+            )
+            runtime = MCPTaskRuntime(
+                app=app,
+                task_store=self._task_store,
+                run_attempt=service.run_task_attempt,
+            )
+            self._config.task_config.executor.bind(runtime)
 
         def invalidate_router() -> "None":
             _logger.debug("invalidate_router callback triggered")

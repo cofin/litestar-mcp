@@ -1,6 +1,6 @@
 """Configuration for Litestar MCP Plugin."""
 
-from collections.abc import Sequence  # noqa: TC003
+from collections.abc import Awaitable, Callable, Sequence  # noqa: TC003
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol
@@ -14,8 +14,6 @@ SUPPORTED_PROTOCOL_VERSIONS: tuple[str, ...] = ("2026-07-28", "2025-06-18", "202
 
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable
-
     from litestar import Request
 
 
@@ -136,6 +134,8 @@ class MCPTaskConfig:
     default_ttl_ms: "int" = 300_000
     max_ttl_ms: "int" = 3_600_000
     poll_interval_ms: "int" = 1_000
+    status_callback: "Callable[[Any], Awaitable[None]] | None" = None
+    executor: "Any | None" = None
 
     def __post_init__(self) -> "None":
         if self.default_ttl_ms < 0:
