@@ -287,6 +287,16 @@ conformance: conformance-install                    ## Run MCP 2026-07-28 confor
 	fi
 	@echo "${OK} MCP conformance complete ✨"
 
+.PHONY: conformance-queue
+conformance-queue: conformance-install              ## Run MCP 2026-07-28 conformance with the queue task executor
+	@echo "${INFO} Running MCP 2026-07-28 conformance with queue task executor... 🔌"
+	@if command -v nodenv >/dev/null 2>&1; then \
+		MCP_CONFORMANCE_TASK_EXECUTOR=queue NODENV_VERSION="$(NODE_VERSION)" nodenv exec $(UV_RUN_PY310) python tools/ci/run_mcp_conformance.py; \
+	else \
+		MCP_CONFORMANCE_TASK_EXECUTOR=queue $(UV_RUN_PY310) python tools/ci/run_mcp_conformance.py; \
+	fi
+	@echo "${OK} MCP conformance with queue task executor complete ✨"
+
 .PHONY: websocket-test
 websocket-test:                                     ## Run WebSocket handler tests
 	@echo "${INFO} Running WebSocket tests... 🔌"
