@@ -2,16 +2,22 @@
 
 import asyncio
 import json
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import anyio
 import pytest
 
 pytest.importorskip("litestar_queues")
 
-from litestar import Litestar, Request, get
+from dishka import Provider, Scope, make_async_container, provide
+from dishka.integrations.litestar import FromDishka, inject, setup_dishka
+from litestar import Controller, Litestar, Request, get
 from litestar.connection import ASGIConnection
+from litestar.di import Provide
 from litestar.exceptions import ImproperlyConfiguredException
 from litestar.status_codes import HTTP_200_OK
 from litestar.testing import AsyncTestClient
@@ -28,9 +34,16 @@ from litestar_mcp import (
 )
 from litestar_mcp.core.jsonrpc import INTERNAL_ERROR, JSONRPCError, JSONRPCErrorException
 from litestar_mcp.mcp.service import TASKS_EXTENSION
-from litestar_mcp.mcp.tasks import ToolTaskCall
+from litestar_mcp.mcp.tasks import (
+    ToolTaskCall,
+    _FallbackAuthorizationSnapshot,
+    _FallbackCredentialRestrictions,
+    _FallbackPrincipal,
+    _FallbackSecurityContext,
+)
 from litestar_mcp.queues import QueueTaskExecutor
 from litestar_mcp.utils import mcp_tool
+from tests.unit.conftest import mcp_envelope
 
 
 def _auth_guard(connection: ASGIConnection[Any, Any, Any, Any], _: Any) -> None:
@@ -123,8 +136,6 @@ async def _mcp_post(
     tasks_capable: bool = True,
     expected_status: int | None = None,
 ) -> dict[str, Any]:
-    from tests.unit.conftest import mcp_envelope
-
     request_params = dict(params or {})
     if tasks_capable:
         meta = dict(request_params.get("_meta") or {})
@@ -746,3 +757,508 @@ async def test_standalone_worker_lifespan_runs_tool_attempt() -> None:
     assert finished.status == "completed"
     assert finished.result is not None
     assert json.loads(finished.result["content"][0]["text"]) == {"echo": "standalone"}
+
+
+@dataclass(frozen=True, slots=True)
+class _DomainUser:
+    """Domain user value object for Provide dependency rehydration tests."""
+
+    id: str
+    role: str
+
+
+class _RequestTraceService:
+    """Request-scoped Dishka service tracking container lifecycle."""
+
+    def __init__(self) -> None:
+        self.token = uuid4().hex
+        self.closed = False
+
+
+class _RequestTraceProvider(Provider):
+    """Dishka provider yielding a request-scoped _RequestTraceService."""
+
+    scope = Scope.REQUEST
+
+    def __init__(self, lifecycle_events: list[str]) -> None:
+        super().__init__()
+        self._lifecycle_events = lifecycle_events
+
+    @provide
+    async def provide_service(self) -> AsyncIterator[_RequestTraceService]:
+        service = _RequestTraceService()
+        self._lifecycle_events.append(f"open:{service.token}")
+        try:
+            yield service
+        finally:
+            service.closed = True
+            self._lifecycle_events.append(f"close:{service.token}")
+
+
+@pytest.mark.anyio
+async def test_zero_config_auto_wires_queue_task_executor() -> None:
+    """Registering QueuePlugin and LitestarMCP() auto-enables tasks and auto-wires QueueTaskExecutor."""
+
+    @get("/auto-echo")
+    @mcp_tool(name="auto_echo", task=True)
+    async def auto_echo(text: str = "zero-config") -> dict[str, str]:
+        return {"echo": text}
+
+    queue_plugin = QueuePlugin(
+        QueueConfig(
+            queue_backend="memory",
+            execution_backend="immediate",
+            worker=WorkerConfig(placement="external"),
+        )
+    )
+    mcp_plugin = LitestarMCP()
+    app = Litestar(route_handlers=[auto_echo], plugins=[queue_plugin, mcp_plugin])
+
+    assert mcp_plugin.config.task_config is not None
+    assert isinstance(mcp_plugin.config.task_config.executor, QueueTaskExecutor)
+
+    async with AsyncTestClient(app) as client:
+        result = await _mcp_post(
+            client,
+            "tools/call",
+            {"name": "auto_echo", "arguments": {"text": "auto-wired"}},
+        )
+        assert result["result"]["resultType"] == "task"
+        task_id = result["result"]["taskId"]
+
+        status_result = await _mcp_post(client, "tasks/get", {"taskId": task_id})
+        assert status_result["result"]["status"] == "completed"
+        assert json.loads(status_result["result"]["result"]["content"][0]["text"]) == {"echo": "auto-wired"}
+
+
+@pytest.mark.anyio
+async def test_zero_config_auto_rehydrates_authenticated_user_and_fails_closed_when_anonymous() -> None:
+    """Zero-config QueueTaskExecutor snapshots and rehydrates request.user (key and attribute access) and fails closed when anonymous."""
+
+    @get("/profile-inspect", guards=[_auth_guard])
+    @mcp_tool(name="profile_inspect", task=True)
+    async def profile_inspect(request: Request[Any, Any, Any]) -> dict[str, str]:
+        return {
+            "key_id": str(request.user["id"]),
+            "attr_id": str(request.user.id),
+            "attr_name": str(request.user.name),
+            "nested_tier_attr": str(request.user.profile.tier),
+            "nested_tier_key": str(request.user["profile"]["tier"]),
+        }
+
+    def rich_user_middleware(app: Any) -> Any:
+        async def asgi_handler(scope: Any, receive: Any, send: Any) -> None:
+            if scope["type"] == "http":
+                for name, value in scope.get("headers", []):
+                    if name.lower() == b"x-user-id":
+                        uid = value.decode("utf-8")
+                        scope["user"] = {
+                            "id": uid,
+                            "name": uid.capitalize(),
+                            "profile": {"tier": "enterprise"},
+                        }
+                        break
+            await app(scope, receive, send)
+
+        return asgi_handler
+
+    queue_plugin = QueuePlugin(
+        QueueConfig(
+            queue_backend="memory",
+            execution_backend="immediate",
+            worker=WorkerConfig(placement="external"),
+        )
+    )
+    app = Litestar(
+        route_handlers=[profile_inspect],
+        plugins=[queue_plugin, LitestarMCP()],
+        middleware=[rich_user_middleware],
+    )
+
+    async with AsyncTestClient(app) as client:
+        auth_result = await _mcp_post(
+            client,
+            "tools/call",
+            {"name": "profile_inspect", "arguments": {}},
+            headers={"X-User-Id": "alice"},
+        )
+        auth_task_id = auth_result["result"]["taskId"]
+        auth_status = await _mcp_post(
+            client,
+            "tasks/get",
+            {"taskId": auth_task_id},
+            headers={"X-User-Id": "alice"},
+        )
+        assert auth_status["result"]["status"] == "completed"
+        assert json.loads(auth_status["result"]["result"]["content"][0]["text"]) == {
+            "key_id": "alice",
+            "attr_id": "alice",
+            "attr_name": "Alice",
+            "nested_tier_attr": "enterprise",
+            "nested_tier_key": "enterprise",
+        }
+
+        anon_result = await _mcp_post(
+            client,
+            "tools/call",
+            {"name": "profile_inspect", "arguments": {}},
+        )
+        anon_task_id = anon_result["result"]["taskId"]
+        anon_status = await _mcp_post(client, "tasks/get", {"taskId": anon_task_id})
+        assert anon_status["result"]["status"] == "completed"
+        assert anon_status["result"]["result"]["isError"] is True
+
+
+@pytest.mark.anyio
+async def test_worker_rehydrates_from_existing_litestar_provide_dependency() -> None:
+    """Worker resolves existing current_user Provide dependency for guards, handler params, and request.user."""
+
+    def require_admin_role(connection: ASGIConnection[Any, Any, Any, Any], _: Any) -> None:
+        user = getattr(connection, "user", None)
+        if getattr(user, "role", None) != "admin":
+            msg = "Admin role required"
+            raise PermissionError(msg)
+
+    async def provide_current_user(request: Request[Any, Any, Any]) -> _DomainUser:
+        return _DomainUser(id=str(request.user["id"]), role="admin")
+
+    @get(
+        "/admin-report",
+        guards=[require_admin_role],
+        dependencies={"current_user": Provide(provide_current_user)},
+    )
+    @mcp_tool(name="admin_report", task=True)
+    async def admin_report(
+        current_user: _DomainUser,
+        request: Request[Any, Any, Any],
+    ) -> dict[str, str]:
+        assert isinstance(current_user, _DomainUser)
+        assert isinstance(request.user, _DomainUser)
+        return {"id": current_user.id, "role": request.user.role}
+
+    app, _ = _make_queued_app(
+        executor=QueueTaskExecutor(),
+        execution_backend="immediate",
+        extra_handlers=[admin_report],
+    )
+    async with AsyncTestClient(app) as client:
+        result = await _mcp_post(
+            client,
+            "tools/call",
+            {"name": "admin_report", "arguments": {}},
+            headers={"X-User-Id": "alice"},
+        )
+        task_id = result["result"]["taskId"]
+        status_result = await _mcp_post(
+            client,
+            "tasks/get",
+            {"taskId": task_id},
+            headers={"X-User-Id": "alice"},
+        )
+        assert status_result["result"]["status"] == "completed"
+        assert json.loads(status_result["result"]["result"]["content"][0]["text"]) == {
+            "id": "alice",
+            "role": "admin",
+        }
+
+
+@pytest.mark.anyio
+async def test_dishka_request_scoped_dependency_in_queued_and_in_process_tasks() -> None:
+    """Both QueueTaskExecutor attempts and detached in-process tasks enter fresh Scope.REQUEST Dishka containers."""
+    lifecycle_events: list[str] = []
+
+    @get("/dishka-queued")
+    @mcp_tool(name="dishka_queued", task=True)
+    @inject
+    async def dishka_queued(svc: FromDishka[_RequestTraceService]) -> dict[str, Any]:
+        return {"token": svc.token, "closed": svc.closed}
+
+    @get("/dishka-inproc")
+    @mcp_tool(name="dishka_inproc", task=True, queue=False)
+    @inject
+    async def dishka_inproc(svc: FromDishka[_RequestTraceService]) -> dict[str, Any]:
+        await asyncio.sleep(0.02)
+        return {"token": svc.token, "closed": svc.closed}
+
+    queue_plugin = QueuePlugin(
+        QueueConfig(
+            queue_backend="memory",
+            execution_backend="local",
+            worker=WorkerConfig(placement="external"),
+        )
+    )
+    app = Litestar(
+        route_handlers=[dishka_queued, dishka_inproc],
+        plugins=[queue_plugin, LitestarMCP()],
+    )
+    container = make_async_container(_RequestTraceProvider(lifecycle_events))
+    setup_dishka(container, app)
+
+    async with AsyncTestClient(app) as client:
+        queued_resp = await _mcp_post(client, "tools/call", {"name": "dishka_queued", "arguments": {}})
+        queued_task_id = queued_resp["result"]["taskId"]
+
+        service = queue_plugin.config.get_service(app.state)
+        worker = Worker(service, queue_plugin.config.worker)
+        await worker.run_once()
+        await worker.stop()
+
+        queued_status = await _mcp_post(client, "tasks/get", {"taskId": queued_task_id})
+        assert queued_status["result"]["status"] == "completed"
+        queued_payload = json.loads(queued_status["result"]["result"]["content"][0]["text"])
+        assert queued_payload["closed"] is False
+        assert f"open:{queued_payload['token']}" in lifecycle_events
+        assert f"close:{queued_payload['token']}" in lifecycle_events
+
+        inproc_resp = await _mcp_post(client, "tools/call", {"name": "dishka_inproc", "arguments": {}})
+        inproc_task_id = inproc_resp["result"]["taskId"]
+
+        inproc_status: dict[str, Any] = {}
+        for _ in range(40):
+            inproc_status = await _mcp_post(client, "tasks/get", {"taskId": inproc_task_id})
+            if inproc_status["result"]["status"] == "completed":
+                break
+            await asyncio.sleep(0.01)
+
+        assert inproc_status["result"]["status"] == "completed"
+        inproc_payload = json.loads(inproc_status["result"]["result"]["content"][0]["text"])
+        assert inproc_payload["closed"] is False
+        assert inproc_payload["token"] != queued_payload["token"]
+        assert f"open:{inproc_payload['token']}" in lifecycle_events
+        assert f"close:{inproc_payload['token']}" in lifecycle_events
+
+
+@pytest.mark.anyio
+async def test_litestar_security_principal_and_context_rehydration_in_worker() -> None:
+    """Worker reconstructs Principal, SecurityContext, AuthorizationSnapshot, and CredentialRestrictions."""
+
+    def require_security_scope(connection: ASGIConnection[Any, Any, Any, Any], _: Any) -> None:
+        sec_ctx = cast("dict[str, Any]", connection.scope).get("litestar_security")
+        if sec_ctx is None or "mcp:execute" not in sec_ctx.authorization.scopes:
+            msg = "Missing required scope mcp:execute"
+            raise PermissionError(msg)
+
+    @get("/secure-audit", guards=[require_security_scope])
+    @mcp_tool(name="secure_audit", task=True)
+    async def secure_audit(request: Request[Any, Any, Any]) -> dict[str, Any]:
+        sec_ctx = cast("dict[str, Any]", request.scope)["litestar_security"]
+        return {
+            "account_id": request.user.account_id,
+            "user_email": request.user.user.email,
+            "roles": sorted(sec_ctx.authorization.roles),
+            "scopes": sorted(sec_ctx.authorization.scopes),
+            "tenant_roles": {k: sorted(v) for k, v in sec_ctx.authorization.tenant_roles.items()},
+            "restriction_tenants": sorted(sec_ctx.restrictions[0].tenant_ids or ()),
+        }
+
+    def security_context_middleware(app: Any) -> Any:
+        async def asgi_handler(scope: Any, receive: Any, send: Any) -> None:
+            if scope["type"] == "http":
+                for name, value in scope.get("headers", []):
+                    if name.lower() == b"x-security-principal":
+                        acct = value.decode("utf-8")
+                        restriction = _FallbackCredentialRestrictions(
+                            scopes=frozenset({"mcp:execute"}),
+                            tenant_ids=frozenset({"tenant-1"}),
+                        )
+                        principal = _FallbackPrincipal(
+                            user={"id": acct, "email": f"{acct}@example.com"},
+                            account_id=acct,
+                            subject=acct,
+                            mechanisms=("jwt",),
+                            restrictions=(restriction,),
+                            attributes=MappingProxyType({"idp": "google"}),
+                        )
+                        auth_snap = _FallbackAuthorizationSnapshot(
+                            roles=frozenset({"operator"}),
+                            permissions=frozenset({"tasks:run"}),
+                            scopes=frozenset({"mcp:execute"}),
+                            attributes=MappingProxyType({"region": "us"}),
+                            tenant_roles=MappingProxyType({"tenant-1": frozenset({"admin"})}),
+                        )
+                        sec_ctx = _FallbackSecurityContext(
+                            principal=principal,
+                            authorization=auth_snap,
+                            restrictions=(restriction,),
+                        )
+                        scope["user"] = principal
+                        scope["auth"] = sec_ctx
+                        scope["litestar_security"] = sec_ctx
+                        break
+            await app(scope, receive, send)
+
+        return asgi_handler
+
+    queue_plugin = QueuePlugin(
+        QueueConfig(
+            queue_backend="memory",
+            execution_backend="immediate",
+            worker=WorkerConfig(placement="external"),
+        )
+    )
+    app = Litestar(
+        route_handlers=[secure_audit],
+        plugins=[queue_plugin, LitestarMCP()],
+        middleware=[security_context_middleware],
+    )
+
+    async with AsyncTestClient(app) as client:
+        result = await _mcp_post(
+            client,
+            "tools/call",
+            {"name": "secure_audit", "arguments": {}},
+            headers={"X-Security-Principal": "acct-42"},
+        )
+        task_id = result["result"]["taskId"]
+        status_result = await _mcp_post(
+            client,
+            "tasks/get",
+            {"taskId": task_id},
+            headers={"X-Security-Principal": "acct-42"},
+        )
+        assert status_result["result"]["status"] == "completed"
+        assert json.loads(status_result["result"]["result"]["content"][0]["text"]) == {
+            "account_id": "acct-42",
+            "user_email": "acct-42@example.com",
+            "roles": ["operator"],
+            "scopes": ["mcp:execute"],
+            "tenant_roles": {"tenant-1": ["admin"]},
+            "restriction_tenants": ["tenant-1"],
+        }
+
+
+@pytest.mark.anyio
+async def test_task_and_queue_override_hierarchy() -> None:
+    """Verify plugin, controller, and route overrides for task mode and target queue lane."""
+    queue_plugin_disabled = QueuePlugin(
+        QueueConfig(
+            queue_backend="memory",
+            execution_backend="immediate",
+            worker=WorkerConfig(placement="external"),
+        )
+    )
+    mcp_disabled = LitestarMCP(MCPConfig(tasks=False))
+    app_disabled = Litestar(route_handlers=[], plugins=[queue_plugin_disabled, mcp_disabled])
+    assert app_disabled is not None
+    assert mcp_disabled.config.task_config is None
+    assert mcp_disabled.task_store is None
+
+    queue_plugin_inproc = QueuePlugin(
+        QueueConfig(
+            queue_backend="memory",
+            execution_backend="immediate",
+            worker=WorkerConfig(placement="external"),
+        )
+    )
+    mcp_inproc = LitestarMCP(MCPConfig(tasks=MCPTaskConfig(executor="in_process")))
+    app_inproc = Litestar(route_handlers=[], plugins=[queue_plugin_inproc, mcp_inproc])
+    assert app_inproc is not None
+    assert mcp_inproc.config.task_config is not None
+    assert mcp_inproc.config.task_config.executor is None
+
+    class BatchController(Controller):
+        path = "/batch"
+        opt = {"mcp_task": True, "mcp_queue": "controller-lane"}
+
+        @get("/inherited", mcp_tool="batch_inherited")
+        async def inherited(self) -> dict[str, str]:
+            return {"mode": "inherited"}
+
+        @get("/sync-override")
+        @mcp_tool(name="batch_sync", task="sync")
+        async def sync_override(self) -> dict[str, str]:
+            return {"mode": "sync"}
+
+        @get("/custom-lane")
+        @mcp_tool(name="batch_custom_lane", queue="route-lane")
+        async def custom_lane(self) -> dict[str, str]:
+            return {"mode": "route-lane"}
+
+        @get("/inproc-override")
+        @mcp_tool(name="batch_inproc", queue=False)
+        async def inproc_override(self) -> dict[str, str]:
+            return {"mode": "inproc"}
+
+    queue_plugin = QueuePlugin(
+        QueueConfig(
+            queue_backend="memory",
+            execution_backend="immediate",
+            worker=WorkerConfig(placement="external"),
+        )
+    )
+    mcp_plugin = LitestarMCP()
+    app = Litestar(route_handlers=[BatchController], plugins=[queue_plugin, mcp_plugin])
+
+    async with AsyncTestClient(app) as client:
+        sync_res = await _mcp_post(client, "tools/call", {"name": "batch_sync", "arguments": {}})
+        assert sync_res["result"].get("resultType") != "task"
+        assert json.loads(sync_res["result"]["content"][0]["text"]) == {"mode": "sync"}
+
+        inh_res = await _mcp_post(client, "tools/call", {"name": "batch_inherited", "arguments": {}})
+        assert inh_res["result"]["resultType"] == "task"
+        inh_id = inh_res["result"]["taskId"]
+        assert mcp_plugin.task_store is not None
+        inh_dispatch = await mcp_plugin.task_store.get_dispatch(inh_id)
+        assert inh_dispatch is not None
+        assert inh_dispatch.queue == "controller-lane"
+
+        lane_res = await _mcp_post(client, "tools/call", {"name": "batch_custom_lane", "arguments": {}})
+        assert lane_res["result"]["resultType"] == "task"
+        lane_id = lane_res["result"]["taskId"]
+        lane_dispatch = await mcp_plugin.task_store.get_dispatch(lane_id)
+        assert lane_dispatch is not None
+        assert lane_dispatch.queue == "route-lane"
+
+        inproc_res = await _mcp_post(client, "tools/call", {"name": "batch_inproc", "arguments": {}})
+        assert inproc_res["result"]["resultType"] == "task"
+        inproc_id = inproc_res["result"]["taskId"]
+        inproc_status: dict[str, Any] = {}
+        for _ in range(20):
+            inproc_status = await _mcp_post(client, "tasks/get", {"taskId": inproc_id})
+            if inproc_status["result"]["status"] == "completed":
+                break
+            await asyncio.sleep(0.01)
+        assert inproc_status["result"]["status"] == "completed"
+        assert await mcp_plugin.task_store.get_dispatch(inproc_id) is None
+        assert mcp_plugin.task_store.has_local_runner(inproc_id) is True
+
+
+@pytest.mark.anyio
+async def test_external_mcp_tool_meta_attribute_discovery() -> None:
+    """Handlers decorated by external libraries setting _mcp_tool_meta are discovered and normalized."""
+
+    async def external_tool(message: str = "ping") -> dict[str, str]:
+        return {"reply": message}
+
+    setattr(
+        external_tool,
+        "_mcp_tool_meta",
+        {
+            "name": "external_ping",
+            "description": "External library tool",
+            "task": "sync",
+        },
+    )
+    route_handler = get("/external-ping")(external_tool)
+
+    queue_plugin = QueuePlugin(
+        QueueConfig(
+            queue_backend="memory",
+            execution_backend="immediate",
+            worker=WorkerConfig(placement="external"),
+        )
+    )
+    app = Litestar(route_handlers=[route_handler], plugins=[queue_plugin, LitestarMCP()])
+
+    async with AsyncTestClient(app) as client:
+        tools_list = await _mcp_post(client, "tools/list", {})
+        tool_names = [t["name"] for t in tools_list["result"]["tools"]]
+        assert "external_ping" in tool_names
+
+        call_res = await _mcp_post(
+            client,
+            "tools/call",
+            {"name": "external_ping", "arguments": {"message": "pong"}},
+        )
+        assert call_res["result"].get("resultType") != "task"
+        assert json.loads(call_res["result"]["content"][0]["text"]) == {"reply": "pong"}

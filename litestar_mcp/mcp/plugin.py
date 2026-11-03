@@ -12,7 +12,7 @@ from litestar.plugins import CLIPlugin, InitPluginProtocol
 from litestar_mcp.core.schema_builder import generate_schema_for_handler, validate_mcp_header_schema
 from litestar_mcp.core.sse import SubscriptionManager
 from litestar_mcp.mcp.cli import mcp_group
-from litestar_mcp.mcp.config import MCPConfig, MCPSkillsConfig
+from litestar_mcp.mcp.config import MCPConfig, MCPSkillsConfig, MCPTaskConfig
 from litestar_mcp.mcp.prompt_controller import PromptController
 from litestar_mcp.mcp.registry import PromptRegistration, Registry
 from litestar_mcp.mcp.routes import MCPController
@@ -84,7 +84,14 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         )
         self._task_store: MCPTaskStore | None = None
         if self._config.task_config is not None:
-            task_config = self._config.task_config
+            self._ensure_task_store(self._config.task_config)
+        self._skill_catalog: SkillCatalog | None = (
+            SkillCatalog.from_config(self._config.skills) if isinstance(self._config.skills, MCPSkillsConfig) else None
+        )
+
+    def _ensure_task_store(self, task_config: "MCPTaskConfig") -> "MCPTaskStore":
+        """Initialize the task store if it has not been created yet."""
+        if self._task_store is None:
             self._task_store = MCPTaskStore(
                 store=task_config.store,
                 default_ttl_ms=task_config.default_ttl_ms,
@@ -92,9 +99,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                 poll_interval_ms=task_config.poll_interval_ms,
                 status_callback=task_config.status_callback,
             )
-        self._skill_catalog: SkillCatalog | None = (
-            SkillCatalog.from_config(self._config.skills) if isinstance(self._config.skills, MCPSkillsConfig) else None
-        )
+        return self._task_store
 
     @property
     def config(self) -> "MCPConfig":
@@ -166,6 +171,38 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         """Configure CLI commands for MCP operations."""
         cli.add_command(mcp_group)
 
+    def _configure_task_runtime(self, app_config: "AppConfig") -> "None":
+        """Auto-enable queue task execution when ``QueuePlugin`` is present and configure the task store."""
+        if _has_queue_plugin(app_config) and self._config.tasks is not False:
+            if self._config.tasks is None or self._config.tasks is True:
+                self._config.tasks = MCPTaskConfig()
+            auto_task_config = self._config.task_config
+            if auto_task_config is not None:
+                self._ensure_task_store(auto_task_config)
+                if auto_task_config.executor is None and not getattr(auto_task_config, "_disable_auto_executor", False):
+                    auto_task_config.executor = _create_default_queue_task_executor()
+
+        task_config = self._config.task_config
+        if self._task_store is None or task_config is None:
+            return
+
+        if task_config.store is None:
+            self._task_store.store = resolve_app_store(app_config, TASK_STORE_NAME)
+        executor = task_config.executor
+        if executor is not None and not isinstance(executor, (bool, str)):
+            executor.configure(app_config)
+        user_status_callback = self._task_store.status_callback
+
+        async def publish_task_status(record: "TaskRecord") -> "None":
+            if user_status_callback is not None:
+                await user_status_callback(record)
+            await self._registry.publish_notification(
+                "notifications/tasks",
+                record.to_dict(),
+            )
+
+        self._task_store.set_status_callback(publish_task_status)
+
     def on_app_init(self, app_config: "AppConfig") -> "AppConfig":
         """Initialize the MCP integration when the Litestar app starts."""
         self._discover_mcp_routes(app_config.route_handlers)
@@ -174,24 +211,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                 app_config.route_handlers.append(dyn_handler)
         self._discover_mcp_routes(self._dynamic_handlers)
         self._registry.set_subscription_manager(self._subscription_manager)
-
-        task_config = self._config.task_config
-        if self._task_store is not None and task_config is not None:
-            if task_config.store is None:
-                self._task_store.store = resolve_app_store(app_config, TASK_STORE_NAME)
-            if task_config.executor is not None:
-                task_config.executor.configure(app_config)
-            user_status_callback = self._task_store.status_callback
-
-            async def publish_task_status(record: "TaskRecord") -> "None":
-                if user_status_callback is not None:
-                    await user_status_callback(record)
-                await self._registry.publish_notification(
-                    "notifications/tasks",
-                    record.to_dict(),
-                )
-
-            self._task_store.set_status_callback(publish_task_status)
+        self._configure_task_runtime(app_config)
 
         def provide_mcp_config() -> "MCPConfig":
             return self._config
@@ -243,9 +263,12 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         for handler in self._registry.tools.values():
             validate_mcp_header_schema(generate_schema_for_handler(handler))
 
+        task_config = self._config.task_config
+        executor = task_config.executor if task_config is not None else None
         if (
-            self._config.task_config is not None
-            and self._config.task_config.executor is not None
+            task_config is not None
+            and executor is not None
+            and not isinstance(executor, (bool, str))
             and self._task_store is not None
         ):
             service = MCPHandlerService(
@@ -263,7 +286,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                 task_store=self._task_store,
                 run_attempt=service.run_task_attempt,
             )
-            self._config.task_config.executor.bind(runtime)
+            executor.bind(runtime)
 
         def invalidate_router() -> "None":
             _logger.debug("invalidate_router callback triggered")
@@ -419,3 +442,19 @@ def _is_handler_registered(dyn_handler: "Any", route_handlers: "Sequence[Any]") 
             return True
 
     return False
+
+
+def _has_queue_plugin(app_config: "AppConfig") -> "bool":
+    """Return whether a ``litestar-queues`` ``QueuePlugin`` is registered on ``app_config``."""
+    for plugin in app_config.plugins:
+        cls = plugin if isinstance(plugin, type) else type(plugin)
+        if cls.__name__ == "QueuePlugin" and cls.__module__.startswith("litestar_queues"):
+            return True
+    return False
+
+
+def _create_default_queue_task_executor() -> "Any":
+    """Instantiate the default ``QueueTaskExecutor`` lazily when ``QueuePlugin`` is present."""
+    from litestar_mcp.queues.mcp_tasks import QueueTaskExecutor
+
+    return QueueTaskExecutor()

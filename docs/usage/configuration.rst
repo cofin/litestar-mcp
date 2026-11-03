@@ -75,33 +75,56 @@ task-handle authorization boundary.
 MCP Tasks on litestar-queues
 ----------------------------
 
-When deploying across multiple server processes or replicas, configure
-:class:`~litestar_mcp.queues.QueueTaskExecutor` to distribute long-running
-MCP Tasks across workers managed by ``litestar-queues``. The queue integration
-is optional; install it with the ``queues`` extra:
+When ``QueuePlugin`` is registered on the same :class:`~litestar.Litestar`
+application, ``LitestarMCP`` automatically enables the Tasks extension and wires
+:class:`~litestar_mcp.queues.QueueTaskExecutor` with zero configuration. The
+queue integration is optional; install it with the ``queues`` extra:
 
 .. code-block:: bash
 
     pip install "litestar-mcp[queues]"
 
-Without an executor, MCP Tasks run as in-process background tasks and
-``litestar-queues`` is never imported. With one, register ``QueuePlugin`` on the
-same application; ``LitestarMCP`` attaches the executor's task dependencies to it
-during app init. Attempts run on any worker placement: litestar-queues (0.13.0+)
-enters the application lifespan in standalone worker processes, so the executor is
-bound there exactly as in the web process. Keep ``WorkerConfig.run_app_lifespan``
-enabled (the default).
+Without ``QueuePlugin`` (or when ``MCPTaskConfig(executor="in_process")`` is set),
+MCP Tasks run as in-process background tasks and ``litestar-queues`` is never
+imported. When ``QueuePlugin`` is present, ``LitestarMCP`` attaches the
+executor's task dependencies to it during app init. Attempts run on any worker
+placement: ``litestar-queues`` (0.13.0+) enters the application lifespan in
+standalone worker processes, so the executor is bound there exactly as in the
+web process. Keep ``WorkerConfig.run_app_lifespan`` enabled (the default).
 
 .. literalinclude:: /examples/snippets/mcp_tasks_queue.py
     :language: python
     :caption: ``docs/examples/snippets/mcp_tasks_queue.py``
 
+You can override task execution at the plugin, controller, or route level:
+
+- **Plugin level**: Pass ``MCPConfig(tasks=False)`` to disable MCP Tasks even
+  when ``QueuePlugin`` is installed, ``MCPTaskConfig(executor="in_process")`` to
+  keep MCP Tasks in-process, or ``MCPTaskConfig(executor=QueueTaskExecutor(queue="custom-mcp"))``
+  to customize the default queue lane or timeout.
+- **Controller / Router level**: Set ``opt={"mcp_task": True, "mcp_queue": "heavy"}``
+  on a ``Controller`` or ``Router`` to enable task support or select a queue lane
+  for all tools in that group.
+- **Route level**: Pass ``@mcp_tool(task=True, queue="heavy")``,
+  ``@mcp_tool(task="sync")`` (or ``task=False``) to keep a specific route
+  synchronous, or ``@mcp_tool(task=True, queue=False)`` to run a specific tool's
+  task in-process.
+
 Guarantees and Execution Semantics:
 
-- **Fail-closed principal loader**: Workers rebuild ``scope["user"]`` by calling
-  ``principal_loader(owner_id)``. Without a loader the attempt runs with
-  ``scope["user"] = None``, so guarded tools reject the call and the task completes
-  with an ``isError`` result instead of running as the original principal.
+- **Automatic principal, dependency, and security rehydration**: At enqueue time,
+  ``LitestarMCP`` captures a JSON-safe snapshot of the authenticated
+  ``request.user``, ``request.auth``, and ``litestar-security``
+  ``SecurityContext`` (``Principal``, ``AuthorizationSnapshot``, and
+  ``CredentialRestrictions``). In the worker, ``scope["user"]``,
+  ``scope["auth"]``, and ``scope["litestar_security"]`` are automatically
+  rehydrated before guards and dependencies run, existing ``current_user`` /
+  ``user`` / ``principal`` Litestar ``Provide`` dependencies are resolved, and a
+  fresh ``Scope.REQUEST`` Dishka container is entered when Dishka is configured
+  on the app. Unauthenticated requests fail closed without a ``scope["user"]``
+  entry so guarded tools reject the call. An explicit ``principal_loader`` on
+  :class:`~litestar_mcp.queues.QueueTaskExecutor` remains available as an
+  optional override.
 - **Cooperative cancellation**: ``tasks/cancel`` cancels the current queue job with
   ``include_running=True``. A running attempt races the job's cancellation signal
   and is cancelled at its next await; the replica that wins the cancellation marks
@@ -177,8 +200,8 @@ Configuration Options
       - ``None``
       - Filter exposure by OpenAPI tags.
     * - ``tasks``
-      - ``False``
-      - Enable the Tasks extension, optionally with a persistent Store.
+      - ``None``
+      - Enable the Tasks extension (auto-enabled with ``QueueTaskExecutor`` when ``QueuePlugin`` is registered; pass ``True``, ``MCPTaskConfig(...)``, or ``False``).
     * - ``skills``
       - ``None``
       - Serve Agent Skills over MCP from the configured directories; see

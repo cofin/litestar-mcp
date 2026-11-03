@@ -3,11 +3,12 @@
 
 import asyncio
 import base64
+import contextlib
 import contextvars
 import inspect
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, TypeVar, cast, get_type_hints
 
 import anyio
@@ -58,11 +59,20 @@ from litestar_mcp.mcp.registry import (
     should_include_prompt,
 )
 from litestar_mcp.mcp.skills import SKILL_URI_PREFIX, SkillIntegrityError
-from litestar_mcp.mcp.tasks import MCPTaskStore, TaskLookupError, TaskRecord, ToolTaskCall
+from litestar_mcp.mcp.tasks import (
+    MCPTaskStore,
+    PrincipalProxy,
+    TaskLookupError,
+    TaskRecord,
+    ToolTaskCall,
+    extract_principal_snapshot,
+    rehydrate_security_scope,
+)
 from litestar_mcp.utils import (
     get_handler_function,
     get_mcp_metadata,
     match_uri,
+    normalize_task_support,
     render_description,
     should_include_handler,
 )
@@ -538,11 +548,98 @@ class MCPHandlerService:
                 status_message=str(exc),
             )
 
+    def _prepare_user_dependency_call(
+        self,
+        handler: "BaseRouteHandler",
+        request: "Request[Any, Any, Any]",
+        call: "ToolTaskCall",
+    ) -> "tuple[str, Callable[..., Any], dict[str, Any]] | None":
+        """Locate a ``current_user``/``user``/``principal`` dependency and build its invocation kwargs."""
+        resolve_deps = getattr(handler, "resolve_dependencies", None)
+        dependencies = resolve_deps() if callable(resolve_deps) else None
+        if not isinstance(dependencies, Mapping):
+            return None
+
+        target_key = next((k for k in ("current_user", "user", "principal") if k in dependencies), None)
+        provider = dependencies.get(target_key) if target_key is not None else None
+        dep_fn = getattr(provider, "dependency", provider) if provider is not None else None
+        if target_key is None or not callable(dep_fn):
+            return None
+
+        sig: inspect.Signature | None = None
+        with contextlib.suppress(TypeError, ValueError):
+            sig = inspect.signature(dep_fn)
+        if sig is None:
+            return None
+
+        call_kwargs: dict[str, Any] = {}
+        raw_owner = call.owner_id.removeprefix("user:") if call.owner_id is not None else None
+        for param_name, param in sig.parameters.items():
+            if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                continue
+            if param_name in {"request", "connection"}:
+                call_kwargs[param_name] = request
+            elif param_name == "state":
+                call_kwargs[param_name] = self.app_ref.state
+            elif param_name == "scope":
+                call_kwargs[param_name] = request.scope
+            elif param_name in {"owner_id", "user_id", "principal_id"} and raw_owner is not None:
+                call_kwargs[param_name] = raw_owner
+            elif param_name not in dependencies and param.default is inspect.Parameter.empty:
+                return None
+
+        missing_required = any(
+            param.default is inspect.Parameter.empty
+            and param.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+            and name not in call_kwargs
+            for name, param in sig.parameters.items()
+        )
+        return None if missing_required else (target_key, dep_fn, call_kwargs)
+
+    async def _rehydrate_user_from_handler_dependencies(
+        self,
+        handler: "BaseRouteHandler",
+        request: "Request[Any, Any, Any]",
+        call: "ToolTaskCall",
+    ) -> "None":
+        """Hydrate ``request.scope["user"]`` from a handler's ``current_user``/``user``/``principal`` dependency."""
+        if call.owner_id is None and call.principal is None:
+            return
+        prepared = self._prepare_user_dependency_call(handler, request, call)
+        if prepared is None:
+            return
+        target_key, dep_fn, call_kwargs = prepared
+
+        resolved: Any = None
+        with contextlib.suppress(Exception):
+            resolved = dep_fn(**call_kwargs)
+            if inspect.isawaitable(resolved):
+                resolved = await resolved
+        if resolved is None:
+            return
+
+        declared_params: Mapping[str, Any] = {}
+        with contextlib.suppress(Exception):
+            declared_params = handler.parsed_fn_signature.parameters
+
+        scope = cast("dict[str, Any]", request.scope)
+        if target_key in declared_params and isinstance(scope.get("user"), PrincipalProxy):
+            extra = extract_principal_snapshot(resolved, owner_id=call.owner_id)
+            if isinstance(extra, Mapping):
+                merged = dict(scope["user"])
+                merged.update({k: v for k, v in extra.items() if not k.startswith("__")})
+                scope["user"] = PrincipalProxy(merged)
+        else:
+            scope["user"] = resolved
+
     async def run_task_attempt(self, call: "ToolTaskCall", user: "Any") -> "None":
         """Execute one task-augmented tool call attempt in a background worker."""
         if self.task_store is None:
             return
         scope = blank_http_scope(self.app_ref)
+        if call.owner_id is not None:
+            scope["litestar_mcp.owner_id"] = call.owner_id
+        rehydrate_security_scope(scope, call.principal, call.owner_id)
         if user is not None:
             scope["user"] = user
         request: Request[Any, Any, Any] = Request(cast("Any", scope))
@@ -563,6 +660,9 @@ class MCPHandlerService:
                 JSONRPCError(code=INVALID_PARAMS, message=f"Tool not found: {call.tool_name}"),
             )
             return
+
+        if user is None:
+            await self._rehydrate_user_from_handler_dependencies(handler, request, call)
 
         try:
             result = await self._execute_tool_call(call.tool_name, handler, call.arguments, context)
@@ -733,6 +833,33 @@ class MCPHandlerService:
             result["nextCursor"] = next_cursor
         return result
 
+    def _resolve_tool_task_support(
+        self,
+        handler: "BaseRouteHandler",
+        metadata: "Mapping[str, Any]",
+    ) -> "str | None":
+        """Resolve effective MCP task support mode across decorator metadata and route/controller/router opt."""
+        raw_meta = metadata.get("task_support") if metadata.get("task_support") is not None else metadata.get("task")
+        if raw_meta is not None:
+            return normalize_task_support(raw_meta)
+        handler_opt = getattr(handler, "opt", None) or {}
+        opt_keys = self.config.opt_keys
+        raw_opt = (
+            handler_opt.get(opt_keys.task) if opt_keys.task in handler_opt else handler_opt.get(opt_keys.task_support)
+        )
+        return normalize_task_support(raw_opt)
+
+    def _resolve_tool_queue(
+        self,
+        handler: "BaseRouteHandler",
+        metadata: "Mapping[str, Any]",
+    ) -> "str | bool | None":
+        """Resolve effective queue override across decorator metadata and route/controller/router opt."""
+        if "queue" in metadata and metadata["queue"] is not None:
+            return cast("str | bool | None", metadata["queue"])
+        handler_opt = getattr(handler, "opt", None) or {}
+        return cast("str | bool | None", handler_opt.get(self.config.opt_keys.queue))
+
     async def tools_call(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
         tool_name = params.get("name")
         if not tool_name:
@@ -781,7 +908,7 @@ class MCPHandlerService:
                 max_blob_bytes=self.config.max_blob_bytes,
             )
 
-        task_support = metadata.get("task_support")
+        task_support = self._resolve_tool_task_support(handler, metadata)
         extensions = (context.client_capabilities or {}).get("extensions", {})
         task_capable = isinstance(extensions, dict) and TASKS_EXTENSION in extensions
         task_enabled = self.task_config is not None and self.task_store is not None
@@ -805,12 +932,27 @@ class MCPHandlerService:
         if task_store is None:  # pragma: no cover - narrowed by task_enabled
             return await self._execute_tool_call(tool_name, handler, tool_args, context)
 
-        if self.task_config is not None and self.task_config.executor is not None:
+        route_queue = self._resolve_tool_queue(handler, metadata)
+        force_in_process = route_queue in (False, "in_process")
+        raw_executor = None if force_in_process or self.task_config is None else self.task_config.executor
+        executor = None if isinstance(raw_executor, (bool, str)) else raw_executor
+
+        if executor is not None:
+            req_scope = cast("dict[str, Any]", context.request.scope) if context.request is not None else {}
+            principal_snapshot = extract_principal_snapshot(
+                req_scope.get("user"),
+                req_scope.get("auth"),
+                req_scope.get("litestar_security"),
+                context.owner_id,
+            )
+            target_queue = route_queue if isinstance(route_queue, str) and route_queue else None
             call = ToolTaskCall(
                 task_id="",
                 tool_name=tool_name,
                 arguments=tool_args,
                 owner_id=context.owner_id,
+                principal=principal_snapshot,
+                queue=target_queue,
                 client_id=context.client_id,
                 protocol_version=context.protocol_version,
                 client_capabilities=context.client_capabilities,
@@ -822,15 +964,25 @@ class MCPHandlerService:
             call = msgspec.structs.replace(call, task_id=record.task_id)
             await task_store.set_dispatch(record.task_id, call)
             try:
-                await self.task_config.executor.submit(record, call)
+                await executor.submit(record, call)
             except Exception as exc:
                 raise JSONRPCErrorException(JSONRPCError(code=INTERNAL_ERROR, message=str(exc))) from exc
             return {"resultType": "task", **record.to_dict()}
 
         record = await task_store.create(context.owner_id)
-        if context.progress_reporter is not None:
-            context.progress_reporter = _discard_progress
-        background_task = asyncio.create_task(self._run_task(record, tool_name, handler, tool_args, context))
+        bg_request = context.request
+        if bg_request is not None:
+            bg_scope = dict(cast("dict[str, Any]", bg_request.scope))
+            bg_state = dict(cast("dict[str, Any]", bg_scope.get("state") or {}))
+            bg_state.pop("dishka_container", None)
+            bg_scope["state"] = bg_state
+            bg_request = Request(cast("Any", bg_scope))
+        bg_context = replace(
+            context,
+            request=bg_request,
+            progress_reporter=_discard_progress if context.progress_reporter is not None else None,
+        )
+        background_task = asyncio.create_task(self._run_task(record, tool_name, handler, tool_args, bg_context))
         await task_store.attach_runner(record.task_id, background_task)
         return {"resultType": "task", **record.to_dict()}
 
@@ -1283,8 +1435,9 @@ class MCPHandlerService:
             )
         try:
             responses = await self.task_store.update(task_id, context.owner_id, input_responses)
-            executor = self.task_config.executor if self.task_config is not None else None
-            if responses is not None and executor is not None:
+            raw_executor = self.task_config.executor if self.task_config is not None else None
+            executor = None if isinstance(raw_executor, (bool, str)) else raw_executor
+            if responses is not None and executor is not None and not self.task_store.has_local_runner(task_id):
                 record = await self.task_store.get(task_id, context.owner_id)
                 dispatch = await self.task_store.get_dispatch(task_id)
                 if dispatch is None:
@@ -1314,9 +1467,11 @@ class MCPHandlerService:
         if not task_id:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'taskId'"))
         try:
-            if self.task_config is not None and self.task_config.executor is not None:
+            raw_executor = self.task_config.executor if self.task_config is not None else None
+            executor = None if isinstance(raw_executor, (bool, str)) else raw_executor
+            if executor is not None and not self.task_store.has_local_runner(task_id):
                 record = await self.task_store.get(task_id, context.owner_id)
-                await self.task_config.executor.cancel(record)
+                await executor.cancel(record)
             else:
                 await self.task_store.cancel(task_id, context.owner_id)
         except TaskLookupError as exc:

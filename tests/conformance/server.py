@@ -566,15 +566,11 @@ def prompt_with_image() -> list[dict[str, Any]]:
     ]
 
 
-executor: Any = None
 queue_plugins: list[Any] = []
 if _TASK_EXECUTOR == "queue":
     from litestar_queues import QueueConfig, QueuePlugin
     from litestar_queues.config import WorkerConfig
 
-    from litestar_mcp.queues import QueueTaskExecutor
-
-    executor = QueueTaskExecutor()
     queue_plugins = [
         QueuePlugin(QueueConfig(queue_backend="memory", worker=WorkerConfig(placement="asgi", poll_interval=0.05))),
     ]
@@ -588,7 +584,6 @@ plugin = LitestarMCP(
             default_ttl_ms=300_000,
             max_ttl_ms=3_600_000,
             poll_interval_ms=50,
-            executor=executor,
         ),
     ),
     prompts=[

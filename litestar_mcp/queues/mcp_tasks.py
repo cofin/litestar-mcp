@@ -33,10 +33,13 @@ class QueueTaskExecutor:
     wiring is needed beyond registering ``QueuePlugin`` on the same app.
 
     Args:
-        principal_loader: Rehydrates ``scope["user"]`` from a task ``owner_id``
-            in the worker. Without it the worker runs with ``user=None`` and
-            authenticated tools fail closed.
-        queue: Queue name for tool attempts.
+        principal_loader: Optional callback rehydrating ``scope["user"]`` from a
+            task ``owner_id`` in the worker. When omitted, ``LitestarMCP``
+            automatically rehydrates ``scope["user"]``, ``scope["auth"]``, and
+            ``scope["litestar_security"]`` from the authenticated principal
+            snapshot and the application's existing Litestar dependencies.
+        queue: Default queue name for tool attempts (overridable per controller
+            or route via ``mcp_queue`` / ``@mcp_tool(queue=...)``).
         timeout: Per-attempt timeout in seconds.
     """
 
@@ -124,7 +127,7 @@ class QueueTaskExecutor:
             run_mcp_tool_task,
             call=msgspec.to_builtins(call),
             key=f"mcp-task:{call.task_id}:{call.attempt}",
-            queue=self._queue,
+            queue=call.queue or self._queue,
             timeout=self._timeout,
         )
         await self.runtime.task_store.set_job_id(call.task_id, str(result.id))

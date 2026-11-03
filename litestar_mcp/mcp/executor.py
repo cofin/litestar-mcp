@@ -28,6 +28,7 @@ from urllib.parse import urlencode
 
 from litestar import Litestar, Request
 from litestar._asgi.routing_trie.traversal import parse_path_params
+from litestar.connection import ASGIConnection
 from litestar.exceptions import ImproperlyConfiguredException, PermissionDeniedException, SerializationException
 from litestar.response import Response
 from litestar.serialization import decode_json, encode_json
@@ -40,7 +41,6 @@ from litestar_mcp.utils.handler_signature import get_advertised_handler_paramete
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
 
-    from litestar.connection import ASGIConnection
     from litestar.handlers.base import BaseRouteHandler
     from litestar.handlers.http_handlers.base import HTTPRouteHandler
     from litestar.types import Message, Receive, Scope, Send
@@ -324,6 +324,14 @@ async def _run_handler_pipeline(
     """Run guards, hooks, dependency resolution, handler dispatch, and response rendering."""
     try:
         try:
+            state_scope = dispatch_request.scope.setdefault("state", {})
+            app_dishka = getattr(app.state, "dishka_container", None)
+            if "dishka_container" not in state_scope and callable(app_dishka):
+                req_container = await stack.enter_async_context(
+                    cast("Any", app_dishka)({Request: dispatch_request, ASGIConnection: dispatch_request})
+                )
+                state_scope["dishka_container"] = req_container
+
             await _enforce_guards(handler, dispatch_request)
 
             short_circuit = await _run_before_request(handler, dispatch_request)
@@ -336,6 +344,11 @@ async def _run_handler_pipeline(
                     del kwargs["data"]
                 cleanup_group = await kwargs_model.resolve_dependencies(dispatch_request, kwargs)
                 await stack.enter_async_context(cleanup_group)
+                for user_dep_key in ("current_user", "user", "principal"):
+                    if user_dep_key in kwargs and kwargs[user_dep_key] is not None:
+                        if type(dispatch_request.scope.get("user")).__name__ == "PrincipalProxy":
+                            dispatch_request.scope["user"] = kwargs[user_dep_key]
+                        break
                 parsed_kwargs = handler.signature_model.parse_values_from_connection_kwargs(
                     connection=dispatch_request,
                     kwargs=kwargs,
@@ -838,7 +851,7 @@ def _build_dispatch_scope(
         inherited_state = dict(base_scope.get("state", {}))
         inherited_state.pop("_ls_connection_state", None)
         scope["state"] = inherited_state
-        for passthrough in ("user", "auth", "session"):
+        for passthrough in ("user", "auth", "session", "litestar_security"):
             if passthrough in base_scope:
                 scope[passthrough] = base_scope[passthrough]
 
