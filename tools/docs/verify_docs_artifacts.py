@@ -6,6 +6,7 @@ import subprocess
 import sys
 import zlib
 from collections.abc import Sequence
+from html.parser import HTMLParser
 from pathlib import Path
 
 import msgspec
@@ -28,9 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 MAX_REFERENCE_HTML_BYTES = 240 * 1024
 
 WARNING_PATTERN = re.compile(r"\b(WARNING|ERROR)\b")
-CODE_OR_PRE_RE = re.compile(
-    r"<(?:pre|code|textarea|script|style)\b[^>]*>.*?</(?:pre|code|textarea|script|style)>", re.DOTALL | re.IGNORECASE
-)
+IGNORED_HTML_TAGS: frozenset[str] = frozenset({"pre", "code", "textarea", "script", "style"})
 RAW_DIRECTIVE_RE = re.compile(r"(?:^|>|\s):::\s+litestar_mcp\b")
 RAW_SNIPPET_RE = re.compile(r"--8\s*<\s*--")
 RAW_SPHINX_ROLE_RE = re.compile(r":(?:class|func|meth|mod|attr|exc|obj|data|const|ref|doc|pep):`[^`]+`")
@@ -56,6 +55,37 @@ class ArtifactFinding(msgspec.Struct, frozen=True, gc=False):
 
     detail: str
     """Human-readable explanation of the failure."""
+
+
+class _VisibleHTMLTextExtractor(HTMLParser):
+    """Extract visible HTML text outside code, preformatted, script, and style elements."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self._ignored_stack: list[str] = []
+        self._chunks: list[str] = []
+
+    def get_text(self) -> str:
+        """Return the concatenated non-code text chunks."""
+        return "\n".join(self._chunks)
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        """Enter an ignored element when encountering a code, pre, textarea, script, or style start tag."""
+        del attrs
+        normalized = tag.lower()
+        if normalized in IGNORED_HTML_TAGS:
+            self._ignored_stack.append(normalized)
+
+    def handle_endtag(self, tag: str) -> None:
+        """Pop the ignored element stack when closing an ignored tag."""
+        normalized = tag.lower()
+        if normalized in IGNORED_HTML_TAGS and self._ignored_stack:
+            self._ignored_stack.pop()
+
+    def handle_data(self, data: str) -> None:
+        """Record text data when not inside an ignored element."""
+        if not self._ignored_stack:
+            self._chunks.append(data)
 
 
 def verify_site(
@@ -272,7 +302,7 @@ def _check_html_files(site_dir: Path) -> list[ArtifactFinding]:
     for html_file in sorted(site_dir.rglob("*.html")):
         rel_path = html_file.relative_to(site_dir).as_posix()
         raw_html = html_file.read_text(encoding="utf-8")
-        stripped_html = CODE_OR_PRE_RE.sub("", raw_html)
+        stripped_html = _extract_non_code_text(raw_html)
 
         if RAW_DIRECTIVE_RE.search(stripped_html):
             findings.append(
@@ -392,6 +422,14 @@ def _check_cli_autodoc(docs_dir: Path) -> list[ArtifactFinding]:
             if f"`litestar mcp {cmd_name}`" not in cli_text
         )
     return findings
+
+
+def _extract_non_code_text(raw_html: str) -> str:
+    """Extract visible text outside `<pre>`, `<code>`, `<textarea>`, `<script>`, and `<style>` elements."""
+    extractor = _VisibleHTMLTextExtractor()
+    extractor.feed(raw_html)
+    extractor.close()
+    return extractor.get_text()
 
 
 if __name__ == "__main__":

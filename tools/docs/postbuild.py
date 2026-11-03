@@ -36,7 +36,7 @@ SITE_URL = "https://cofin.github.io/litestar-mcp"
 
 SNIPPET_INCLUDE_RE = re.compile(r'^(\s*)--8<--\s+"([^"]+)"\s*$', re.MULTILINE)
 DIRECTIVE_RE = re.compile(r"^:::\s+(litestar_mcp(?:\.[A-Za-z0-9_]+)*)\s*$", re.MULTILINE)
-PRE_OR_TEXTAREA_RE = re.compile(r"(<(?:pre|textarea)\b[^>]*>.*?</(?:pre|textarea)>)", re.DOTALL | re.IGNORECASE)
+PRE_OR_TEXTAREA_RE = re.compile(r"(<(?:pre|textarea)\b[^>]*>.*?</(?:pre|textarea)\b[^>]*>)", re.DOTALL | re.IGNORECASE)
 LEADING_INDENT_RE = re.compile(r"\n[ \t]+")
 MULTI_BLANK_LINES_RE = re.compile(r"\n\s*\n+")
 TRAILING_WS_RE = re.compile(r"[ \t]+\n")

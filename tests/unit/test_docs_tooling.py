@@ -201,6 +201,26 @@ def test_verify_site_detects_unrendered_directives_snippets_and_roles(
     assert expected_rule in rules
 
 
+def test_verify_site_ignores_directives_and_roles_inside_code_and_script_elements(tmp_path: Path) -> None:
+    """Verify `verify_site` ignores `:::` and `:class:` occurrences inside `<code>`, `<pre>`, and `<script>` tags."""
+    site_dir = tmp_path / "site"
+    docs_dir = tmp_path / "docs"
+    site_dir.mkdir(parents=True)
+    docs_dir.mkdir(parents=True)
+    (docs_dir / "index.md").write_text("# Litestar MCP\n", encoding="utf-8")
+    safe_html = (
+        "<html><body>"
+        "<pre><code>::: litestar_mcp.MCPConfig</code></pre>"
+        "<script >const role = ':class:`LitestarMCP`';</script >"
+        "</body></html>"
+    )
+    (site_dir / "index.html").write_text(safe_html, encoding="utf-8")
+    run_postbuild(site_dir=site_dir, docs_dir=docs_dir)
+    (site_dir / "index.html").write_text(safe_html, encoding="utf-8")
+
+    assert verify_site(site_dir=site_dir, docs_dir=docs_dir) == []
+
+
 def test_zensical_toml_and_pyproject_configuration() -> None:
     """Verify `zensical.toml` and `pyproject.toml` configure the 7-tab docs architecture and Markdown safety."""
     zensical_data = tomllib.loads((REPO_ROOT / "zensical.toml").read_text(encoding="utf-8"))
