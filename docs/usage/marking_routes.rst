@@ -13,8 +13,10 @@ Tool Marker
 ===========
 
 Tools are executable operations - anything that takes arguments and returns
-structured output. Tag a handler with ``mcp_tool="<tool_name>"`` and the
-plugin publishes it via ``tools/list`` and ``tools/call``.
+structured output. Tag a handler with ``mcp_tool=True`` and the plugin
+publishes it via ``tools/list`` and ``tools/call`` under the function's name.
+Pass ``mcp_tool="<tool_name>"`` only when the MCP name should differ from the
+function name; the same applies to ``mcp_resource`` and ``mcp_prompt``.
 
 .. literalinclude:: /examples/snippets/marking_tools.py
     :language: python
@@ -27,8 +29,8 @@ Resource Marker
 ===============
 
 Resources are read-only payloads such as schemas, capability summaries, or
-cached projections. Tag a handler with ``mcp_resource="<resource_name>"`` to
-expose it via ``resources/list`` and ``resources/read``.
+cached projections. Tag a handler with ``mcp_resource=True`` (or an explicit
+name) to expose it via ``resources/list`` and ``resources/read``.
 
 .. literalinclude:: /examples/snippets/marking_resources.py
     :language: python
@@ -44,7 +46,7 @@ Prompts are templated instructions for a model. The plugin recognises
 two registration paths.
 
 **Handler-based prompts.** Tag a Litestar route handler with
-``mcp_prompt="<prompt_name>"``. The handler stays a normal HTTP endpoint
+``mcp_prompt=True`` (or an explicit name). The handler stays a normal HTTP endpoint
 and is also reachable through ``prompts/get``. Override the description,
 title, argument list, or icons through dedicated opt keys:
 

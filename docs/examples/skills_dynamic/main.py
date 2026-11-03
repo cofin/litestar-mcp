@@ -108,17 +108,9 @@ def build_app() -> "Litestar":
     """Construct a Litestar app combining filesystem and dynamic skill sources."""
     mcp_config = MCPConfig(
         name="Dynamic Skills API",
-        cache_scope="private",
-        skills=MCPSkillsConfig(
-            paths=[SKILLS_ROOT],
-            sources=[WorkspaceSkillSource()],
-            directory_read=True,
-        ),
+        skills=MCPSkillsConfig(paths=[SKILLS_ROOT], sources=[WorkspaceSkillSource()]),
     )
-    return Litestar(
-        route_handlers=[],
-        plugins=[LitestarMCP(mcp_config)],
-    )
+    return Litestar(plugins=[LitestarMCP(mcp_config)])
 
 
 app = build_app()
@@ -126,4 +118,4 @@ app = build_app()
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run(app, host="127.0.0.1", port=8000)

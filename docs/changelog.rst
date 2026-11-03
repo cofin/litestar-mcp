@@ -9,6 +9,54 @@ notes, and important protocol fixes.
 Recent Updates
 ==============
 
+.. changelog:: 0.18.0
+
+    .. change:: support distributed MCP Tasks on litestar-queues via QueueTaskExecutor
+        :type: feature
+
+        Added ``QueueTaskExecutor`` so long-running MCP Tasks run on workers managed by
+        ``litestar-queues`` (optional ``queues`` extra). Set it on
+        ``MCPTaskConfig(executor=...)`` and register ``QueuePlugin`` on the same app;
+        ``LitestarMCP`` attaches the executor's task dependencies to the queue during
+        app init. ``MCPTaskConfig.executor`` is typed by the ``MCPTaskExecutor``
+        protocol, so the core package never imports ``litestar-queues``. Supports
+        fail-closed principal loading (``principal_loader``), cooperative cancellation,
+        cross-replica resumption on ``input_required``, and internal job dispatch
+        decoupling. ``MCPTaskStore.update`` returns merged responses and
+        ``MCPTaskStore.create`` takes a keyword-only ``local``. The ``queues`` extra
+        now requires ``litestar-queues>=0.13.0``, whose standalone workers run the
+        application lifespan, so MCP Tasks and durable workflows execute on every
+        worker placement (`#104 <https://github.com/cofin/litestar-mcp/pull/104>`_).
+
+    .. change:: support durable workflow execution on litestar-queues via DurableWorkflowEngine
+        :type: feature
+
+        Added ``DurableWorkflowEngine``, ``WorkflowStore``, ``WorkflowRun``, and
+        ``NodeRecord`` in ``litestar_mcp.queues`` for durable, distributed DAG workflows.
+        ``DurableWorkflowEngine(workflows)`` is a Litestar plugin: registered next to
+        ``QueuePlugin`` it attaches its task dependencies, stores records in the app's
+        ``stores`` registry (``litestar_mcp_workflows``), and provides itself as the
+        ``workflow_engine`` dependency. Provides idempotent node scheduling with
+        reservation cleanup, at-least-once node execution, per-run watchdog ticks that
+        recover lost advances, configurable run timeouts, and rejects immediate execution
+        backends when the watchdog is active (`#104 <https://github.com/cofin/litestar-mcp/pull/104>`_).
+
+    .. change:: infer configuration that previously had to be spelled out
+        :type: feature
+
+        - ``mcp_tool``, ``mcp_resource``, and ``mcp_prompt`` decorators default ``name``
+          to the function name, and the route opt keys accept ``True``
+          (``@get("/users", mcp_tool=True)``) to do the same.
+        - Resources advertise the route's ``media_type`` as their MIME type when no
+          ``mcp_resource_mime_type`` / ``mime_type`` override is set.
+        - ``MCPTaskConfig.store`` defaults to the app's ``stores`` registry entry
+          ``litestar_mcp_tasks``, so a shared ``StoreRegistry`` covers MCP Tasks.
+        - ``AgentRuntime`` is a Litestar plugin that provides itself as the ``runtime``
+          dependency used by ``AgentChatController``.
+        - ``LitestarA2A`` accepts an ``AgentExecutor`` in place of a ``RequestHandler``
+          and wraps it in ``DefaultRequestHandler`` with an ``InMemoryTaskStore``
+          (`#104 <https://github.com/cofin/litestar-mcp/pull/104>`_).
+
 .. changelog:: 0.17.0
 
     .. change:: support MCP ToolAnnotations via route opt keys and HTTP method inference

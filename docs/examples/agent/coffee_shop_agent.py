@@ -3,7 +3,6 @@
 from typing import Any
 
 from litestar import Litestar
-from litestar.di import Provide
 
 from litestar_mcp import (
     LitestarMCP,
@@ -20,7 +19,6 @@ from litestar_mcp.agent import (
     AgentRuntime,
     GoogleGenAIClient,
 )
-from litestar_mcp.mcp.config import MCPConfig
 
 
 class BaristaSkillController(SkillController):
@@ -28,7 +26,6 @@ class BaristaSkillController(SkillController):
 
     name = "barista"
     description = "Specialized skills for querying menu items and preparing coffee orders"
-    prefix = "barista"
     instructions = (
         "Barista Operational Grounding:\n"
         "- Suggest seasonal single-origin roasts when asked for recommendations.\n"
@@ -46,14 +43,14 @@ class BaristaSkillController(SkillController):
         }
         self.orders: list[dict[str, Any]] = []
 
-    @tool(description="Retrieve available coffee drinks and pricing.")
+    @tool
     def get_menu(self) -> dict[str, dict[str, Any]]:
-        """Return the current coffee menu."""
+        """Retrieve available coffee drinks and pricing."""
         return self.menu
 
-    @tool(description="Place a customized beverage order.")
+    @tool
     def place_order(self, beverage: str, milk: str = "whole", shots: int = 2) -> dict[str, Any]:
-        """Record an order and return confirmation details."""
+        """Place a customized beverage order."""
         bev = beverage.lower().replace(" ", "_")
         if bev not in self.menu:
             return {"status": "error", "message": f"'{beverage}' is not on the menu."}
@@ -95,31 +92,23 @@ class CoffeePromptController(PromptController):
 
 
 def create_model_client() -> GoogleGenAIClient:
-    """Instantiate GoogleGenAIClient with optional thinking budget."""
-    return GoogleGenAIClient(
-        model="gemini-3.8-flash",
-        thinking_budget=2048,
-        temperature=0.2,
-    )
+    """Instantiate GoogleGenAIClient with a thinking budget and low temperature."""
+    return GoogleGenAIClient(thinking_budget=2048, temperature=0.2)
 
 
 def setup_coffee_agent_group() -> AgentGroup:
     """Build and configure the coffee shop agent group with specialists."""
-    model_client = GoogleGenAIClient(model="gemini-3.8-flash")
-
     barista_agent = Agent(
         name="barista",
         description="Prepares coffee drinks, looks up menu pricing, and manages customer orders.",
         instructions="You are the lead barista. Handle menu questions and beverage customizations.",
-        skills=[BaristaSkillController()],
-        model=model_client,
+        skills=[BaristaSkillController],
     )
 
     triage_coordinator = Agent(
         name="concierge",
         description="Greets customers and routes coffee questions to the barista specialist.",
         instructions="Greet customers warmly. Delegate ordering and coffee questions to the barista.",
-        model=model_client,
     )
 
     return AgentGroup(
@@ -128,23 +117,10 @@ def setup_coffee_agent_group() -> AgentGroup:
     )
 
 
-coffee_shop_group = setup_coffee_agent_group()
-
-agent_runtime = AgentRuntime(target=coffee_shop_group)
-
-mcp_plugin = LitestarMCP(
-    config=MCPConfig(
-        prompt_controllers=[CoffeePromptController],
-        skill_controllers=[BaristaSkillController],
-    )
-)
-
 app = Litestar(
-    route_handlers=[
-        AgentChatController,
-        CoffeePromptController,
-        BaristaSkillController,
+    route_handlers=[AgentChatController, CoffeePromptController, BaristaSkillController],
+    plugins=[
+        AgentRuntime(setup_coffee_agent_group(), default_model=create_model_client()),
+        LitestarMCP(),
     ],
-    plugins=[mcp_plugin],
-    dependencies={"runtime": Provide(lambda: agent_runtime, sync_to_thread=False)},
 )

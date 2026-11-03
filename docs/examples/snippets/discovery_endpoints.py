@@ -15,4 +15,4 @@ def build() -> "Litestar":
     Discovery is served at:
       POST /mcp (server/discover)
     """
-    return Litestar(route_handlers=[], plugins=[LitestarMCP()])
+    return Litestar(plugins=[LitestarMCP()])

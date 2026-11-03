@@ -106,6 +106,11 @@ automatic thought signature round-tripping on follow-up function-calling turns:
     :caption: ``docs/examples/agent/coffee_shop_agent.py`` - ``create_model_client``
     :pyobject: create_model_client
 
+Agents without an explicit ``model`` use the runtime's ``default_model``; when that is
+unset too, the runtime builds a default :class:`~litestar_mcp.agent.GoogleGenAIClient`.
+Register the :class:`~litestar_mcp.agent.AgentRuntime` in ``Litestar(plugins=[...])`` to
+provide it as the ``runtime`` dependency of :class:`~litestar_mcp.agent.AgentChatController`.
+
 Sessions and Runtime
 ====================
 
@@ -128,6 +133,59 @@ and live Server-Sent Events (SSE) streaming with ``Last-Event-ID`` cursor recove
 - ``POST /agent/turns``: Synchronous turn execution returning full aggregated output.
 - ``GET /agent/turns/{turn_id}/stream``: Realtime SSE event stream emitting typed frames
   (``thought``, ``delta``, ``tool_call``, ``tool_result``, ``complete``) with keepalive pings.
+
+Durable Workflows
+=================
+
+For multi-step, stateful agent pipelines that survive worker crashes, node retries,
+and distributed scaling, Litestar MCP provides durable workflow orchestration
+on top of ``litestar-queues``. Install the optional ``queues`` extra to use it:
+
+.. code-block:: bash
+
+    pip install "litestar-mcp[queues]"
+
+.. literalinclude:: /examples/snippets/durable_workflow.py
+    :language: python
+    :caption: ``docs/examples/snippets/durable_workflow.py``
+
+Register :class:`~litestar_mcp.queues.DurableWorkflowEngine` next to ``QueuePlugin``;
+no other wiring is required. During app init the engine:
+
+- validates every :class:`~litestar_mcp.agent.workflow.DynamicWorkflow` DAG and rejects
+  duplicate workflow names,
+- attaches its task dependencies to the ``QueuePlugin`` configuration (any
+  ``task_dependency_resolver`` you set keeps running first),
+- stores run and node records (:class:`~litestar_mcp.queues.WorkflowRun`,
+  :class:`~litestar_mcp.queues.NodeRecord`) in the application's ``stores`` registry under
+  ``litestar_mcp_workflows``, so configuring ``Litestar(stores=...)`` once (for example a
+  Redis-backed ``StoreRegistry``) makes workflow state shared across replicas, and
+- provides itself to route handlers as the ``workflow_engine`` dependency.
+
+Start runs with ``await workflow_engine.start("workflow_name", initial_state={})`` and inspect
+them with ``await workflow_engine.snapshot(run_id)``, which returns ``(WorkflowRun, WorkflowContext)``.
+
+Execution Semantics & Guarantees:
+
+- **Idempotent Scheduling**: Workflow nodes are registered with ``unique_until="forever"``
+  and enqueued with keys matching ``wf-node:{run_id}:{node}``. Redelivered tasks or concurrent
+  advances never double-schedule an in-flight or completed step. Node reservations are automatically
+  released upon reaching a terminal status (``completed`` or ``failed``).
+- **At-least-once Node Execution**: If a worker crashes while executing a step before recording its
+  outcome to the store, ``litestar-queues``' stale requeue recovers the job and re-runs the node.
+- **JSON-Serializable Outputs**: Step results must be JSON-serializable. Returning non-serializable
+  data fails the node and records a descriptive error.
+- **Fail-Fast Cascading**: When a node fails or exceeds retries, its dependent downstream nodes
+  are skipped, and the overall run transitions to ``status="failed"``.
+- **Per-Run Watchdog & Timeouts**: If a worker crashes between persisting a node record and
+  enqueuing the subsequent advance task, the watchdog task (scheduled with ``run_after=watchdog_interval``
+  and per-tick key ``wf-watchdog:{run_id}:{tick}``) detects the stalled run and triggers advance.
+  Runs exceeding ``run_timeout_seconds`` are transitioned to ``failed`` with a timeout error and
+  all reservations released.
+- **Non-Immediate Backend Requirement**: Because ``litestar-queues``' ``immediate`` execution backend
+  runs enqueued tasks synchronously inline, enabling the watchdog on an immediate backend is rejected
+  with an :class:`~litestar.exceptions.ImproperlyConfiguredException` to prevent infinite recursion.
+  Use ``local``, ``redis``, or ``sqlspec`` execution backends when watchdog is enabled.
 
 Runnable Coffee Shop Example
 ============================

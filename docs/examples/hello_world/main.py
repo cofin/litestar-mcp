@@ -51,9 +51,9 @@ def build_app() -> "Litestar":
 
 app = build_app()
 
-# That's it! Your app now exposes MCP endpoints at /mcp and well-known metadata documents.
+# That's it! Your app now exposes MCP endpoints at /mcp.
 
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run(app, host="127.0.0.1", port=8000)

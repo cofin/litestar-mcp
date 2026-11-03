@@ -258,3 +258,13 @@ def test_task_promoted_tool_ignores_request_progress_stream() -> None:
 
     assert result["status"] == "completed"
     assert result["result"]["isError"] is False
+
+
+def test_task_store_defaults_to_app_store_registry() -> None:
+    shared_store = MemoryStore()
+    plugin = LitestarMCP(MCPConfig(tasks=True))
+    app = Litestar(plugins=[plugin], stores={"litestar_mcp_tasks": shared_store})
+
+    assert plugin.task_store is not None
+    assert plugin.task_store.store is shared_store
+    assert app.stores.get("litestar_mcp_tasks") is shared_store

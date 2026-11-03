@@ -23,7 +23,6 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-import msgspec
 from advanced_alchemy.extensions.litestar import (
     AsyncSessionConfig,
     SQLAlchemyAsyncConfig,
@@ -38,10 +37,6 @@ from litestar.status_codes import HTTP_200_OK
 from docs.examples.notes.advanced_alchemy.common import NoteService
 from docs.examples.notes.shared.contracts import (
     APP_INFO_RESOURCE_NAME,
-    CREATE_NOTE_TOOL_NAME,
-    DELETE_NOTE_TOOL_NAME,
-    LIST_NOTES_TOOL_NAME,
-    NOTES_SCHEMA_RESOURCE_NAME,
     AppInfo,
     CreateNoteInput,
     DeleteNoteResult,
@@ -49,7 +44,7 @@ from docs.examples.notes.shared.contracts import (
     NotesSchema,
     build_app_info,
 )
-from litestar_mcp import LitestarMCP, MCPConfig
+from litestar_mcp import LitestarMCP
 
 
 class NotesDishkaProvider(Provider):
@@ -92,30 +87,29 @@ def create_app(database_path: "str | None" = None) -> "Litestar":
     )
     container = make_async_container(LitestarProvider(), NotesDishkaProvider(alchemy_config))
 
-    @get("/notes", mcp_tool=LIST_NOTES_TOOL_NAME)
+    @get("/notes", mcp_tool=True)
     @inject
     async def list_notes(note_service: "FromDishka[NoteService]") -> "OffsetPagination[Note]":
         notes = await note_service.list()
         return note_service.to_schema(notes, schema_type=Note)
 
-    @post("/notes", mcp_tool=CREATE_NOTE_TOOL_NAME)
+    @post("/notes", mcp_tool=True)
     @inject
-    async def create_note(data: "dict[str, Any]", note_service: "FromDishka[NoteService]") -> "Note":
-        payload = msgspec.convert(data, CreateNoteInput)
-        note = await note_service.create({"title": payload.title, "body": payload.body}, auto_commit=True)
+    async def create_note(data: "CreateNoteInput", note_service: "FromDishka[NoteService]") -> "Note":
+        note = await note_service.create({"title": data.title, "body": data.body}, auto_commit=True)
         return note_service.to_schema(note, schema_type=Note)
 
     @delete(
         "/notes/{note_id:str}",
         status_code=HTTP_200_OK,
-        mcp_tool=DELETE_NOTE_TOOL_NAME,
+        mcp_tool=True,
     )
     @inject
     async def delete_note(note_id: "str", note_service: "FromDishka[NoteService]") -> "DeleteNoteResult":
         await note_service.delete(UUID(note_id), auto_commit=True)
         return DeleteNoteResult(deleted=True, note_id=note_id)
 
-    @get("/notes/schema", mcp_resource=NOTES_SCHEMA_RESOURCE_NAME, sync_to_thread=False)
+    @get("/notes/schema", mcp_resource=True, sync_to_thread=False)
     def notes_schema() -> "NotesSchema":
         return NotesSchema()
 
@@ -128,7 +122,7 @@ def create_app(database_path: "str | None" = None) -> "Litestar":
 
     app = Litestar(
         route_handlers=[list_notes, create_note, delete_note, notes_schema, get_api_info],
-        plugins=[SQLAlchemyPlugin(config=alchemy_config), LitestarMCP(MCPConfig())],
+        plugins=[SQLAlchemyPlugin(config=alchemy_config), LitestarMCP()],
         on_shutdown=[close_container],
     )
     setup_dishka(container, app)

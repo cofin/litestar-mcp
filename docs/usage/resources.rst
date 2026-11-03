@@ -38,9 +38,10 @@ responses are base64 encoded as MCP ``blob`` contents:
     :end-before: # end-route-example
     :dedent:
 
-``mcp_resource_mime_type`` is advertised in ``resources/list`` and is used as
-a fallback when the handler response does not carry a content type. The
-decorator form accepts the same metadata as ``mime_type=``:
+The route's ``media_type`` is advertised in ``resources/list`` and is used as
+a fallback when the handler response does not carry a content type. Set
+``mcp_resource_mime_type`` (or ``mime_type=`` on the decorator) only when the
+MCP MIME type should differ from the route's ``media_type``:
 
 .. literalinclude:: /examples/snippets/resource_binary.py
     :language: python

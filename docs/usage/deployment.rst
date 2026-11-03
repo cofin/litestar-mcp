@@ -39,6 +39,31 @@ request's own origin or an exact value in ``allowed_origins``. Terminate TLS
 at a trusted proxy, preserve the public scheme and host, and apply ordinary
 Litestar authentication and guards to the MCP router.
 
+Multi-replica deployments
+=========================
+
+Deploying Litestar MCP horizontally across multiple replicas requires shared
+infrastructure for persistent state, notifications, and queue execution:
+
+- **Shared State Store**: Configure ``Litestar(stores=StoreRegistry(default_factory=...))``
+  with a shared backend such as :class:`~litestar.stores.redis.RedisStore`. MCP Tasks
+  (registry name ``litestar_mcp_tasks``) and durable workflows (``litestar_mcp_workflows``)
+  use the application's store registry unless you pass an explicit store, so tasks and
+  workflow runs created on one replica can be polled, advanced, or inspected from any
+  replica.
+- **Cross-Worker Notification Channels**: Configure ``MCPConfig(subscription_channels=channels)``
+  backed by Redis channels via Litestar's ``ChannelsPlugin``. Task status updates,
+  cancellation signals, and subscriptions are broadcast across all workers.
+- **Durable Queue Backend**: Configure ``litestar-queues`` with a durable persistent
+  backend (such as Redis or SQLSpec / PostgreSQL) rather than memory.
+- **Worker Placement**: In development, ``WorkerConfig(placement="server")`` runs
+  in-process background workers alongside the web server. In production, configure
+  ``WorkerConfig(placement="external")`` and run separate worker processes executing
+  the same Litestar application via ``litestar workers run``.
+- **Conformance Testing**: Contributors can run ``make conformance-queue`` (which sets
+  ``MCP_CONFORMANCE_TASK_EXECUTOR=queue``) to run the official MCP conformance suite
+  against queue-backed task execution.
+
 .. seealso::
 
     - :doc:`configuration`

@@ -31,7 +31,7 @@ from litestar.params import FromPath, FromQuery, JSONBody
 from litestar.status_codes import HTTP_201_CREATED
 from pydantic import BaseModel
 
-from litestar_mcp import LitestarMCP, MCPConfig, mcp_prompt
+from litestar_mcp import LitestarMCP, mcp_prompt
 
 
 class Task(BaseModel):
@@ -98,7 +98,6 @@ def register_prompts(store: "dict[int, Task]") -> "list[Any]":
 
     # start-example
     @mcp_prompt(
-        name="summarize_tasks",
         title="Summarize tasks",
         description="Ask the model to summarize the current task list in a chosen style.",
     )
@@ -121,21 +120,21 @@ def register_tools(store: "dict[int, Task]") -> "list[Any]":
     """Return MCP tool handlers (task CRUD) bound to ``store``."""
 
     # start-example
-    @get("/tasks", mcp_tool="list_tasks")
+    @get("/tasks", mcp_tool=True)
     async def list_tasks(completed: "FromQuery[bool | None]" = None) -> "list[Task]":
         """List all tasks, optionally filtered by completion status."""
         if completed is None:
             return list(store.values())
         return [task for task in store.values() if task.completed == completed]
 
-    @get("/tasks/{task_id:int}", mcp_tool="get_task")
+    @get("/tasks/{task_id:int}", mcp_tool=True)
     async def get_task(task_id: "FromPath[int]") -> "Task":
         """Get a specific task by ID."""
         if task_id not in store:
             raise NotFoundException(detail=f"Task {task_id} not found")
         return store[task_id]
 
-    @post("/tasks", status_code=HTTP_201_CREATED, mcp_tool="create_task")
+    @post("/tasks", status_code=HTTP_201_CREATED, mcp_tool=True)
     async def create_task(data: "JSONBody[CreateTaskRequest]") -> "Task":
         """Create a new task."""
         new_id = max(store.keys(), default=0) + 1
@@ -143,7 +142,7 @@ def register_tools(store: "dict[int, Task]") -> "list[Any]":
         store[new_id] = new_task
         return new_task
 
-    @post("/tasks/{task_id:int}/complete", mcp_tool="complete_task")
+    @post("/tasks/{task_id:int}/complete", mcp_tool=True)
     async def complete_task(task_id: "FromPath[int]") -> "Task":
         """Mark a task as completed."""
         if task_id not in store:
@@ -151,7 +150,7 @@ def register_tools(store: "dict[int, Task]") -> "list[Any]":
         store[task_id].completed = True
         return store[task_id]
 
-    @delete("/tasks/{task_id:int}", mcp_tool="delete_task")
+    @delete("/tasks/{task_id:int}", mcp_tool=True)
     async def delete_task(task_id: "FromPath[int]") -> "None":
         """Delete a task by ID."""
         if task_id not in store:
@@ -187,11 +186,6 @@ def build_app(tasks: "dict[int, Task] | None" = None) -> "Litestar":
     prompts = register_prompts(store)
 
     # start-example
-    mcp_config = MCPConfig(
-        name="Task Management API",
-        base_path="/mcp",
-        include_in_schema=False,
-    )
     app = Litestar(
         route_handlers=[
             *resource_handlers,
@@ -199,7 +193,7 @@ def build_app(tasks: "dict[int, Task] | None" = None) -> "Litestar":
             root,
             health_check,
         ],
-        plugins=[LitestarMCP(mcp_config, prompts=prompts)],
+        plugins=[LitestarMCP(prompts=prompts)],
         openapi_config=OpenAPIConfig(
             title="Task Management API",
             version="1.0.0",
@@ -225,4 +219,4 @@ if __name__ == "__main__":
     logger.info("MCP Transport: http://127.0.0.1:8000/mcp")
     logger.info("MCP Discovery: POST http://127.0.0.1:8000/mcp (server/discover)")
 
-    uvicorn.run(app, host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run(app, host="127.0.0.1", port=8000)

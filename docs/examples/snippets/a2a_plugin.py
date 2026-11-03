@@ -2,8 +2,6 @@ from uuid import uuid4
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
-from a2a.server.request_handlers import DefaultRequestHandler
-from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill, Message, Part, Role
 from a2a.utils.errors import UnsupportedOperationError
 from litestar import Litestar
@@ -38,5 +36,4 @@ def build() -> Litestar:
             )
         ],
     )
-    handler = DefaultRequestHandler(agent_executor=EchoExecutor(), task_store=InMemoryTaskStore(), agent_card=card)
-    return Litestar(plugins=[LitestarA2A(card, handler)])
+    return Litestar(plugins=[LitestarA2A(card, EchoExecutor())])

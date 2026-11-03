@@ -24,7 +24,7 @@ class ApiKeyAuthenticationMiddleware(AbstractAuthenticationMiddleware):
         return AuthenticationResult(user=claims["sub"], auth=claims)
 
 
-@get("/whoami", mcp_tool="whoami", sync_to_thread=False)
+@get("/whoami", mcp_tool=True, sync_to_thread=False)
 def whoami(request: "Request[Any, Any, Any]") -> "dict[str, Any]":
     return {"user": request.user, "roles": request.auth["roles"]}
 

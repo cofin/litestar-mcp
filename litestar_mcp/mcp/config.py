@@ -1,6 +1,6 @@
 """Configuration for Litestar MCP Plugin."""
 
-from collections.abc import Sequence  # noqa: TC003
+from collections.abc import Awaitable, Callable, Sequence  # noqa: TC003
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol
@@ -9,13 +9,12 @@ from litestar.stores.base import Store  # noqa: TC002
 
 from litestar_mcp.core._streaming import DEFAULT_STREAM_CLEANUP_TIMEOUT, validate_stream_cleanup_timeout
 from litestar_mcp.mcp.skills import SkillSource
+from litestar_mcp.mcp.tasks import MCPTaskExecutor  # noqa: TC001
 
 SUPPORTED_PROTOCOL_VERSIONS: tuple[str, ...] = ("2026-07-28", "2025-06-18", "2025-03-26")
 
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable
-
     from litestar import Request
 
 
@@ -59,7 +58,9 @@ class MCPOptKeys:
 
     Attributes:
         tool: Opt key that marks a route handler as an MCP tool
-            (``handler.opt[tool] = "<tool-name>"``).
+            (``handler.opt[tool] = "<tool-name>"``, or ``True`` to use the
+            handler function name). The resource and prompt keys accept
+            ``True`` the same way.
         resource: Opt key that marks a route handler as an MCP resource.
         resource_uri: Opt key that carries a concrete resource URI override.
         resource_mime_type: Opt key that carries the resource MIME type for
@@ -89,6 +90,13 @@ class MCPOptKeys:
         returns: Opt key for the ``## Returns`` section.
         annotations: Opt key carrying MCP ``ToolAnnotations`` mapping.
         read_only: Opt key shorthand setting ``annotations.readOnlyHint``.
+        task_support: Opt key declaring MCP Tasks support mode (``optional``,
+            ``required``, ``forbidden``, or soft aliases ``sync``, ``disabled``,
+            ``inline``, ``True``, ``False``).
+        task: Short alias opt key for ``task_support``.
+        queue: Opt key overriding the target ``litestar-queues`` queue name for
+            task-augmented tool execution (or ``False`` / ``"in_process"`` to
+            force in-process execution).
     """
 
     tool: "str" = "mcp_tool"
@@ -110,6 +118,9 @@ class MCPOptKeys:
     returns: "str" = "mcp_returns"
     annotations: "str" = "mcp_annotations"
     read_only: "str" = "mcp_read_only"
+    task_support: "str" = "mcp_task_support"
+    task: "str" = "mcp_task"
+    queue: "str" = "mcp_queue"
 
     def for_field(self, field_name: "str", kind: "Literal['tool', 'resource', 'prompt']") -> "str":
         """Return the opt key for ``(field_name, kind)``.
@@ -130,12 +141,31 @@ class MCPOptKeys:
 
 @dataclass
 class MCPTaskConfig:
-    """Configuration for the opt-in MCP Tasks extension."""
+    """Configuration for the opt-in MCP Tasks extension.
+
+    Attributes:
+        store: Litestar ``Store`` persisting task records; defaults to an in-memory store.
+        default_ttl_ms: TTL applied when a client does not request one.
+        max_ttl_ms: Upper bound for client-requested TTLs.
+        poll_interval_ms: Poll interval advertised on task records.
+        status_callback: Optional coroutine invoked with every task status transition.
+        executor: Optional :class:`~litestar_mcp.mcp.tasks.MCPTaskExecutor` that runs
+            task-augmented tool calls outside the creating request. ``None`` auto-wires
+            ``litestar_mcp.queues.QueueTaskExecutor`` when ``QueuePlugin`` is registered
+            on the application and falls back to in-process background tasks otherwise.
+            Pass ``"in_process"`` or ``False`` to force in-process background tasks even
+            when ``QueuePlugin`` is installed.
+    """
 
     store: "Store | None" = None
     default_ttl_ms: "int" = 300_000
     max_ttl_ms: "int" = 3_600_000
     poll_interval_ms: "int" = 1_000
+    status_callback: "Callable[[Any], Awaitable[None]] | None" = None
+    if TYPE_CHECKING:
+        executor: "MCPTaskExecutor | Literal['in_process'] | bool | None" = None
+    else:
+        executor: "MCPTaskExecutor | None" = None
 
     def __post_init__(self) -> "None":
         if self.default_ttl_ms < 0:
@@ -147,11 +177,15 @@ class MCPTaskConfig:
         if self.poll_interval_ms <= 0:
             msg = "poll_interval_ms must be positive"
             raise ValueError(msg)
+        disable_auto = self.executor in (False, "in_process")
+        self._disable_auto_executor: bool = disable_auto
+        if disable_auto:
+            self.executor = None
 
 
-def normalize_task_config(value: "bool | MCPTaskConfig") -> "MCPTaskConfig | None":
+def normalize_task_config(value: "bool | MCPTaskConfig | None") -> "MCPTaskConfig | None":
     """Normalize task configuration into a concrete config object."""
-    if value is False:
+    if value is False or value is None:
         return None
     if value is True:
         return MCPTaskConfig()
@@ -281,7 +315,7 @@ class MCPConfig:
     exclude_operations: "list[str] | None" = None
     include_tags: "list[str] | None" = None
     exclude_tags: "list[str] | None" = None
-    tasks: "bool | MCPTaskConfig" = False
+    tasks: "bool | MCPTaskConfig | None" = None
     skills: "MCPSkillsConfig | None" = None
     opt_keys: "MCPOptKeys" = field(default_factory=MCPOptKeys)
     cache_ttl_ms: "int" = 0
@@ -335,6 +369,8 @@ class MCPConfig:
                 f"got {self.max_output_field_description_length}"
             )
             raise ValueError(msg)
+        if self.tasks is True:
+            self.tasks = MCPTaskConfig()
 
     @property
     def task_config(self) -> "MCPTaskConfig | None":

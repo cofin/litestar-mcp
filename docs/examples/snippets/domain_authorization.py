@@ -24,7 +24,7 @@ async def require_workspace_owner(
 
 @get(
     "/workspaces/{workspace_owner_id:str}/export",
-    mcp_tool="export_workspace",
+    mcp_tool=True,
     dependencies={"_owner_check": Provide(require_workspace_owner)},
 )
 async def export_workspace(

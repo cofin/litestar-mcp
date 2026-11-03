@@ -19,10 +19,14 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
+from litestar.stores.registry import StoreRegistry
+
 from litestar_mcp.mcp.config import MCPOptKeys
 
 if TYPE_CHECKING:
+    from litestar.config.app import AppConfig
     from litestar.handlers import BaseRouteHandler
+    from litestar.stores.base import Store
 
     from litestar_mcp.mcp.config import MCPConfig
 
@@ -212,8 +216,37 @@ def should_include_handler(name: "str", tags: "set[str]", config: "MCPConfig") -
     return not (config.include_operations and name not in config.include_operations)
 
 
+def normalize_task_support(value: "str | bool | None") -> "str | None":
+    """Normalize a task support mode or soft alias into a canonical MCP mode.
+
+    Args:
+        value: Canonical mode (``"optional"``, ``"required"``, ``"forbidden"``)
+            or soft alias (``True``, ``False``, ``"sync"``, ``"disabled"``,
+            ``"inline"``).
+
+    Returns:
+        Canonical mode string (``"optional"``, ``"required"``, ``"forbidden"``)
+        or ``None``.
+
+    Raises:
+        ValueError: When ``value`` is not a recognized task mode.
+    """
+    if value is None:
+        return None
+    if value is True or value == "optional":
+        return "optional"
+    if value == "required":
+        return "required"
+    if value is False or value in {"forbidden", "sync", "disabled", "inline"}:
+        return "forbidden"
+    msg = (
+        "task_support must be one of 'optional', 'required', 'forbidden', 'sync', 'disabled', 'inline', True, or False"
+    )
+    raise ValueError(msg)
+
+
 def mcp_tool(
-    name: "str",
+    name: "str | None" = None,
     *,
     description: "str | None" = None,
     agent_instructions: "str | None" = None,
@@ -224,13 +257,15 @@ def mcp_tool(
     annotations: "dict[str, Any] | None" = None,
     read_only: "bool | None" = None,
     scopes: "list[str] | None" = None,
-    task_support: "str | None" = None,
+    task: "str | bool | None" = None,
+    task_support: "str | bool | None" = None,
     task_input_before_start: "bool" = False,
+    queue: "str | bool | None" = None,
 ) -> "Callable[[F], F]":
     """Decorator to mark a route handler as an MCP tool.
 
     Args:
-        name: The name of the MCP tool.
+        name: The name of the MCP tool. Defaults to the function name.
         description: LLM-facing description. Overrides ``fn.__doc__``.
             Ignored when ``handler.opt["mcp_description"]`` is set (opt wins).
             Empty string is treated as absent so the docstring fallback still
@@ -250,11 +285,16 @@ def mcp_tool(
             ``tools/list``). Scopes are **not** enforced inline — attach a
             Litestar ``Guard`` to the route / router / controller for
             authorization.
-        task_support: Optional task support mode. Must be one of ``optional``,
-            ``required``, or ``forbidden``.
+        task: Preferred task mode parameter. Accepts ``"optional"`` (or ``True``),
+            ``"required"``, or ``"sync"`` / ``"disabled"`` / ``"inline"`` /
+            ``"forbidden"`` / ``False``.
+        task_support: Optional task support mode alias for ``task``.
         task_input_before_start: Execute the first call synchronously so an
             MRTR input-required result can be completed before creating the
             task on the retry.
+        queue: Optional target ``litestar-queues`` queue name for this tool,
+            or ``False`` / ``"in_process"`` to force in-process background task
+            execution.
 
     Returns:
         Decorator function that adds MCP metadata to the handler.
@@ -278,7 +318,7 @@ def mcp_tool(
     """
 
     def decorator(fn: "F") -> "F":
-        metadata: dict[str, Any] = {"type": "tool", "name": name}
+        metadata: dict[str, Any] = {"type": "tool", "name": name or _callable_name(fn)}
         if description is not None:
             metadata["description"] = description
         if agent_instructions is not None:
@@ -300,13 +340,16 @@ def mcp_tool(
             metadata["read_only"] = bool(read_only)
         if scopes is not None:
             metadata["scopes"] = scopes
-        if task_support is not None:
-            if task_support not in {"optional", "required", "forbidden"}:
-                msg = "task_support must be one of 'optional', 'required', or 'forbidden'"
-                raise ValueError(msg)
-            metadata["task_support"] = task_support
+        raw_task = task if task is not None else task_support
+        if raw_task is not None:
+            metadata["task_support"] = normalize_task_support(raw_task)
         if task_input_before_start:
             metadata["task_input_before_start"] = True
+        if queue is not None:
+            if queue is True or not isinstance(queue, (str, bool)) or (isinstance(queue, str) and not queue.strip()):
+                msg = "queue must be a non-empty queue name string, 'in_process', or False"
+                raise ValueError(msg)
+            metadata["queue"] = queue
         _REGISTRY.set(fn, metadata)
         return fn
 
@@ -314,7 +357,7 @@ def mcp_tool(
 
 
 def mcp_resource(
-    name: "str",
+    name: "str | None" = None,
     *,
     uri_template: "str | None" = None,
     mime_type: "str | None" = None,
@@ -326,7 +369,7 @@ def mcp_resource(
     """Decorator to mark a route handler as an MCP resource.
 
     Args:
-        name: The name of the MCP resource.
+        name: The name of the MCP resource. Defaults to the function name.
         uri_template: Optional RFC 6570 Level 1 URI template
             (e.g. ``"app://workspaces/{workspace_id}/files/{file_id}"``).
             Concrete URIs matching the template dispatch to this handler
@@ -369,7 +412,7 @@ def mcp_resource(
         parse_template(uri_template)
 
     def decorator(fn: "F") -> "F":
-        metadata: dict[str, Any] = {"type": "resource", "name": name}
+        metadata: dict[str, Any] = {"type": "resource", "name": name or _callable_name(fn)}
         if uri_template is not None:
             metadata["resource_template"] = uri_template
         if mime_type is not None:
@@ -389,7 +432,7 @@ def mcp_resource(
 
 
 def mcp_prompt(
-    name: "str",
+    name: "str | None" = None,
     *,
     title: "str | None" = None,
     description: "str | None" = None,
@@ -442,7 +485,7 @@ def mcp_prompt(
     """
 
     def decorator(fn: "F") -> "F":
-        metadata: dict[str, Any] = {"type": "prompt", "name": name}
+        metadata: dict[str, Any] = {"type": "prompt", "name": name or _callable_name(fn)}
         if title is not None:
             metadata["title"] = title
         if description is not None:
@@ -466,7 +509,24 @@ def get_mcp_metadata(obj: "Any") -> "dict[str, Any] | None":
     Returns:
         MCP metadata dictionary or None if not present.
     """
-    return _REGISTRY.get(obj)
+    registered = _REGISTRY.get(obj)
+    if registered is not None:
+        return registered
+    target = get_handler_function(obj) if hasattr(obj, "fn") else obj
+    ext_meta = getattr(target, "_mcp_tool_meta", None)
+    if isinstance(ext_meta, Mapping):
+        normalized: dict[str, Any] = {
+            "type": "tool",
+            **ext_meta,
+            "name": str(ext_meta.get("name") or _callable_name(target)),
+        }
+        raw_task = normalized.pop("task", None)
+        if raw_task is None:
+            raw_task = normalized.get("task_support")
+        if raw_task is not None:
+            normalized["task_support"] = normalize_task_support(raw_task)
+        return normalized
+    return None
 
 
 def set_mcp_metadata(obj: "Any", metadata: "dict[str, Any]") -> "None":
@@ -653,7 +713,38 @@ def expand_template(template: "str", values: "dict[str, str]") -> "str":
     return "".join(parts)
 
 
+def resolve_app_store(app_config: "AppConfig", name: "str") -> "Store":
+    """Return the named store from the application's store registry.
+
+    Integrations call this from ``on_app_init`` when the user did not pass an
+    explicit store, so configuring ``Litestar(stores=...)`` once (for example a
+    ``StoreRegistry`` whose ``default_factory`` returns namespaced Redis stores)
+    covers them too. A plain ``stores`` mapping is promoted to the
+    ``StoreRegistry`` that Litestar would build from it, so the integration and
+    ``app.stores`` share the same instance.
+
+    Args:
+        app_config: Application configuration being initialized.
+        name: Store registry name.
+
+    Returns:
+        The registered store, or the registry's default store for ``name``.
+    """
+    stores = app_config.stores
+    registry = stores if isinstance(stores, StoreRegistry) else StoreRegistry(stores)
+    app_config.stores = registry
+    return registry.get(name)
+
+
 # Private helper functions and classes
+
+
+def _callable_name(fn: "Any") -> "str":
+    """Return the name of a plain callable or of the function wrapped by a route handler."""
+    plain_name = getattr(fn, "__name__", None)
+    if isinstance(plain_name, str):
+        return plain_name
+    return str(get_handler_function(fn).__name__)
 
 
 def _clean(value: "Any") -> "str | None":
@@ -708,8 +799,10 @@ __all__ = (
     "mcp_prompt",
     "mcp_resource",
     "mcp_tool",
+    "normalize_task_support",
     "parse_template",
     "render_description",
+    "resolve_app_store",
     "set_mcp_metadata",
     "should_include_handler",
     "strip_docstring_sections",

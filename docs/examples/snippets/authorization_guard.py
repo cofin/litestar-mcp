@@ -35,7 +35,7 @@ class ReportController(Controller):
     path = "/reports"
     guards = [requires_authenticated_user]
 
-    @get("/", mcp_tool="generate_report", scopes=["report:read"], sync_to_thread=False)
+    @get("/", mcp_tool=True, scopes=["report:read"], sync_to_thread=False)
     def generate_report(self) -> "dict[str, str]":
         return {"status": "ok"}
 

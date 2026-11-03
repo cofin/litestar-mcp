@@ -36,10 +36,6 @@ from docs.examples.notes.shared.auth import (
 )
 from docs.examples.notes.shared.contracts import (
     APP_INFO_RESOURCE_NAME,
-    CREATE_NOTE_TOOL_NAME,
-    DELETE_NOTE_TOOL_NAME,
-    LIST_NOTES_TOOL_NAME,
-    NOTES_SCHEMA_RESOURCE_NAME,
     AppInfo,
     CreateNoteInput,
     DeleteNoteResult,
@@ -53,7 +49,7 @@ from docs.examples.notes.sqlspec.common import (
     build_sqlspec,
     note_row_to_public,
 )
-from litestar_mcp import LitestarMCP, MCPConfig
+from litestar_mcp import LitestarMCP
 
 DEFAULT_USER_DIRECTORY = {"alice": "alice-password", "bob": "bob-password"}
 
@@ -103,7 +99,7 @@ def create_app(
 
     resolved_user_dep = {"resolved_user": Provide(_provide_resolved_user)}
 
-    @get("/notes", mcp_tool=LIST_NOTES_TOOL_NAME, dependencies=resolved_user_dep)
+    @get("/notes", mcp_tool=True, dependencies=resolved_user_dep)
     @inject
     async def list_notes(
         note_service: "FromDishka[SQLSpecNoteService]", resolved_user: "AuthenticatedIdentity"
@@ -111,21 +107,20 @@ def create_app(
         rows = await note_service.list_for_owner(resolved_user.sub)
         return [msgspec.convert(note_row_to_public(row), Note) for row in rows]
 
-    @post("/notes", mcp_tool=CREATE_NOTE_TOOL_NAME, dependencies=resolved_user_dep)
+    @post("/notes", mcp_tool=True, dependencies=resolved_user_dep)
     @inject
     async def create_note(
-        data: "dict[str, Any]",
+        data: "CreateNoteInput",
         note_service: "FromDishka[SQLSpecNoteService]",
         resolved_user: "AuthenticatedIdentity",
     ) -> "Note":
-        payload = msgspec.convert(data, CreateNoteInput)
-        row = await note_service.create(title=payload.title, body=payload.body, owner_sub=resolved_user.sub)
+        row = await note_service.create(title=data.title, body=data.body, owner_sub=resolved_user.sub)
         return msgspec.convert(note_row_to_public(row), Note)
 
     @delete(
         "/notes/{note_id:str}",
         status_code=HTTP_200_OK,
-        mcp_tool=DELETE_NOTE_TOOL_NAME,
+        mcp_tool=True,
         dependencies=resolved_user_dep,
     )
     @inject
@@ -137,7 +132,7 @@ def create_app(
         deleted = await note_service.delete_for_owner(note_id, resolved_user.sub)
         return DeleteNoteResult(deleted=deleted, note_id=note_id)
 
-    @get("/notes/schema", mcp_resource=NOTES_SCHEMA_RESOURCE_NAME, sync_to_thread=False)
+    @get("/notes/schema", mcp_resource=True, sync_to_thread=False)
     def notes_schema() -> "NotesSchema":
         return NotesSchema()
 
@@ -147,8 +142,6 @@ def create_app(
 
     async def on_startup() -> "None":
         await bootstrap_schema(sqlspec, config)
-
-    mcp_config = MCPConfig()
 
     app = Litestar(
         route_handlers=[
@@ -160,7 +153,7 @@ def create_app(
             get_api_info,
         ],
         on_startup=[on_startup],
-        plugins=[SQLSpecPlugin(sqlspec), LitestarMCP(mcp_config)],
+        plugins=[SQLSpecPlugin(sqlspec), LitestarMCP()],
         on_app_init=[oauth_backend.on_app_init],
         on_shutdown=[container.close],
     )

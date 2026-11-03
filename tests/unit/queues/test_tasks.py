@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+pytest.importorskip("litestar_queues")
+
 from litestar_mcp.agent.runtime import AgentRuntime, TurnRequest
 from litestar_mcp.agent.streaming import AgentStreamFrame
 from litestar_mcp.core.exceptions import MissingDependencyError

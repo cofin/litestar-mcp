@@ -21,6 +21,10 @@ from litestar_mcp import (
 from litestar_mcp.core.jsonrpc import INTERNAL_ERROR, INVALID_PARAMS, JSONRPCError, JSONRPCErrorException
 
 _PIXEL = b"\x89PNG\r\n\x1a\n"
+_TASK_EXECUTOR = os.getenv("MCP_CONFORMANCE_TASK_EXECUTOR", "process")
+if _TASK_EXECUTOR not in ("process", "queue"):
+    msg = f"Invalid MCP_CONFORMANCE_TASK_EXECUTOR: {_TASK_EXECUTOR}. Must be 'process' or 'queue'."
+    raise ValueError(msg)
 _JSON_SCHEMA_2020_12 = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
@@ -562,12 +566,25 @@ def prompt_with_image() -> list[dict[str, Any]]:
     ]
 
 
+queue_plugins: list[Any] = []
+if _TASK_EXECUTOR == "queue":
+    from litestar_queues import QueueConfig, QueuePlugin
+    from litestar_queues.config import WorkerConfig
+
+    queue_plugins = [
+        QueuePlugin(QueueConfig(queue_backend="memory", worker=WorkerConfig(placement="asgi", poll_interval=0.05))),
+    ]
+
 plugin = LitestarMCP(
     MCPConfig(
         name="litestar-mcp-conformance",
         cache_ttl_ms=0,
         cache_scope="private",
-        tasks=MCPTaskConfig(default_ttl_ms=300_000, max_ttl_ms=3_600_000, poll_interval_ms=50),
+        tasks=MCPTaskConfig(
+            default_ttl_ms=300_000,
+            max_ttl_ms=3_600_000,
+            poll_interval_ms=50,
+        ),
     ),
     prompts=[
         simple_prompt,
@@ -612,7 +629,7 @@ app = Litestar(
         static_binary,
         template_resource,
     ],
-    plugins=[plugin],
+    plugins=[*queue_plugins, plugin],
     allowed_hosts=[
         f"127.0.0.1:{os.getenv('MCP_CONFORMANCE_PORT', '18765')}",
         f"localhost:{os.getenv('MCP_CONFORMANCE_PORT', '18765')}",

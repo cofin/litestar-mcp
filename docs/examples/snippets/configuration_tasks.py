@@ -3,18 +3,10 @@
 from litestar import Litestar
 
 from litestar_mcp import LitestarMCP, MCPConfig
-from litestar_mcp.mcp.config import MCPTaskConfig
 
 
 def build() -> "Litestar":
     # start-example
-    config = MCPConfig(
-        tasks=MCPTaskConfig(
-            default_ttl_ms=300_000,
-            max_ttl_ms=3_600_000,
-            poll_interval_ms=1_000,
-        ),
-    )
-    app = Litestar(route_handlers=[], plugins=[LitestarMCP(config)])
+    app = Litestar(plugins=[LitestarMCP(MCPConfig(tasks=True))])
     # end-example
     return app

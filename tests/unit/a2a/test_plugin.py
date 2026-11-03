@@ -12,8 +12,9 @@ pytest.importorskip("a2a")
 
 from a2a.client.transports.jsonrpc import JsonRpcTransport
 from a2a.client.transports.rest import RestTransport
+from a2a.server.agent_execution import AgentExecutor
 from a2a.server.context import ServerCallContext
-from a2a.server.request_handlers import RequestHandler
+from a2a.server.request_handlers import DefaultRequestHandler, RequestHandler
 from a2a.types import (
     AgentCapabilities,
     AgentCard,
@@ -1298,3 +1299,16 @@ async def test_http_json_rest_transport_send_and_stream() -> None:
 
     assert sent.message.message_id == "reply"
     assert events == ["task", "status_update"]
+
+
+def test_agent_executor_is_wrapped_in_default_request_handler() -> None:
+    """Passing an AgentExecutor builds a DefaultRequestHandler for the plugin's card."""
+
+    class _Echo(AgentExecutor):
+        async def execute(self, context: Any, event_queue: Any) -> None: ...
+
+        async def cancel(self, context: Any, event_queue: Any) -> None: ...
+
+    plugin = LitestarA2A(make_card(), _Echo())
+
+    assert isinstance(plugin.request_handler, DefaultRequestHandler)

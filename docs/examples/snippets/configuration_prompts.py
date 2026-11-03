@@ -5,7 +5,7 @@ from litestar import Litestar
 from litestar_mcp import LitestarMCP, MCPConfig, mcp_prompt
 
 
-@mcp_prompt(name="greet", description="Greet a user by name.")
+@mcp_prompt(description="Greet a user by name.")
 async def greet(name: "str") -> "str":
     """Build a greeting prompt.
 
