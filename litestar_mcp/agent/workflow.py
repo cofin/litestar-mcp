@@ -20,9 +20,13 @@ class StepResult:
     """Result record for a single executed workflow step."""
 
     node_name: str
+    """Name of the workflow node that produced this result."""
     output: Any
+    """Value returned by the node handler or agent turn."""
     status: StepStatus = "completed"
+    """Terminal execution status of the step (`completed`, `skipped`, or `failed`)."""
     error: str | None = None
+    """Optional error message when `status` is `failed`."""
 
 
 @dataclass(slots=True)
@@ -30,9 +34,13 @@ class WorkflowContext:
     """Execution context tracking state and step outputs across a workflow run."""
 
     run_id: str = field(default_factory=lambda: uuid4().hex)
+    """Unique identifier for the workflow execution run."""
     state: dict[str, Any] = field(default_factory=dict)
+    """Mutable shared state dictionary accessible to all workflow nodes."""
     node_outputs: dict[str, Any] = field(default_factory=dict)
+    """Mapping of completed node names to their raw output values."""
     step_results: dict[str, StepResult] = field(default_factory=dict)
+    """Mapping of executed node names to their `StepResult` records."""
 
     def __getitem__(self, key: str) -> Any:
         if key in self.state:
@@ -54,12 +62,19 @@ class WorkflowNode:
     """A single execution node within a DynamicWorkflow DAG."""
 
     name: str
+    """Unique node name within the workflow DAG."""
     agent: Agent | None = None
+    """Optional `Agent` executed when this node runs."""
     handler: Callable[..., Any] | Agent | None = None
+    """Optional synchronous or asynchronous callable accepting `WorkflowContext`."""
     depends_on: tuple[str, ...] | Sequence[str] = ()
+    """Names of upstream nodes that must complete before this node runs."""
     prompt: Callable[[WorkflowContext], str] | None = None
+    """Optional callable building the prompt string for an `agent` node from `WorkflowContext`."""
     timeout_seconds: float = 300.0
+    """Maximum execution time in seconds allowed for this node."""
     condition: Callable[[WorkflowContext], bool] | None = None
+    """Optional predicate evaluated against `WorkflowContext`; when false, the node is skipped."""
 
     def __post_init__(self) -> None:
         if isinstance(self.handler, Agent) and self.agent is None:

@@ -844,6 +844,14 @@ class LitestarA2A(InitPluginProtocol):
         ]
 
     def on_app_init(self, app_config: "AppConfig") -> "AppConfig":
+        """Register the A2A JSON-RPC, agent card, and optional HTTP+JSON routes on the application.
+
+        Args:
+            app_config: The Litestar application configuration being initialized.
+
+        Returns:
+            The updated application configuration.
+        """
         occupied = {
             route_obj.path
             for entry in app_config.route_handlers
@@ -896,6 +904,11 @@ class LitestarA2A(InitPluginProtocol):
         return app_config
 
     async def on_shutdown(self, app: "Litestar") -> "None":
+        """Close the A2A request handler if it defines an `aclose` coroutine or method.
+
+        Args:
+            app: The shutting-down Litestar application instance.
+        """
         del app
         close = getattr(self.request_handler, "aclose", None)
         if close is not None:

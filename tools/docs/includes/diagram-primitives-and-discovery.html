@@ -1,0 +1,235 @@
+<div class="lm-diagram lm-diag lm-diag--primitives">
+  <style>
+    .lm-diag--primitives {
+      --lm-d-surface: var(--md-default-bg-color, #ffffff);
+      --lm-d-card: var(--md-code-bg-color, #f8fafc);
+      --lm-d-border: rgba(148, 163, 184, 0.35);
+      --lm-d-text: var(--md-default-fg-color, #0f172a);
+      --lm-d-muted: var(--md-default-fg-color--light, #475569);
+      --lm-d-blue: #2563eb;
+      --lm-d-amber: #d97706;
+      --lm-d-emerald: #059669;
+      --lm-d-violet: #7c3aed;
+      --lm-d-rose: #e11d48;
+      background: var(--lm-d-surface);
+      border: 1px solid var(--lm-d-border);
+      border-radius: 0.75rem;
+      padding: 1rem;
+      margin: 1.5rem 0;
+    }
+    [data-md-color-scheme="slate"] .lm-diag--primitives {
+      --lm-d-surface: #121521;
+      --lm-d-card: #171b2a;
+      --lm-d-border: rgba(148, 163, 184, 0.24);
+      --lm-d-blue: #60a5fa;
+      --lm-d-amber: #fbbf24;
+      --lm-d-emerald: #34d399;
+      --lm-d-violet: #a78bfa;
+      --lm-d-rose: #fb7185;
+    }
+    .lm-diag--primitives input[type="radio"] {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+    #lm-prim-tools:checked ~ .lm-diag-tabs label[for="lm-prim-tools"],
+    #lm-prim-resources:checked ~ .lm-diag-tabs label[for="lm-prim-resources"],
+    #lm-prim-prompts:checked ~ .lm-diag-tabs label[for="lm-prim-prompts"],
+    #lm-prim-skills:checked ~ .lm-diag-tabs label[for="lm-prim-skills"] {
+      border-color: var(--lm-d-blue);
+      background: rgba(37, 99, 235, 0.14);
+      color: var(--lm-d-blue);
+    }
+    .lm-diag--primitives .lm-prim-panel {
+      display: none;
+    }
+    #lm-prim-tools:checked ~ .lm-prim-panels .lm-panel-tools,
+    #lm-prim-resources:checked ~ .lm-prim-panels .lm-panel-resources,
+    #lm-prim-prompts:checked ~ .lm-prim-panels .lm-panel-prompts,
+    #lm-prim-skills:checked ~ .lm-prim-panels .lm-panel-skills {
+      display: block;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .lm-diag--primitives .lm-flow-forward,
+      .lm-diag--primitives .lm-flow-reverse,
+      .lm-diag--primitives .lm-flow-slow,
+      .lm-diag--primitives .lm-pulse {
+        animation: none !important;
+      }
+    }
+  </style>
+
+  <input type="radio" name="lm-primitives-mode" id="lm-prim-tools" checked />
+  <input type="radio" name="lm-primitives-mode" id="lm-prim-resources" />
+  <input type="radio" name="lm-primitives-mode" id="lm-prim-prompts" />
+  <input type="radio" name="lm-primitives-mode" id="lm-prim-skills" />
+
+  <div class="lm-diag-tabs" role="tablist" aria-label="MCP Primitives and Discovery Compilation">
+    <label class="lm-diag-tab" for="lm-prim-tools">Tools &amp; ToolAnnotations</label>
+    <label class="lm-diag-tab" for="lm-prim-resources">Resources &amp; URI Templates</label>
+    <label class="lm-diag-tab" for="lm-prim-prompts">Prompts &amp; PromptController</label>
+    <label class="lm-diag-tab" for="lm-prim-skills">Agent Skills &amp; SkillSource</label>
+  </div>
+
+  <div class="lm-prim-panels">
+    <div class="lm-prim-panel lm-panel-tools">
+      <svg viewBox="0 0 900 240" role="img" aria-labelledby="lm-prim-tools-title lm-prim-tools-desc">
+        <title id="lm-prim-tools-title">MCP Tools and ToolAnnotations Compilation Pipeline</title>
+        <desc id="lm-prim-tools-desc">Litestar routes marked with mcp_tool or @mcp_tool compile signature types, Provide dependencies, and HTTP verb hints into JSON Schema and ToolAnnotations for tools/list and tools/call.</desc>
+
+        <rect x="20" y="25" width="245" height="185" rx="12" fill="var(--lm-d-card)" stroke="var(--lm-d-blue)" stroke-width="2" />
+        <circle class="lm-pulse" cx="40" cy="48" r="5" fill="var(--lm-d-blue)" />
+        <text x="142" y="52" text-anchor="middle" fill="var(--lm-d-text)" font-size="14" font-weight="700">1. Route Declaration</text>
+        <text x="142" y="78" text-anchor="middle" fill="var(--lm-d-blue)" font-size="12" font-family="monospace">mcp_tool=True | "name"</text>
+        <text x="142" y="102" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">@mcp_tool(...) / @mcp.tool()</text>
+        <text x="142" y="122" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">mcp_tool_annotations=ToolAnnotations</text>
+        <text x="142" y="142" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">mcp_tool_output_schema={...}</text>
+        <text x="142" y="162" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">task=True | "required" | "optional"</text>
+        <text x="142" y="184" text-anchor="middle" fill="var(--lm-d-emerald)" font-size="10" font-family="monospace">HTTP verb -&gt; readOnly/idempotent hints</text>
+
+        <line class="lm-flow-forward" x1="265" y1="118" x2="328" y2="118" stroke="var(--lm-d-blue)" stroke-width="2.5" />
+
+        <rect x="328" y="25" width="245" height="185" rx="12" fill="var(--lm-d-card)" stroke="var(--lm-d-amber)" stroke-width="2" />
+        <text x="450" y="52" text-anchor="middle" fill="var(--lm-d-text)" font-size="14" font-weight="700">2. Registry Schema Builder</text>
+        <text x="450" y="78" text-anchor="middle" fill="var(--lm-d-amber)" font-size="12" font-family="monospace">Registry.register_tool()</text>
+        <text x="450" y="102" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Extracts msgspec / Pydantic / dataclass</text>
+        <text x="450" y="122" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Strips Dishka &amp; internal DI params</text>
+        <text x="450" y="142" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Precedence: description &gt; summary &gt; doc</text>
+        <text x="450" y="162" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Applies include/exclude tag filters</text>
+        <text x="450" y="184" text-anchor="middle" fill="var(--lm-d-amber)" font-size="10" font-family="monospace">litestar mcp export-tool-spec</text>
+
+        <line class="lm-flow-forward" x1="573" y1="118" x2="635" y2="118" stroke="var(--lm-d-emerald)" stroke-width="2.5" />
+
+        <rect x="635" y="25" width="245" height="185" rx="12" fill="var(--lm-d-card)" stroke="var(--lm-d-emerald)" stroke-width="2" />
+        <circle class="lm-pulse" cx="655" cy="48" r="5" fill="var(--lm-d-emerald)" />
+        <text x="757" y="52" text-anchor="middle" fill="var(--lm-d-text)" font-size="14" font-weight="700">3. JSON-RPC Execution</text>
+        <text x="757" y="78" text-anchor="middle" fill="var(--lm-d-emerald)" font-size="12" font-family="monospace">tools/list &amp; tools/call</text>
+        <text x="757" y="102" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Dispatches via internal ASGI scope</text>
+        <text x="757" y="122" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11"> Emits structuredContent when typed</text>
+        <text x="757" y="142" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Supports ToolContext.report_progress</text>
+        <text x="757" y="162" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Handles params.task async execution</text>
+        <text x="757" y="184" text-anchor="middle" fill="var(--lm-d-emerald)" font-size="10" font-family="monospace">isError: true on 4xx/5xx tool errors</text>
+      </svg>
+    </div>
+
+    <div class="lm-prim-panel lm-panel-resources">
+      <svg viewBox="0 0 900 240" role="img" aria-labelledby="lm-prim-res-title lm-prim-res-desc">
+        <title id="lm-prim-res-title">MCP Resources and RFC 6570 URI Templates Pipeline</title>
+        <desc id="lm-prim-res-desc">Static resources and parameterized RFC 6570 URI templates register in the MCP Registry, supporting resources/list, resources/templates/list, resources/read, and resources/subscribe.</desc>
+
+        <rect x="20" y="25" width="245" height="185" rx="12" fill="var(--lm-d-card)" stroke="var(--lm-d-amber)" stroke-width="2" />
+        <circle class="lm-pulse" cx="40" cy="48" r="5" fill="var(--lm-d-amber)" />
+        <text x="142" y="52" text-anchor="middle" fill="var(--lm-d-text)" font-size="14" font-weight="700">1. Resource &amp; Template Opts</text>
+        <text x="142" y="78" text-anchor="middle" fill="var(--lm-d-amber)" font-size="12" font-family="monospace">mcp_resource="name"</text>
+        <text x="142" y="102" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">mcp_resource_uri="app://config"</text>
+        <text x="142" y="122" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">mcp_resource_template="notes://{id}"</text>
+        <text x="142" y="142" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">@mcp_resource / @mcp.resource()</text>
+        <text x="142" y="162" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Built-in: litestar://openapi</text>
+        <text x="142" y="184" text-anchor="middle" fill="var(--lm-d-amber)" font-size="10" font-family="monospace">RFC 6570 Level 1 Path Variables</text>
+
+        <line class="lm-flow-forward" x1="265" y1="118" x2="328" y2="118" stroke="var(--lm-d-amber)" stroke-width="2.5" />
+
+        <rect x="328" y="25" width="245" height="185" rx="12" fill="var(--lm-d-card)" stroke="var(--lm-d-blue)" stroke-width="2" />
+        <text x="450" y="52" text-anchor="middle" fill="var(--lm-d-text)" font-size="14" font-weight="700">2. URI Matcher &amp; Subscriptions</text>
+        <text x="450" y="78" text-anchor="middle" fill="var(--lm-d-blue)" font-size="12" font-family="monospace">Registry Resource Index</text>
+        <text x="450" y="102" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Compiles URI regex &amp; param extractors</text>
+        <text x="450" y="122" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Infers MIME type (application/json)</text>
+        <text x="450" y="142" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Tracks active URI subscriptions</text>
+        <text x="450" y="162" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Optional ChannelsPlugin fan-out</text>
+        <text x="450" y="184" text-anchor="middle" fill="var(--lm-d-blue)" font-size="10" font-family="monospace">notify_resource_updated(uri)</text>
+
+        <line class="lm-flow-forward" x1="573" y1="118" x2="635" y2="118" stroke="var(--lm-d-emerald)" stroke-width="2.5" />
+
+        <rect x="635" y="25" width="245" height="185" rx="12" fill="var(--lm-d-card)" stroke="var(--lm-d-emerald)" stroke-width="2" />
+        <circle class="lm-pulse" cx="655" cy="48" r="5" fill="var(--lm-d-emerald)" />
+        <text x="757" y="52" text-anchor="middle" fill="var(--lm-d-text)" font-size="14" font-weight="700">3. Resource JSON-RPC Surface</text>
+        <text x="757" y="78" text-anchor="middle" fill="var(--lm-d-emerald)" font-size="12" font-family="monospace">resources/read &amp; list</text>
+        <text x="757" y="102" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">resources/list (static URIs)</text>
+        <text x="757" y="122" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">resources/templates/list (RFC 6570)</text>
+        <text x="757" y="142" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">resources/subscribe &amp; unsubscribe</text>
+        <text x="757" y="162" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Returns text or base64 blob contents</text>
+        <text x="757" y="184" text-anchor="middle" fill="var(--lm-d-emerald)" font-size="10" font-family="monospace">notifications/resources/updated</text>
+      </svg>
+    </div>
+
+    <div class="lm-prim-panel lm-panel-prompts">
+      <svg viewBox="0 0 900 240" role="img" aria-labelledby="lm-prim-prm-title lm-prim-prm-desc">
+        <title id="lm-prim-prm-title">MCP Prompts and PromptController Compilation Pipeline</title>
+        <desc id="lm-prim-prm-desc">Prompts declared via route markers, @mcp_prompt, or class-based PromptController resolve dependencies through Litestar and Dishka DI during prompts/get.</desc>
+
+        <rect x="20" y="25" width="245" height="185" rx="12" fill="var(--lm-d-card)" stroke="var(--lm-d-violet)" stroke-width="2" />
+        <circle class="lm-pulse" cx="40" cy="48" r="5" fill="var(--lm-d-violet)" />
+        <text x="142" y="52" text-anchor="middle" fill="var(--lm-d-text)" font-size="14" font-weight="700">1. Prompt Authoring</text>
+        <text x="142" y="78" text-anchor="middle" fill="var(--lm-d-violet)" font-size="12" font-family="monospace">PromptController / @mcp_prompt</text>
+        <text x="142" y="102" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Route opt: mcp_prompt="name"</text>
+        <text x="142" y="122" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Class-based PromptController</text>
+        <text x="142" y="142" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Universal DI: Provide / FromDishka[T]</text>
+        <text x="142" y="162" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Inject() &amp; Depends(fn) markers</text>
+        <text x="142" y="184" text-anchor="middle" fill="var(--lm-d-violet)" font-size="10" font-family="monospace">Controller-level guards &amp; dependencies</text>
+
+        <line class="lm-flow-forward" x1="265" y1="118" x2="328" y2="118" stroke="var(--lm-d-violet)" stroke-width="2.5" />
+
+        <rect x="328" y="25" width="245" height="185" rx="12" fill="var(--lm-d-card)" stroke="var(--lm-d-blue)" stroke-width="2" />
+        <text x="450" y="52" text-anchor="middle" fill="var(--lm-d-text)" font-size="14" font-weight="700">2. Prompt Argument Schema</text>
+        <text x="450" y="78" text-anchor="middle" fill="var(--lm-d-blue)" font-size="12" font-family="monospace">PromptArgument Extraction</text>
+        <text x="450" y="102" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Excludes DI &amp; Request parameters</text>
+        <text x="450" y="122" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Derives required/optional arguments</text>
+        <text x="450" y="142" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Parses Google docstring Args table</text>
+        <text x="450" y="162" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Supports completion suggestions</text>
+        <text x="450" y="184" text-anchor="middle" fill="var(--lm-d-blue)" font-size="10" font-family="monospace">completion/complete handler</text>
+
+        <line class="lm-flow-forward" x1="573" y1="118" x2="635" y2="118" stroke="var(--lm-d-emerald)" stroke-width="2.5" />
+
+        <rect x="635" y="25" width="245" height="185" rx="12" fill="var(--lm-d-card)" stroke="var(--lm-d-emerald)" stroke-width="2" />
+        <circle class="lm-pulse" cx="655" cy="48" r="5" fill="var(--lm-d-emerald)" />
+        <text x="757" y="52" text-anchor="middle" fill="var(--lm-d-text)" font-size="14" font-weight="700">3. Prompt Message Normalization</text>
+        <text x="757" y="78" text-anchor="middle" fill="var(--lm-d-emerald)" font-size="12" font-family="monospace">prompts/list &amp; prompts/get</text>
+        <text x="757" y="102" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Executes within ASGI request scope</text>
+        <text x="757" y="122" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Normalizes str, dict, or list[dict]</text>
+        <text x="757" y="142" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Produces role + TextContent blocks</text>
+        <text x="757" y="162" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Enforces controller &amp; route guards</text>
+        <text x="757" y="184" text-anchor="middle" fill="var(--lm-d-emerald)" font-size="10" font-family="monospace">messages: [{role, content}]</text>
+      </svg>
+    </div>
+
+    <div class="lm-prim-panel lm-panel-skills">
+      <svg viewBox="0 0 900 240" role="img" aria-labelledby="lm-prim-skl-title lm-prim-skl-desc">
+        <title id="lm-prim-skl-title">Agent Skills SEP-2640 and SkillSource Pipeline</title>
+        <desc id="lm-prim-skl-desc">MCPSkillsConfig combines static FilesystemSkillSource directories, request-aware SkillSource plugins, and SkillController classes into the io.modelcontextprotocol/skills extension and skills:// resources.</desc>
+
+        <rect x="20" y="25" width="245" height="185" rx="12" fill="var(--lm-d-card)" stroke="var(--lm-d-rose)" stroke-width="2" />
+        <circle class="lm-pulse" cx="40" cy="48" r="5" fill="var(--lm-d-rose)" />
+        <text x="142" y="52" text-anchor="middle" fill="var(--lm-d-text)" font-size="14" font-weight="700">1. Skill Sources (SEP-2640)</text>
+        <text x="142" y="78" text-anchor="middle" fill="var(--lm-d-rose)" font-size="12" font-family="monospace">MCPSkillsConfig</text>
+        <text x="142" y="102" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">paths=[Path("skills")] (SKILL.md)</text>
+        <text x="142" y="122" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">sources=[CustomSkillSource()]</text>
+        <text x="142" y="142" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">SkillController &amp; @skill_list/@skill_load</text>
+        <text x="142" y="162" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Skill.build() &amp; Skill.from_content()</text>
+        <text x="142" y="184" text-anchor="middle" fill="var(--lm-d-rose)" font-size="10" font-family="monospace">SkillFile.from_content() + SHA-256</text>
+
+        <line class="lm-flow-forward" x1="265" y1="118" x2="328" y2="118" stroke="var(--lm-d-rose)" stroke-width="2.5" />
+
+        <rect x="328" y="25" width="245" height="185" rx="12" fill="var(--lm-d-card)" stroke="var(--lm-d-amber)" stroke-width="2" />
+        <text x="450" y="52" text-anchor="middle" fill="var(--lm-d-text)" font-size="14" font-weight="700">2. Request-Aware Resolution</text>
+        <text x="450" y="78" text-anchor="middle" fill="var(--lm-d-amber)" font-size="12" font-family="monospace">CompositeSkillSource</text>
+        <text x="450" y="102" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Passes Request + DI per invocation</text>
+        <text x="450" y="122" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Tenant &amp; user-scoped skill filtering</text>
+        <text x="450" y="142" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Path traversal protection &amp; symlink guard</text>
+        <text x="450" y="162" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">Parses YAML frontmatter &amp; manifest</text>
+        <text x="450" y="184" text-anchor="middle" fill="var(--lm-d-amber)" font-size="10" font-family="monospace">io.modelcontextprotocol/skills</text>
+
+        <line class="lm-flow-forward" x1="573" y1="118" x2="635" y2="118" stroke="var(--lm-d-emerald)" stroke-width="2.5" />
+
+        <rect x="635" y="25" width="245" height="185" rx="12" fill="var(--lm-d-card)" stroke="var(--lm-d-emerald)" stroke-width="2" />
+        <circle class="lm-pulse" cx="655" cy="48" r="5" fill="var(--lm-d-emerald)" />
+        <text x="757" y="52" text-anchor="middle" fill="var(--lm-d-text)" font-size="14" font-weight="700">3. Dual Discovery Surface</text>
+        <text x="757" y="78" text-anchor="middle" fill="var(--lm-d-emerald)" font-size="12" font-family="monospace">skills/* &amp; skills://*</text>
+        <text x="757" y="102" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">skills/list (cursor pagination)</text>
+        <text x="757" y="122" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">skills/load (SKILL.md + file manifest)</text>
+        <text x="757" y="142" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">skills/read_file (UTF-8 or base64)</text>
+        <text x="757" y="162" text-anchor="middle" fill="var(--lm-d-muted)" font-size="11">expose_as_resources: skills://{name}</text>
+        <text x="757" y="184" text-anchor="middle" fill="var(--lm-d-emerald)" font-size="10" font-family="monospace">skills://{name}/{path} fallback</text>
+      </svg>
+    </div>
+  </div>
+</div>

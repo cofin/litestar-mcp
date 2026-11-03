@@ -21,17 +21,14 @@ INTERNAL_ERROR = -32603
 
 @dataclass
 class JSONRPCError:
-    """A JSON-RPC 2.0 error object.
-
-    Attributes:
-        code: Integer error code.
-        message: Short description of the error.
-        data: Optional additional error data.
-    """
+    """A JSON-RPC 2.0 error object."""
 
     code: "int"
+    """Integer error code."""
     message: "str"
+    """Short description of the error."""
     data: "Any | None" = None
+    """Optional additional error data."""
 
     def to_dict(self) -> "dict[str, Any]":
         """Convert to a JSON-serializable dict."""
@@ -43,19 +40,16 @@ class JSONRPCError:
 
 @dataclass
 class JSONRPCRequest:
-    """A parsed JSON-RPC 2.0 request.
-
-    Attributes:
-        jsonrpc: Must be "2.0".
-        method: The RPC method name.
-        id: Request identifier (absent for notifications).
-        params: Method parameters.
-    """
+    """A parsed JSON-RPC 2.0 request."""
 
     jsonrpc: "str"
+    """JSON-RPC protocol version (`"2.0"`)."""
     method: "str"
+    """The RPC method name."""
     id: "Any | None" = None
+    """Request identifier (absent for notifications)."""
     params: "dict[str, Any]" = field(default_factory=dict)
+    """Method parameters."""
 
     @property
     def is_notification(self) -> "bool":

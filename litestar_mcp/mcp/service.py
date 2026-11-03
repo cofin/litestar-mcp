@@ -112,15 +112,25 @@ class MCPRequestContext:
     """
 
     client_id: "str"
+    """Identifier of the connected MCP client or transport session."""
     owner_id: "str | None"
+    """Authenticated task-owner identifier, or `None` for anonymous callers."""
     request: "Request[Any, Any, Any] | None" = None
+    """Inbound Litestar HTTP `Request`, or `None` for stdio/background invocations."""
     protocol_version: "str" = MCP_PROTOCOL_VERSION
+    """Negotiated MCP protocol version string for the current request."""
     client_capabilities: "dict[str, Any] | None" = None
+    """Client capabilities dictionary advertised during initialization or via request `_meta`."""
     client_info: "dict[str, Any] | None" = None
+    """Client implementation metadata (`name`, `version`) supplied by the caller."""
     input_responses: "dict[str, Any] | None" = None
+    """Multi-round-trip input responses supplied by the client for an interactive tool call."""
     request_state: "str | None" = None
+    """Opaque round-tripped state token accompanying `input_responses`."""
     progress_token: "str | int | None" = None
+    """Optional progress correlation token extracted from request `_meta.progressToken`."""
     progress_reporter: "Callable[[dict[str, Any]], Awaitable[None]] | None" = None
+    """Optional async callback used to emit `notifications/progress` frames for this request."""
 
     async def report_progress(self, progress: float, total: float | None = None, message: str | None = None) -> None:
         """Report progress correlated to the request's supplied progress token."""
@@ -823,6 +833,7 @@ class MCPHandlerService:
         return tools
 
     async def tools_list(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
+        """Return a paginated list of registered MCP tools matching active filters."""
         tools = self.build_tool_entries()
         try:
             page, next_cursor = _paginate_list(tools, params, self.config.list_page_size)
@@ -861,6 +872,7 @@ class MCPHandlerService:
         return cast("str | bool | None", handler_opt.get(self.config.opt_keys.queue))
 
     async def tools_call(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
+        """Invoke a registered MCP tool synchronously or promote it to a background task."""
         tool_name = params.get("name")
         if not tool_name:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'name'"))
@@ -987,6 +999,7 @@ class MCPHandlerService:
         return {"resultType": "task", **record.to_dict()}
 
     async def resources_list(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
+        """Return a paginated list of concrete MCP resources and visible skill files."""
         resources = [
             {
                 "uri": "litestar://openapi",
@@ -1034,6 +1047,7 @@ class MCPHandlerService:
     async def resources_templates_list(
         self, params: "dict[str, Any]", context: "MCPRequestContext"
     ) -> "dict[str, Any]":
+        """Return a paginated list of registered RFC 6570 resource URI templates."""
         if self.registry is None:
             return {"resourceTemplates": []}
         templates = []
@@ -1066,6 +1080,7 @@ class MCPHandlerService:
         return result
 
     async def resources_read(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
+        """Read the contents of a concrete resource, skill file, or URI-template resource."""
         uri = params.get("uri", "")
         if not isinstance(uri, str) or not uri:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=f"Invalid resource URI: {uri}"))
@@ -1263,9 +1278,11 @@ class MCPHandlerService:
         return result
 
     async def completion_complete(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
+        """Return argument auto-completion suggestions for prompts or resource templates."""
         return {"completion": {"values": [], "total": 0, "hasMore": False}}
 
     async def prompts_list(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
+        """Return a paginated list of registered MCP prompts matching active filters."""
         prompts = [
             render_prompt_entry(registration, self.config)
             for registration in self.discovered_prompts.values()
@@ -1281,6 +1298,7 @@ class MCPHandlerService:
         return result
 
     async def prompts_get(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
+        """Render a registered MCP prompt with caller-supplied string arguments."""
         prompt_name = params.get("name")
         if not prompt_name:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'name'"))
@@ -1409,6 +1427,7 @@ class MCPHandlerService:
         raise JSONRPCErrorException(JSONRPCError(code=INTERNAL_ERROR, message=f"Prompt has no callable: {prompt_name}"))
 
     async def tasks_get(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
+        """Retrieve the current status and result of a background MCP task."""
         _require_tasks_capability(context)
         if self.task_store is None:
             raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message="Task store not configured"))
@@ -1422,6 +1441,7 @@ class MCPHandlerService:
         return record.to_dict()
 
     async def tasks_update(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
+        """Supply interactive input responses to a task awaiting client input and resume execution."""
         _require_tasks_capability(context)
         if self.task_store is None:
             raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message="Task store not configured"))
@@ -1460,6 +1480,7 @@ class MCPHandlerService:
         return {}
 
     async def tasks_cancel(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
+        """Request cancellation of an in-flight MCP background task."""
         _require_tasks_capability(context)
         if self.task_store is None:
             raise JSONRPCErrorException(JSONRPCError(code=METHOD_NOT_FOUND, message="Task store not configured"))

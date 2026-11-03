@@ -40,10 +40,15 @@ class TurnRequest:
     """Input parameters for one agent turn execution."""
 
     user_message: "str" = ""
+    """User prompt text initiating the agent turn."""
     session_id: "str | None" = None
+    """Optional session identifier to resume an existing conversation."""
     turn_id: "str | None" = None
+    """Optional caller-supplied identifier for the turn."""
     dynamic_context: "str | None" = None
+    """Optional per-turn context prepended to the active agent's instructions."""
     context: "ToolContext | None" = None
+    """Request-scoped tool execution and principal ownership context."""
 
 
 @dataclass(slots=True)
@@ -51,11 +56,17 @@ class TurnResponse:
     """Aggregated result of a completed agent turn."""
 
     session_id: "str"
+    """Session identifier under which the turn history was persisted."""
     turn_id: "str"
+    """Unique identifier for the completed turn."""
     output: "str"
+    """Concatenated assistant text output produced across the turn."""
     agent_name: "str"
+    """Name of the active agent at the end of the turn."""
     messages: "list[AgentMessage]" = field(default_factory=list)
+    """Full conversation history including the newly appended turn messages."""
     token_usage: "dict[str, int]" = field(default_factory=dict)
+    """Aggregated token usage counts for prompt, completion, and thought tokens."""
 
     @property
     def content(self) -> "str":
@@ -150,8 +161,8 @@ def _check_agent_transfer(
 class AgentRuntime(InitPluginProtocol):
     """Runs agent turns with budgets, owner-scoped sessions, and streamed frames.
 
-    Register the runtime in ``Litestar(plugins=[...])`` to provide it as the
-    ``runtime`` dependency used by :class:`~litestar_mcp.agent.AgentChatController`.
+    Register the runtime in `Litestar(plugins=[...])` to provide it as the
+    `runtime` dependency used by `AgentChatController`.
     """
 
     def __init__(

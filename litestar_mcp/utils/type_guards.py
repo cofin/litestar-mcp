@@ -1,9 +1,9 @@
 """Type-identification helpers for schema-library dispatch.
 
-:mod:`litestar_mcp.core.schema_builder` uses these to branch on the return
+`litestar_mcp.core.schema_builder` uses these to branch on the return
 annotation kind (msgspec / pydantic / attrs / dataclass) when building MCP
 input/output schemas. They are the "which schema library is this" guards —
-distinct from :mod:`litestar_mcp.core.serialization`, which handles
+distinct from `litestar_mcp.core.serialization`, which handles
 *runtime* encoding.
 
 All guards accept both instances and classes; ``is_schema_model`` unions the

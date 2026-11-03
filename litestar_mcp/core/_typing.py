@@ -18,8 +18,6 @@ class DataclassProtocol(Protocol):
 T = TypeVar("T")
 T_co = TypeVar("T_co", covariant=True)
 
-# Always define stub types for type checking
-
 
 class BaseModelStub:
     """Placeholder implementation for Pydantic BaseModel."""
@@ -59,7 +57,6 @@ class BaseModelStub:
         return {"type": "object", "properties": {}, "description": "Pydantic model not available"}
 
 
-# Try to import real implementations at runtime
 try:
     from pydantic import BaseModel as _RealBaseModel
 
@@ -68,8 +65,6 @@ try:
 except ImportError:
     BaseModel = BaseModelStub  # type: ignore[assignment,misc]
     PYDANTIC_INSTALLED = False  # pyright: ignore[reportConstantRedefinition]
-
-# Always define stub types for msgspec
 
 
 @dataclass_transform()
@@ -98,12 +93,13 @@ def convert_stub(  # noqa: PLR0913
 
 
 class UnsetTypeStub(enum.Enum):
+    """Placeholder enum for msgspec UnsetType."""
+
     UNSET = "UNSET"
 
 
 UNSET_STUB = UnsetTypeStub.UNSET
 
-# Try to import real implementations at runtime
 try:
     from msgspec import UNSET as _REAL_UNSET
     from msgspec import Struct as _RealStruct
@@ -123,7 +119,6 @@ except ImportError:
     MSGSPEC_INSTALLED = False  # pyright: ignore[reportConstantRedefinition]
 
 
-# Always define stub type for attrs
 @dataclass_transform()
 class AttrsInstanceStub:
     """Placeholder Implementation for attrs classes"""
@@ -163,7 +158,6 @@ def attrs_has_stub(*args: "Any", **kwargs: "Any") -> "bool":  # noqa: ARG001
     return False
 
 
-# Try to import real implementations at runtime
 try:
     from attrs import NOTHING as _REAL_ATTRS_NOTHING
     from attrs import AttrsInstance as _RealAttrsInstance  # pyright: ignore
@@ -192,7 +186,6 @@ except ImportError:
     ATTRS_INSTALLED = False  # pyright: ignore[reportConstantRedefinition]
 
 
-# Always define stub types for dishka
 class DishkaDependencyKeyStub:
     """Placeholder implementation for Dishka DependencyKey."""
 

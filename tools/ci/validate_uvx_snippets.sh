@@ -24,8 +24,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DOCS=(
-    "${ROOT}/docs/usage/uvx_guide.rst"
-    "${ROOT}/docs/usage/reference_examples.rst"
+    "${ROOT}/docs/architecture/uvx-and-pep723.md"
+    "${ROOT}/docs/architecture/reference-examples.md"
     "${ROOT}/docs/examples/notes/README.md"
     "${ROOT}/docs/examples/notes/advanced_alchemy/README.md"
     "${ROOT}/docs/examples/notes/sqlspec/README.md"

@@ -34,7 +34,7 @@ calls.
 
 Each variant exposes a `create_app(...)` factory suitable for
 `litestar.testing.TestClient` and for a plain ASGI server. Every
-variant file ships a :pep:`723` inline-script metadata block, so `uv`
+variant file ships a [PEP 723](https://peps.python.org/pep-0723/) inline-script metadata block, so `uv`
 reads its dependencies from the file itself — no clone or
 `uv sync` required:
 
@@ -45,7 +45,7 @@ uv run docs/examples/notes/advanced_alchemy/jwt_auth.py        # requires TOKEN_
 uv run docs/examples/notes/advanced_alchemy/jwt_auth_dishka.py
 ```
 
-See the [single-file run reference](../../../usage/uvx_guide.rst) for
+See the [single-file run reference](../../../architecture/uvx-and-pep723.md) for
 the full variant matrix.
 
 The JWT variants require a caller-supplied `token_secret` argument. The
@@ -70,9 +70,9 @@ self-contained.
 - [Top-level notes README](../README.md) — family chooser + `uvx` quick-start.
 - [SQLSpec sibling family](../sqlspec/README.md) — same contract with
   explicit SQL, plus Cloud Run JWT and Google IAP deployment variants.
-- [Reference examples usage page](../../../usage/reference_examples.rst)
-- [`uvx` reference guide](../../../usage/uvx_guide.rst)
+- [Reference examples usage page](../../../architecture/reference-examples.md)
+- [`uvx` reference guide](../../../architecture/uvx-and-pep723.md)
 - Foundation spec: `.agents/specs/reference-notes-foundation/spec.md`
-- Auth docs: `docs/usage/auth.rst`
+- Auth docs: [`docs/security/authentication.md`](../../../security/authentication.md)
 - Shared contract module: `docs/examples/notes/shared/contracts.py`
 - Shared auth helpers: `docs/examples/notes/shared/auth.py`

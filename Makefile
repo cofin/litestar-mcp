@@ -203,13 +203,13 @@ pre-commit:                                         ## Run pre-commit hooks
 .PHONY: ruff-check
 ruff-check:                                         ## Run ruff linting
 	@echo "${INFO} Running ruff checks... 🔄"
-	@$(UV_RUN_PY310) ruff check --fix litestar_mcp tests docs/examples tools/ci
+	@$(UV_RUN_PY310) ruff check --fix litestar_mcp tests docs/examples tools/ci tools/docs
 	@echo "${OK} Ruff checks passed ✨"
 
 .PHONY: ruff-format
 ruff-format:                                        ## Run ruff formatting
 	@echo "${INFO} Running ruff formatting... 🎨"
-	@$(UV_RUN_PY310) ruff format litestar_mcp tests docs/examples tools/ci
+	@$(UV_RUN_PY310) ruff format litestar_mcp tests docs/examples tools/ci tools/docs
 	@echo "${OK} Ruff formatting complete ✨"
 
 .PHONY: slotscheck
@@ -228,34 +228,37 @@ check-all: lint test-all coverage                   ## Run all checks (lint, tes
 # Documentation
 # =============================================================================
 
+.PHONY: docs-install
+docs-install:                                       ## Install documentation dependencies
+	@uv sync --all-extras --dev
+
 .PHONY: docs-clean
 docs-clean:                                         ## Clean documentation build
-	@echo "${INFO} Cleaning documentation build assets... 🧹"
-	@rm -rf docs/_build >/dev/null 2>&1
-	@echo "${OK} Documentation assets cleaned"
+	@rm -rf site docs/_build
 
-.PHONY: docs-serve
-docs-serve: docs-clean                              ## Serve documentation locally
-	@echo "${INFO} Starting documentation server... 📚"
-	$(UV_RUN_PY310) sphinx-autobuild docs docs/_build/ -j auto --watch litestar_mcp --watch docs --watch tests --watch CONTRIBUTING.rst --port 8002
+.PHONY: docs-scan
+docs-scan:                                          ## Scan public docstrings and PEP 257 field docstrings
+	@uv run python tools/docs/scan_public_docstrings.py
+
+.PHONY: docs-cli
+docs-cli:                                           ## Generate CLI reference documentation
+	@uv run python tools/docs/generate_cli_docs.py
 
 .PHONY: docs
-docs: docs-clean                                    ## Build documentation
-	@echo "${INFO} Building documentation... 📚"
-	@$(UV_RUN_PY310) sphinx-build -M html docs docs/_build/ -E -a -W --keep-going
-	@echo "${OK} Documentation built successfully"
+docs: docs-cli                                      ## Build documentation and postbuild artifacts
+	@uv run zensical build --clean
+	@uv run python tools/docs/postbuild.py
 
-.PHONY: docs-linkcheck
-docs-linkcheck:                                     ## Check documentation links
-	@echo "${INFO} Checking documentation links... 🔗"
-	@$(UV_RUN_PY310) sphinx-build -b linkcheck ./docs ./docs/_build -D linkcheck_ignore='http://.*','https://.*'
-	@echo "${OK} Link check complete"
+.PHONY: docs-check
+docs-check: docs-scan                               ## Verify docstrings, CLI docs, site build, and artifacts
+	@uv run python tools/docs/generate_cli_docs.py --check
+	@uv run zensical build --clean
+	@uv run python tools/docs/postbuild.py
+	@uv run python tools/docs/verify_docs_artifacts.py
 
-.PHONY: docs-linkcheck-full
-docs-linkcheck-full:                                ## Run full documentation link check
-	@echo "${INFO} Running full link check... 🔗"
-	@$(UV_RUN_PY310) sphinx-build -b linkcheck ./docs ./docs/_build -D linkcheck_anchors=0
-	@echo "${OK} Full link check complete"
+.PHONY: docs-serve
+docs-serve: docs-cli                                ## Serve documentation locally
+	@uv run zensical serve
 
 # =============================================================================
 # MCP Specific Targets
@@ -355,5 +358,5 @@ watch-test:                                         ## Run tests in watch mode
 .PHONY: format-check
 format-check:                                       ## Check if code is formatted correctly
 	@echo "${INFO} Checking code formatting... 🔍"
-	@$(UV_RUN_PY310) ruff format --check litestar_mcp tests
+	@$(UV_RUN_PY310) ruff format --check litestar_mcp tests docs/examples tools/ci tools/docs
 	@echo "${OK} Code formatting check complete ✨"

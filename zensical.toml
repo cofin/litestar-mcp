@@ -1,0 +1,204 @@
+[project]
+site_name = "Litestar MCP"
+site_description = "Model Context Protocol (MCP), Agent Runtime, Durable Workflows, and A2A 1.0 Integration for Litestar"
+site_author = "Litestar Organization"
+site_url = "https://cofin.github.io/litestar-mcp/"
+repo_name = "cofin/litestar-mcp"
+repo_url = "https://github.com/cofin/litestar-mcp"
+edit_uri = "edit/main/docs/"
+copyright = "Copyright &copy; 2025-2026 Litestar Organization"
+docs_dir = "docs"
+site_dir = "site"
+use_directory_urls = true
+exclude_docs = "examples/**"
+extra_css = ["stylesheets/extra.css"]
+nav = [
+  { "Home" = [
+    "index.md",
+    { "Architecture & Examples" = [
+      "architecture/index.md",
+      "architecture/reference-examples.md",
+      "architecture/uvx-and-pep723.md",
+    ] },
+  ] },
+  { "Getting Started" = [
+    "getting-started/index.md",
+    "getting-started/installation.md",
+    "getting-started/quickstart.md",
+    "getting-started/standalone.md",
+    "getting-started/concepts.md",
+  ] },
+  { "MCP Core" = [
+    "learn/index.md",
+    "learn/configuration.md",
+    "learn/marking-routes.md",
+    "learn/tools.md",
+    "learn/resources.md",
+    "learn/prompts.md",
+    "learn/skills.md",
+    "learn/discovery.md",
+    "learn/stdio-and-bridge.md",
+  ] },
+  { "Tasks, Queues & Workflows" = [
+    "queues/index.md",
+    "queues/mcp-tasks.md",
+    "queues/distributed-task-queues.md",
+    "queues/durable-workflows.md",
+    "queues/queued-agent-turns.md",
+    "queues/deployment.md",
+  ] },
+  { "Agents & A2A" = [
+    "agents/index.md",
+    "agents/runtime-and-budgets.md",
+    "agents/groups-and-handoffs.md",
+    "agents/sessions-and-streaming.md",
+    "agents/protocol-bridges.md",
+    "agents/a2a-protocol.md",
+    "agents/multi-tenancy.md",
+  ] },
+  { "Security & Operations" = [
+    "security/index.md",
+    "security/authentication.md",
+    "security/litestar-security.md",
+    "security/authorization-and-scopes.md",
+    "security/observability.md",
+    "security/migration-0-14.md",
+    "security/migration-0-12.md",
+  ] },
+  { "Reference" = [
+    "reference/index.md",
+    "reference/plugin-and-config.md",
+    "reference/primitives-and-skills.md",
+    "reference/tasks-and-queues.md",
+    "reference/agents-and-workflows.md",
+    "reference/a2a-and-bridges.md",
+    "reference/core-and-observability.md",
+    "reference/cli.md",
+    "reference/contributing.md",
+    "changelog.md",
+  ] },
+]
+
+[project.theme]
+variant = "modern"
+language = "en"
+logo = "assets/logo.svg"
+favicon = "assets/favicon.svg"
+features = [
+  "content.code.annotate",
+  "content.code.copy",
+  "content.tabs.link",
+  "navigation.footer",
+  "navigation.indexes",
+  "navigation.path",
+  "navigation.sections",
+  "navigation.tabs",
+  "navigation.top",
+  "navigation.tracking",
+  "search.highlight",
+  "search.share",
+  "search.suggest",
+  "toc.follow",
+]
+
+[project.theme.font]
+text = "Inter"
+code = "JetBrains Mono"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+primary = "custom"
+accent = "amber"
+toggle = { icon = "lucide/sun", name = "Switch to dark mode" }
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+primary = "custom"
+accent = "amber"
+toggle = { icon = "lucide/moon", name = "Switch to light mode" }
+
+[project.extra]
+generator = false
+social = [
+  { icon = "fontawesome/brands/github", link = "https://github.com/cofin/litestar-mcp", name = "GitHub" },
+  { icon = "fontawesome/brands/discord", link = "https://discord.gg/litestar", name = "Discord" },
+  { icon = "fontawesome/brands/python", link = "https://pypi.org/project/litestar-mcp/", name = "PyPI" },
+]
+
+[project.plugins.mkdocstrings]
+default_handler = "python"
+custom_templates = "tools/docs/templates"
+enable_inventory = true
+
+[project.plugins.mkdocstrings.handlers.python]
+paths = ["."]
+
+[project.plugins.mkdocstrings.handlers.python.options]
+extensions = ["griffe_fieldz"]
+docstring_style = "google"
+docstring_section_style = "table"
+heading_level = 3
+inherited_members = false
+line_length = 80
+members_order = "source"
+merge_init_into_class = false
+modernize_annotations = true
+annotations_path = "brief"
+preload_modules = ["litestar_mcp"]
+separate_signature = true
+show_bases = true
+show_category_heading = false
+show_if_no_docstring = true
+show_labels = false
+show_object_full_path = false
+show_overloads = false
+show_root_full_path = false
+show_root_heading = true
+show_root_toc_entry = true
+show_signature_annotations = false
+show_source = false
+show_symbol_type_heading = true
+show_symbol_type_toc = false
+signature_crossrefs = true
+summary = { attributes = true, functions = false, classes = false, modules = false }
+unwrap_annotated = true
+filters = ["!^_"]
+
+[project.markdown_extensions]
+admonition = {}
+attr_list = {}
+def_list = {}
+footnotes = {}
+md_in_html = {}
+tables = {}
+toc = { permalink = true, toc_depth = "2-3" }
+
+[project.markdown_extensions.pymdownx.details]
+[project.markdown_extensions.pymdownx.inlinehilite]
+[project.markdown_extensions.pymdownx.keys]
+
+[project.markdown_extensions.pymdownx.emoji]
+emoji_index = "zensical.extensions.emoji.twemoji"
+emoji_generator = "zensical.extensions.emoji.to_svg"
+
+[project.markdown_extensions.pymdownx.highlight]
+anchor_linenums = true
+line_spans = "__span"
+pygments_lang_class = true
+
+[project.markdown_extensions.pymdownx.snippets]
+base_path = ["."]
+check_paths = true
+dedent_subsections = true
+
+[project.markdown_extensions.pymdownx.superfences]
+custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]
+
+[project.markdown_extensions.pymdownx.tabbed]
+alternate_style = true
+combine_header_slug = true
+slugify = { object = "pymdownx.slugs.slugify", kwds = { case = "lower" } }

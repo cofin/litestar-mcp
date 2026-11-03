@@ -1,0 +1,166 @@
+<div class="lm-diagram lm-diag lm-diag--workflows">
+  <style>
+    .lm-diag--workflows {
+      --lm-w-surface: var(--md-default-bg-color, #ffffff);
+      --lm-w-card: var(--md-code-bg-color, #f8fafc);
+      --lm-w-border: rgba(148, 163, 184, 0.35);
+      --lm-w-text: var(--md-default-fg-color, #0f172a);
+      --lm-w-muted: var(--md-default-fg-color--light, #475569);
+      --lm-w-blue: #2563eb;
+      --lm-w-amber: #d97706;
+      --lm-w-emerald: #059669;
+      --lm-w-violet: #7c3aed;
+      --lm-w-rose: #e11d48;
+      background: var(--lm-w-surface);
+      border: 1px solid var(--lm-w-border);
+      border-radius: 0.75rem;
+      padding: 1rem;
+      margin: 1.5rem 0;
+    }
+    [data-md-color-scheme="slate"] .lm-diag--workflows {
+      --lm-w-surface: #121521;
+      --lm-w-card: #171b2a;
+      --lm-w-border: rgba(148, 163, 184, 0.24);
+      --lm-w-blue: #60a5fa;
+      --lm-w-amber: #fbbf24;
+      --lm-w-emerald: #34d399;
+      --lm-w-violet: #a78bfa;
+      --lm-w-rose: #fb7185;
+    }
+    .lm-diag--workflows input[type="radio"] {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+    #lm-wf-durable:checked ~ .lm-diag-tabs label[for="lm-wf-durable"],
+    #lm-wf-inproc:checked ~ .lm-diag-tabs label[for="lm-wf-inproc"] {
+      border-color: var(--lm-w-blue);
+      background: rgba(37, 99, 235, 0.14);
+      color: var(--lm-w-blue);
+    }
+    .lm-diag--workflows .lm-wf-panel {
+      display: none;
+    }
+    #lm-wf-durable:checked ~ .lm-wf-panels .lm-panel-durable,
+    #lm-wf-inproc:checked ~ .lm-wf-panels .lm-panel-inproc {
+      display: block;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .lm-diag--workflows .lm-flow-forward,
+      .lm-diag--workflows .lm-flow-reverse,
+      .lm-diag--workflows .lm-flow-slow,
+      .lm-diag--workflows .lm-pulse {
+        animation: none !important;
+      }
+    }
+  </style>
+
+  <input type="radio" name="lm-workflow-mode" id="lm-wf-durable" checked />
+  <input type="radio" name="lm-workflow-mode" id="lm-wf-inproc" />
+
+  <div class="lm-diag-tabs" role="tablist" aria-label="Workflow Engine Execution Mode">
+    <label class="lm-diag-tab" for="lm-wf-durable">Distributed DurableWorkflowEngine</label>
+    <label class="lm-diag-tab" for="lm-wf-inproc">In-Process WorkflowEngine</label>
+  </div>
+
+  <div class="lm-wf-panels">
+    <div class="lm-wf-panel lm-panel-durable">
+      <svg viewBox="0 0 920 295" role="img" aria-labelledby="lm-wf-d-title lm-wf-d-desc">
+        <title id="lm-wf-d-title">Distributed DurableWorkflowEngine on litestar-queues</title>
+        <desc id="lm-wf-d-desc">DynamicWorkflow DAG waves execute across worker replicas via DurableWorkflowEngine, persisting write-once NodeRecord and monotonic WorkflowRun documents in WorkflowStore (litestar_mcp_workflows), using forever-unique wf-node:{run_id}:{node} reservations with reset_task_identity on retry and per-run wf-watchdog:{run_id}:{tick} recovery.</desc>
+
+        <rect x="16" y="22" width="196" height="172" rx="10" fill="var(--lm-w-card)" stroke="var(--lm-w-blue)" stroke-width="2" />
+        <circle class="lm-pulse" cx="34" cy="42" r="5" fill="var(--lm-w-blue)" />
+        <text x="114" y="46" text-anchor="middle" fill="var(--lm-w-text)" font-size="13" font-weight="700">1. DynamicWorkflow DAG</text>
+        <text x="114" y="70" text-anchor="middle" fill="var(--lm-w-blue)" font-size="11" font-family="monospace">engine.start(name, ...)</text>
+        <text x="114" y="92" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">Topological wave validation</text>
+        <text x="114" y="110" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">Agent nodes &amp; Python step nodes</text>
+        <text x="114" y="128" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">Dynamic StepResult(next_nodes)</text>
+        <text x="114" y="146" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">Captures PrincipalSnapshot</text>
+        <text x="114" y="168" text-anchor="middle" fill="var(--lm-w-emerald)" font-size="10" font-family="monospace">Returns run_id immediately</text>
+
+        <line class="lm-flow-forward" x1="212" y1="108" x2="256" y2="108" stroke="var(--lm-w-blue)" stroke-width="2.5" />
+
+        <rect x="256" y="22" width="204" height="172" rx="10" fill="var(--lm-w-card)" stroke="var(--lm-w-amber)" stroke-width="2" />
+        <text x="358" y="46" text-anchor="middle" fill="var(--lm-w-text)" font-size="13" font-weight="700">2. WorkflowStore</text>
+        <text x="358" y="70" text-anchor="middle" fill="var(--lm-w-amber)" font-size="10" font-family="monospace">litestar_mcp_workflows</text>
+        <text x="358" y="92" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">Write-once NodeRecord per node</text>
+        <text x="358" y="110" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">Eliminates sibling fan-in races</text>
+        <text x="358" y="128" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">Monotonic WorkflowRun status</text>
+        <text x="358" y="146" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">Completed outputs never lost</text>
+        <text x="358" y="168" text-anchor="middle" fill="var(--lm-w-amber)" font-size="10" font-family="monospace">engine.snapshot(run_id)</text>
+
+        <line class="lm-flow-forward" x1="460" y1="108" x2="504" y2="108" stroke="var(--lm-w-amber)" stroke-width="2.5" />
+
+        <rect x="504" y="22" width="206" height="172" rx="10" fill="var(--lm-w-card)" stroke="var(--lm-w-violet)" stroke-width="2" />
+        <circle class="lm-pulse" cx="522" cy="42" r="5" fill="var(--lm-w-violet)" />
+        <text x="607" y="46" text-anchor="middle" fill="var(--lm-w-text)" font-size="13" font-weight="700">3. Forever-Unique Queue</text>
+        <text x="607" y="70" text-anchor="middle" fill="var(--lm-w-violet)" font-size="10" font-family="monospace">wf-node:{run_id}:{node}</text>
+        <text x="607" y="92" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">Deduplicates concurrent fan-in</text>
+        <text x="607" y="110" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">Rehydrates Dishka Scope.REQUEST</text>
+        <text x="607" y="128" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">On transient error: releases key</text>
+        <text x="607" y="146" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">via service.reset_task_identity()</text>
+        <text x="607" y="168" text-anchor="middle" fill="var(--lm-w-violet)" font-size="10" font-family="monospace">Enqueues ready downstream wave</text>
+
+        <line class="lm-flow-slow" x1="710" y1="108" x2="752" y2="108" stroke="var(--lm-w-emerald)" stroke-width="2.5" />
+
+        <rect x="752" y="22" width="152" height="172" rx="10" fill="var(--lm-w-card)" stroke="var(--lm-w-emerald)" stroke-width="2" />
+        <text x="828" y="46" text-anchor="middle" fill="var(--lm-w-text)" font-size="13" font-weight="700">4. Watchdog</text>
+        <text x="828" y="70" text-anchor="middle" fill="var(--lm-w-emerald)" font-size="10" font-family="monospace">wf-watchdog:{id}:{t}</text>
+        <text x="828" y="92" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">Per-run self-rearming</text>
+        <text x="828" y="110" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">Checks ready_nodes()</text>
+        <text x="828" y="128" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">Heals crashed workers</text>
+        <text x="828" y="146" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">Stops on terminal state</text>
+        <text x="828" y="168" text-anchor="middle" fill="var(--lm-w-emerald)" font-size="10" font-family="monospace">Zero orphan DAG runs</text>
+
+        <rect x="16" y="214" width="888" height="58" rx="8" fill="var(--lm-w-card)" stroke="var(--lm-w-border)" stroke-width="1.5" />
+        <text x="460" y="236" text-anchor="middle" fill="var(--lm-w-text)" font-size="12" font-weight="700">Parallel Wave Fan-Out &amp; Conflict-Free Fan-In</text>
+        <text x="460" y="256" text-anchor="middle" fill="var(--lm-w-muted)" font-size="11" font-family="monospace">Wave 0: [extract] -&gt; Wave 1: [enrich_a, enrich_b] (parallel workers) -&gt; Wave 2: [aggregate] (forever-unique gate)</text>
+      </svg>
+    </div>
+
+    <div class="lm-wf-panel lm-panel-inproc">
+      <svg viewBox="0 0 920 295" role="img" aria-labelledby="lm-wf-i-title lm-wf-i-desc">
+        <title id="lm-wf-i-title">In-Process WorkflowEngine Execution</title>
+        <desc id="lm-wf-i-desc">In-process WorkflowEngine executes DynamicWorkflow topological waves concurrently using AnyIO task groups within a single request or background coroutine.</desc>
+
+        <rect x="16" y="22" width="265" height="172" rx="10" fill="var(--lm-w-card)" stroke="var(--lm-w-blue)" stroke-width="2" />
+        <circle class="lm-pulse" cx="36" cy="42" r="5" fill="var(--lm-w-blue)" />
+        <text x="148" y="46" text-anchor="middle" fill="var(--lm-w-text)" font-size="13" font-weight="700">1. Workflow Definition</text>
+        <text x="148" y="70" text-anchor="middle" fill="var(--lm-w-blue)" font-size="11" font-family="monospace">DynamicWorkflow(name="...")</text>
+        <text x="148" y="94" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">WorkflowNode(name, agent=... | fn=...)</text>
+        <text x="148" y="114" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">depends_on=["upstream_a", ...]</text>
+        <text x="148" y="134" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">Validates acyclic dependency graph</text>
+        <text x="148" y="154" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">Supports runtime graph mutation</text>
+        <text x="148" y="174" text-anchor="middle" fill="var(--lm-w-blue)" font-size="10" font-family="monospace">workflow.add_node(...) in step</text>
+
+        <line class="lm-flow-forward" x1="281" y1="108" x2="334" y2="108" stroke="var(--lm-w-blue)" stroke-width="2.5" />
+
+        <rect x="334" y="22" width="252" height="172" rx="10" fill="var(--lm-w-card)" stroke="var(--lm-w-amber)" stroke-width="2" />
+        <text x="460" y="46" text-anchor="middle" fill="var(--lm-w-text)" font-size="13" font-weight="700">2. AnyIO Wave Scheduler</text>
+        <text x="460" y="70" text-anchor="middle" fill="var(--lm-w-amber)" font-size="11" font-family="monospace">WorkflowEngine.run(context)</text>
+        <text x="460" y="94" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">Computes ready nodes per wave</text>
+        <text x="460" y="114" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">Runs sibling wave nodes in TaskGroup</text>
+        <text x="460" y="134" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">Passes WorkflowContext(inputs, state)</text>
+        <text x="460" y="154" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">Records ctx.node_outputs[node]</text>
+        <text x="460" y="174" text-anchor="middle" fill="var(--lm-w-amber)" font-size="10" font-family="monospace">Enforces max_steps ceiling</text>
+
+        <line class="lm-flow-forward" x1="586" y1="108" x2="639" y2="108" stroke="var(--lm-w-emerald)" stroke-width="2.5" />
+
+        <rect x="639" y="22" width="265" height="172" rx="10" fill="var(--lm-w-card)" stroke="var(--lm-w-emerald)" stroke-width="2" />
+        <circle class="lm-pulse" cx="659" cy="42" r="5" fill="var(--lm-w-emerald)" />
+        <text x="771" y="46" text-anchor="middle" fill="var(--lm-w-text)" font-size="13" font-weight="700">3. Dynamic Branching &amp; Output</text>
+        <text x="771" y="70" text-anchor="middle" fill="var(--lm-w-emerald)" font-size="11" font-family="monospace">StepResult &amp; WorkflowContext</text>
+        <text x="771" y="94" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">StepResult(output=..., next_nodes=[...])</text>
+        <text x="771" y="114" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">Prunes unselected conditional branches</text>
+        <text x="771" y="134" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">Returns completed WorkflowContext</text>
+        <text x="771" y="154" text-anchor="middle" fill="var(--lm-w-muted)" font-size="10">Same DynamicWorkflow runs on both</text>
+        <text x="771" y="174" text-anchor="middle" fill="var(--lm-w-emerald)" font-size="10" font-family="monospace">WorkflowEngine &amp; DurableWorkflowEngine</text>
+
+        <rect x="16" y="214" width="888" height="58" rx="8" fill="var(--lm-w-card)" stroke="var(--lm-w-border)" stroke-width="1.5" />
+        <text x="460" y="236" text-anchor="middle" fill="var(--lm-w-text)" font-size="12" font-weight="700">Portable DAG Definition Across In-Process and Distributed Engines</text>
+        <text x="460" y="256" text-anchor="middle" fill="var(--lm-w-muted)" font-size="11" font-family="monospace">Author DynamicWorkflow once -&gt; test with WorkflowEngine in unit tests -&gt; deploy on DurableWorkflowEngine</text>
+      </svg>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,175 @@
+<div class="lm-diagram lm-diag lm-diag--pipeline">
+  <style>
+    .lm-diag--pipeline {
+      --lm-p-surface: var(--md-default-bg-color, #ffffff);
+      --lm-p-card: var(--md-code-bg-color, #f8fafc);
+      --lm-p-border: rgba(148, 163, 184, 0.35);
+      --lm-p-text: var(--md-default-fg-color, #0f172a);
+      --lm-p-muted: var(--md-default-fg-color--light, #475569);
+      --lm-p-blue: #2563eb;
+      --lm-p-amber: #d97706;
+      --lm-p-emerald: #059669;
+      --lm-p-violet: #7c3aed;
+      --lm-p-rose: #e11d48;
+      background: var(--lm-p-surface);
+      border: 1px solid var(--lm-p-border);
+      border-radius: 0.75rem;
+      padding: 1rem;
+      margin: 1.5rem 0;
+    }
+    [data-md-color-scheme="slate"] .lm-diag--pipeline {
+      --lm-p-surface: #121521;
+      --lm-p-card: #171b2a;
+      --lm-p-border: rgba(148, 163, 184, 0.24);
+      --lm-p-blue: #60a5fa;
+      --lm-p-amber: #fbbf24;
+      --lm-p-emerald: #34d399;
+      --lm-p-violet: #a78bfa;
+      --lm-p-rose: #fb7185;
+    }
+    .lm-diag--pipeline input[type="radio"] {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+    #lm-pipe-http:checked ~ .lm-diag-tabs label[for="lm-pipe-http"],
+    #lm-pipe-stdio:checked ~ .lm-diag-tabs label[for="lm-pipe-stdio"] {
+      border-color: var(--lm-p-blue);
+      background: rgba(37, 99, 235, 0.14);
+      color: var(--lm-p-blue);
+    }
+    .lm-diag--pipeline .lm-pipe-panel {
+      display: none;
+    }
+    #lm-pipe-http:checked ~ .lm-pipe-panels .lm-panel-http,
+    #lm-pipe-stdio:checked ~ .lm-pipe-panels .lm-panel-stdio {
+      display: block;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .lm-diag--pipeline .lm-flow-forward,
+      .lm-diag--pipeline .lm-flow-reverse,
+      .lm-diag--pipeline .lm-flow-slow,
+      .lm-diag--pipeline .lm-pulse {
+        animation: none !important;
+      }
+    }
+  </style>
+
+  <input type="radio" name="lm-pipeline-mode" id="lm-pipe-http" checked />
+  <input type="radio" name="lm-pipeline-mode" id="lm-pipe-stdio" />
+
+  <div class="lm-diag-tabs" role="tablist" aria-label="MCP Transport and Dispatch Pipeline">
+    <label class="lm-diag-tab" for="lm-pipe-http">Streamable HTTP (2026-07-28 &amp; 2025-06-18)</label>
+    <label class="lm-diag-tab" for="lm-pipe-stdio">In-Process Stdio &amp; HTTP Bridge</label>
+  </div>
+
+  <div class="lm-pipe-panels">
+    <div class="lm-pipe-panel lm-panel-http">
+      <svg viewBox="0 0 920 280" role="img" aria-labelledby="lm-pipe-http-title lm-pipe-http-desc">
+        <title id="lm-pipe-http-title">Stateless Streamable HTTP and Internal ASGI Dispatch Pipeline</title>
+        <desc id="lm-pipe-http-desc">JSON-RPC requests arrive at MCPController (/mcp), negotiate 2026-07-28 or 2025-06-18 via MCPHandlerService, and execute tools and prompts through Litestar internal ASGI dispatch with middleware, guards, DI, and OpenTelemetry spans.</desc>
+
+        <rect x="16" y="26" width="188" height="156" rx="10" fill="var(--lm-p-card)" stroke="var(--lm-p-blue)" stroke-width="2" />
+        <circle class="lm-pulse" cx="34" cy="46" r="5" fill="var(--lm-p-blue)" />
+        <text x="110" y="50" text-anchor="middle" fill="var(--lm-p-text)" font-size="13" font-weight="700">MCP Client</text>
+        <text x="110" y="74" text-anchor="middle" fill="var(--lm-p-blue)" font-size="11" font-family="monospace">POST / DELETE /mcp</text>
+        <text x="110" y="96" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">2026-07-28: server/discover</text>
+        <text x="110" y="114" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">2025-06-18: initialize &amp; ping</text>
+        <text x="110" y="132" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">SEP-2575 Capability Headers</text>
+        <text x="110" y="150" text-anchor="middle" fill="var(--lm-p-emerald)" font-size="10" font-family="monospace">JSON or text/event-stream</text>
+
+        <line class="lm-flow-forward" x1="204" y1="88" x2="254" y2="88" stroke="var(--lm-p-blue)" stroke-width="2.5" />
+        <line class="lm-flow-reverse" x1="204" y1="120" x2="254" y2="120" stroke="var(--lm-p-emerald)" stroke-width="2" />
+
+        <rect x="254" y="26" width="196" height="156" rx="10" fill="var(--lm-p-card)" stroke="var(--lm-p-amber)" stroke-width="2" />
+        <text x="352" y="50" text-anchor="middle" fill="var(--lm-p-text)" font-size="13" font-weight="700">MCPController</text>
+        <text x="352" y="74" text-anchor="middle" fill="var(--lm-p-amber)" font-size="11" font-family="monospace">MCPHandlerService</text>
+        <text x="352" y="96" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Router Guards &amp; route_opt</text>
+        <text x="352" y="114" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Origin &amp; Protocol Validation</text>
+        <text x="352" y="132" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">202 Accepted (notifications)</text>
+        <text x="352" y="150" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">204 No Content (DELETE /mcp)</text>
+
+        <line class="lm-flow-forward" x1="450" y1="88" x2="500" y2="88" stroke="var(--lm-p-amber)" stroke-width="2.5" />
+        <line class="lm-flow-reverse" x1="450" y1="120" x2="500" y2="120" stroke="var(--lm-p-emerald)" stroke-width="2" />
+
+        <rect x="500" y="26" width="194" height="156" rx="10" fill="var(--lm-p-card)" stroke="var(--lm-p-violet)" stroke-width="2" />
+        <text x="597" y="50" text-anchor="middle" fill="var(--lm-p-text)" font-size="13" font-weight="700">Internal ASGI Dispatch</text>
+        <text x="597" y="74" text-anchor="middle" fill="var(--lm-p-violet)" font-size="11" font-family="monospace">execute_tool / prompt</text>
+        <text x="597" y="96" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Forwards Auth &amp; Trace Headers</text>
+        <text x="597" y="114" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Preserves request.user &amp; auth</text>
+        <text x="597" y="132" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Binds ToolContext in scope</text>
+        <text x="597" y="150" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Zero TCP Loopback Hop</text>
+
+        <line class="lm-flow-forward" x1="694" y1="88" x2="742" y2="88" stroke="var(--lm-p-violet)" stroke-width="2.5" />
+        <line class="lm-flow-reverse" x1="694" y1="120" x2="742" y2="120" stroke="var(--lm-p-emerald)" stroke-width="2" />
+
+        <rect x="742" y="26" width="162" height="156" rx="10" fill="var(--lm-p-card)" stroke="var(--lm-p-emerald)" stroke-width="2" />
+        <circle class="lm-pulse" cx="760" cy="46" r="5" fill="var(--lm-p-emerald)" />
+        <text x="823" y="50" text-anchor="middle" fill="var(--lm-p-text)" font-size="13" font-weight="700">Litestar Handler</text>
+        <text x="823" y="74" text-anchor="middle" fill="var(--lm-p-emerald)" font-size="11" font-family="monospace">@get / @post / @tool</text>
+        <text x="823" y="96" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Middleware &amp; Route Guards</text>
+        <text x="823" y="114" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Provide &amp; FromDishka[T]</text>
+        <text x="823" y="132" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">DTOs &amp; msgspec Validation</text>
+        <text x="823" y="150" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">before/after_request Hooks</text>
+
+        <rect x="16" y="206" width="888" height="54" rx="8" fill="var(--lm-p-card)" stroke="var(--lm-p-border)" stroke-width="1.5" />
+        <text x="460" y="228" text-anchor="middle" fill="var(--lm-p-text)" font-size="12" font-weight="700">Cross-Cutting Observability &amp; Registry Layer</text>
+        <text x="460" y="246" text-anchor="middle" fill="var(--lm-p-muted)" font-size="11" font-family="monospace">Registry (Tools • Resources • Prompts • Skills)  |  TelemetryConfig OpenTelemetry Spans (mcp.request • mcp.tool.call)</text>
+      </svg>
+    </div>
+
+    <div class="lm-pipe-panel lm-panel-stdio">
+      <svg viewBox="0 0 920 280" role="img" aria-labelledby="lm-pipe-stdio-title lm-pipe-stdio-desc">
+        <title id="lm-pipe-stdio-title">In-Process Stdio and HTTP Bridge Pipeline</title>
+        <desc id="lm-pipe-stdio-desc">Desktop MCP clients communicate over newline-delimited JSON on stdin/stdout using either in-process Litestar.lifespan() execution with MCPStdioContext or the stateless HTTP relay bridge.</desc>
+
+        <rect x="16" y="26" width="196" height="156" rx="10" fill="var(--lm-p-card)" stroke="var(--lm-p-blue)" stroke-width="2" />
+        <circle class="lm-pulse" cx="34" cy="46" r="5" fill="var(--lm-p-blue)" />
+        <text x="114" y="50" text-anchor="middle" fill="var(--lm-p-text)" font-size="13" font-weight="700">Desktop Host</text>
+        <text x="114" y="74" text-anchor="middle" fill="var(--lm-p-blue)" font-size="11" font-family="monospace">stdin / stdout NDJSON</text>
+        <text x="114" y="96" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Claude Desktop / Cursor / IDE</text>
+        <text x="114" y="114" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">litestar mcp stdio</text>
+        <text x="114" y="132" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">litestar mcp bridge</text>
+        <text x="114" y="150" text-anchor="middle" fill="var(--lm-p-emerald)" font-size="10" font-family="monospace">mcp.run(transport="stdio")</text>
+
+        <line class="lm-flow-forward" x1="212" y1="88" x2="262" y2="88" stroke="var(--lm-p-blue)" stroke-width="2.5" />
+        <line class="lm-flow-reverse" x1="212" y1="120" x2="262" y2="120" stroke="var(--lm-p-emerald)" stroke-width="2" />
+
+        <rect x="262" y="26" width="206" height="156" rx="10" fill="var(--lm-p-card)" stroke="var(--lm-p-amber)" stroke-width="2" />
+        <text x="365" y="50" text-anchor="middle" fill="var(--lm-p-text)" font-size="13" font-weight="700">Stdio Lifecycle Adapter</text>
+        <text x="365" y="74" text-anchor="middle" fill="var(--lm-p-amber)" font-size="11" font-family="monospace">run_stdio_async()</text>
+        <text x="365" y="96" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Enters Litestar.lifespan()</text>
+        <text x="365" y="114" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Injects MCPStdioContext</text>
+        <text x="365" y="132" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">user • auth • session • state</text>
+        <text x="365" y="150" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Bounded shutdown_timeout=5.0s</text>
+
+        <line class="lm-flow-forward" x1="468" y1="88" x2="518" y2="88" stroke="var(--lm-p-amber)" stroke-width="2.5" />
+        <line class="lm-flow-reverse" x1="468" y1="120" x2="518" y2="120" stroke="var(--lm-p-emerald)" stroke-width="2" />
+
+        <rect x="518" y="26" width="190" height="156" rx="10" fill="var(--lm-p-card)" stroke="var(--lm-p-violet)" stroke-width="2" />
+        <text x="613" y="50" text-anchor="middle" fill="var(--lm-p-text)" font-size="13" font-weight="700">Synthetic ASGI Scope</text>
+        <text x="613" y="74" text-anchor="middle" fill="var(--lm-p-violet)" font-size="11" font-family="monospace">MCPHandlerService</text>
+        <text x="613" y="96" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">In-Memory ASGI Dispatch</text>
+        <text x="613" y="114" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Or Remote HTTP Relay (--url)</text>
+        <text x="613" y="132" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Owner ID: user:&lt;subject&gt;</text>
+        <text x="613" y="150" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">SSE Progress Notification Loop</text>
+
+        <line class="lm-flow-forward" x1="708" y1="88" x2="748" y2="88" stroke="var(--lm-p-violet)" stroke-width="2.5" />
+        <line class="lm-flow-reverse" x1="708" y1="120" x2="748" y2="120" stroke="var(--lm-p-emerald)" stroke-width="2" />
+
+        <rect x="748" y="26" width="156" height="156" rx="10" fill="var(--lm-p-card)" stroke="var(--lm-p-emerald)" stroke-width="2" />
+        <circle class="lm-pulse" cx="766" cy="46" r="5" fill="var(--lm-p-emerald)" />
+        <text x="826" y="50" text-anchor="middle" fill="var(--lm-p-text)" font-size="13" font-weight="700">Application DI</text>
+        <text x="826" y="74" text-anchor="middle" fill="var(--lm-p-emerald)" font-size="11" font-family="monospace">Full Litestar Pipeline</text>
+        <text x="826" y="96" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">DB Pools &amp; Stores Active</text>
+        <text x="826" y="114" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Dishka Scope.REQUEST</text>
+        <text x="826" y="132" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Route Guards Enforced</text>
+        <text x="826" y="150" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Identical Tool Semantics</text>
+
+        <rect x="16" y="206" width="888" height="54" rx="8" fill="var(--lm-p-card)" stroke="var(--lm-p-border)" stroke-width="1.5" />
+        <text x="460" y="228" text-anchor="middle" fill="var(--lm-p-text)" font-size="12" font-weight="700">Two CLI Modes: Local In-Process vs Remote HTTP Relay</text>
+        <text x="460" y="246" text-anchor="middle" fill="var(--lm-p-muted)" font-size="11" font-family="monospace">litestar --app app:app mcp stdio (in-process ASGI)  |  litestar mcp bridge --url https://api.example.com/mcp (remote HTTP)</text>
+      </svg>
+    </div>
+  </div>
+</div>

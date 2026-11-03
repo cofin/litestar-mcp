@@ -25,6 +25,7 @@ _logger = logging.getLogger(__name__)
 
 
 def validate_stream_cleanup_timeout(timeout: "float") -> None:
+    """Validate that a stream cleanup timeout is positive and finite."""
     if not math.isfinite(timeout) or timeout <= 0:
         msg = "stream_cleanup_timeout must be positive and finite"
         raise ValueError(msg)
@@ -42,6 +43,7 @@ class StreamOwner(Generic[_T, _R]):
         self._result_observed = False
 
     def start(self, producer: "Callable[[MemoryObjectSendStream[_T]], Awaitable[_R]]") -> None:
+        """Launch the background producer task writing into the bounded channel."""
         self._task = asyncio.create_task(self._run(producer))
 
     async def _run(self, producer: "Callable[[MemoryObjectSendStream[_T]], Awaitable[_R]]") -> "_R":
@@ -51,6 +53,7 @@ class StreamOwner(Generic[_T, _R]):
             self.sender.close()
 
     async def result(self) -> "_R":
+        """Await and return the producer result while shielding the underlying task."""
         if self._task is None:
             msg = "Stream producer has not started"
             raise RuntimeError(msg)
@@ -62,6 +65,7 @@ class StreamOwner(Generic[_T, _R]):
             _logger.error("Stream producer failed during cleanup", exc_info=error)
 
     async def close(self) -> None:
+        """Close the channel and drain or cancel the producer within the cleanup deadline."""
         self.receiver.close()
         self.sender.close()
         task = self._task
@@ -104,6 +108,7 @@ class StreamCleanupMiddleware(ASGIMiddleware):
     scopes = (ScopeType.HTTP,)
 
     async def handle(self, scope: "Scope", receive: "Receive", send: "Send", next_app: "ASGIApp") -> None:
+        """Bind a stream state to the ASGI scope and ensure producer cleanup on exit."""
         with anyio.CancelScope() as cancel_scope:
             state = _StreamState(cancel_scope)
             scope_dict = cast("dict[str, Any]", scope)
@@ -125,6 +130,7 @@ def start_stream(
     capacity: "int",
     cleanup_timeout: "float",
 ) -> "StreamOwner[_T, _R]":
+    """Create and register a stream owner on the active ASGI request scope."""
     state = cast("_StreamState", cast("dict[str, Any]", scope)[_STREAM_STATE_KEY])
     owner: StreamOwner[_T, _R] = StreamOwner(capacity, cleanup_timeout)
     state.owner = owner

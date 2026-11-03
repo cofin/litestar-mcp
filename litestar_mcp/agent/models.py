@@ -31,15 +31,25 @@ class ModelDelta:
     """Incremental chunk emitted by a ModelClient during an agent turn."""
 
     event_type: "ModelEventType"
+    """Kind of incremental model event (`delta`, `thought`, `tool_call`, or `usage`)."""
     text: "str | None" = None
+    """Incremental assistant text or thought content."""
     thought: "str | None" = None
+    """Reasoning or thinking trace text when emitted by a thinking model."""
     tool_name: "str | None" = None
+    """Name of the tool requested by the model for a `tool_call` event."""
     call_id: "str | None" = None
+    """Unique identifier correlating a tool call with its result."""
     arguments: "dict[str, Any] | None" = None
+    """Decoded JSON arguments mapping passed to the requested tool."""
     prompt_tokens: "int | None" = None
+    """Input prompt token count reported in a `usage` event."""
     completion_tokens: "int | None" = None
+    """Output completion token count reported in a `usage` event."""
     provider_metadata: "dict[str, dict[str, Any]]" = field(default_factory=dict)
+    """Provider-specific metadata such as call identifiers and thought signatures."""
     thought_tokens: "int | None" = None
+    """Reasoning token count reported in a `usage` event."""
 
 
 @runtime_checkable

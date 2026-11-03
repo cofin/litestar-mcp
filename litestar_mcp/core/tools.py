@@ -48,18 +48,26 @@ class ToolCall(msgspec.Struct, kw_only=True):
     """A model-requested tool invocation."""
 
     name: "str"
+    """Registered name of the tool to invoke."""
     call_id: "str"
+    """Unique correlation identifier for this tool invocation."""
     arguments: "dict[str, Any]" = msgspec.field(default_factory=dict)
+    """Model-supplied keyword arguments for the tool."""
     provider_metadata: "dict[str, dict[str, Any]]" = msgspec.field(default_factory=dict)
+    """Provider-specific metadata attached to the tool call."""
 
 
 class ToolResult(msgspec.Struct, kw_only=True):
     """The JSON-compatible outcome of one tool invocation."""
 
     call_id: "str"
+    """Correlation identifier matching the originating `ToolCall.call_id`."""
     name: "str"
+    """Name of the tool that produced this result."""
     content: "Any"
+    """JSON-serializable return payload or error dict from the tool."""
     is_error: "bool" = False
+    """Whether the tool invocation raised an error."""
 
     @property
     def result(self) -> "Any":

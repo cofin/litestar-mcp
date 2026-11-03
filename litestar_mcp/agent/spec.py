@@ -23,10 +23,15 @@ class AgentMessage(msgspec.Struct, kw_only=True):
     """Provider-neutral conversation message."""
 
     role: "Literal['system', 'user', 'assistant', 'tool']"
+    """Message author role (`system`, `user`, `assistant`, or `tool`)."""
     content: "str" = ""
+    """Primary text content of the message."""
     tool_calls: "list[ToolCall]" = msgspec.field(default_factory=list)
+    """Tool invocations requested by the assistant in this message."""
     tool_results: "list[ToolResult]" = msgspec.field(default_factory=list)
+    """Tool execution results returned in a `tool` role message."""
     agent_name: "str | None" = None
+    """Optional name of the agent that produced or handled this message."""
 
 
 @dataclass(slots=True)
@@ -34,11 +39,17 @@ class Agent:
     """Agent definition with instructions, tools, skills, and an optional model binding."""
 
     name: "str"
+    """Unique identifier of the agent within an application or `AgentGroup`."""
     description: "str" = ""
+    """Human-readable summary of the agent's purpose and capabilities."""
     instructions: "str" = ""
+    """Base system instructions guiding the agent's behavior."""
     tools: "Sequence[Tool | Callable[..., Any]]" = ()
+    """Tools or plain callables exposed directly to the agent."""
     skills: "Sequence[SkillController | type[SkillController]]" = ()
+    """`SkillController` classes or instances contributing tools and instructions."""
     model: "ModelClient | str | None" = None
+    """Bound `ModelClient` instance or model identifier string."""
     _tool_set: "tuple[Tool, ...]" = field(init=False, repr=False, default=())
     _skill_instances: "tuple[SkillController, ...]" = field(init=False, repr=False, default=())
 

@@ -283,7 +283,7 @@ def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]"
 
 @lru_cache(maxsize=1024)
 def cached_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]":
-    """Return :func:`generate_schema_for_handler` output, computed once per handler.
+    """Return `generate_schema_for_handler` output, computed once per handler.
 
     The returned schema is shared between callers and must not be mutated.
     """

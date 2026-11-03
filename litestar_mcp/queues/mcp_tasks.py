@@ -28,18 +28,18 @@ RUN_TOOL_TASK = "litestar_mcp.mcp.run_tool_task"
 class QueueTaskExecutor:
     """Run MCP Tasks attempts on litestar-queues.
 
-    ``LitestarMCP`` calls :meth:`configure` during app init, which attaches the
-    executor's task dependencies to the application's ``QueuePlugin``; no queue
-    wiring is needed beyond registering ``QueuePlugin`` on the same app.
+    `LitestarMCP` calls `configure` during app init, which attaches the
+    executor's task dependencies to the application's `QueuePlugin`; no queue
+    wiring is needed beyond registering `QueuePlugin` on the same app.
 
     Args:
-        principal_loader: Optional callback rehydrating ``scope["user"]`` from a
-            task ``owner_id`` in the worker. When omitted, ``LitestarMCP``
-            automatically rehydrates ``scope["user"]``, ``scope["auth"]``, and
-            ``scope["litestar_security"]`` from the authenticated principal
+        principal_loader: Optional callback rehydrating `scope["user"]` from a
+            task `owner_id` in the worker. When omitted, `LitestarMCP`
+            automatically rehydrates `scope["user"]`, `scope["auth"]`, and
+            `scope["litestar_security"]` from the authenticated principal
             snapshot and the application's existing Litestar dependencies.
         queue: Default queue name for tool attempts (overridable per controller
-            or route via ``mcp_queue`` / ``@mcp_tool(queue=...)``).
+            or route via `mcp_queue` / `@mcp_tool(queue=...)`).
         timeout: Per-attempt timeout in seconds.
     """
 

@@ -71,7 +71,7 @@ async def run_stdio_streamable_http_bridge(
     Args:
         endpoint: Full MCP Streamable HTTP endpoint URL.
         transport: Optional httpx2 transport. Pass
-            :class:`~litestar_mcp.mcp.stdio.ASGIStreamingTransport` to serve an
+            `litestar_mcp.mcp.stdio.ASGIStreamingTransport` to serve an
             in-process ASGI app instead of a remote endpoint.
         client_info: Default ``io.modelcontextprotocol/clientInfo`` injected
             into requests that do not carry one.

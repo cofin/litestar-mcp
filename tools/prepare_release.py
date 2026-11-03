@@ -1,5 +1,6 @@
+"""Release preparation CLI for generating GitHub release notes and Markdown changelog entries."""
+
 import asyncio
-import contextlib
 import datetime as dt
 import os
 import pathlib
@@ -9,14 +10,10 @@ import subprocess
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 import click
 import httpx
 import msgspec
-
-if TYPE_CHECKING:
-    from collections.abc import Generator
 
 _polar = "[Polar.sh](https://polar.sh/litestar-org)"
 _open_collective = "[OpenCollective](https://opencollective.com/litestar)"
@@ -25,71 +22,114 @@ _repository_owner = "cofin"
 _repository_name = "litestar-mcp"
 _repository = f"{_repository_owner}/{_repository_name}"
 _repository_url = f"https://github.com/{_repository}"
+_RELEASE_HEADING_RE = re.compile(r"^##\s+\[?v?\d+\.\d+\.\d+")
 
 
-class PullRequest(msgspec.Struct, kw_only=True):
+class PullRequest(msgspec.Struct, frozen=True, gc=False, kw_only=True):
+    """GitHub pull request payload returned by the REST API."""
+
     title: "str"
+    """Full pull request title including conventional commit prefix."""
     number: "int"
+    """Pull request number."""
     body: "str"
+    """Markdown body of the pull request."""
     created_at: "str"
+    """ISO-8601 creation timestamp."""
     user: "RepoUser"
+    """Pull request author."""
     merge_commit_sha: "str | None" = None
+    """Merge commit SHA if merged."""
 
 
-class Comp(msgspec.Struct):
+class Comp(msgspec.Struct, frozen=True, gc=False):
+    """Commit comparison entry returned by the GitHub compare endpoint."""
+
     sha: "str"
+    """Commit SHA."""
 
-    class _Commit(msgspec.Struct):
+    class _Commit(msgspec.Struct, frozen=True, gc=False):
+        """Nested commit metadata payload."""
+
         message: "str"
+        """Commit message."""
         url: "str"
+        """Commit API URL."""
 
     commit: "_Commit"
+    """Nested commit details."""
 
 
-class RepoUser(msgspec.Struct):
+class RepoUser(msgspec.Struct, frozen=True, gc=False):
+    """GitHub user record attached to a pull request."""
+
     login: "str"
+    """GitHub username."""
     id: "int"
+    """GitHub numeric user ID."""
     type: "str"
+    """Account type such as ``User`` or ``Bot``."""
 
 
 @dataclass
 class PRInfo:
+    """Normalized pull request metadata used for release notes and changelog generation."""
+
     url: "str"
+    """HTML URL of the pull request."""
     title: "str"
+    """Original pull request title."""
     clean_title: "str"
+    """Title with the conventional commit prefix stripped."""
     cc_type: "str"
+    """Conventional commit type such as ``feat`` or ``fix``."""
     number: "int"
+    """Pull request number."""
     closes: "list[int]"
+    """Issue numbers closed by this pull request."""
     created_at: "dt.datetime"
+    """Parsed pull request creation datetime."""
     description: "str"
+    """Pull request body text."""
     user: "RepoUser"
+    """Pull request author."""
 
 
 @dataclass
 class ReleaseInfo:
+    """Aggregated release information between a base tag and a target release tag."""
+
     base: "str"
+    """Previous release tag used as the comparison base."""
     release_tag: "str"
+    """New release tag name (for example ``v0.18.0``)."""
     version: "str"
+    """Semantic version string without the leading ``v``."""
     pull_requests: "dict[str, list[PRInfo]]"
+    """Pull requests grouped by conventional commit type."""
     first_time_prs: "list[PRInfo]"
+    """First-time contributor pull requests included in this release."""
 
     @property
     def compare_url(self) -> "str":
+        """Return the GitHub comparison URL between ``base`` and ``release_tag``."""
         return f"{_repository_url}/compare/{self.base}...{self.release_tag}"
 
 
 def _pr_number_from_commit(comp: "Comp") -> "int | None":
-    # this is an ugly hack, but it appears to actually be the most reliably way to
-    # extract the most "reliable" way to extract the info we want from GH ¯\_(ツ)_/¯
+    """Extract a pull request number from a squash-merge commit subject line."""
     message_head = comp.commit.message.split("\n\n")[0]
     match = re.search(r"\(#(\d+)\)$", message_head)
     if not match:
-        print(f"Could not find PR number in {message_head}")  # noqa: T201
+        click.echo(f"Could not find PR number in {message_head}")
     return int(match[1]) if match else None
 
 
 class _Thing:
+    """GitHub API client for collecting pull request and contributor metadata."""
+
     def __init__(self, *, gh_token: "str", base: "str", release_branch: "str", tag: "str", version: "str") -> "None":
+        """Initialize the release client for the target tag and comparison range."""
         self._gh_token = gh_token
         self._base = base
         self._new_release_tag = tag
@@ -110,6 +150,7 @@ class _Thing:
         )
 
     async def get_closing_issues_references(self, pr_number: "int") -> "list[int]":
+        """Query GitHub GraphQL for issue numbers closed by ``pr_number``."""
         graphql_query = """{
         repository(owner: "%s", name: "%s") {
             pullRequest(number: %d) {
@@ -135,6 +176,7 @@ class _Thing:
         ]
 
     async def _get_pr_info_for_pr(self, number: "int") -> "PRInfo | None":
+        """Fetch and normalize pull request details for ``number``."""
         res = await self._api_client.get(f"/pulls/{number}")
         if res.is_client_error:
             click.secho(
@@ -150,8 +192,12 @@ class _Thing:
             return None
         pr = msgspec.convert(data, type=PullRequest)
 
-        cc_prefix, clean_title = pr.title.split(":", maxsplit=1)
-        cc_type = cc_prefix.split("(", maxsplit=1)[0].lower()
+        if ":" in pr.title:
+            cc_prefix, clean_title = pr.title.split(":", maxsplit=1)
+            cc_type = cc_prefix.split("(", maxsplit=1)[0].lower()
+        else:
+            cc_type = "misc"
+            clean_title = pr.title
         closes_issues = await self.get_closing_issues_references(pr_number=pr.number)
 
         return PRInfo(
@@ -167,6 +213,7 @@ class _Thing:
         )
 
     async def get_prs(self) -> "dict[str, list[PRInfo]]":
+        """Return non-bot pull requests in the compare range grouped by conventional commit type."""
         res = await self._api_client.get(f"/compare/{self._base}...{self._release_branch}")
         res.raise_for_status()
         compares = msgspec.convert(res.json()["commits"], list[Comp])
@@ -182,10 +229,7 @@ class _Thing:
         return prs
 
     async def _get_first_time_contributions(self, prs: "dict[str, list[PRInfo]]") -> "list[PRInfo]":
-        # there's probably a way to peel this information out of the GraphQL API but
-        # this was easier to implement, and it works well enough ¯\_(ツ)_/¯
-        # the logic is: if we don't find a commit to the main branch, dated before the
-        # first commit within this release, it's the user's first contribution
+        """Identify authors whose earliest pull request in this release is their first commit on ``main``."""
         prs_by_user_login: dict[str, list[PRInfo]] = defaultdict(list)
         for pr in [p for type_prs in prs.values() for p in type_prs]:
             prs_by_user_login[pr.user.login].append(pr)
@@ -193,6 +237,7 @@ class _Thing:
         first_prs: list[PRInfo] = []
 
         async def is_user_first_commit(user_login: "str") -> "None":
+            """Check whether ``user_login`` had any commits on ``main`` prior to ``first_pr``."""
             first_pr = min(prs_by_user_login[user_login], key=lambda p: p.created_at)
             res = await self._api_client.get(
                 "/commits",
@@ -213,6 +258,7 @@ class _Thing:
         return first_prs
 
     async def get_release_info(self) -> "ReleaseInfo":
+        """Collect all pull requests and first-time contributors for the target release."""
         prs = await self.get_prs()
         first_time_contributors = await self._get_first_time_contributions(prs)
         return ReleaseInfo(
@@ -224,6 +270,7 @@ class _Thing:
         )
 
     async def create_draft_release(self, body: "str", release_branch: "str") -> "str":
+        """Create a draft GitHub release and return its HTML URL."""
         res = await self._api_client.post(
             "/releases",
             json={
@@ -235,66 +282,68 @@ class _Thing:
             },
         )
         res.raise_for_status()
-        return res.json()["html_url"]  # type: ignore[no-any-return]
+        return str(res.json()["html_url"])
 
 
 class GHReleaseWriter:
+    """Builder for GitHub release notes Markdown."""
+
     def __init__(self) -> "None":
+        """Initialize an empty GitHub release notes buffer."""
         self.text = ""
 
     def add_line(self, line: "str") -> "None":
+        """Append a single line to the release notes buffer."""
         self.text += line + "\n"
 
     def add_pr_descriptions(self, infos: "list[PRInfo]") -> "None":
+        """Append bullet items for each pull request in ``infos``."""
         for info in infos:
             self.add_line(f"* {info.title} by @{info.user.login} in {info.url}")
 
 
 class ChangelogEntryWriter:
-    def __init__(self) -> "None":
-        self.text = ""
-        self._level = 0
-        self._indent = "    "
-        self._cc_type_map = {"fix": "bugfix", "feat": "feature"}
+    """Builder for Keep-a-Changelog Markdown entries in ``docs/changelog.md``."""
 
-    def add_line(self, line: "str") -> "None":
-        self.text += (self._indent * self._level) + line + "\n"
+    def __init__(self) -> "None":
+        """Initialize an empty Markdown changelog buffer."""
+        self.text = ""
+        self._cc_type_map = {"fix": "Fixed", "feat": "Added"}
+
+    def add_line(self, line: "str" = "") -> "None":
+        """Append a line to the Markdown changelog buffer."""
+        self.text += line + "\n"
+
+    def section_for_type(self, cc_type: "str") -> "str":
+        """Map a conventional commit type to its Keep-a-Changelog section heading."""
+        return self._cc_type_map.get(cc_type, "Changed")
+
+    def add_section(self, heading: "str", prs: "list[PRInfo]") -> "None":
+        """Render a Keep-a-Changelog subsection (`### Added`, `### Fixed`, `### Changed`)."""
+        if not prs:
+            return
+        self.add_line(f"### {heading}")
+        self.add_line()
+        for pr in prs:
+            self.add_change(pr)
+        self.add_line()
 
     def add_change(self, pr: "PRInfo") -> "None":
-        with self.directive(
-            "change",
-            arg=pr.clean_title,
-            type=self._cc_type_map.get(pr.cc_type, "misc"),
-            pr=str(pr.number),
-            issue=", ".join(map(str, pr.closes)),
-        ):
-            self.add_line("")
-            for line in pr.description.splitlines():
-                self.add_line(line)
-
-    @contextlib.contextmanager
-    def directive(self, name: "str", arg: "str | None" = None, **options: "str") -> "Generator[None, None, None]":
-        self.add_line(f".. {name}:: {arg or ''}")
-        self._level += 1
-        for key, value in options.items():
-            if value:
-                self.add_line(f":{key}: {value}")
-        yield
-        self._level -= 1
-        self.add_line("")
+        """Render a single pull request entry as a Markdown bullet item with PR and issue links."""
+        refs = [f"[#{pr.number}]({pr.url})"]
+        refs.extend(f"[#{issue}]({_repository_url}/issues/{issue})" for issue in pr.closes)
+        ref_suffix = f" ({', '.join(refs)})"
+        self.add_line(f"- **{pr.clean_title}**{ref_suffix}")
+        description = pr.description.strip()
+        if description:
+            self.add_line()
+            for line in description.splitlines():
+                self.add_line(f"  {line}" if line.strip() else "")
 
 
 def build_gh_release_notes(release_info: "ReleaseInfo") -> "str":
-    # this is for the most part just recreating GitHub's autogenerated release notes
-    # but with three important differences:
-    # 1. PRs are sorted into categories
-    # 2. The conventional commit type is stripped from the title
-    # 3. It works with our release branch process. GitHub doesn't pick up (all) commits
-    #    made there depending on how things were merged
+    """Build categorized GitHub release notes Markdown from ``release_info``."""
     doc = GHReleaseWriter()
-
-    # doc.add_line("## Sponsors 🌟")
-    # doc.add_line(f"- A huge 'Thank you!' to all sponsors across {_polar}, {_open_collective} and {_github_sponsors}!")
 
     doc.add_line("## What's changed")
     if features := release_info.pull_requests.get("feat"):
@@ -322,23 +371,30 @@ def build_gh_release_notes(release_info: "ReleaseInfo") -> "str":
 
 
 def build_changelog_entry(release_info: "ReleaseInfo", interactive: "bool" = False) -> "str":
+    """Build a Keep-a-Changelog Markdown section for ``docs/changelog.md``."""
     doc = ChangelogEntryWriter()
-    with doc.directive("changelog", release_info.version):
-        doc.add_line(f":date: {dt.datetime.now(tz=dt.timezone.utc).date().isoformat()}")
-        doc.add_line("")
-        change_types = {"fix", "feat"}
-        for prs in release_info.pull_requests.values():
-            for pr in prs:
-                cc_type = pr.cc_type
-                if cc_type in change_types or (interactive and click.confirm(f"Include PR #{pr.number} {pr.title!r}?")):
-                    doc.add_change(pr)
-                else:
-                    click.secho(f"Ignoring change with type {cc_type}", fg="yellow")
+    release_date = dt.datetime.now(tz=dt.timezone.utc).date().isoformat()
+    doc.add_line(f"## [{release_info.version}] - {release_date}")
+    doc.add_line()
 
-    return doc.text
+    grouped: dict[str, list[PRInfo]] = {"Added": [], "Fixed": [], "Changed": []}
+    change_types = {"fix", "feat"}
+    for prs in release_info.pull_requests.values():
+        for pr in prs:
+            cc_type = pr.cc_type
+            if cc_type in change_types or (interactive and click.confirm(f"Include PR #{pr.number} {pr.title!r}?")):
+                grouped[doc.section_for_type(cc_type)].append(pr)
+            else:
+                click.secho(f"Ignoring change with type {cc_type}", fg="yellow")
+
+    for section in ("Added", "Fixed", "Changed"):
+        doc.add_section(section, grouped[section])
+
+    return doc.text.rstrip() + "\n"
 
 
 def _get_gh_token() -> "str":
+    """Resolve a GitHub token from ``GH_TOKEN`` or the ``gh`` CLI."""
     if gh_token := os.getenv("GH_TOKEN"):
         click.secho("Using GitHub token from env", fg="blue")
         return gh_token
@@ -357,29 +413,39 @@ def _get_gh_token() -> "str":
 
 
 def _get_latest_tag() -> "str":
+    """Return the most recent git tag sorted by tagger date."""
     click.secho("Using latest tag", fg="blue")
-    return subprocess.run(  # noqa: S602
-        "git tag --sort=taggerdate | tail -1",  # noqa: S607
+    git_executable = shutil.which("git") or "git"
+    output = subprocess.run(
+        [git_executable, "tag", "--sort=taggerdate"],
         check=True,
         capture_output=True,
         text=True,
-        shell=True,
-    ).stdout.strip()
+    ).stdout
+    tags = [line.strip() for line in output.splitlines() if line.strip()]
+    return tags[-1] if tags else ""
 
 
-def _write_changelog_entry(changelog_entry: "str") -> "None":
-    changelog_path = pathlib.Path("docs/changelog.rst")
-    changelog_lines = changelog_path.read_text().splitlines()
+def _write_changelog_entry(changelog_entry: "str", changelog_path: "pathlib.Path | None" = None) -> "None":
+    """Insert ``changelog_entry`` above the most recent release heading in ``docs/changelog.md``."""
+    target_path = changelog_path or pathlib.Path("docs/changelog.md")
+    changelog_lines = target_path.read_text(encoding="utf-8").splitlines()
     line_no = next(
-        (i for i, line in enumerate(changelog_lines) if line.startswith(".. changelog::")),
+        (i for i, line in enumerate(changelog_lines) if _RELEASE_HEADING_RE.match(line)),
         None,
     )
-    if not line_no:
-        msg = "Changelog start not found"
+    if line_no is None:
+        line_no = next(
+            (i for i, line in enumerate(changelog_lines) if line.startswith("## ")),
+            None,
+        )
+    if line_no is None:
+        msg = "Changelog start not found in docs/changelog.md"
         raise ValueError(msg)
 
-    changelog_lines[line_no:line_no] = changelog_entry.splitlines()
-    changelog_path.write_text("\n".join(changelog_lines))
+    entry_lines = changelog_entry.rstrip("\n").splitlines()
+    changelog_lines[line_no:line_no] = [*entry_lines, ""]
+    target_path.write_text("\n".join(changelog_lines) + "\n", encoding="utf-8")
 
 
 @click.command()
@@ -407,6 +473,7 @@ def cli(
     interactive: "bool",
     create_draft_release: "bool",
 ) -> "None":
+    """Generate release notes and prepend a Markdown changelog entry in ``docs/changelog.md``."""
     if gh_token is None:
         gh_token = _get_gh_token()
     if base is None:

@@ -1,6 +1,6 @@
 """Execute MCP tools through Litestar's full HTTP request-pipeline.
 
-Each ``tools/call`` synthesizes a Litestar :class:`Request` shaped like a real
+Each ``tools/call`` synthesizes a Litestar `Request` shaped like a real
 HTTP request for the handler's declared route, then runs the framework's own
 dispatch pipeline against it. Path params, query kwargs, ``data: StructT``
 bodies, ``FromDishka[T]``, ``request: Request``, guards, dependencies,
@@ -8,7 +8,7 @@ bodies, ``FromDishka[T]``, ``request: Request``, guards, dependencies,
 ``after_exception`` observers, and ownership-layer ``exception_handlers`` all
 work the way they would for a normal HTTP handler — no MCP-specific plumbing.
 
-Response rendering delegates to :meth:`HTTPRouteHandler.to_response` + a
+Response rendering delegates to `HTTPRouteHandler.to_response` + a
 capture-send driver, so every Litestar feature baked into the ``to_response``
 closure (``type_encoders``, ``response_class``, ``media_type``, cookies,
 headers, ``after_request``) is picked up automatically. The JSON-RPC envelope
@@ -95,9 +95,13 @@ class MCPHandlerResponse:
     """Captured response from a Litestar handler dispatch."""
 
     content: "Any"
+    """Decoded response payload (JSON value, UTF-8 text, raw bytes, or MCP content helper)."""
     status_code: "int"
+    """HTTP status code emitted by the handler response."""
     body: "bytes"
+    """Raw ASGI response body bytes."""
     media_type: "str"
+    """Resolved MIME media type from the `content-type` response header."""
 
 
 class NotCallableInCLIContextError(ImproperlyConfiguredException):
@@ -187,7 +191,7 @@ async def execute_tool(
     5. On any raised exception: app-level ``after_exception`` observers fire
        (observer failures are logged and swallowed), then
        ``handler.resolve_exception_handlers()`` is walked MRO-style. A
-       matching handler's returned :class:`Response` renders in-place; if
+       matching handler's returned `Response` renders in-place; if
        no handler matches, the exception propagates to the route layer's
        JSON-RPC blanket catch.
     6. ``after_response`` (closest-wins) fires in ``finally``, exactly once,
@@ -202,7 +206,7 @@ async def execute_tool(
         app: The running Litestar application.
         tool_args: Arguments from the MCP ``tools/call`` request; routed
             into path / query / body based on the handler's signature.
-        request: Inbound :class:`~litestar.Request` in HTTP mode, ``None``
+        request: Inbound `litestar.Request` in HTTP mode, ``None``
             for CLI / stdio invocations.
         config: MCP plugin configuration. When supplied with ``tool_name``,
             tool-call observability callbacks are invoked around dispatch.
@@ -412,7 +416,7 @@ async def _run_before_request(
     """Invoke the closest-wins ``before_request`` hook.
 
     Returns:
-        :data:`Empty` when no hook is declared or the resolved hook is the
+        `Empty` when no hook is declared or the resolved hook is the
         app-level hook (which already fired on the outer ``/mcp`` request);
         otherwise the hook's return value (truthy short-circuits the
         handler, falsy falls through to normal dispatch).
@@ -523,7 +527,7 @@ async def _capture_asgi_response(
 ) -> "MCPHandlerResponse":
     """Drive an ASGIApp against a sink-send, returning (content, status_code).
 
-    ``handler.to_response`` returns an :class:`ASGIResponse`. We invoke it
+    ``handler.to_response`` returns an `ASGIResponse`. We invoke it
     with the dispatch request's scope/receive and a send callable that
     captures the ``http.response.start`` / ``http.response.body`` messages.
     The body is decoded as JSON; if the handler returned a non-JSON media
@@ -675,7 +679,7 @@ def _coerce_path_params(
 ) -> "dict[str, Any]":
     """Coerce raw path-param strings to their declared types via Litestar.
 
-    Uses :func:`litestar._asgi.routing_trie.traversal.parse_path_params`, the
+    Uses `litestar._asgi.routing_trie.traversal.parse_path_params`, the
     same ``@lru_cache(1024)``-memoized helper Litestar's ASGI router runs on
     every inbound request. Covers every built-in parser (``uuid``, ``int``,
     ``float``, ``decimal``, ``date``, ``datetime``, ``time``, ``timedelta``,
@@ -683,7 +687,7 @@ def _coerce_path_params(
 
     Args:
         path_parameters: The owning route's ``path_parameters`` dict — each
-            value is a :class:`~litestar.types.internal_types.PathParameterDefinition`
+            value is a `litestar.types.internal_types.PathParameterDefinition`
             carrying the parser callable (``None`` for plain ``str``).
         raw_values: Subset of ``tool_args`` that matched path-parameter names.
 
@@ -795,7 +799,7 @@ def _split_tool_args(
 def blank_http_scope(app: "Litestar") -> "dict[str, Any]":
     """Return a minimum ASGI HTTP scope for stdio-mode dispatch.
 
-    Keys mirror :meth:`litestar.testing.RequestFactory._create_scope` so
+    Keys mirror `litestar.testing.RequestFactory._create_scope` so
     Litestar's native dispatch pipeline finds everything it expects.
     Parity audited 2026-04-19 — the only delta is ``asgi.spec_version``:
     RequestFactory uses ``"3.0"`` (stale), we use the current ASGI spec

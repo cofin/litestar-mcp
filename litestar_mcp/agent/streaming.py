@@ -34,13 +34,21 @@ class AgentStreamFrame(msgspec.Struct, kw_only=True, omit_defaults=True):
     """Typed SSE frame emitted during agent execution."""
 
     event_type: StreamEventType
+    """Frame event discriminator (`session`, `thought`, `delta`, `tool_call`, `tool_result`, `agent_transfer`, `ping`, `complete`, or `error`)."""
     turn_id: str
+    """Unique identifier of the turn that emitted this frame."""
     seq: int = 0
+    """Monotonically increasing 1-based sequence number within the turn stream."""
     agent_name: str | None = None
+    """Name of the active agent associated with this frame."""
     text: str | None = None
+    """Incremental text chunk for `delta` or `thought` frames."""
     tool_name: str | None = None
+    """Tool name for `tool_call` and `tool_result` frames."""
     call_id: str | None = None
+    """Tool call correlation identifier for `tool_call` and `tool_result` frames."""
     payload: dict[str, Any] | None = None
+    """Structured event payload for session, tool, transfer, completion, or error frames."""
 
     def to_sse_message(self, type_encoders: "TypeEncodersMap | None" = None) -> ServerSentEventMessage:
         """Encode as an SSE message whose id is seq when non-zero and whose event is event_type."""
