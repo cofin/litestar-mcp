@@ -1,3 +1,5 @@
+"""Async Streamable HTTP client and request-header helpers for Litestar MCP endpoints."""
+
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 

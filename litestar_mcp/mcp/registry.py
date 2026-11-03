@@ -55,8 +55,11 @@ class ResourceTemplate:
     """A declared RFC 6570 Level 1 URI template bound to a resource handler."""
 
     name: "str"
+    """Logical resource name."""
     template: "str"
+    """RFC 6570 Level 1 URI template string."""
     handler: "BaseRouteHandler"
+    """Litestar route handler bound to the URI template."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,28 +71,24 @@ class PromptRegistration:
 
     Handler-based prompts are Litestar route handlers discovered via the
     ``mcp_prompt`` opt key, executed through the normal Litestar pipeline.
-
-    Attributes:
-        name: Unique prompt identifier used in ``prompts/get``.
-        fn: The callable to invoke (standalone prompt functions).
-        handler: The Litestar route handler (handler-based prompts).
-        title: Optional human-readable display name.
-        description: Optional LLM-facing description.
-        arguments: Explicit argument definitions. When ``None``, derived
-            from the function signature (standalone prompts) or the
-            handler's parsed signature (handler-based prompts), with
-            DI- and framework-injected parameters filtered out.
-        icons: Optional list of icon objects for UI display.
     """
 
     name: "str"
+    """Unique prompt identifier used in `prompts/get`."""
     fn: "Callable[..., Any] | None" = None
+    """The callable to invoke for standalone prompt functions."""
     handler: "BaseRouteHandler | None" = None
+    """The Litestar route handler for handler-based prompts."""
     title: "str | None" = None
+    """Optional human-readable display name."""
     description: "str | None" = None
+    """Optional LLM-facing description."""
     arguments: "list[dict[str, Any]] | None" = field(default=None, hash=False)
+    """Explicit argument definitions, or `None` to derive from the function or handler signature."""
     icons: "list[dict[str, Any]] | None" = field(default=None, hash=False)
+    """Optional list of icon objects for UI display."""
     instructions: "str | None" = None
+    """Optional grounding instructions prepended to rendered prompt messages."""
 
     def __post_init__(self) -> "None":
         if self.fn is not None and self.handler is not None:
@@ -156,7 +155,7 @@ def _normalize_prompt_result(result: "Any") -> "list[dict[str, Any]]":
     * ``str`` → single user-role text message.
     * ``dict`` with a ``role`` key (presence-only, value not validated
       against the spec's ``user``/``assistant`` enumeration) and a
-      ``content`` block recognised by :data:`_PROMPT_CONTENT_REQUIRED_KEYS`
+      ``content`` block recognised by `_PROMPT_CONTENT_REQUIRED_KEYS`
       is returned as-is, wrapped in a list.
     * ``list`` items follow the same dict rules.
     * Any other type — or any dict that doesn't look like a valid
@@ -312,7 +311,7 @@ class Registry:
     Note:
         Tools and resources are stored as bare ``BaseRouteHandler`` values
         because every entry has a single underlying handler. Prompts use
-        :class:`PromptRegistration` instead — a prompt may originate from
+        `PromptRegistration` instead — a prompt may originate from
         either a standalone ``@mcp_prompt`` callable *or* a route handler,
         so the dataclass carries the ``fn | handler`` union plus the
         per-prompt metadata (title, description, arguments, icons) that
@@ -423,7 +422,7 @@ class Registry:
             name: The resource name (same key as ``register_resource``).
             handler: The route handler bound to the template.
             template: The URI template string. Validated at registration;
-                invalid templates raise :class:`ValueError`.
+                invalid templates raise `ValueError`.
         """
         parse_template(template)
         existing = self._templates.get(name)
@@ -493,7 +492,7 @@ class Registry:
 
         Storage only — runtime dispatch and the
         ``messages``-passthrough vs. normalize-on-return decision live in
-        :func:`litestar_mcp.mcp.routes.handle_prompts_get`. This function
+        `litestar_mcp.mcp.routes.handle_prompts_get`. This function
         captures the handler reference plus any explicit overrides so the
         registry can render ``prompts/list`` entries without executing
         the handler.

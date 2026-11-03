@@ -83,18 +83,31 @@ class ToolTaskCall(msgspec.Struct, kw_only=True):
     """Serializable dispatch envelope for one task-augmented ``tools/call`` attempt."""
 
     task_id: str
+    """Unique identifier of the task record in `MCPTaskStore`."""
     tool_name: str
+    """Registered name of the MCP tool being executed."""
     arguments: dict[str, Any]
+    """Tool invocation arguments supplied by the caller."""
     owner_id: str | None = None
+    """Optional task-owner identifier scoping access to the task record."""
     principal: dict[str, Any] | None = None
+    """Serialized principal snapshot captured from the creating request."""
     queue: str | None = None
+    """Optional target `litestar-queues` queue name override."""
     client_id: str = "queue"
+    """Identifier of the originating MCP client."""
     protocol_version: str = DEFAULT_PROTOCOL_VERSION
+    """Negotiated MCP protocol version for the task execution."""
     client_capabilities: dict[str, Any] | None = None
+    """Client capabilities dictionary captured from the creating request."""
     client_info: dict[str, Any] | None = None
+    """Client implementation metadata captured from the creating request."""
     input_responses: dict[str, Any] | None = None
+    """Accumulated interactive input responses supplied via `tasks/update`."""
     request_state: str | None = None
+    """Opaque round-tripped state token accompanying `input_responses`."""
     attempt: int = 1
+    """1-based execution attempt counter incremented on each `tasks/update` resume."""
 
 
 @dataclass
@@ -102,23 +115,40 @@ class MCPTaskRuntime:
     """Collaborators an executor needs once the application has started."""
 
     app: "Litestar"
+    """The running Litestar application instance."""
     task_store: "MCPTaskStore"
+    """The active `MCPTaskStore` managing persisted task records."""
     run_attempt: Callable[[ToolTaskCall, Any], Awaitable[None]]
+    """Async callback that executes a single `ToolTaskCall` attempt against the handler service."""
 
 
 class MCPTaskExecutor(Protocol):
     """Runs task-augmented tool calls outside the request that created them.
 
-    ``LitestarMCP`` calls :meth:`configure` during app init so the executor can
-    wire itself into other plugins, and :meth:`bind` at startup with the
+    ``LitestarMCP`` calls `configure` during app init so the executor can
+    wire itself into other plugins, and `bind` at startup with the
     collaborators that need the running application.
     """
 
-    def configure(self, app_config: "AppConfig") -> None: ...
-    def bind(self, runtime: MCPTaskRuntime) -> None: ...
-    async def submit(self, record: "TaskRecord", call: ToolTaskCall) -> None: ...
-    async def resume(self, call: ToolTaskCall) -> None: ...
-    async def cancel(self, record: "TaskRecord") -> None: ...
+    def configure(self, app_config: "AppConfig") -> None:
+        """Register executor hooks or dependencies on the Litestar `AppConfig` during initialization."""
+        ...
+
+    def bind(self, runtime: MCPTaskRuntime) -> None:
+        """Bind the running application, task store, and attempt runner callback at startup."""
+        ...
+
+    async def submit(self, record: "TaskRecord", call: ToolTaskCall) -> None:
+        """Enqueue or schedule initial execution of a newly created task-augmented tool call."""
+        ...
+
+    async def resume(self, call: ToolTaskCall) -> None:
+        """Schedule a resumed execution attempt after client input responses are received."""
+        ...
+
+    async def cancel(self, record: "TaskRecord") -> None:
+        """Cancel an in-flight task execution backed by this executor."""
+        ...
 
 
 @dataclass
@@ -126,19 +156,33 @@ class TaskRecord:
     """Persisted Tasks extension state."""
 
     task_id: str
+    """Unique task identifier (`taskId`)."""
     owner_id: str | None
+    """Optional owner identifier restricting task access to the creating principal."""
     status: str
+    """Current MCP task lifecycle status (`working`, `input_required`, `completed`, `failed`, or `cancelled`)."""
     created_at: datetime
+    """UTC timestamp when the task record was created."""
     last_updated_at: datetime
+    """UTC timestamp of the most recent task state transition."""
     ttl_ms: int | None
+    """Time-to-live in milliseconds for the persisted task record."""
     poll_interval_ms: int | None
+    """Suggested client polling interval in milliseconds."""
     status_message: str | None = None
+    """Optional human-readable status message describing current task progress."""
     input_requests: dict[str, dict[str, Any]] | None = None
+    """Pending multi-round-trip input request descriptors when `status == "input_required"`."""
     request_state: str | None = None
+    """Opaque round-tripped state token preserved across `input_required` pauses."""
     result: dict[str, Any] | None = None
+    """Final MCP tool result dictionary when `status == "completed"`."""
     error: JSONRPCError | None = None
+    """Terminal JSON-RPC error object when `status == "failed"`."""
     dispatch: dict[str, Any] | None = None
+    """Serialized `ToolTaskCall` payload persisted for external executor resume."""
     input_responses: dict[str, Any] | None = None
+    """Most recent client input responses submitted via `tasks/update`."""
 
     def is_terminal(self) -> bool:
         """Return whether the task has reached a terminal state."""
@@ -171,7 +215,7 @@ class TaskRecord:
 
 
 class MCPTaskStore:
-    """Task records backed by a Litestar :class:`Store`.
+    """Task records backed by a Litestar `Store`.
 
     Only serializable records are persisted. Runner tasks, cancellation flags,
     and input queues are process-local coordination primitives; production

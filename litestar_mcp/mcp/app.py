@@ -1,3 +1,5 @@
+"""High-level FastMCP-style `MCP` application wrapper around Litestar and `LitestarMCP`."""
+
 import inspect
 import os
 import sys
@@ -614,6 +616,6 @@ class MCP:
     ) -> "None":
         """Run the server over stdio through the in-process transport.
 
-        Keyword arguments are forwarded to :func:`litestar_mcp.mcp.stdio.run_stdio`.
+        Keyword arguments are forwarded to `litestar_mcp.mcp.stdio.run_stdio`.
         """
         run_stdio(self.app, stdio_context=stdio_context or MCPStdioContext(), **kwargs)

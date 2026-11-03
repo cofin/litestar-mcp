@@ -14,8 +14,11 @@ class TurnBudget:
     """Configurable execution limits for a single agent turn."""
 
     max_turns: int = 15
+    """Maximum number of model-invocation iterations allowed in a single turn."""
     max_tool_calls: int = 50
+    """Maximum total tool calls allowed across all iterations of a single turn."""
     timeout_seconds: float = 300.0
+    """Wall-clock timeout in seconds for the entire turn execution."""
 
     def __post_init__(self) -> None:
         if self.max_turns <= 0:

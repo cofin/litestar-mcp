@@ -22,20 +22,30 @@ class WorkflowRun(msgspec.Struct, kw_only=True):
     """Durable state of one workflow run."""
 
     run_id: str
+    """Unique identifier of the workflow run."""
     workflow: str
+    """Name of the `DynamicWorkflow` definition being executed."""
     state: dict[str, Any] = msgspec.field(default_factory=dict)
+    """Initial workflow state persisted when the run was created."""
     status: RunStatus = "running"
+    """Current lifecycle status of the workflow run (`running`, `completed`, or `failed`)."""
     error: str | None = None
+    """Optional error description recorded when `status` transitions to `failed`."""
     created_at: float = msgspec.field(default_factory=time.time)
+    """Unix epoch timestamp (seconds) when the workflow run was created."""
 
 
 class NodeRecord(msgspec.Struct, kw_only=True):
     """Write-once outcome of one node in one run."""
 
     node: str
+    """Name of the workflow node within the DAG."""
     status: StepStatus
+    """Terminal step status (`completed`, `skipped`, or `failed`)."""
     output: Any = None
+    """JSON-serializable output produced by the node when completed."""
     error: str | None = None
+    """Optional error description recorded when the node failed."""
 
 
 class WorkflowStore:

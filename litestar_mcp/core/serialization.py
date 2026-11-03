@@ -3,10 +3,10 @@
 Type-keyed pipeline: the first ``schema_dump`` call for a given
 ``(type, exclude_unset, type_encoders)`` triple builds a dispatch function
 once and caches it. Subsequent calls reuse the cached
-:class:`SchemaSerializer` instead of rebuilding per value.
+`SchemaSerializer` instead of rebuilding per value.
 
-Each dumper routes through :func:`litestar.serialization.get_serializer` +
-:class:`msgspec.json.Encoder` — the same pipeline Litestar's ASGI response
+Each dumper routes through `litestar.serialization.get_serializer` +
+`msgspec.json.Encoder` — the same pipeline Litestar's ASGI response
 path uses. That means:
 
 - ``msgspec.Struct`` with ``rename="camel"`` emits ``{"fooBar": ...}`` (the
@@ -15,7 +15,7 @@ path uses. That means:
   ``UUID``, ``Decimal``, ``Path``, and anything else Litestar's default
   serializer knows, just works.
 - Custom types register once via ``type_encoders={MyType: fn}`` on the route
-  decorator; the map is threaded through :func:`schema_dump` via the
+  decorator; the map is threaded through `schema_dump` via the
   ``type_encoders=`` kwarg and picked up by ``get_serializer``. Exactly the
   same registration path HTTP dispatch honors.
 
@@ -128,7 +128,7 @@ def schema_dump(
     - Dicts pass through unchanged.
     - Every schema model (msgspec, dataclass, pydantic, attrs, anything
       Litestar's default serializer knows) routes through
-      :func:`litestar.serialization.get_serializer` + :class:`msgspec.json.Encoder`.
+      `litestar.serialization.get_serializer` + `msgspec.json.Encoder`.
     - Custom types: register once via ``type_encoders={MyType: fn}`` on the
       route and pass the same map here (or let the executor do it for you on
       the tool-call hot path, which already uses ``handler.to_response``).
@@ -163,7 +163,7 @@ def serialize_collection(
     """Serialize an iterable of heterogeneous items.
 
     Primitives and ``None`` pass through unchanged. Other items dispatch via
-    :func:`get_collection_serializer`; a local cache reuses pipelines across
+    `get_collection_serializer`; a local cache reuses pipelines across
     items within the iteration to avoid repeated global-lock acquisitions.
 
     Args:
@@ -196,7 +196,7 @@ def get_collection_serializer(
     exclude_unset: "bool" = True,
     type_encoders: "Mapping[Any, Callable[[Any], Any]] | None" = None,
 ) -> "SchemaSerializer":
-    """Return (and cache) a :class:`SchemaSerializer` for ``sample``'s type.
+    """Return (and cache) a `SchemaSerializer` for ``sample``'s type.
 
     The cache key is ``(type(sample), exclude_unset, type_encoders items)`` —
     ``dict`` and ``None`` share a ``(None, ...)`` type component so pass-through
@@ -208,7 +208,7 @@ def get_collection_serializer(
             encoder always filters ``UNSET`` at the wire level; honored
             explicitly for pydantic models via ``model_dump(exclude_unset=...)``.
         type_encoders: Optional custom-type encoder map (``{MyType: fn}``).
-            Threaded through :func:`litestar.serialization.get_serializer` so
+            Threaded through `litestar.serialization.get_serializer` so
             the dumper honors the same custom types an HTTP route would.
 
     Returns:

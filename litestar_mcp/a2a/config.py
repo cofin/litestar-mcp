@@ -23,51 +23,37 @@ class A2AConfig:
     its result.
 
     Handlers report extension activation through the context state's
-    ``a2a_activated_extensions`` set of requested, advertised URI strings. Set it
+    `a2a_activated_extensions` set of requested, advertised URI strings. Set it
     before returning a result or yielding the first stream event: response
     headers cannot reflect later activation.
 
-    ``stream_cleanup_timeout`` bounds the wait for cooperative producer cleanup
+    `stream_cleanup_timeout` bounds the wait for cooperative producer cleanup
     after a response ends. It must be positive and finite; expiry is logged as
     incomplete cleanup. Application finalizers must themselves tolerate cancellation.
-
-    Attributes:
-        path: Mount path of the A2A JSON-RPC route. Must start with ``/``; a
-            trailing slash is removed.
-        agent_card_path: Path that serves the agent card. Must start with
-            ``/``; a trailing slash is removed.
-        guards: Litestar guards applied to the JSON-RPC route. The agent card
-            route is public.
-        route_opt: Extra ``opt`` entries merged into the JSON-RPC and HTTP+JSON
-            routes, for example an authentication policy.
-        agent_card_route_opt: Extra ``opt`` entries merged into the public
-            agent card route.
-        tenant_header: Optional HTTP header name used as a fallback tenant
-            source when neither the request payload nor the URL path specifies
-            a tenant.
-        enable_http_json: Mount A2A 1.0 HTTP+JSON REST transport routes
-            alongside the JSON-RPC route.
-        context_builder: Optional ``(request, context)`` callback that
-            authorizes the prepared SDK call context and returns it, directly
-            or as an awaitable.
-        include_in_schema: Include A2A routes in the OpenAPI schema.
-        agent_card_max_age: ``Cache-Control`` ``max-age`` for the agent card,
-            in seconds. Must not be negative.
-        stream_cleanup_timeout: Seconds to wait for producer cleanup after a
-            response ends.
     """
 
     path: str = "/a2a"
+    """Mount path of the A2A JSON-RPC route. Must start with `/`; a trailing slash is removed."""
     agent_card_path: str = "/.well-known/agent-card.json"
+    """Path that serves the agent card. Must start with `/`; a trailing slash is removed."""
     guards: "Sequence[Guard]" = ()
+    """Litestar guards applied to the JSON-RPC route. The agent card route is public."""
     route_opt: dict[str, Any] = field(default_factory=dict)
+    """Extra `opt` entries merged into the JSON-RPC and HTTP+JSON routes, for example an authentication policy."""
     agent_card_route_opt: dict[str, Any] = field(default_factory=dict)
+    """Extra `opt` entries merged into the public agent card route."""
     tenant_header: str | None = "X-A2A-Tenant"
+    """Optional HTTP header name used as a fallback tenant source when neither the request payload nor the URL path specifies a tenant."""
     enable_http_json: bool = True
+    """Mount A2A 1.0 HTTP+JSON REST transport routes alongside the JSON-RPC route."""
     context_builder: "Callable[[Request[Any, Any, Any], ServerCallContext], ServerCallContext | Awaitable[ServerCallContext]] | None" = None
+    """Optional `(request, context)` callback that authorizes the prepared SDK call context and returns it, directly or as an awaitable."""
     include_in_schema: bool = False
+    """Include A2A routes in the OpenAPI schema."""
     agent_card_max_age: int = 300
+    """`Cache-Control` `max-age` for the agent card, in seconds. Must not be negative."""
     stream_cleanup_timeout: float = DEFAULT_STREAM_CLEANUP_TIMEOUT
+    """Seconds to wait for producer cleanup after a response ends."""
 
     def __post_init__(self) -> None:
         validate_stream_cleanup_timeout(self.stream_cleanup_timeout)

@@ -23,37 +23,34 @@ _CONTAINER_STATE_ATTRS = (
 
 @dataclass(slots=True)
 class ToolContext:
-    """Identity, tenant, request metadata, and DI container context injected into tools.
-
-    Attributes:
-        user: Authenticated principal from ``connection.user``, or ``None``.
-        auth: Authentication value from ``connection.auth``, or ``None``.
-        tenant_id: Tenant identifier resolved from the principal or ``request.state``.
-        roles: Principal roles.
-        scopes: Principal scopes.
-        session_id: Conversation session identifier.
-        turn_id: Agent turn identifier.
-        request: Originating Litestar connection, or ``None`` outside HTTP.
-        state: Mutable per-invocation values shared between tools.
-        type_encoders: Encoders resolved from the route's ownership layers, used to serialize tool results.
-        container: Active DI container (Dishka, Wireup, svcs, dependency-injector, or custom) for resolving tool dependencies.
-        dishka_container: Alias for ``container`` when using Dishka.
-        dependency_resolver: Optional callback ``(param_name, type_hint, ctx) -> Any | Awaitable[Any]`` for custom DI frameworks.
-    """
+    """Identity, tenant, request metadata, and DI container context injected into tools."""
 
     user: "Any | None" = None
+    """Authenticated principal from `connection.user`, or `None`."""
     auth: "Any | None" = None
+    """Authentication value from `connection.auth`, or `None`."""
     tenant_id: "str | None" = None
+    """Tenant identifier resolved from the principal or `request.state`."""
     roles: "tuple[str, ...]" = ()
+    """Principal roles."""
     scopes: "tuple[str, ...]" = ()
+    """Principal scopes."""
     session_id: "str | None" = None
+    """Conversation session identifier."""
     turn_id: "str | None" = None
+    """Agent turn identifier."""
     request: "Any | None" = None
+    """Originating Litestar connection, or `None` outside HTTP."""
     state: "dict[str, Any]" = field(default_factory=dict)
+    """Mutable per-invocation values shared between tools."""
     type_encoders: "TypeEncodersMap | None" = None
+    """Encoders resolved from the route's ownership layers, used to serialize tool results."""
     container: "Any | None" = None
+    """Active DI container (Dishka, Wireup, svcs, dependency-injector, or custom) for resolving tool dependencies."""
     dishka_container: "Any | None" = None
+    """Alias for `container` when using Dishka."""
     dependency_resolver: "Callable[[str, Any, ToolContext], Any] | None" = None
+    """Optional callback `(param_name, type_hint, ctx) -> Any | Awaitable[Any]` for custom DI frameworks."""
 
     def __post_init__(self) -> "None":
         """Synchronize container and dishka_container aliases."""

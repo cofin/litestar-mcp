@@ -40,11 +40,17 @@ class MCPStdioContext:
     """Runtime identity context for standalone MCP stdio transports."""
 
     client_id: "str" = "stdio"
+    """Client identifier attached to stdio MCP requests."""
     owner_id: "str | None" = None
+    """Optional owner identifier used to scope background tasks created over stdio."""
     user: "Any" = None
+    """Pre-populated `request.user` principal injected into synthesized ASGI scopes."""
     auth: "Any" = None
+    """Pre-populated `request.auth` context injected into synthesized ASGI scopes."""
     session: "Mapping[str, Any] | None" = None
+    """Optional session dictionary injected into synthesized ASGI scopes."""
     state: "Mapping[str, Any] | None" = None
+    """Optional initial request state mapping injected into synthesized ASGI scopes."""
 
 
 class _ASGIResponseState:
@@ -410,7 +416,7 @@ def run_stdio(
     max_message_size: "int" = DEFAULT_MAX_STDIN_MESSAGE_SIZE,
     shutdown_timeout: "float" = 5.0,
 ) -> "int":
-    """Synchronously run :func:`run_stdio_async`; ``KeyboardInterrupt`` exits 0."""
+    """Synchronously run `run_stdio_async`; ``KeyboardInterrupt`` exits 0."""
     try:
         return asyncio.run(
             run_stdio_async(

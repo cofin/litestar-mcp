@@ -41,20 +41,30 @@ class PrincipalSnapshot(msgspec.Struct, kw_only=True):
     """Snapshot of security principal attributes for queued execution."""
 
     user_id: str | None = None
+    """Authenticated user identifier captured at enqueue time."""
     tenant: str | None = None
+    """Optional tenant identifier associated with the principal."""
     roles: list[str] = msgspec.field(default_factory=list)
+    """Role names granted to the principal."""
     scopes: list[str] = msgspec.field(default_factory=list)
+    """Authorization scopes granted to the principal."""
 
 
 class QueuedTurn(msgspec.Struct, kw_only=True):
     """Serializable envelope for background turn execution."""
 
     session_id: str
+    """Conversation session identifier for the queued turn."""
     turn_id: str
+    """Unique identifier assigned to the queued turn."""
     user_message: str | dict[str, Any]
+    """User message string or structured payload initiating the turn."""
     agent_name: str = "root"
+    """Registered agent runtime name in `AgentRegistry` that will execute the turn."""
     dynamic_context: str | None = None
+    """Optional per-turn context prepended to the agent's system instructions."""
     principal: PrincipalSnapshot | None = None
+    """Optional serialized security principal snapshot for worker rehydration."""
 
 
 class AgentRegistry:

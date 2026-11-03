@@ -56,11 +56,17 @@ class DIParameterSpec:
     """Metadata describing a Dependency Injection parameter on a tool or prompt callable."""
 
     name: "str"
+    """Python parameter name on the target callable."""
     type_hint: "Any"
+    """Unwrapped type annotation for the dependency parameter."""
     source_kind: "str"
+    """DI provider kind (`"litestar"`, `"callable"`, `"dishka"`, or `"container"`)."""
     component: "str" = ""
+    """Optional Dishka component name when `source_kind == "dishka"`."""
     provider: "Any | None" = None
+    """Explicit provider object or marker associated with the parameter."""
     default: "Any" = inspect.Parameter.empty
+    """Fallback default value when the container or provider does not supply one."""
 
 
 def extract_di_parameter(
@@ -187,11 +193,17 @@ class AdvertisedHandlerParameter:
     """Handler parameter metadata relevant to MCP callers."""
 
     python_name: "str"
+    """Declared Python parameter name on the route handler signature."""
     wire_name: "str"
+    """Public wire name advertised in MCP tool and prompt schemas (honoring `Parameter(name=...)`)."""
     annotation: "Any"
+    """Resolved type annotation used for schema generation."""
     required: "bool"
+    """Whether the caller must supply a value for this parameter."""
     default: "Any" = inspect.Parameter.empty
+    """Default value when `required` is `False`, or `inspect.Parameter.empty`."""
     description: "str | None" = None
+    """Optional human- or LLM-readable parameter description from `Parameter` or docstring."""
 
 
 def resolve_tool_argument_aliases(

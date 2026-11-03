@@ -27,7 +27,9 @@ class MCPInputRequiredResult:
     """
 
     input_requests: "dict[str, dict[str, Any]] | None" = None
+    """Map of input request identifiers to client input request descriptors."""
     request_state: "str | None" = None
+    """Opaque integrity-protected state token round-tripped through the client."""
 
     def to_result(self) -> "dict[str, Any]":
         """Return the MCP wire result."""
@@ -44,13 +46,21 @@ class MCPResourceLink:
     """A tool-result content block linking to a fetchable MCP resource."""
 
     name: "str"
+    """Logical resource name."""
     uri: "str"
+    """Target MCP resource URI."""
     mime_type: "str | None" = None
+    """Optional MIME type of the linked resource."""
     description: "str | None" = None
+    """Optional human- or LLM-readable description of the linked resource."""
     title: "str | None" = None
+    """Optional display title for the resource link."""
     size: "int | None" = None
+    """Optional size of the linked resource in bytes."""
     annotations: "dict[str, Any] | None" = None
+    """Optional MCP content annotations attached to the resource link."""
     meta: "dict[str, Any] | None" = None
+    """Optional `_meta` dictionary emitted on the content block."""
 
     def to_content_block(self) -> "dict[str, Any]":
         """Return the MCP ``resource_link`` content block."""
@@ -75,10 +85,15 @@ class MCPBlobResource:
     """A tool-result embedded resource backed by bytes."""
 
     uri: "str"
+    """Canonical URI identifying the embedded binary resource."""
     data: "bytes | bytearray | memoryview"
+    """Raw binary payload encoded as base64 in the MCP content block."""
     mime_type: "str" = "application/octet-stream"
+    """MIME type of the binary payload."""
     annotations: "dict[str, Any] | None" = None
+    """Optional MCP annotations attached to the embedded resource."""
     meta: "dict[str, Any] | None" = None
+    """Optional `_meta` dictionary emitted on the embedded resource."""
 
     def to_content_block(self, *, max_blob_bytes: "int | None" = None) -> "dict[str, Any]":
         """Return the MCP embedded resource content block.
@@ -105,9 +120,13 @@ class MCPToolResult:
     """A complete MCP tool result with explicit content blocks."""
 
     content: "Any"
+    """One or more content blocks (or values normalized into content blocks)."""
     structured_content: "Any" = _STRUCTURED_CONTENT_UNSET
+    """Optional structured JSON payload emitted under `structuredContent`."""
     is_error: "bool" = False
+    """Whether the tool result represents an execution error (`isError`)."""
     meta: "dict[str, Any] | None" = None
+    """Optional `_meta` dictionary emitted on the tool result."""
 
     def to_result(self, *, max_blob_bytes: "int | None" = None) -> "dict[str, Any]":
         """Return the MCP ``tools/call`` result object."""
@@ -127,7 +146,9 @@ class PromptMessage:
     """An MCP ``PromptMessage`` with a ``user`` or ``assistant`` role and one content block."""
 
     role: "Literal['user', 'assistant']"
+    """Message speaker role (`"user"` or `"assistant"`)."""
     content: "dict[str, Any]"
+    """MCP content block dictionary for the prompt message."""
 
     def __post_init__(self) -> "None":
         if self.role not in {"user", "assistant"}:

@@ -64,25 +64,22 @@ def guess_skill_mime_type(relative_path: "str") -> "str":
 
 @dataclass(frozen=True, slots=True)
 class SkillFile:
-    """One file inside a skill folder or dynamic skill manifest.
-
-    Attributes:
-        relative_path: Forward-slash path relative to the skill root.
-        path: Absolute filesystem path on disk, or ``None`` for in-memory/lazy files.
-        uri: Canonical ``skill://<name>/<relative_path>`` URI.
-        mime_type: Resolved MIME type (``application/octet-stream`` fallback).
-        size: Byte length recorded in the skill manifest.
-        digest: ``sha256:<hex>`` recorded in the skill manifest.
-        content: Optional inline byte payload served without calling ``source.read_file``.
-    """
+    """One file inside a skill folder or dynamic skill manifest."""
 
     relative_path: "str"
+    """Forward-slash path relative to the skill root."""
     path: "Path | None"
+    """Absolute filesystem path on disk, or `None` for in-memory/lazy files."""
     uri: "str"
+    """Canonical `skill://<name>/<relative_path>` URI."""
     mime_type: "str"
+    """Resolved MIME type (`application/octet-stream` fallback)."""
     size: "int"
+    """Byte length recorded in the skill manifest."""
     digest: "str"
+    """`sha256:<hex>` digest recorded in the skill manifest."""
     content: "bytes | None" = field(default=None, repr=False)
+    """Optional inline byte payload served without calling `source.read_file`."""
 
     def __post_init__(self) -> "None":
         """Validate path, URI, size, digest, and inline content invariants."""
@@ -160,21 +157,18 @@ def verify_skill_file(file: "SkillFile", data: "bytes") -> "bytes":
 
 @dataclass(frozen=True, slots=True)
 class Skill:
-    """One skill loaded from a skill directory or constructed dynamically.
-
-    Attributes:
-        name: Skill identifier, matching the ``name`` frontmatter key.
-        description: Human-readable summary from frontmatter.
-        uri: Canonical ``skill://<name>/SKILL.md`` URI.
-        frontmatter: Full parsed YAML frontmatter mapping, preserved verbatim.
-        files: Every file belonging to the skill, sorted by ``relative_path``.
-    """
+    """One skill loaded from a skill directory or constructed dynamically."""
 
     name: "str"
+    """Skill identifier, matching the `name` frontmatter key."""
     description: "str"
+    """Human-readable summary from frontmatter."""
     uri: "str"
+    """Canonical `skill://<name>/SKILL.md` URI."""
     frontmatter: "dict[str, Any]"
+    """Full parsed YAML frontmatter mapping, preserved verbatim."""
     files: "tuple[SkillFile, ...]"
+    """Every file belonging to the skill, sorted by `relative_path`."""
 
     def __post_init__(self) -> "None":
         """Validate skill identity, frontmatter consistency, file URIs, and sort files."""
@@ -374,8 +368,11 @@ class SkillFileMatch:
     """Resolved skill file paired with its owning ``SkillSource`` and ``Skill``."""
 
     source: "SkillSource"
+    """The `SkillSource` that produced the matched skill."""
     skill: "Skill"
+    """The `Skill` owning the matched file."""
     file: "SkillFile"
+    """The matched `SkillFile` manifest entry."""
 
 
 class FilesystemSkillSource:
@@ -461,7 +458,7 @@ class FilesystemSkillSource:
 
 
 class SkillCatalog:
-    """Request-aware composition of :class:`SkillSource` instances."""
+    """Request-aware composition of `SkillSource` instances."""
 
     __slots__ = ("_sources", "directory_read")
 
@@ -471,12 +468,12 @@ class SkillCatalog:
 
     @property
     def sources(self) -> "tuple[SkillSource, ...]":
-        """Tuple of composed :class:`SkillSource` instances in priority order."""
+        """Tuple of composed `SkillSource` instances in priority order."""
         return self._sources
 
     @classmethod
     def from_config(cls, config: "MCPSkillsConfig") -> "SkillCatalog":
-        """Build a catalog from ``config`` (`paths` first as :class:`FilesystemSkillSource`, then ``sources``)."""
+        """Build a catalog from ``config`` (`paths` first as `FilesystemSkillSource`, then ``sources``)."""
         composed: list[SkillSource] = []
         if config.paths:
             composed.append(
@@ -541,7 +538,7 @@ class SkillCatalog:
         return await self.get_skill(request, name)
 
     async def get_file(self, request: "Request[Any, Any, Any]", uri: "str") -> "SkillFileMatch | None":
-        """Resolve ``uri`` to a :class:`SkillFileMatch` visible to ``request``, or ``None``."""
+        """Resolve ``uri`` to a `SkillFileMatch` visible to ``request``, or ``None``."""
         parsed = parse_skill_uri(uri)
         if parsed is None:
             return None

@@ -55,72 +55,52 @@ class MCPOptKeys:
     Downstream apps can rename any key to avoid collisions with other plugins
     or app-specific conventions. All fields default to ``mcp_<purpose>`` and
     the pattern mirrors ``litestar.security.jwt.auth.JWTAuth.exclude_opt_key``.
-
-    Attributes:
-        tool: Opt key that marks a route handler as an MCP tool
-            (``handler.opt[tool] = "<tool-name>"``, or ``True`` to use the
-            handler function name). The resource and prompt keys accept
-            ``True`` the same way.
-        resource: Opt key that marks a route handler as an MCP resource.
-        resource_uri: Opt key that carries a concrete resource URI override.
-        resource_mime_type: Opt key that carries the resource MIME type for
-            list responses and binary ``resources/read`` fallbacks.
-        resource_template: Opt key that carries an RFC 6570 Level 1 URI
-            template for the resource (``handler.opt[resource_template] =
-            "app://workspaces/{workspace_id}/files/{file_id}"``).
-        required_client_capabilities: Opt key declaring standard client
-            capabilities required before a tool may be invoked.
-        task_input_before_start: Opt key selecting a synchronous MRTR input
-            round before task creation.
-        prompt: Opt key that marks a route handler as an MCP prompt
-            (``handler.opt[prompt] = "<prompt-name>"``).
-        description: Opt key overriding the tool description
-            (``handler.opt[description] = "LLM prose"``).
-        resource_description: Opt key overriding the resource description.
-            Kept distinct from ``description`` so a handler that exposes both
-            a tool and a resource on the same route can target each.
-        prompt_description: Opt key overriding the prompt description.
-        prompt_title: Opt key overriding the prompt title.
-        prompt_arguments: Opt key overriding the prompt argument list (a
-            ``list[dict]`` matching the decorator's ``arguments=`` param).
-        prompt_icons: Opt key overriding the prompt icons list (a
-            ``list[dict]`` matching the decorator's ``icons=`` param).
-        agent_instructions: Opt key for the ``## Instructions`` section.
-        when_to_use: Opt key for the ``## When to use`` section.
-        returns: Opt key for the ``## Returns`` section.
-        annotations: Opt key carrying MCP ``ToolAnnotations`` mapping.
-        read_only: Opt key shorthand setting ``annotations.readOnlyHint``.
-        task_support: Opt key declaring MCP Tasks support mode (``optional``,
-            ``required``, ``forbidden``, or soft aliases ``sync``, ``disabled``,
-            ``inline``, ``True``, ``False``).
-        task: Short alias opt key for ``task_support``.
-        queue: Opt key overriding the target ``litestar-queues`` queue name for
-            task-augmented tool execution (or ``False`` / ``"in_process"`` to
-            force in-process execution).
     """
 
     tool: "str" = "mcp_tool"
+    """Opt key that marks a route handler as an MCP tool (`handler.opt[tool] = "<tool-name>"`, or `True` to use the handler function name)."""
     resource: "str" = "mcp_resource"
+    """Opt key that marks a route handler as an MCP resource."""
     resource_uri: "str" = "mcp_resource_uri"
+    """Opt key that carries a concrete resource URI override."""
     resource_mime_type: "str" = "mcp_resource_mime_type"
+    """Opt key that carries the resource MIME type for list responses and binary `resources/read` fallbacks."""
     resource_template: "str" = "mcp_resource_template"
+    """Opt key that carries an RFC 6570 Level 1 URI template for the resource."""
     required_client_capabilities: "str" = "mcp_required_client_capabilities"
+    """Opt key declaring standard client capabilities required before a tool may be invoked."""
     task_input_before_start: "str" = "mcp_task_input_before_start"
+    """Opt key selecting a synchronous MRTR input round before task creation."""
     prompt: "str" = "mcp_prompt"
+    """Opt key that marks a route handler as an MCP prompt (`handler.opt[prompt] = "<prompt-name>"`)."""
     description: "str" = "mcp_description"
+    """Opt key overriding the tool description (`handler.opt[description] = "LLM prose"`)."""
     resource_description: "str" = "mcp_resource_description"
+    """Opt key overriding the resource description, kept distinct from `description` for dual-role handlers."""
     prompt_description: "str" = "mcp_prompt_description"
+    """Opt key overriding the prompt description."""
     prompt_title: "str" = "mcp_prompt_title"
+    """Opt key overriding the prompt title."""
     prompt_arguments: "str" = "mcp_prompt_arguments"
+    """Opt key overriding the prompt argument list (`list[dict]` matching the decorator's `arguments=` param)."""
     prompt_icons: "str" = "mcp_prompt_icons"
+    """Opt key overriding the prompt icons list (`list[dict]` matching the decorator's `icons=` param)."""
     agent_instructions: "str" = "mcp_agent_instructions"
+    """Opt key for the `## Instructions` section."""
     when_to_use: "str" = "mcp_when_to_use"
+    """Opt key for the `## When to use` section."""
     returns: "str" = "mcp_returns"
+    """Opt key for the `## Returns` section."""
     annotations: "str" = "mcp_annotations"
+    """Opt key carrying MCP `ToolAnnotations` mapping."""
     read_only: "str" = "mcp_read_only"
+    """Opt key shorthand setting `annotations.readOnlyHint`."""
     task_support: "str" = "mcp_task_support"
+    """Opt key declaring MCP Tasks support mode (`optional`, `required`, `forbidden`, or soft aliases)."""
     task: "str" = "mcp_task"
+    """Short alias opt key for `task_support`."""
     queue: "str" = "mcp_queue"
+    """Opt key overriding the target `litestar-queues` queue name for task-augmented tool execution (or `False` / `"in_process"` to force in-process execution)."""
 
     def for_field(self, field_name: "str", kind: "Literal['tool', 'resource', 'prompt']") -> "str":
         """Return the opt key for ``(field_name, kind)``.
@@ -141,31 +121,24 @@ class MCPOptKeys:
 
 @dataclass
 class MCPTaskConfig:
-    """Configuration for the opt-in MCP Tasks extension.
-
-    Attributes:
-        store: Litestar ``Store`` persisting task records; defaults to an in-memory store.
-        default_ttl_ms: TTL applied when a client does not request one.
-        max_ttl_ms: Upper bound for client-requested TTLs.
-        poll_interval_ms: Poll interval advertised on task records.
-        status_callback: Optional coroutine invoked with every task status transition.
-        executor: Optional :class:`~litestar_mcp.mcp.tasks.MCPTaskExecutor` that runs
-            task-augmented tool calls outside the creating request. ``None`` auto-wires
-            ``litestar_mcp.queues.QueueTaskExecutor`` when ``QueuePlugin`` is registered
-            on the application and falls back to in-process background tasks otherwise.
-            Pass ``"in_process"`` or ``False`` to force in-process background tasks even
-            when ``QueuePlugin`` is installed.
-    """
+    """Configuration for the opt-in MCP Tasks extension."""
 
     store: "Store | None" = None
+    """Litestar `Store` persisting task records; defaults to an in-memory store."""
     default_ttl_ms: "int" = 300_000
+    """TTL in milliseconds applied when a client does not request one."""
     max_ttl_ms: "int" = 3_600_000
+    """Upper bound in milliseconds for client-requested TTLs."""
     poll_interval_ms: "int" = 1_000
+    """Poll interval in milliseconds advertised on task records."""
     status_callback: "Callable[[Any], Awaitable[None]] | None" = None
+    """Optional coroutine invoked with every task status transition."""
     if TYPE_CHECKING:
         executor: "MCPTaskExecutor | Literal['in_process'] | bool | None" = None
+        """Optional `MCPTaskExecutor` that runs task-augmented tool calls outside the creating request (`None` auto-wires `QueueTaskExecutor` when `QueuePlugin` is registered, or pass `"in_process"` / `False` to force in-process background tasks)."""
     else:
         executor: "MCPTaskExecutor | None" = None
+        """Optional `MCPTaskExecutor` that runs task-augmented tool calls outside the creating request (`None` auto-wires `QueueTaskExecutor` when `QueuePlugin` is registered, or pass `"in_process"` / `False` to force in-process background tasks)."""
 
     def __post_init__(self) -> "None":
         if self.default_ttl_ms < 0:
@@ -194,30 +167,18 @@ def normalize_task_config(value: "bool | MCPTaskConfig | None") -> "MCPTaskConfi
 
 @dataclass
 class MCPSkillsConfig:
-    """Configuration for the opt-in Skills over MCP extension.
-
-    Attributes:
-        paths: Directories whose immediate child folders containing a
-            ``SKILL.md`` file are served as MCP skills. Entries are
-            normalized with :class:`~pathlib.Path`, so a plain string
-            works at runtime; the annotation is ``Sequence[Path]``, so
-            type-checked callers should pass :class:`~pathlib.Path`
-            objects. A bare ``str`` in place of the sequence is
-            rejected. Optional when ``sources`` is non-empty.
-        directory_read: Advertise and serve ``resources/directory/read``.
-        max_files_per_skill: Maximum files, including ``SKILL.md``, one
-            filesystem skill may contain before it is rejected at startup.
-        max_bytes_per_skill: Maximum total byte size of one filesystem
-            skill's files before it is rejected at startup.
-        sources: Async, request-aware :class:`~litestar_mcp.SkillSource`
-            instances composed after any ``paths`` source.
-    """
+    """Configuration for the opt-in Skills over MCP extension."""
 
     paths: "Sequence[Path]" = ()
+    """Directories whose immediate child folders containing a `SKILL.md` file are served as MCP skills (entries are normalized with `pathlib.Path`; optional when `sources` is non-empty)."""
     directory_read: "bool" = True
+    """Whether to advertise and serve `resources/directory/read`."""
     max_files_per_skill: "int" = 512
+    """Maximum files, including `SKILL.md`, one filesystem skill may contain before it is rejected at startup."""
     max_bytes_per_skill: "int" = 16_777_216
+    """Maximum total byte size of one filesystem skill's files before it is rejected at startup."""
     sources: "Sequence[SkillSource]" = ()
+    """Async, request-aware `SkillSource` instances composed after any `paths` source."""
 
     def __post_init__(self) -> "None":
         """Validate and normalize skill directory paths, sources, and size bounds."""
@@ -251,91 +212,70 @@ class MCPConfig:
 
     The plugin uses Litestar's opt attribute to discover routes marked for MCP exposure.
     Server name and version are derived from the Litestar app's OpenAPI configuration.
-
-    Attributes:
-        base_path: Base path for MCP API endpoints.
-        include_in_schema: Whether to include MCP routes in OpenAPI schema generation.
-        name: Optional override for server name. If not set, uses OpenAPI title.
-        guards: Optional list of guards to protect MCP endpoints.
-        route_opt: Optional route ``opt`` mapping applied to the mounted MCP
-            router and therefore merged into the JSON-RPC handler's ``opt``.
-            Use it to declare an opt-based authentication policy for the MCP
-            surface, for example ``{"auth": required("api-key")}`` with
-            litestar-security.
-        allowed_origins: Exact additional Origin values to accept. A missing
-            Origin is valid; a present Origin must match the request origin or
-            one of these configured values.
-        tasks: Optional task configuration or ``True`` to enable the default
-            experimental in-memory task implementation.
-        list_page_size: Page size for ``tools/list``, ``resources/list``,
-            ``resources/templates/list``, ``skills/list``, ``prompts/list``,
-            and ``resources/directory/read``. The MCP spec lets servers choose
-            the page size; clients cannot override it per request — they page
-            through results via the opaque ``cursor`` / ``nextCursor``
-            round-trip. Must be a positive integer.
-        before_tool_call: Optional callback invoked once before each
-            ``tools/call`` dispatch, after the synthesized request is built
-            and before guards run.
-        after_tool_call: Optional callback invoked once after each
-            ``tools/call`` dispatch with either the result or exception and
-            elapsed dispatch duration in seconds.
-        stream_queue_capacity: Maximum queued notifications per stream. Request
-            progress waits for room without discarding reports.
-        stream_cleanup_timeout: Positive finite seconds allowed for cooperative
-            progress producer cleanup after its response ends. Expiry is logged
-            as incomplete cleanup; application finalizers must tolerate cancellation.
-        max_blob_bytes: Maximum raw byte length for base64-embedded MCP blobs.
-            Set to ``None`` to disable the library cap.
-        skills: Optional Skills over MCP configuration; ``None`` leaves the
-            extension disabled.
-        prompt_controllers: Optional sequence of PromptController classes or
-            instances to register on startup.
-        skill_controllers: Optional sequence of SkillController classes or
-            instances to register on startup.
-        infer_http_method_annotations: Automatically infer default MCP
-            ``ToolAnnotations`` hints (``readOnlyHint``, ``destructiveHint``,
-            ``idempotentHint``) from the route handler's HTTP method when not
-            explicitly overridden.
-        max_tool_description_length: Optional maximum character length for
-            tool descriptions enforced during tool-spec validation.
-        max_param_description_length: Optional maximum character length for
-            input parameter descriptions enforced during tool-spec validation.
-        max_output_field_description_length: Optional maximum character length
-            for output schema property descriptions enforced during tool-spec
-            validation.
     """
 
     base_path: "str" = "/mcp"
+    """Base path for MCP API endpoints."""
     include_in_schema: "bool" = False
+    """Whether to include MCP routes in OpenAPI schema generation."""
     name: "str | None" = None
+    """Optional override for server name; defaults to the OpenAPI title."""
     instructions: "str | None" = None
+    """Optional server-level instructions returned in the MCP `initialize` response."""
     guards: "list[Any] | None" = None
+    """Optional list of Litestar guards protecting MCP endpoints."""
     allowed_origins: "list[str] | None" = None
+    """Exact additional `Origin` values to accept alongside the request origin."""
     include_operations: "list[str] | None" = None
+    """Optional allowlist of operation names to expose over MCP."""
     exclude_operations: "list[str] | None" = None
+    """Optional denylist of operation names to hide from MCP."""
     include_tags: "list[str] | None" = None
+    """Optional allowlist of route handler tags to expose over MCP."""
     exclude_tags: "list[str] | None" = None
+    """Optional denylist of route handler tags to hide from MCP."""
     tasks: "bool | MCPTaskConfig | None" = None
+    """Optional task configuration or `True` to enable the default in-memory task implementation."""
     skills: "MCPSkillsConfig | None" = None
+    """Optional Skills over MCP configuration; `None` leaves the extension disabled."""
     opt_keys: "MCPOptKeys" = field(default_factory=MCPOptKeys)
+    """Configurable `handler.opt` key names inspected by the plugin."""
     cache_ttl_ms: "int" = 0
+    """Cache duration in milliseconds for list responses (`0` disables caching)."""
     cache_scope: "Literal['private', 'public']" = "private"
+    """Cache visibility scope (`"private"` or `"public"`)."""
     subscription_max_streams: "int" = 10_000
+    """Maximum concurrent SSE subscription streams permitted by the server."""
     subscription_keepalive_seconds: "float" = 15.0
+    """Keep-alive ping interval in seconds for active SSE subscription streams."""
     stream_queue_capacity: "int" = 256
+    """Maximum queued notifications per stream before producers await capacity."""
     stream_cleanup_timeout: "float" = DEFAULT_STREAM_CLEANUP_TIMEOUT
+    """Positive finite seconds allowed for cooperative progress producer cleanup after its response ends."""
     subscription_channels: "Any | None" = None
+    """Optional Litestar `ChannelsPlugin` backend used to fan out subscription notifications."""
     list_page_size: "int" = 100
+    """Positive integer page size for `tools/list`, `resources/list`, `resources/templates/list`, `skills/list`, `prompts/list`, and `resources/directory/read`."""
     before_tool_call: "BeforeToolCallHook | None" = None
+    """Optional callback invoked once before each `tools/call` dispatch, after the synthesized request is built and before guards run."""
     after_tool_call: "AfterToolCallHook | None" = None
+    """Optional callback invoked once after each `tools/call` dispatch with either the result or exception and elapsed duration in seconds."""
     max_blob_bytes: "int | None" = 25 * 1024 * 1024
+    """Maximum raw byte length for base64-embedded MCP blobs (`None` disables the cap)."""
     route_opt: "dict[str, Any] | None" = None
+    """Optional route `opt` mapping applied to the mounted MCP router and merged into the JSON-RPC handler's `opt`."""
     prompt_controllers: "Sequence[type[Any]]" = ()
+    """Optional sequence of `PromptController` classes or instances to register on startup."""
     skill_controllers: "Sequence[type[Any]]" = ()
+    """Optional sequence of `SkillController` classes or instances to register on startup."""
     infer_http_method_annotations: "bool" = True
+    """Automatically infer default MCP `ToolAnnotations` hints (`readOnlyHint`, `destructiveHint`, `idempotentHint`) from the route handler's HTTP method when not explicitly overridden."""
     max_tool_description_length: "int | None" = None
+    """Optional maximum character length for tool descriptions enforced during tool-spec validation."""
     max_param_description_length: "int | None" = None
+    """Optional maximum character length for input parameter descriptions enforced during tool-spec validation."""
     max_output_field_description_length: "int | None" = None
+    """Optional maximum character length for output schema property descriptions enforced during tool-spec validation."""
 
     def __post_init__(self) -> "None":
         validate_stream_cleanup_timeout(self.stream_cleanup_timeout)

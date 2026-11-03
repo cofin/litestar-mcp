@@ -126,10 +126,12 @@ class MetadataRegistry:
         return cls._instance
 
     def set(self, obj: "Any", value: "dict[str, Any]") -> "None":
+        """Store MCP metadata dictionary for `obj` keyed by its resolved module and qualname."""
         key = self._get_key(obj)
         self._data[key] = value
 
     def get(self, obj: "Any") -> "dict[str, Any] | None":
+        """Retrieve the stored MCP metadata dictionary for `obj`, or `None` if not registered."""
         key = self._get_key(obj)
         return self._data.get(key)  # pyright: ignore[reportReturnType]
 
@@ -156,19 +158,16 @@ _REGISTRY = MetadataRegistry()
 
 @dataclass(frozen=True)
 class DescriptionSources:
-    """Resolved description fields for a handler.
-
-    Attributes:
-        description: The primary LLM-facing description (always set).
-        when_to_use: Optional ``## When to use`` section.
-        returns: Optional ``## Returns`` section.
-        agent_instructions: Optional ``## Instructions`` section.
-    """
+    """Resolved description fields for a handler."""
 
     description: "str"
+    """The primary LLM-facing description (always set)."""
     when_to_use: "str | None"
+    """Optional `## When to use` section."""
     returns: "str | None"
+    """Optional `## Returns` section."""
     agent_instructions: "str | None"
+    """Optional `## Instructions` section."""
 
 
 # Public functions
@@ -756,7 +755,7 @@ def _clean(value: "Any") -> "str | None":
 
 
 def _default_opt_keys() -> "MCPOptKeys":
-    """Return a default :class:`MCPOptKeys` without creating an import cycle."""
+    """Return a default `MCPOptKeys` without creating an import cycle."""
     return MCPOptKeys()
 
 

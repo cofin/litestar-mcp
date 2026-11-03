@@ -49,26 +49,37 @@ class ChatRequest(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
     """Body payload for agent chat streaming and turn creation."""
 
     message: "str"
+    """User prompt text for the agent turn."""
     session_id: "str | None" = None
+    """Optional existing session identifier to continue a conversation."""
     dynamic_context: "str | None" = None
+    """Optional per-turn context prepended to the agent's system instructions."""
 
 
 class TurnResult(msgspec.Struct, kw_only=True):
     """Aggregated turn result returned by POST /agent/turns."""
 
     session_id: "str"
+    """Identifier of the conversation session for this turn."""
     turn_id: "str"
+    """Unique identifier assigned to this turn execution."""
     agent_name: "str"
+    """Name of the agent that produced the final turn output."""
     output: "str"
+    """Concatenated assistant text output produced during the turn."""
     messages: "list[AgentMessage]"
+    """Updated conversation message history after the turn completes."""
     token_usage: "dict[str, int]"
+    """Accumulated token usage counts keyed by token category."""
 
 
 class SessionHistory(msgspec.Struct, kw_only=True):
     """Conversation history payload returned by GET /agent/sessions/{session_id}."""
 
     session_id: "str"
+    """Identifier of the retrieved conversation session."""
     messages: "list[AgentMessage]"
+    """Ordered list of messages stored in the session."""
 
 
 class AgentChatController(Controller):

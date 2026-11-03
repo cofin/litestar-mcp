@@ -9,10 +9,12 @@ import binascii
 
 
 def encode_cursor(offset: "int") -> "str":
+    """Encode an integer pagination offset into an opaque URL-safe base64 cursor."""
     return base64.urlsafe_b64encode(str(offset).encode("utf-8")).decode("ascii")
 
 
 def decode_cursor(cursor: "str") -> "int":
+    """Decode an opaque pagination cursor back into a non-negative integer offset."""
     try:
         raw = base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
         offset = int(raw)

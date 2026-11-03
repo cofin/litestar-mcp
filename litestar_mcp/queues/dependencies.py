@@ -16,9 +16,9 @@ __all__ = ("TaskDependencyChain",)
 class TaskDependencyChain:
     """Ordered task dependency resolvers merged into one resolver.
 
-    Later resolvers win on key collisions. ``QueueConfig`` accepts a single
-    ``task_dependency_resolver``, so integrations append themselves to the
-    application's queue configuration through :meth:`attach` instead of asking
+    Later resolvers win on key collisions. `QueueConfig` accepts a single
+    `task_dependency_resolver`, so integrations append themselves to the
+    application's queue configuration through `attach` instead of asking
     users to combine resolvers by hand.
     """
 
