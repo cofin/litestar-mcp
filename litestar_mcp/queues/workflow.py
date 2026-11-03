@@ -30,6 +30,7 @@ from litestar_mcp.queues.workflow_store import (
 from litestar_mcp.utils import resolve_app_store
 
 if TYPE_CHECKING:
+    from litestar import Litestar
     from litestar.config.app import AppConfig
     from litestar.stores.base import Store
     from litestar_queues import QueueService
@@ -131,6 +132,7 @@ class DurableWorkflowEngine(InitPluginProtocol):
         self.watchdog_interval = watchdog_interval
         self.run_timeout_seconds = run_timeout_seconds
         self._queue_plugin: QueuePlugin | None = None
+        self._app: Litestar | None = None
 
     @property
     def store(self) -> WorkflowStore:
@@ -141,7 +143,7 @@ class DurableWorkflowEngine(InitPluginProtocol):
         return self._store
 
     def on_app_init(self, app_config: "AppConfig") -> "AppConfig":
-        """Wire task dependencies, the default store, and the ``workflow_engine`` dependency.
+        """Wire task dependencies, the default store, the ``workflow_engine`` dependency, and app capture.
 
         Returns:
             The updated application configuration.
@@ -154,6 +156,7 @@ class DurableWorkflowEngine(InitPluginProtocol):
         if self._store is None:
             self._store = WorkflowStore(resolve_app_store(app_config, WORKFLOW_STORE_NAME))
         app_config.dependencies.setdefault("workflow_engine", Provide(self._provide_engine, sync_to_thread=False))
+        app_config.on_startup.append(self._capture_app)
         app_config.signature_namespace.setdefault("DurableWorkflowEngine", DurableWorkflowEngine)
         return app_config
 
@@ -376,6 +379,10 @@ class DurableWorkflowEngine(InitPluginProtocol):
             )
         return current_status
 
+    def _capture_app(self, app: "Litestar") -> None:
+        """Remember the started application so queue services resolve from its state."""
+        self._app = app
+
     def _provide_engine(self) -> "DurableWorkflowEngine":
         """Return this engine for the ``workflow_engine`` dependency."""
         return self
@@ -383,9 +390,11 @@ class DurableWorkflowEngine(InitPluginProtocol):
     def _queue_service(self) -> "QueueService":
         """Return the queue service of the application's ``QueuePlugin``.
 
-        Inside the application lifespan this is the plugin's opened service. In
-        standalone worker processes, which never run the application lifespan,
-        the plugin builds a service bound to its configured backend.
+        After application startup this is the service bound to app state: the
+        web process's opened service, or the worker's own service in standalone
+        worker processes (litestar-queues enters the application lifespan there).
+        Without a started application, the plugin builds a service bound to its
+        configured backend.
 
         Raises:
             ImproperlyConfiguredException: If the engine was never registered as a plugin.
@@ -393,6 +402,8 @@ class DurableWorkflowEngine(InitPluginProtocol):
         if self._queue_plugin is None:
             msg = "DurableWorkflowEngine is not registered; add it to Litestar(plugins=[...]) next to QueuePlugin"
             raise ImproperlyConfiguredException(msg)
+        if self._app is not None:
+            return self._queue_plugin.config.get_service(self._app.state)
         return self._queue_plugin.get_service()
 
 

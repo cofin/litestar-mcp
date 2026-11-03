@@ -57,7 +57,10 @@ class QueueTaskExecutor:
     def runtime(self) -> "MCPTaskRuntime":
         """Collaborators bound at application startup."""
         if self._runtime is None:
-            msg = "QueueTaskExecutor is not bound; register LitestarMCP on the application"
+            msg = (
+                "QueueTaskExecutor is not bound; register LitestarMCP on the application and keep "
+                "WorkerConfig.run_app_lifespan enabled so standalone queue workers run application startup"
+            )
             raise RuntimeError(msg)
         return self._runtime
 
@@ -127,13 +130,18 @@ class QueueTaskExecutor:
         await self.runtime.task_store.set_job_id(call.task_id, str(result.id))
 
     def _queue_service(self) -> "QueueService":
-        """Return the queue service of the application's ``QueuePlugin``."""
+        """Return the queue service bound to the started application's state.
+
+        That is the web process's opened service, or the worker's own service in
+        standalone worker processes, where litestar-queues enters the application
+        lifespan before claiming tasks.
+        """
         if self._queue_plugin is None:
             msg = (
                 "QueueTaskExecutor is not configured; set it on MCPTaskConfig(executor=...) of a registered LitestarMCP"
             )
             raise ImproperlyConfiguredException(msg)
-        return self._queue_plugin.get_service()
+        return self._queue_plugin.config.get_service(self.runtime.app.state)
 
 
 @task(RUN_TOOL_TASK, queue="mcp", retries=0)

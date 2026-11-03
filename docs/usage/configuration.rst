@@ -87,7 +87,10 @@ is optional; install it with the ``queues`` extra:
 Without an executor, MCP Tasks run as in-process background tasks and
 ``litestar-queues`` is never imported. With one, register ``QueuePlugin`` on the
 same application; ``LitestarMCP`` attaches the executor's task dependencies to it
-during app init.
+during app init. Attempts run on any worker placement: litestar-queues (0.13.0+)
+enters the application lifespan in standalone worker processes, so the executor is
+bound there exactly as in the web process. Keep ``WorkerConfig.run_app_lifespan``
+enabled (the default).
 
 .. literalinclude:: /examples/snippets/mcp_tasks_queue.py
     :language: python

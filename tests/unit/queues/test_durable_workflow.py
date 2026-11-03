@@ -683,3 +683,24 @@ async def test_watchdog_immediate_backend_behavior() -> None:
         run, ctx = await engine_allowed.snapshot(run_id)
         assert run.status == "completed"
         assert ctx.node_outputs["step1"] == "done"
+
+
+@pytest.mark.anyio
+async def test_standalone_worker_lifespan_runs_workflow() -> None:
+    """A standalone worker resolves the engine's queue service from the worker-bound app state."""
+    wf = DynamicWorkflow(name="standalone")
+    wf.add_node("a", handler=lambda _c: {"v": 1})
+    wf.add_node("b", handler=lambda c: {"v": c.node_outputs["a"]["v"] + 1}, depends_on=["a"])
+    app, engine, plugin = _make_engine_and_app([wf])
+
+    async with plugin.open_worker_service(app) as service:
+        await service.open()
+        try:
+            run_id = await engine.start("standalone")
+            await _drain(service, plugin.config.worker, engine, run_id)
+            run, ctx = await engine.snapshot(run_id)
+        finally:
+            await service.close()
+
+    assert run.status == "completed"
+    assert ctx.node_outputs["b"] == {"v": 2}

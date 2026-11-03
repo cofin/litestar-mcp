@@ -1,6 +1,7 @@
 """Unit tests for distributed MCP Tasks on litestar-queues via QueueTaskExecutor."""
 
 import asyncio
+import json
 from typing import Any, cast
 from uuid import UUID
 
@@ -27,6 +28,7 @@ from litestar_mcp import (
 )
 from litestar_mcp.core.jsonrpc import INTERNAL_ERROR, JSONRPCError, JSONRPCErrorException
 from litestar_mcp.mcp.service import TASKS_EXTENSION
+from litestar_mcp.mcp.tasks import ToolTaskCall
 from litestar_mcp.queues import QueueTaskExecutor
 from litestar_mcp.utils import mcp_tool
 
@@ -717,3 +719,30 @@ async def test_resume_attempt_numbers_increase() -> None:
 
         status_result = await _mcp_post(client, "tasks/get", {"taskId": task_id})
         assert status_result["result"]["status"] == "completed"
+
+
+@pytest.mark.anyio
+async def test_standalone_worker_lifespan_runs_tool_attempt() -> None:
+    """A standalone worker enters the app lifespan, binds the executor, and completes a tool attempt."""
+    executor = QueueTaskExecutor()
+    app, _ = _make_queued_app(executor=executor, execution_backend="local")
+    queue_plugin = app.plugins.get(QueuePlugin)
+
+    async with queue_plugin.open_worker_service(app) as service:
+        await service.open()
+        try:
+            store = executor.runtime.task_store
+            record = await store.create(None, local=False)
+            call = ToolTaskCall(task_id=record.task_id, tool_name="slow_echo", arguments={"text": "standalone"})
+            await store.set_dispatch(record.task_id, call)
+            await executor.submit(record, call)
+            worker = Worker(service, queue_plugin.config.worker)
+            await worker.run_once()
+            await worker.stop()
+            finished = await store.get(record.task_id, None)
+        finally:
+            await service.close()
+
+    assert finished.status == "completed"
+    assert finished.result is not None
+    assert json.loads(finished.result["content"][0]["text"]) == {"echo": "standalone"}

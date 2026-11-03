@@ -23,8 +23,10 @@ Recent Updates
         fail-closed principal loading (``principal_loader``), cooperative cancellation,
         cross-replica resumption on ``input_required``, and internal job dispatch
         decoupling. ``MCPTaskStore.update`` returns merged responses and
-        ``MCPTaskStore.create`` takes a keyword-only ``local``
-        (`#104 <https://github.com/cofin/litestar-mcp/pull/104>`_).
+        ``MCPTaskStore.create`` takes a keyword-only ``local``. The ``queues`` extra
+        now requires ``litestar-queues>=0.13.0``, whose standalone workers run the
+        application lifespan, so MCP Tasks and durable workflows execute on every
+        worker placement (`#104 <https://github.com/cofin/litestar-mcp/pull/104>`_).
 
     .. change:: support durable workflow execution on litestar-queues via DurableWorkflowEngine
         :type: feature
