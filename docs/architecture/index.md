@@ -55,12 +55,12 @@ The `io.modelcontextprotocol/tasks` capability lets clients request asynchronous
 
 ## 4. Durable DAG Workflows (`DurableWorkflowEngine`)
 
-`DynamicWorkflow` defines a Directed Acyclic Graph (DAG) of `WorkflowNode` steps (wrapping either an `Agent` or an async Python callable) with topological wave dependencies and conditional `StepResult(next_nodes=[...])` branching.
+`DynamicWorkflow` defines a Directed Acyclic Graph (DAG) of `WorkflowNode` steps (wrapping either an `Agent` or an async Python callable) with topological wave dependencies and conditional `WorkflowNode(condition=...)` branching.
 
 The same `DynamicWorkflow` definition runs in-process via `WorkflowEngine` or across distributed worker replicas via `DurableWorkflowEngine` on `litestar-queues`:
 
-- **Conflict-Free Persistence (`WorkflowStore`)**: Persists a write-once `NodeRecord` per completed node (`node:{run_id}:{node_name}`) and a monotonic `WorkflowRun` document in `litestar_mcp_workflows`, preventing sibling fan-in write races.
-- **Forever-Unique Node Scheduling**: Schedules ready nodes with `unique_key="wf-node:{run_id}:{node}"` and `unique_Window=0`. If a node fails transiently and retries via `litestar-queues`, `DurableWorkflowEngine` releases the reservation with `service.reset_task_identity()` before re-raising.
+- **Conflict-Free Persistence (`WorkflowStore`)**: Persists a write-once `NodeRecord` per completed node (`{prefix}:{run_id}:node:{node_name}`) and a monotonic `WorkflowRun` document in `litestar_mcp_workflows`, preventing sibling fan-in write races.
+- **Forever-Unique Node Scheduling**: Schedules ready nodes with `unique_key="wf-node:{run_id}:{node}"` and `unique_until="forever"`. If a node fails transiently and retries via `litestar-queues`, `DurableWorkflowEngine` releases the reservation with `service.reset_task_identity()` before re-raising.
 - **Self-Rearming Per-Run Watchdog**: Schedules `wf-watchdog:{run_id}:{tick}` tasks that inspect `ready_nodes()` and heal stalled runs if a worker process crashes mid-wave.
 
 --8<-- "tools/docs/includes/diagram-durable-workflows.html"
@@ -74,8 +74,8 @@ The same `DynamicWorkflow` definition runs in-process via `WorkflowEngine` or ac
 
 `AgentRuntime` manages `Agent` and `AgentGroup` execution inside your Litestar application:
 
-- **`TurnBudget` & `GoogleGenAIClient`**: Enforces per-turn ceilings (`max_steps`, `max_tool_calls`, `max_tokens`, `max_duration_s`) while driving `ModelClient` implementations. `GoogleGenAIClient` defaults to `gemini-3.8-flash` and preserves Gemini 3/2.5 `thought_signature` bytes across multi-turn tool calls.
-- **`AgentGroup` Handoffs**: Coordinates a primary agent and specialist sub-agents by injecting synthetic `transfer_to_<agent>` tools without mutating the underlying `Agent.tools` lists, guarded by `max_handoffs`.
+- **`TurnBudget` & `GoogleGenAIClient`**: Enforces per-turn ceilings (`max_turns`, `max_tool_calls`, `timeout_seconds`) while driving `ModelClient` implementations. `GoogleGenAIClient` defaults to `gemini-3.8-flash` and preserves Gemini 3/2.5 `thought_signature` bytes across multi-turn tool calls.
+- **`AgentGroup` Handoffs**: Coordinates a primary agent and specialist sub-agents by injecting a synthetic `Literal`-typed `transfer_to_agent` tool without mutating the underlying `Agent.tools` lists.
 - **Owner-Scoped Sessions & SSE Streaming**: `SessionStore` (`MemorySessionStore` or `LitestarStoreSessionStore`) isolates conversation history by authenticated `owner_id`. `AgentChatController` and `QueuedAgentChatController` expose ready-to-mount REST and Server-Sent Events (SSE) endpoints.
 - **Bidirectional Protocol Bridges**: `agent_to_mcp`, `mcp_to_tools`, `discover_mcp_tools`, and `agent_to_a2a` connect Litestar routes, remote MCP servers, local agents, and A2A 1.0 endpoints without duplicate glue code.
 
@@ -98,3 +98,12 @@ The same `DynamicWorkflow` definition runs in-process via `WorkflowEngine` or ac
 
 - **Deep-Dive Guides**: [A2A 1.0 Protocol & HTTP+JSON Binding](../agents/a2a-protocol.md) · [Multi-Tenant A2A Routing](../agents/multi-tenancy.md) · [First-Party `litestar-security` Integration](../security/litestar-security.md)
 - **API Reference**: [`LitestarA2A` & `A2AConfig`](../reference/a2a-and-bridges.md)
+
+---
+
+## 7. Runnable Reference Examples & PEP 723 Single-File Apps
+
+Every subsystem above is accompanied by runnable, pytest-verified reference applications and single-file PEP 723 scripts:
+
+- **[Reference Examples & Notes Matrix](reference-examples.md)**: Full comparison of the `advanced_alchemy` and `sqlspec` Notes reference application families across 10 database/auth variants (`no_auth`, `jwt_auth`, `cloud_run`, `google_iap`).
+- **[Single-File `uvx` & PEP 723 Guide](uvx-and-pep723.md)**: Zero-setup execution of standalone `litestar-mcp` scripts using inline PEP 723 dependency metadata, `uv run`, and `litestar mcp bridge`.

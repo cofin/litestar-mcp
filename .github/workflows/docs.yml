@@ -27,15 +27,15 @@ jobs:
         run: uv python install 3.14
 
       - name: Install dependencies
-        run: uv sync --group doc --python 3.14
+        run: uv sync --all-extras --dev
 
       - name: Build Documentation
-        run: uv run python tools/build_docs.py docs-build --version latest
+        run: make docs-check
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
-          path: docs-build/
+          path: site/
 
   deploy:
     needs: build

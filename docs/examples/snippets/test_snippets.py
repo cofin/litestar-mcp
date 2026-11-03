@@ -17,9 +17,12 @@ import docs.examples.snippets as snippets_pkg
 from litestar_mcp import MCPConfig
 
 OPTIONAL_SNIPPET_DEPENDENCIES = {
+    "a2a_http_json_multitenant": "a2a",
     "a2a_plugin": "a2a",
     "durable_workflow": "litestar_queues",
     "mcp_tasks_queue": "litestar_queues",
+    "protocol_bridges": "a2a",
+    "queued_agent_turns": "litestar_queues",
 }
 CONFIG_SNIPPET_MODULES = {"configuration_stateless"}
 HANDLER_ONLY_SNIPPET_MODULES = {"tool_explicit_input_schema", "tool_task_input_before_start"}

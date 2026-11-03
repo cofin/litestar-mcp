@@ -107,7 +107,7 @@ For desktop MCP hosts that launch a local stdio subprocess, run either the in-pr
 ```bash
 litestar --app my_app:app mcp stdio
 litestar --app my_app:app mcp bridge
-litestar mcp bridge --url http://127.0.0.1:8000/mcp
+litestar mcp bridge --base-url http://127.0.0.1:8000 --endpoint /mcp
 ```
 
 ---

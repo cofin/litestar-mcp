@@ -122,10 +122,10 @@ In `v0.14.0`, `MCPSkillsConfig(paths=[...])` loaded a static synchronous `SkillC
 - `LitestarA2A` enforces A2A 1.0 (`A2A-Version: 1.0` or `1.0.x`).
 - **`v0.17.0` `HTTP+JSON` REST & Multi-Tenancy**:
   - Set `A2AConfig(enable_http_json=True)` (enabled by default) to mount native A2A 1.0 REST endpoints (`/a2a/message:send`, `/a2a/message:stream`, `/a2a/tasks/{id}`, `/a2a/tasks/{id}:cancel`, `/a2a/tasks/{id}:subscribe`) alongside `POST /a2a` JSON-RPC 2.0.
-  - Set `A2AConfig(agent_card_route_opt="a2a_skill")` to compile `AgentSkill` entries into `/.well-known/agent-card.json` directly from Litestar route `opt` dictionaries.
+  - Set `A2AConfig(agent_card_route_opt={...})` to supply separate Litestar route `opt` entries (such as public discovery auth policies) for `/.well-known/agent-card.json` independent of `A2AConfig.route_opt`.
   - Multi-tenant requests resolve tenant identifiers from `/{tenant:str}/a2a/...` path prefixes or the `X-A2A-Tenant` header (`A2AConfig.tenant_header`) and pass the prepared `ServerCallContext` to `A2AConfig.context_builder(request, context)`.
-- **`v0.18.0` Direct `AgentExecutor` Support**:
-  - `A2AConfig(request_handler=...)` now accepts an `AgentExecutor` (such as `agent_to_a2a(runtime)`) directly and wraps it in `DefaultRequestHandler` with an `InMemoryTaskStore` automatically.
+- **`v0.18.0` Direct `AgentExecutor` & Bridge Support**:
+  - `LitestarA2A(agent_card, request_handler, config=...)` accepts an `AgentExecutor` directly as `request_handler` (wrapping it in `DefaultRequestHandler` with an `InMemoryTaskStore` automatically), and `agent_to_a2a(agent, runtime=runtime)` returns a ready-to-mount `LitestarA2A` plugin.
 
 ---
 

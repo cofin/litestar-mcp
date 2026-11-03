@@ -1981,6 +1981,14 @@ a2a = [
     { name = "a2a-sdk" },
     { name = "protobuf" },
 ]
+all = [
+    { name = "a2a-sdk" },
+    { name = "google-genai", version = "2.33.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "google-genai", version = "2.34.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "litestar-queues" },
+    { name = "opentelemetry-api" },
+    { name = "protobuf" },
+]
 google-genai = [
     { name = "google-genai", version = "2.33.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "google-genai", version = "2.34.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -2083,17 +2091,22 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "a2a-sdk", marker = "extra == 'a2a'", specifier = ">=1.1.4" },
+    { name = "a2a-sdk", marker = "extra == 'all'", specifier = ">=1.1.4" },
     { name = "anyio", specifier = ">=4.1" },
+    { name = "google-genai", marker = "extra == 'all'", specifier = ">=2.29.0" },
     { name = "google-genai", marker = "extra == 'google-genai'", specifier = ">=2.29.0" },
     { name = "httpx2", specifier = ">=2.13.1" },
     { name = "litestar", specifier = ">=2.23.0" },
+    { name = "litestar-queues", marker = "extra == 'all'", specifier = ">=0.13.0" },
     { name = "litestar-queues", marker = "extra == 'queues'", specifier = ">=0.13.0" },
+    { name = "opentelemetry-api", marker = "extra == 'all'", specifier = ">=1.20.0" },
     { name = "opentelemetry-api", marker = "extra == 'opentelemetry'", specifier = ">=1.20.0" },
     { name = "protobuf", marker = "extra == 'a2a'", specifier = ">=5.29.5" },
+    { name = "protobuf", marker = "extra == 'all'", specifier = ">=5.29.5" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "typing-extensions", specifier = ">=4.0.0" },
 ]
-provides-extras = ["a2a", "google-genai", "opentelemetry", "queues"]
+provides-extras = ["a2a", "all", "google-genai", "opentelemetry", "queues"]
 
 [package.metadata.requires-dev]
 build = [{ name = "bump-my-version" }]
@@ -2115,7 +2128,7 @@ dev = [
     { name = "pyarrow" },
     { name = "pydantic" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10.1" },
-    { name = "pymdown-extensions", specifier = ">=10.16" },
+    { name = "pymdown-extensions", specifier = ">=10.16,<12" },
     { name = "pyright", specifier = ">=1.1.386" },
     { name = "pytest", specifier = ">=7.4.1" },
     { name = "pytest-asyncio" },
@@ -2134,7 +2147,7 @@ dev = [
 doc = [
     { name = "griffe-fieldz", specifier = ">=0.4.0" },
     { name = "mkdocstrings-python", specifier = ">=2.0.1" },
-    { name = "pymdown-extensions", specifier = ">=10.16" },
+    { name = "pymdown-extensions", specifier = ">=10.16,<12" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.4.1" },
     { name = "zensical", specifier = ">=0.0.29" },
 ]
@@ -3756,16 +3769,16 @@ crypto = [
 
 [[package]]
 name = "pymdown-extensions"
-version = "12.3"
+version = "11.0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "markdown", version = "3.10.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "markdown", version = "3.11.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f3/fe/ac50ee24a80a1b344e643f6fb626063cc7041b978cd1dd9a7f9963ae1cd1/pymdown_extensions-12.3.tar.gz", hash = "sha256:a7f2a4e0bc60c6e6babfa7922cfb3b01cd640eb00fb208f3c582e12bae00ea67", size = 870532, upload-time = "2026-10-14T22:40:43.252Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ad/17/2db4b414de89659144488e0d9c6c0bf0c8395841dc12d81d0532cc6ef310/pymdown_extensions-11.0.2.tar.gz", hash = "sha256:9506fcbe66fa355a775b768084334238dd6805020ac4b92bea0c0dda6f8f223d", size = 855419, upload-time = "2026-08-22T19:28:47.236Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8a/d0/758afe732c2da502c051b4d03ff88daa3c0fc1a1e671e6c5a6318177bab4/pymdown_extensions-12.3-py3-none-any.whl", hash = "sha256:345493a8e3497e24382902903a1c43a28e34a52f2b7571a1c9641429b820ca74", size = 277597, upload-time = "2026-10-14T22:40:41.543Z" },
+    { url = "https://files.pythonhosted.org/packages/a6/43/9f45ec4d14e596efc32c925a78104934790438b0c0628b70d741016734ad/pymdown_extensions-11.0.2-py3-none-any.whl", hash = "sha256:259910762019732caa1dfd76f3faa62c59f191d46573e80bcb1d13c0f675bbe5", size = 269929, upload-time = "2026-08-22T19:28:45.389Z" },
 ]
 
 [[package]]

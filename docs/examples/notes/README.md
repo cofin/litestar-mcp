@@ -54,7 +54,7 @@ dependency injection is Litestar-native or routed through Dishka.
 
 ## Run any variant with one command
 
-Every variant ships a :pep:`723` inline script metadata block, so
+Every variant ships a [PEP 723](https://peps.python.org/pep-0723/) inline script metadata block, so
 `uv` reads its dependencies directly from the file and provisions an
 ephemeral environment on first run. No clone, no `uv sync`, no extras
 juggling:
@@ -66,7 +66,7 @@ uv run docs/examples/notes/sqlspec/no_auth.py
 uv run docs/examples/notes/sqlspec/google_iap.py
 ```
 
-See the [single-file run reference](../../usage/uvx_guide.rst) for the
+See the [single-file run reference](../../architecture/uvx-and-pep723.md) for the
 full variant matrix and common pitfalls.
 
 ## Multi-replica deployments
@@ -74,7 +74,7 @@ full variant matrix and common pitfalls.
 MCP 2026-07-28 POST requests can land on any replica. Use a persistent
 Litestar Store for durable Tasks extension records and an existing
 ChannelsPlugin for cross-worker subscription fan-out. See
-[`docs/usage/deployment.rst`](../../usage/deployment.rst) for the full
+[`docs/queues/deployment.md`](../../queues/deployment.md) for the full
 note.
 
 ## Shared contract
@@ -92,6 +92,6 @@ re-implement them.
 
 - [Advanced Alchemy family README](advanced_alchemy/README.md)
 - [SQLSpec family README](sqlspec/README.md)
-- [Reference examples usage page](../../usage/reference_examples.rst)
-- [`uvx` reference guide](../../usage/uvx_guide.rst)
+- [Reference examples usage page](../../architecture/reference-examples.md)
+- [`uvx` reference guide](../../architecture/uvx-and-pep723.md)
 - Foundation spec: `.agents/specs/reference-notes-foundation/spec.md`

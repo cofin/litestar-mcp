@@ -1,389 +1,367 @@
-# Litestar MCP Plugin
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner-inline-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/banner-inline-light.svg">
+    <img alt="Litestar MCP" src="docs/assets/banner-inline-light.svg" width="760">
+  </picture>
 
-A lightweight plugin that integrates Litestar web applications with the Model Context Protocol (MCP) by exposing marked routes as MCP tools, resources, and prompts over MCP Streamable HTTP and JSON-RPC.
+  <p><strong>Model Context Protocol (MCP), Multi-Agent Runtime, Durable DAG Workflows, and A2A 1.0 Interoperability for Litestar.</strong></p>
 
-[![PyPI - Version](https://img.shields.io/pypi/v/litestar-mcp)](https://pypi.org/project/litestar-mcp/)
-[![Python Version](https://img.shields.io/pypi/pyversions/litestar-mcp)](https://pypi.org/project/litestar-mcp/)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+  <p>
+    <a href="https://pypi.org/project/litestar-mcp/"><img alt="PyPI Version" src="https://img.shields.io/pypi/v/litestar-mcp?color=202235&labelColor=0b0d14"></a>
+    <a href="https://pypi.org/project/litestar-mcp/"><img alt="Python Versions" src="https://img.shields.io/pypi/pyversions/litestar-mcp?color=202235&labelColor=0b0d14"></a>
+    <a href="https://cofin.github.io/litestar-mcp/"><img alt="Documentation" src="https://img.shields.io/badge/docs-cofin.github.io%2Flitestar--mcp-DCB834?labelColor=0b0d14"></a>
+    <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-202235?labelColor=0b0d14"></a>
+    <a href="https://discord.gg/litestar"><img alt="Discord" src="https://img.shields.io/badge/discord-Litestar-5865F2?labelColor=0b0d14&logo=discord&logoColor=white"></a>
+  </p>
+
+  <p>
+    <a href="https://cofin.github.io/litestar-mcp/getting-started/">Getting Started</a>
+    &middot;
+    <a href="https://cofin.github.io/litestar-mcp/architecture/">Architecture &amp; Diagrams</a>
+    &middot;
+    <a href="https://cofin.github.io/litestar-mcp/learn/">MCP Core</a>
+    &middot;
+    <a href="https://cofin.github.io/litestar-mcp/queues/">Tasks, Queues &amp; Workflows</a>
+    &middot;
+    <a href="https://cofin.github.io/litestar-mcp/agents/">Agents &amp; A2A</a>
+    &middot;
+    <a href="https://cofin.github.io/litestar-mcp/security/">Security</a>
+    &middot;
+    <a href="https://cofin.github.io/litestar-mcp/reference/">API Reference</a>
+  </p>
+</div>
+
+---
 
 ## Overview
 
-This plugin automatically discovers Litestar routes marked for MCP and exposes them through an MCP-native transport surface. Pass `mcp_tool=True`, `mcp_resource=True`, or `mcp_prompt=True` (named after the function) or an explicit `"name"` straight through to `@get` / `@post` / etc. — Litestar funnels unknown kwargs into `handler.opt`, so no second decorator or `opt={...}` wrapper is needed. Standalone prompt callables that are not bound to an HTTP route can be registered through `LitestarMCP(prompts=[...])`.
+`litestar-mcp` integrates Litestar web applications with the Model Context Protocol (MCP), multi-agent orchestration, distributed task queues, and the Agent2Agent (A2A) 1.0 protocol. Mark existing Litestar routes with `mcp_tool=True`, `mcp_resource=True`, or `mcp_prompt=True` — or author standalone servers with the `MCP` wrapper — and every tool and prompt call dispatches in-process through Litestar's ASGI pipeline so your authentication middleware, guards, dependency injection (`Provide` and Dishka `FromDishka[T]`), DTOs, and OpenTelemetry spans execute without duplication.
 
-## Features
+## Capability Matrix
 
-- **Protocol-Native Transport** — MCP Streamable HTTP with JSON-RPC requests and SSE streams.
-- **Three MCP Primitives** — tools, resources, *and* prompts, with `prompts/list` and `prompts/get` driven by the same handler discovery as the rest of the surface.
-- **Simple Route Marking** — pass `mcp_tool` / `mcp_resource` / `mcp_prompt` kwargs straight through to Litestar's route decorators, or register standalone prompts via `LitestarMCP(prompts=[...])`.
-- **RFC 6570 URI Templates** — `mcp_resource_template="app://…/{var}"` dispatches concrete URIs to handlers with extracted vars.
-- **First-Class Descriptions** — structured `mcp_description`, `mcp_agent_instructions`, `mcp_when_to_use`, `mcp_returns` kwargs.
-- **Type Safe** — full type hints with dataclasses; `msgspec`-powered tool-argument validation.
-- **Automatic Discovery** — routes are discovered at app initialization.
-- **OpenAPI Integration** — server info derived from OpenAPI config.
-- **Bring Your Own Auth** — MCP inherits the app's Litestar authentication middleware, including litestar-security or a custom `AbstractAuthenticationMiddleware`.
-- **Optional Task Support** — the MCP Tasks extension with Litestar Store records; applications coordinate execution across workers.
-- **Optional MCP Skills** — serve Agent Skills from static filesystem folders or dynamic, request-aware `SkillSource` backends through the `io.modelcontextprotocol/skills` extension with SHA-256 manifests.
-- **Optional A2A 1.0** — official SDK models and handlers on native Litestar JSON-RPC/SSE routes, without required Starlette, FastAPI or Uvicorn dependencies.
+| Capability | Primary Symbols | Documentation |
+| :--- | :--- | :--- |
+| **Route Marking & Decorators** | `LitestarMCP`, `MCP`, `MCPConfig`, `mcp_tool`, `mcp_resource`, `mcp_prompt`, `ToolAnnotations`, `PromptController` | [MCP Core Guide](https://cofin.github.io/litestar-mcp/learn/marking-routes/) |
+| **Dual-Version Streamable HTTP & CLI** | `2026-07-28` (`server/discover` + SEP-2575 headers) and `2025-06-18` (`initialize`, `ping`, `DELETE /mcp`), `litestar mcp stdio`, `bridge`, `export-tool-spec` | [Transport & Discovery](https://cofin.github.io/litestar-mcp/learn/discovery/) |
+| **Agent Skills (`SEP-2640`)** | `MCPSkillsConfig`, `FilesystemSkillSource`, `SkillSource`, `Skill`, `SkillFile`, `SkillCatalog`, `SkillController` | [Agent Skills Guide](https://cofin.github.io/litestar-mcp/learn/skills/) |
+| **Distributed MCP Tasks & Queues** | `MCPTaskConfig`, `QueueTaskExecutor`, `InProcessTaskExecutor`, `MCPTaskStore`, `MCPInputRequiredResult`, `PrincipalSnapshot` | [Distributed Task Queues](https://cofin.github.io/litestar-mcp/queues/distributed-task-queues/) |
+| **Durable DAG Workflows** | `DynamicWorkflow`, `WorkflowNode`, `WorkflowEngine`, `DurableWorkflowEngine`, `WorkflowStore`, `WorkflowRun`, `NodeRecord` | [Durable Workflows](https://cofin.github.io/litestar-mcp/queues/durable-workflows/) |
+| **Multi-Agent Runtime & Streaming** | `Agent`, `AgentGroup`, `AgentRuntime`, `TurnBudget`, `GoogleGenAIClient`, `SessionStore`, `AgentChatController`, `QueuedAgentChatController` | [Agents & Runtime](https://cofin.github.io/litestar-mcp/agents/runtime-and-budgets/) |
+| **A2A 1.0 & Protocol Bridges** | `LitestarA2A`, `A2AConfig` (JSON-RPC 2.0 + `HTTP+JSON` REST, `/{tenant:str}` + `X-A2A-Tenant`), `agent_to_mcp`, `mcp_to_tools`, `discover_mcp_tools`, `agent_to_a2a` | [A2A 1.0 Protocol](https://cofin.github.io/litestar-mcp/agents/a2a-protocol/) |
+| **Security & Observability** | Litestar auth middleware, `litestar-security` (`route_opt={"auth": required(...)}` + RFC 9728 metadata), guards/scopes, `TelemetryConfig` | [Security & Operations](https://cofin.github.io/litestar-mcp/security/) |
 
-## Quick Start
+---
 
-### Installation
+## Installation
+
+Install the core package with `uv`, `pip`, `pdm`, or `poetry`:
 
 ```bash
-pip install litestar-mcp
-# or
+# uv (recommended)
 uv add litestar-mcp
+
+# pip
+pip install litestar-mcp
+
+# pdm
+pdm add litestar-mcp
+
+# poetry
+poetry add litestar-mcp
 ```
 
-### Basic Usage
+### Optional Extras
+
+`litestar-mcp` keeps its core dependency footprint focused on Litestar. Enable optional integrations by installing the corresponding extra:
+
+| Extra | Install Command | Purpose |
+| :--- | :--- | :--- |
+| `queues` | `uv add "litestar-mcp[queues]"` | Distributed MCP Tasks (`QueueTaskExecutor`), durable DAG workflows (`DurableWorkflowEngine`), and `QueuedAgentChatController` on `litestar-queues>=0.13.0` |
+| `a2a` | `uv add "litestar-mcp[a2a]"` | Official `a2a-sdk` 1.0 plugin (`LitestarA2A`) with JSON-RPC 2.0, `HTTP+JSON` REST bindings, and `agent_to_a2a` bridge |
+| `google-genai` | `uv add "litestar-mcp[google-genai]"` | First-class `GoogleGenAIClient` model adapter (defaults to `gemini-3.8-flash` with thought-signature round-tripping) |
+| `opentelemetry` | `uv add "litestar-mcp[opentelemetry]"` | OpenTelemetry span emission and attribute recording via `TelemetryConfig` |
+
+Combine multiple extras in a single install command when needed:
+
+```bash
+uv add "litestar-mcp[a2a,queues,google-genai,opentelemetry]"
+```
+
+---
+
+## Quickstart
+
+### 1. Expose Existing Litestar Routes (`LitestarMCP` Plugin)
+
+Pass `mcp_tool=True`, `mcp_resource=True`, or `mcp_prompt=True` (or an explicit string name) directly to Litestar route decorators. `LitestarMCP` infers MCP `ToolAnnotations` from the HTTP method (`GET` sets `readOnlyHint=True`, `PUT` sets `idempotentHint=True`, `DELETE` sets `destructiveHint=True`) and strips DI parameters (`Provide`, `FromDishka[T]`, `Request`, `State`, `ToolContext`) from public JSON Schemas while resolving them at invocation time:
 
 ```python
-from litestar import Litestar, get, post
+from litestar import Litestar, delete, get, post
 from litestar.openapi.config import OpenAPIConfig
-from litestar_mcp import LitestarMCP
+from litestar_mcp import LitestarMCP, MCPConfig
 
-# Mark routes for MCP exposure using the opt attribute
+
 @get("/users", mcp_tool="list_users")
-async def get_users() -> list[dict]:
-    """List all users in the system."""
-    return [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]
+async def get_users(limit: int = 20) -> list[dict[str, object]]:
+    """List active users in the workspace."""
+    return [{"id": 1, "name": "Alice", "limit": limit}]
 
-@post("/analyze", mcp_tool=True)
-async def analyze_data(data: dict) -> dict:
-    """Analyze the provided data and return insights."""
-    return {"result": f"Analyzed {len(data)} items"}
+
+@post(
+    "/reports/analyze",
+    mcp_tool=True,
+    mcp_annotations={"title": "Analyze Dataset", "idempotentHint": True},
+)
+async def analyze_data(dataset: str, threshold: float = 0.95) -> dict[str, object]:
+    """Run statistical analysis over a named dataset."""
+    return {"dataset": dataset, "threshold": threshold, "status": "ok"}
+
+
+@delete("/users/{user_id:int}", mcp_tool="remove_user")
+async def delete_user(user_id: int) -> dict[str, object]:
+    """Delete a user account by ID."""
+    return {"deleted": user_id}
+
 
 @get("/config", mcp_resource="app_config")
-async def get_app_config() -> dict:
-    """Get the current application configuration."""
-    return {"debug": True, "version": "1.0.0"}
+async def get_app_config() -> dict[str, object]:
+    """Return read-only application configuration metadata."""
+    return {"environment": "production", "version": "2.0.0"}
 
-# Add the MCP plugin to your Litestar app
+
 app = Litestar(
-    route_handlers=[get_users, analyze_data, get_app_config],
-    plugins=[LitestarMCP()],
-    openapi_config=OpenAPIConfig(title="My API", version="1.0.0"),
+    route_handlers=[get_users, analyze_data, delete_user, get_app_config],
+    plugins=[LitestarMCP(MCPConfig(name="Workspace Service"))],
+    openapi_config=OpenAPIConfig(title="Workspace Service", version="2.0.0"),
 )
 ```
 
-### Standalone Application (Alternative)
+### 2. Standalone Declarative Server (`MCP` Wrapper)
 
-If you are building a standalone MCP server, you can use the ``MCP`` class which provides a simplified declarative API and programmatically boots the server using the standard Litestar CLI:
+When building a dedicated MCP service, use the standalone `MCP` class. Its `@mcp.tool()`, `@mcp.resource()`, and `@mcp.prompt()` decorators accept full Litestar route kwargs (`dependencies`, `guards`, `opt`, DTOs) and expose `mcp.app` for the Litestar CLI:
 
 ```python
 from litestar_mcp import MCP
 
-# 1. Initialize the application
-mcp = MCP("my-mcp-server", instructions="Exposes utility tools.")
+mcp = MCP("math-service", instructions="Provides deterministic arithmetic tools.")
 
-# 2. Register tools, resources, or prompts using decorators
+
 @mcp.tool()
 def add(a: int, b: int) -> int:
-    """Calculate the sum of two integers."""
+    """Return the sum of two integers."""
     return a + b
 
-# 3. Expose the app globally so that the CLI can discover it
+
+@mcp.resource("config://limits", name="service_limits")
+def limits() -> dict[str, int]:
+    """Return service rate and payload limits."""
+    return {"max_batch": 100}
+
+
 app = mcp.app
 
 if __name__ == "__main__":
-    # 4. Boot the modern Streamable HTTP server
     mcp.run(port=8000)
 ```
 
-The standalone decorators accept Litestar route-handler keyword arguments such as `dependencies`, `guards`, `response_headers`, `responses`, `summary`, `tags`, DTO options, hooks, and arbitrary extra kwargs stored in `handler.opt`. The `name` keyword names the MCP primitive; use `route_name` to set Litestar's route-handler name separately.
+### 3. Dual-Version Stateless Streamable HTTP & CLI
 
-### With Configuration
-
-```python
-from litestar_mcp import LitestarMCP, MCPConfig
-
-config = MCPConfig(
-    base_path="/api/mcp",  # Change the base path
-    name="Custom Server Name",  # Override server name
-    include_in_schema=True,  # Include MCP routes in OpenAPI schema
-)
-
-app = Litestar(
-    route_handlers=[get_users, analyze_data, get_app_config],
-    plugins=[LitestarMCP(config)],
-    openapi_config=OpenAPIConfig(title="My API", version="1.0.0"),
-)
-```
-
-## Resources vs Tools: When to Use Each
-
-### Use Resources (`mcp_resource`) for
-
-- **Read-only data** that AI models need to reference
-- **Static or semi-static information** like documentation, schemas, configurations
-- **Data that doesn't require parameters** to retrieve
-- **Reference material** that AI models should "know about"
-
-**Examples:**
-
-```python
-@get("/schema", mcp_resource="database_schema")
-async def get_schema() -> dict:
-    """Database schema information."""
-    return {"tables": ["users", "orders"], "relationships": [...]}
-
-@get("/docs", mcp_resource="api_docs")
-async def get_documentation() -> dict:
-    """API documentation and usage examples."""
-    return {"endpoints": [...], "examples": [...]}
-```
-
-### Use Tools (`mcp_tool`) for
-
-- **Actions that perform operations** or mutations
-- **Dynamic queries** that need input parameters
-- **Operations that change state** in your application
-- **Computations or data processing** tasks
-
-**Examples:**
-
-```python
-@post("/users", mcp_tool=True)
-async def create_user(user_data: dict) -> dict:
-    """Create a new user account."""
-    # Perform user creation logic
-    return {"id": 123, "created": True}
-
-@get("/search", mcp_tool="search_data")
-async def search(query: str, limit: int = 10) -> dict:
-    """Search through application data."""
-    # Perform search with parameters
-    return {"results": [...], "total": 42}
-```
-
-## How It Works
-
-1. **Route Discovery**: At app initialization, the plugin scans all route handlers for the `opt` attribute
-2. **Automatic Exposure**: Routes marked with `mcp_tool` or `mcp_resource` are automatically exposed
-3. **MCP Transport**: The plugin adds a Streamable HTTP MCP endpoint under the configured base path (default `/mcp`)
-4. **Server Info**: Server name and version are derived from your OpenAPI configuration
-
-## MCP Endpoints
-
-Once configured, your application exposes these MCP-compatible endpoints:
-
-- `POST /mcp` - stateless MCP `2026-07-28` JSON-RPC and subscription streams
-- `litestar --app my_app:app mcp stdio` - in-process stdio for desktop clients
-- `litestar mcp bridge` - stdio proxy to a running Streamable HTTP server
-
-Install `litestar-mcp[a2a]` to mount an official A2A SDK request handler and
-agent card independently of MCP. The adapter accepts A2A 1.0 JSON-RPC requests
-with `A2A-Version: 1.0`; it rejects missing/legacy versions and offers no 0.3
-conversion, gRPC or REST binding. Applications supply authentication, durable
-stores, executor resource scopes, worker coordination and push delivery policy.
-See the [A2A guide](https://cofin.github.io/litestar-mcp/latest/usage/a2a.html).
-
-Use `server/discover` instead of an initialize handshake:
+A single `/mcp` endpoint negotiates both MCP `2026-07-28` (`server/discover` with SEP-2575 `MCP-Protocol-Version` and `Mcp-Method` headers) and MCP `2025-06-18` / `2025-03-26` (`initialize`, `notifications/initialized`, `ping`, `202 Accepted` notifications, and `204 No Content` on `DELETE /mcp`):
 
 ```bash
-curl -X POST http://127.0.0.1:8000/mcp \
+# MCP 2026-07-28 stateless discovery
+curl -sX POST http://127.0.0.1:8000/mcp \
   -H 'Content-Type: application/json' \
   -H 'MCP-Protocol-Version: 2026-07-28' \
   -H 'Mcp-Method: server/discover' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/clientInfo":{"name":"curl","version":"1"}}}}'
+  -d '{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
+
+# MCP 2025-06-18 initialize handshake
+curl -sX POST http://127.0.0.1:8000/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'MCP-Protocol-Version: 2025-06-18' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}'
 ```
 
-Every request is independent. There are no protocol sessions, sticky-routing
-headers, GET/DELETE transport handlers, or SSE replay.
+For local desktop hosts and CI pipelines, `litestar-mcp` registers subcommands under `litestar mcp`:
 
-MCP IDs must be strings or finite integer-valued numbers. Missing, null,
-boolean, container or fractional IDs fail before tool execution or stream
-allocation. Progress streams apply bounded backpressure; slow subscription
-consumers are completed and disconnected. Shared task Stores persist records
-but do not distribute task execution or local input/cancel queues.
+```bash
+# Serve the application over stdin/stdout in-process with full Litestar lifespan
+litestar --app my_app:app mcp stdio
 
-See the [0.14 migration guide](https://cofin.github.io/litestar-mcp/latest/usage/migration_0_14.html)
-for removed aliases and configuration.
+# Bridge local stdio to a remote Streamable HTTP deployment
+litestar mcp bridge --base-url https://api.example.com --endpoint /mcp
 
-**Built-in Resources:**
+# Export static {"tools": [...]} JSON schemas without booting an HTTP server
+litestar --app my_app:app mcp export-tool-spec --indent 2
+```
 
-- `litestar://openapi` - Your application's OpenAPI schema (always available via `resources/read`)
+### 4. Distributed MCP Tasks & Durable Workflows (`litestar-queues`)
 
-## Configuration
-
-Every option has a default, so `LitestarMCP()` needs no configuration. Pass an `MCPConfig` only to change one:
-
-**Configuration Options:**
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `base_path` | `str` | `"/mcp"` | Base path for the MCP Streamable HTTP endpoint |
-| `include_in_schema` | `bool` | `False` | Whether to include MCP routes in OpenAPI schema |
-| `name` | `str \| None` | `None` | Override server name. If None, uses OpenAPI title |
-| `instructions` | `str \| None` | `None` | Server instructions returned to clients from `server/discover` |
-| `guards` | `list[Any] \| None` | `None` | Litestar guards applied to the MCP router |
-| `route_opt` | `dict[str, Any] \| None` | `None` | Route metadata merged onto the MCP handler, including litestar-security policies |
-| `allowed_origins` | `list[str] \| None` | `None` | Exact additional Origins; present Origins must be same-origin or allowlisted |
-| `include_operations` | `list[str] \| None` | `None` | Only expose matching operation names |
-| `exclude_operations` | `list[str] \| None` | `None` | Exclude matching operation names |
-| `include_tags` | `list[str] \| None` | `None` | Only expose routes with matching OpenAPI tags |
-| `exclude_tags` | `list[str] \| None` | `None` | Exclude routes with matching OpenAPI tags |
-| `tasks` | `bool \| MCPTaskConfig` | `False` | Enable the `io.modelcontextprotocol/tasks` extension |
-| `skills` | `MCPSkillsConfig \| None` | `None` | Serve Agent Skills over MCP from configured directories and/or dynamic `SkillSource` providers |
-| `opt_keys` | `MCPOptKeys` | `MCPOptKeys()` | Rename the `handler.opt` keys the plugin reads (`mcp_tool`, `mcp_resource`, ...) |
-| `list_page_size` | `int` | `100` | Page size for `tools/list`, `resources/list`, `resources/templates/list`, `skills/list`, `prompts/list`, and `resources/directory/read` |
-| `cache_ttl_ms` | `int` | `0` | Conservative cache lifetime for discovery/list/resource results |
-| `cache_scope` | `"private" \| "public"` | `"private"` | Cache sharing policy |
-| `subscription_max_streams` | `int` | `10000` | Maximum concurrent `subscriptions/listen` streams |
-| `subscription_keepalive_seconds` | `float` | `15.0` | Subscription keepalive interval |
-| `subscription_channels` | `ChannelsPlugin \| None` | `None` | Optional cross-worker notification fan-out |
-| `stream_queue_capacity` | `int` | `256` | Bounded subscription and request-progress queues |
-| `stream_cleanup_timeout` | `float` | `5.0` | Deadline for cooperative response cleanup; expiry is logged |
-| `max_blob_bytes` | `int \| None` | `26214400` | Maximum raw byte length for base64-embedded blobs; `None` disables the cap |
-| `before_tool_call` | `BeforeToolCallHook \| None` | `None` | Observe each `tools/call` before dispatch |
-| `after_tool_call` | `AfterToolCallHook \| None` | `None` | Observe each `tools/call` result, exception, and duration |
-
-## Complete Example
+Pair `LitestarMCP` with `QueuePlugin` from `litestar-queues` to execute long-running `io.modelcontextprotocol/tasks` and durable DAG workflows across worker processes. `QueueTaskExecutor` snapshots `request.user`, `request.auth`, and `litestar-security` `SecurityContext` at submission time, rehydrates the internal HTTP scope and Dishka `Scope.REQUEST` container on the worker, and supports cooperative cancellation plus multi-round `MCPInputRequiredResult` resume across replicas:
 
 ```python
-from litestar import Litestar, get, post, delete
-from litestar.openapi.config import OpenAPIConfig
-from litestar_mcp import LitestarMCP
+from litestar import Litestar, post
+from litestar.stores.memory import MemoryStore
+from litestar.stores.registry import StoreRegistry
+from litestar_queues import QueueConfig, QueuePlugin
 
-# Resources - read-only reference data
-@get("/users/schema", mcp_resource="user_schema")
-async def get_user_schema() -> dict:
-    """User data model schema."""
-    return {
-        "type": "object",
-        "properties": {
-            "id": {"type": "integer"},
-            "name": {"type": "string"},
-            "email": {"type": "string"}
-        }
-    }
+from litestar_mcp import LitestarMCP, MCPConfig, MCPTaskConfig
+from litestar_mcp.agent import DynamicWorkflow, WorkflowContext
+from litestar_mcp.queues import DurableWorkflowEngine, QueueTaskExecutor
 
-@get("/api/info", mcp_resource="api_info")
-async def get_api_info() -> dict:
-    """API capabilities and information."""
-    return {
-        "version": "2.0.0",
-        "features": ["user_management", "data_analysis"],
-        "rate_limits": {"requests_per_minute": 1000}
-    }
 
-# Tools - actionable operations
-@get("/users", mcp_tool=True)
-async def list_users(limit: int = 10) -> dict:
-    """List users with optional limit."""
-    # Fetch users from database
-    return {"users": [{"id": 1, "name": "Alice"}], "total": 1}
+@post("/backfill", mcp_tool="run_backfill", mcp_task=True)
+async def run_backfill(batch_size: int = 500) -> dict[str, object]:
+    """Execute a background backfill task on a litestar-queues worker."""
+    return {"processed": batch_size, "status": "completed"}
 
-@post("/users", mcp_tool=True)
-async def create_user(user_data: dict) -> dict:
-    """Create a new user account."""
-    # Create user logic
-    return {"id": 123, "created": True, "user": user_data}
 
-@post("/analyze", mcp_tool=True)
-async def analyze_dataset(config: dict) -> dict:
-    """Analyze data with custom configuration."""
-    # Analysis logic
-    return {"insights": [...], "metrics": {...}}
+async def extract_step(ctx: WorkflowContext) -> dict[str, object]:
+    """Extract source records for the workflow run."""
+    return {"rows": 250}
 
-# Regular routes (not exposed to MCP)
-@get("/health")
-async def health_check() -> dict:
-    return {"status": "healthy"}
 
-# Create Litestar app
+pipeline = DynamicWorkflow("etl_pipeline")
+pipeline.add_node("extract", handler=extract_step)
+
+queue_plugin = QueuePlugin(QueueConfig(backend="memory"))
+task_executor = QueueTaskExecutor(queue="mcp", timeout=3600)
+workflow_engine = DurableWorkflowEngine([pipeline])
+
 app = Litestar(
-    route_handlers=[
-        get_user_schema, get_api_info,  # Resources
-        list_users, create_user, analyze_dataset,  # Tools
-        health_check  # Regular route
+    route_handlers=[run_backfill],
+    plugins=[
+        queue_plugin,
+        workflow_engine,
+        LitestarMCP(
+            MCPConfig(
+                tasks=MCPTaskConfig(executor=task_executor),
+            )
+        ),
     ],
-    plugins=[LitestarMCP()],
-    openapi_config=OpenAPIConfig(
-        title="User Management API",
-        version="2.0.0"
+    stores=StoreRegistry(
+        stores={
+            "litestar_mcp_tasks": MemoryStore(),
+            "litestar_mcp_workflows": MemoryStore(),
+        }
     ),
 )
 ```
 
-## Authentication
+### 5. Multi-Agent Runtime & `GoogleGenAIClient`
 
-Authentication is a **Litestar middleware** concern. Apps with an existing auth
-middleware get MCP authentication for free — `request.user` and `request.auth`
-are populated before tool handlers run. Three integration paths:
-
-### Path A — Bring Your Own Middleware
-
-If your Litestar app already ships an `AbstractAuthenticationMiddleware` (or
-Litestar's built-in JWT backends), MCP inherits it automatically:
+Orchestrate single agents or hierarchical `AgentGroup` coordinator-specialist trees under `AgentRuntime` with strict `TurnBudget` guardrails (`max_turns`, `max_tool_calls`, `timeout_seconds`) and `GoogleGenAIClient` (defaulting to `gemini-3.8-flash` with thought-signature round-tripping):
 
 ```python
 from litestar import Litestar
-from litestar.middleware import DefineMiddleware
-from litestar_mcp import LitestarMCP
-
-app = Litestar(
-    route_handlers=[...],
-    plugins=[LitestarMCP()],
-    middleware=[DefineMiddleware(YourAuthMiddleware)],  # MCP gets this for free
+from litestar_mcp.agent import (
+    Agent,
+    AgentChatController,
+    AgentRuntime,
+    GoogleGenAIClient,
+    MemorySessionStore,
+    TurnBudget,
 )
+from litestar_mcp.core.tools import tool
+
+
+@tool
+def lookup_order(order_id: str) -> dict[str, str]:
+    """Look up order shipment status by ID."""
+    return {"order_id": order_id, "status": "in_transit"}
+
+
+support_agent = Agent(
+    name="support",
+    description="Answers customer order inquiries.",
+    instructions="Use lookup_order to verify shipment status before replying.",
+    tools=[lookup_order],
+)
+
+runtime = AgentRuntime(
+    support_agent,
+    default_model=GoogleGenAIClient(),
+    sessions=MemorySessionStore(),
+    budget=TurnBudget(max_turns=6, max_tool_calls=8, timeout_seconds=30.0),
+)
+
+app = Litestar(route_handlers=[AgentChatController], plugins=[runtime])
 ```
 
-See `docs/examples/notes/sqlspec/google_iap.py` for a runnable example.
+### 6. Official A2A 1.0 JSON-RPC + `HTTP+JSON` REST (`LitestarA2A`)
 
-### litestar-security
+Mount `LitestarA2A` (or use the `agent_to_a2a` bridge) to expose an `Agent` or official `a2a-sdk` `AgentExecutor` over A2A 1.0 JSON-RPC 2.0 (`POST /a2a`), native A2A 1.0 `HTTP+JSON` REST routes (`/a2a/message:send`, `/a2a/message:stream`, `/a2a/tasks/{id}:cancel`, `/a2a/tasks/{id}:subscribe`), and `GET /.well-known/agent-card.json` with optional `/{tenant:str}` path and `X-A2A-Tenant` header multi-tenancy:
 
-Use litestar-security for policy evaluation and RFC 9728 protected-resource metadata. Pass route policy metadata with `MCPConfig(route_opt={"auth": required("api-key")})`; evaluator failures can emit the required `WWW-Authenticate` resource metadata.
+```python
+from litestar import Litestar
+from litestar_mcp.agent import agent_to_a2a
 
-### In-process stdio
+a2a_plugin = agent_to_a2a(
+    support_agent,
+    path="/a2a",
+    base_url="https://agents.example.com",
+    runtime=runtime,
+)
 
-Run `litestar --app my_app:app mcp stdio` to serve the application in-process to a desktop MCP client. Use `mcp bridge` when the MCP server is already running over Streamable HTTP.
+app = Litestar(plugins=[runtime, a2a_plugin])
+```
 
-Stdio uses native `Litestar.lifespan()`. Its `shutdown_timeout` bounds request
-cleanup and shutdown after startup completes; application hooks own bounded,
-cancellation-safe startup rollback. `MCPStdioContext.session` remains an
-application session. Provide a verified identity for protected tasks;
-anonymous stdio requests have no owner ID.
+---
 
-## Development
+## Single-File Reference Examples (`uv run` & `uvx`)
+
+The repository ships a 10-variant Notes reference application under [`docs/examples/notes/`](https://cofin.github.io/litestar-mcp/architecture/reference-examples/) comparing **SQLSpec** and **Advanced Alchemy** across **Litestar `Provide`** and **Dishka `FromDishka[T]`** dependency injection and four authentication tiers (`no-auth`, `JWT`, `Cloud Run`, and Google `IAP`). Every variant embeds a PEP 723 script block so `uv run` provisions dependencies automatically:
 
 ```bash
-# Clone the repository
+uv run docs/examples/notes/sqlspec/no_auth.py
+uv run docs/examples/notes/sqlspec/jwt_auth_dishka.py
+uv run docs/examples/notes/sqlspec/google_iap.py
+uv run docs/examples/notes/advanced_alchemy/no_auth.py
+```
+
+See the [Single-File `uvx` & PEP 723 Guide](https://cofin.github.io/litestar-mcp/architecture/uvx-and-pep723/) for remote GitHub URL execution and `uvx` commands.
+
+---
+
+## Documentation
+
+Full documentation, interactive architecture diagrams, and API reference are published at **[https://cofin.github.io/litestar-mcp/](https://cofin.github.io/litestar-mcp/)**:
+
+- [**Getting Started**](https://cofin.github.io/litestar-mcp/getting-started/) — Installation, optional extras, 5-minute quickstart, standalone `MCP` servers, and core concepts
+- [**Architecture & Examples**](https://cofin.github.io/litestar-mcp/architecture/) — Interactive system diagrams, Notes reference matrix, and single-file PEP 723 guide
+- [**MCP Core**](https://cofin.github.io/litestar-mcp/learn/) — `MCPConfig`, route markers, `ToolAnnotations`, resources, prompts, Agent Skills (`SEP-2640`), discovery, stdio, and bridge
+- [**Tasks, Queues & Workflows**](https://cofin.github.io/litestar-mcp/queues/) — `io.modelcontextprotocol/tasks`, `QueueTaskExecutor`, `DurableWorkflowEngine`, `QueuedAgentChatController`, and multi-replica deployment
+- [**Agents & A2A**](https://cofin.github.io/litestar-mcp/agents/) — `AgentRuntime`, `TurnBudget`, `GoogleGenAIClient`, `AgentGroup`, protocol bridges, `LitestarA2A`, and multi-tenancy
+- [**Security & Operations**](https://cofin.github.io/litestar-mcp/security/) — Authentication middleware, `litestar-security` & RFC 9728 metadata, authorization guards/scopes, OpenTelemetry, and migration guides
+- [**API Reference & CLI**](https://cofin.github.io/litestar-mcp/reference/) — Curated API reference, `litestar mcp` CLI reference, contributor guide, and [Changelog](https://cofin.github.io/litestar-mcp/changelog/)
+
+---
+
+## Development & Conformance
+
+```bash
 git clone https://github.com/cofin/litestar-mcp.git
 cd litestar-mcp
 
-# Install with development dependencies
+# Create the virtual environment with all extras and dev groups
 make install
 
-# Run the complete Python quality gate
-make check-all
+# Run linters, type checkers (mypy + pyright), slotscheck, and unit/example tests
+make lint
+make test
 
-# Run the pinned MCP 2026-07-28 conformance suite
+# Run the pinned MCP 2026-07-28 conformance suite (in-process and queue executors)
 make conformance
+make conformance-queue
 
-# Build strict documentation and validate examples
-make docs
-make validate-examples validate-uvx validate-pep723
-
-# Run example
-uv run python docs/examples/hello_world/main.py
+# Run the documentation verification pipeline (docstring AST scan, CLI check, build, artifact verification)
+make docs-check
 ```
 
-The conformance target owns Node.js `24.18.1` through `NODE_VERSION` in the
-Makefile. When [nodenv](https://github.com/nodenv/nodenv) is available, the
-target selects that version with `NODENV_VERSION`; otherwise it uses the
-active `node`/`npm` installation. A local `.node-version` is ignored so
-contributors can use nodenv without changing repository state.
-
-The conformance runner reports passed, waived and failed scenarios separately.
-Its pinned alpha validator has documented task-extension schema waivers in
-`tools/ci/run_mcp_conformance.py`; `MCP_CONFORMANCE_STRICT=1` disables those
-waivers. A waived check is not a protocol pass.
+See the [Contributing Guide](https://cofin.github.io/litestar-mcp/reference/contributing/) for full development workflow details.
 
 ## License
 
 MIT License. See [LICENSE](LICENSE) for details.
-
-## Contributing
-
-Contributions welcome! Please see our [contribution guide](docs/contribution-guide.rst) for details.

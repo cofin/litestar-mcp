@@ -18,7 +18,6 @@ __all__ = [
     "CliParamDoc",
     "main",
     "render_cli_markdown",
-    "render_cli_reference",
     "write_cli_docs",
 ]
 
@@ -115,11 +114,6 @@ def render_cli_markdown() -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def render_cli_reference() -> str:
-    """Alias for `render_cli_markdown`."""
-    return render_cli_markdown()
-
-
 def write_cli_docs(output_path: Path = DEFAULT_OUTPUT) -> Path:
     """Render and write the CLI reference Markdown file to disk.
 
@@ -149,9 +143,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--check", action="store_true", help="Verify output matches on-disk file without writing.")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
-    rendered = render_cli_markdown()
     output_path: Path = args.output
     if args.check:
+        rendered = render_cli_markdown()
         if not output_path.exists():
             sys.stderr.write(f"Missing generated CLI reference: {output_path}\n")
             return 1
@@ -163,8 +157,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         return 0
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(rendered, encoding="utf-8")
+    write_cli_docs(output_path)
     return 0
 
 

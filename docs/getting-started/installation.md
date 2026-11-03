@@ -42,10 +42,10 @@ The base package includes `LitestarMCP`, the standalone `MCP` application wrappe
 
 | Extra | Package Specifier | Unlocked Modules & Classes | Underlying Dependencies |
 | :--- | :--- | :--- | :--- |
-| **`queues`** | `litestar-mcp[queues]` | `litestar_mcp.queues` (`QueueTaskExecutor`, `DurableWorkflowEngine`, `WorkflowStore`, `TaskDependencyChain`, `QueuedAgentChatController`, `QueuedTurnManager`, `PrincipalSnapshot`) | `litestar-queues>=0.2.0` |
-| **`a2a`** | `litestar-mcp[a2a]` | `litestar_mcp.a2a` (`LitestarA2A`, `A2AConfig`) and `agent_to_a2a` bridge | `a2a-sdk>=1.0.0a1` |
-| **`google-genai`** | `litestar-mcp[google-genai]` | `GoogleGenAIClient` (default model `gemini-3.8-flash` with Gemini 3/2.5 thought-signature preservation) | `google-genai>=1.0.0` |
-| **`opentelemetry`** | `litestar-mcp[opentelemetry]` | OpenTelemetry span and metric emission via `TelemetryConfig` (`litestar_mcp.core.telemetry`) | `opentelemetry-api>=1.20.0` |
+| **`queues`** | `litestar-mcp[queues]` | `litestar_mcp.queues` (`QueueTaskExecutor`, `DurableWorkflowEngine`, `WorkflowStore`, `TaskDependencyChain`, `QueuedAgentChatController`, `QueuedTurnManager`, `PrincipalSnapshot`) | `litestar-queues>=0.13.0` |
+| **`a2a`** | `litestar-mcp[a2a]` | `litestar_mcp.a2a` (`LitestarA2A`, `A2AConfig`) and `agent_to_a2a` bridge | `a2a-sdk>=1.1.4` |
+| **`google-genai`** | `litestar-mcp[google-genai]` | `GoogleGenAIClient` (default model `gemini-3.8-flash` with Gemini 3/2.5 thought-signature preservation) | `google-genai>=2.29.0` |
+| **`opentelemetry`** | `litestar-mcp[opentelemetry]` | OpenTelemetry span and metric emission via `TelemetryConfig` (`litestar_mcp.core.observability`) | `opentelemetry-api>=1.20.0` |
 | **`all`** | `litestar-mcp[all]` | All optional integrations (`queues`, `a2a`, `google-genai`, `opentelemetry`) | Union of all extras above |
 
 ---
