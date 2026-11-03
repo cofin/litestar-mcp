@@ -1,0 +1,170 @@
+<div class="lm-diagram lm-diag lm-diag--agents">
+  <style>
+    .lm-diag--agents {
+      --lm-a-surface: var(--md-default-bg-color, #ffffff);
+      --lm-a-card: var(--md-code-bg-color, #f8fafc);
+      --lm-a-border: rgba(148, 163, 184, 0.35);
+      --lm-a-text: var(--md-default-fg-color, #0f172a);
+      --lm-a-muted: var(--md-default-fg-color--light, #475569);
+      --lm-a-blue: #2563eb;
+      --lm-a-amber: #d97706;
+      --lm-a-emerald: #059669;
+      --lm-a-violet: #7c3aed;
+      --lm-a-rose: #e11d48;
+      background: var(--lm-a-surface);
+      border: 1px solid var(--lm-a-border);
+      border-radius: 0.75rem;
+      padding: 1rem;
+      margin: 1.5rem 0;
+    }
+    [data-md-color-scheme="slate"] .lm-diag--agents {
+      --lm-a-surface: #121521;
+      --lm-a-card: #171b2a;
+      --lm-a-border: rgba(148, 163, 184, 0.24);
+      --lm-a-blue: #60a5fa;
+      --lm-a-amber: #fbbf24;
+      --lm-a-emerald: #34d399;
+      --lm-a-violet: #a78bfa;
+      --lm-a-rose: #fb7185;
+    }
+    .lm-diag--agents input[type="radio"] {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+    #lm-ag-runtime:checked ~ .lm-diag-tabs label[for="lm-ag-runtime"],
+    #lm-ag-bridges:checked ~ .lm-diag-tabs label[for="lm-ag-bridges"] {
+      border-color: var(--lm-a-blue);
+      background: rgba(37, 99, 235, 0.14);
+      color: var(--lm-a-blue);
+    }
+    .lm-diag--agents .lm-ag-panel {
+      display: none;
+    }
+    #lm-ag-runtime:checked ~ .lm-ag-panels .lm-panel-runtime,
+    #lm-ag-bridges:checked ~ .lm-ag-panels .lm-panel-bridges {
+      display: block;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .lm-diag--agents .lm-flow-forward,
+      .lm-diag--agents .lm-flow-reverse,
+      .lm-diag--agents .lm-flow-slow,
+      .lm-diag--agents .lm-pulse {
+        animation: none !important;
+      }
+    }
+  </style>
+
+  <input type="radio" name="lm-agent-mode" id="lm-ag-runtime" checked />
+  <input type="radio" name="lm-agent-mode" id="lm-ag-bridges" />
+
+  <div class="lm-diag-tabs" role="tablist" aria-label="Agent Runtime and Protocol Bridges">
+    <label class="lm-diag-tab" for="lm-ag-runtime">AgentGroup, AgentRuntime &amp; SSE Sessions</label>
+    <label class="lm-diag-tab" for="lm-ag-bridges">Bidirectional Protocol Bridges (MCP &amp; A2A)</label>
+  </div>
+
+  <div class="lm-ag-panels">
+    <div class="lm-ag-panel lm-panel-runtime">
+      <svg viewBox="0 0 920 290" role="img" aria-labelledby="lm-ag-rt-title lm-ag-rt-desc">
+        <title id="lm-ag-rt-title">AgentGroup, AgentRuntime, TurnBudget, and Owner-Scoped Sessions</title>
+        <desc id="lm-ag-rt-desc">AgentChatController and QueuedAgentChatController stream SSE turns through AgentRuntime, enforcing TurnBudget limits, calling GoogleGenAIClient (gemini-3.8-flash), executing non-mutating AgentGroup handoffs via transfer_to_agent, and persisting history in owner-scoped SessionStore.</desc>
+
+        <rect x="16" y="24" width="194" height="168" rx="10" fill="var(--lm-a-card)" stroke="var(--lm-a-blue)" stroke-width="2" />
+        <circle class="lm-pulse" cx="34" cy="44" r="5" fill="var(--lm-a-blue)" />
+        <text x="113" y="48" text-anchor="middle" fill="var(--lm-a-text)" font-size="13" font-weight="700">Chat &amp; Queue Controllers</text>
+        <text x="113" y="72" text-anchor="middle" fill="var(--lm-a-blue)" font-size="11" font-family="monospace">AgentChatController</text>
+        <text x="113" y="92" text-anchor="middle" fill="var(--lm-a-blue)" font-size="10" font-family="monospace">QueuedAgentChatController</text>
+        <text x="113" y="114" text-anchor="middle" fill="var(--lm-a-muted)" font-size="10">POST /chat/stream (SSE)</text>
+        <text x="113" y="132" text-anchor="middle" fill="var(--lm-a-muted)" font-size="10">Owner-Scoped SessionStore</text>
+        <text x="113" y="150" text-anchor="middle" fill="var(--lm-a-muted)" font-size="10">Memory / LitestarStore</text>
+        <text x="113" y="170" text-anchor="middle" fill="var(--lm-a-emerald)" font-size="10" font-family="monospace">Streams StreamChunk deltas</text>
+
+        <line class="lm-flow-forward" x1="210" y1="92" x2="256" y2="92" stroke="var(--lm-a-blue)" stroke-width="2.5" />
+        <line class="lm-flow-reverse" x1="210" y1="124" x2="256" y2="124" stroke="var(--lm-a-emerald)" stroke-width="2" />
+
+        <rect x="256" y="24" width="204" height="168" rx="10" fill="var(--lm-a-card)" stroke="var(--lm-a-amber)" stroke-width="2" />
+        <text x="358" y="48" text-anchor="middle" fill="var(--lm-a-text)" font-size="13" font-weight="700">AgentRuntime Plugin</text>
+        <text x="358" y="72" text-anchor="middle" fill="var(--lm-a-amber)" font-size="11" font-family="monospace">TurnBudget Enforcement</text>
+        <text x="358" y="94" text-anchor="middle" fill="var(--lm-a-muted)" font-size="10">max_steps • max_tool_calls</text>
+        <text x="358" y="112" text-anchor="middle" fill="var(--lm-a-muted)" font-size="10">max_tokens • max_duration_s</text>
+        <text x="358" y="130" text-anchor="middle" fill="var(--lm-a-muted)" font-size="10">Parallel tool call fan-out</text>
+        <text x="358" y="148" text-anchor="middle" fill="var(--lm-a-muted)" font-size="10">Dishka &amp; Litestar DI resolution</text>
+        <text x="358" y="170" text-anchor="middle" fill="var(--lm-a-amber)" font-size="10" font-family="monospace">TelemetryConfig GenAI Spans</text>
+
+        <line class="lm-flow-forward" x1="460" y1="92" x2="504" y2="92" stroke="var(--lm-a-amber)" stroke-width="2.5" />
+        <line class="lm-flow-reverse" x1="460" y1="124" x2="504" y2="124" stroke="var(--lm-a-violet)" stroke-width="2" />
+
+        <rect x="504" y="24" width="196" height="168" rx="10" fill="var(--lm-a-card)" stroke="var(--lm-a-violet)" stroke-width="2" />
+        <circle class="lm-pulse" cx="522" cy="44" r="5" fill="var(--lm-a-violet)" />
+        <text x="602" y="48" text-anchor="middle" fill="var(--lm-a-text)" font-size="13" font-weight="700">AgentGroup Handoffs</text>
+        <text x="602" y="72" text-anchor="middle" fill="var(--lm-a-violet)" font-size="11" font-family="monospace">Coordinator &amp; Specialists</text>
+        <text x="602" y="94" text-anchor="middle" fill="var(--lm-a-muted)" font-size="10">Synthetic transfer_to_&lt;agent&gt;</text>
+        <text x="602" y="112" text-anchor="middle" fill="var(--lm-a-muted)" font-size="10">Non-mutating member toolsets</text>
+        <text x="602" y="130" text-anchor="middle" fill="var(--lm-a-muted)" font-size="10">max_handoffs cycle guard</text>
+        <text x="602" y="148" text-anchor="middle" fill="var(--lm-a-muted)" font-size="10">Preserves conversation history</text>
+        <text x="602" y="170" text-anchor="middle" fill="var(--lm-a-violet)" font-size="10" font-family="monospace">Tracks active_agent in session</text>
+
+        <line class="lm-flow-forward" x1="700" y1="92" x2="742" y2="92" stroke="var(--lm-a-violet)" stroke-width="2.5" />
+        <line class="lm-flow-reverse" x1="700" y1="124" x2="742" y2="124" stroke="var(--lm-a-emerald)" stroke-width="2" />
+
+        <rect x="742" y="24" width="162" height="168" rx="10" fill="var(--lm-a-card)" stroke="var(--lm-a-emerald)" stroke-width="2" />
+        <text x="823" y="48" text-anchor="middle" fill="var(--lm-a-text)" font-size="13" font-weight="700">ModelClient</text>
+        <text x="823" y="72" text-anchor="middle" fill="var(--lm-a-emerald)" font-size="11" font-family="monospace">GoogleGenAIClient</text>
+        <text x="823" y="94" text-anchor="middle" fill="var(--lm-a-muted)" font-size="10">Default: gemini-3.8-flash</text>
+        <text x="823" y="112" text-anchor="middle" fill="var(--lm-a-muted)" font-size="10">Preserves thought_signature</text>
+        <text x="823" y="130" text-anchor="middle" fill="var(--lm-a-muted)" font-size="10">generate() &amp; stream()</text>
+        <text x="823" y="148" text-anchor="middle" fill="var(--lm-a-muted)" font-size="10">Structured output_schema</text>
+        <text x="823" y="170" text-anchor="middle" fill="var(--lm-a-emerald)" font-size="10" font-family="monospace">Custom ModelClient protocol</text>
+
+        <rect x="16" y="212" width="888" height="58" rx="8" fill="var(--lm-a-card)" stroke="var(--lm-a-border)" stroke-width="1.5" />
+        <text x="460" y="234" text-anchor="middle" fill="var(--lm-a-text)" font-size="12" font-weight="700">Bidirectional Protocol Bridges</text>
+        <text x="460" y="254" text-anchor="middle" fill="var(--lm-a-muted)" font-size="11" font-family="monospace">agent_to_mcp(agent) • mcp_to_tools(app) • discover_mcp_tools(client) • agent_to_a2a(agent_or_group)</text>
+      </svg>
+    </div>
+
+    <div class="lm-ag-panel lm-panel-bridges">
+      <svg viewBox="0 0 920 290" role="img" aria-labelledby="lm-ag-br-title lm-ag-br-desc">
+        <title id="lm-ag-br-title">Bidirectional Protocol Bridges Between Agent, MCP, and A2A 1.0</title>
+        <desc id="lm-ag-br-desc">Four zero-boilerplate bridges connect Agent and AgentGroup instances to MCP tools/call, remote MCP Client discovery, and A2A 1.0 LitestarA2A executors.</desc>
+
+        <rect x="16" y="30" width="250" height="160" rx="12" fill="var(--lm-a-card)" stroke="var(--lm-a-blue)" stroke-width="2" />
+        <text x="141" y="56" text-anchor="middle" fill="var(--lm-a-text)" font-size="14" font-weight="700">MCP Primitives &amp; Clients</text>
+        <text x="141" y="80" text-anchor="middle" fill="var(--lm-a-blue)" font-size="11" font-family="monospace">LitestarMCP / MCPClient</text>
+        <text x="141" y="104" text-anchor="middle" fill="var(--lm-a-muted)" font-size="10">Local marked routes (@get/@post)</text>
+        <text x="141" y="122" text-anchor="middle" fill="var(--lm-a-muted)" font-size="10">Remote Streamable HTTP servers</text>
+        <text x="141" y="140" text-anchor="middle" fill="var(--lm-a-muted)" font-size="10">Exposed as callable MCP tools</text>
+        <text x="141" y="164" text-anchor="middle" fill="var(--lm-a-blue)" font-size="10" font-family="monospace">tools/list &amp; tools/call</text>
+
+        <line class="lm-flow-forward" x1="266" y1="86" x2="340" y2="86" stroke="var(--lm-a-blue)" stroke-width="2.5" />
+        <text x="303" y="76" text-anchor="middle" fill="var(--lm-a-blue)" font-size="9" font-family="monospace">mcp_to_tools</text>
+        <line class="lm-flow-reverse" x1="266" y1="136" x2="340" y2="136" stroke="var(--lm-a-amber)" stroke-width="2.5" />
+        <text x="303" y="152" text-anchor="middle" fill="var(--lm-a-amber)" font-size="9" font-family="monospace">agent_to_mcp</text>
+
+        <rect x="340" y="30" width="240" height="160" rx="12" fill="var(--lm-a-card)" stroke="var(--lm-a-amber)" stroke-width="2" />
+        <circle class="lm-pulse" cx="360" cy="52" r="5" fill="var(--lm-a-amber)" />
+        <text x="460" y="56" text-anchor="middle" fill="var(--lm-a-text)" font-size="14" font-weight="700">Agent / AgentGroup</text>
+        <text x="460" y="80" text-anchor="middle" fill="var(--lm-a-amber)" font-size="11" font-family="monospace">litestar_mcp.agent</text>
+        <text x="460" y="104" text-anchor="middle" fill="var(--lm-a-muted)" font-size="10">Unified Tool(name, schema, fn)</text>
+        <text x="460" y="122" text-anchor="middle" fill="var(--lm-a-muted)" font-size="10">discover_mcp_tools(mcp_client)</text>
+        <text x="460" y="140" text-anchor="middle" fill="var(--lm-a-muted)" font-size="10">Forward headers &amp; ToolContext</text>
+        <text x="460" y="164" text-anchor="middle" fill="var(--lm-a-amber)" font-size="10" font-family="monospace">Agent.run() &amp; Agent.stream()</text>
+
+        <line class="lm-flow-forward" x1="580" y1="110" x2="654" y2="110" stroke="var(--lm-a-emerald)" stroke-width="2.5" />
+        <text x="617" y="98" text-anchor="middle" fill="var(--lm-a-emerald)" font-size="9" font-family="monospace">agent_to_a2a</text>
+
+        <rect x="654" y="30" width="250" height="160" rx="12" fill="var(--lm-a-card)" stroke="var(--lm-a-emerald)" stroke-width="2" />
+        <circle class="lm-pulse" cx="674" cy="52" r="5" fill="var(--lm-a-emerald)" />
+        <text x="779" y="56" text-anchor="middle" fill="var(--lm-a-text)" font-size="14" font-weight="700">A2A 1.0 Interoperability</text>
+        <text x="779" y="80" text-anchor="middle" fill="var(--lm-a-emerald)" font-size="11" font-family="monospace">LitestarA2A(A2AConfig)</text>
+        <text x="779" y="104" text-anchor="middle" fill="var(--lm-a-muted)" font-size="10">Auto-generates AgentCard &amp; Skills</text>
+        <text x="779" y="122" text-anchor="middle" fill="var(--lm-a-muted)" font-size="10">Wraps Agent in AgentExecutor</text>
+        <text x="779" y="140" text-anchor="middle" fill="var(--lm-a-muted)" font-size="10">Bridges SessionStore by context_id</text>
+        <text x="779" y="164" text-anchor="middle" fill="var(--lm-a-emerald)" font-size="10" font-family="monospace">JSON-RPC 2.0 + HTTP+JSON REST</text>
+
+        <rect x="16" y="212" width="888" height="58" rx="8" fill="var(--lm-a-card)" stroke="var(--lm-a-border)" stroke-width="1.5" />
+        <text x="460" y="234" text-anchor="middle" fill="var(--lm-a-text)" font-size="12" font-weight="700">Compose Any Direction Without Duplicate Tool Definitions</text>
+        <text x="460" y="254" text-anchor="middle" fill="var(--lm-a-muted)" font-size="11" font-family="monospace">Litestar Routes -&gt; mcp_to_tools(app) -&gt; Agent -&gt; agent_to_a2a(agent) -&gt; LitestarA2A &amp; agent_to_mcp(agent)</text>
+      </svg>
+    </div>
+  </div>
+</div>

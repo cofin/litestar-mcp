@@ -1,0 +1,167 @@
+<div class="lm-diagram lm-diag lm-diag--tasks">
+  <style>
+    .lm-diag--tasks {
+      --lm-t-surface: var(--md-default-bg-color, #ffffff);
+      --lm-t-card: var(--md-code-bg-color, #f8fafc);
+      --lm-t-border: rgba(148, 163, 184, 0.35);
+      --lm-t-text: var(--md-default-fg-color, #0f172a);
+      --lm-t-muted: var(--md-default-fg-color--light, #475569);
+      --lm-t-blue: #2563eb;
+      --lm-t-amber: #d97706;
+      --lm-t-emerald: #059669;
+      --lm-t-violet: #7c3aed;
+      --lm-t-rose: #e11d48;
+      background: var(--lm-t-surface);
+      border: 1px solid var(--lm-t-border);
+      border-radius: 0.75rem;
+      padding: 1rem;
+      margin: 1.5rem 0;
+    }
+    [data-md-color-scheme="slate"] .lm-diag--tasks {
+      --lm-t-surface: #121521;
+      --lm-t-card: #171b2a;
+      --lm-t-border: rgba(148, 163, 184, 0.24);
+      --lm-t-blue: #60a5fa;
+      --lm-t-amber: #fbbf24;
+      --lm-t-emerald: #34d399;
+      --lm-t-violet: #a78bfa;
+      --lm-t-rose: #fb7185;
+    }
+    .lm-diag--tasks input[type="radio"] {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+    #lm-task-queue:checked ~ .lm-diag-tabs label[for="lm-task-queue"],
+    #lm-task-inproc:checked ~ .lm-diag-tabs label[for="lm-task-inproc"] {
+      border-color: var(--lm-t-blue);
+      background: rgba(37, 99, 235, 0.14);
+      color: var(--lm-t-blue);
+    }
+    .lm-diag--tasks .lm-task-panel {
+      display: none;
+    }
+    #lm-task-queue:checked ~ .lm-task-panels .lm-panel-queue,
+    #lm-task-inproc:checked ~ .lm-task-panels .lm-panel-inproc {
+      display: block;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .lm-diag--tasks .lm-flow-forward,
+      .lm-diag--tasks .lm-flow-reverse,
+      .lm-diag--tasks .lm-flow-slow,
+      .lm-diag--tasks .lm-pulse {
+        animation: none !important;
+      }
+    }
+  </style>
+
+  <input type="radio" name="lm-tasks-mode" id="lm-task-queue" checked />
+  <input type="radio" name="lm-tasks-mode" id="lm-task-inproc" />
+
+  <div class="lm-diag-tabs" role="tablist" aria-label="MCP Tasks Execution Backend">
+    <label class="lm-diag-tab" for="lm-task-queue">Distributed QueueTaskExecutor (litestar-queues)</label>
+    <label class="lm-diag-tab" for="lm-task-inproc">Single-Process InProcessTaskExecutor</label>
+  </div>
+
+  <div class="lm-task-panels">
+    <div class="lm-task-panel lm-panel-queue">
+      <svg viewBox="0 0 920 290" role="img" aria-labelledby="lm-task-q-title lm-task-q-desc">
+        <title id="lm-task-q-title">Distributed QueueTaskExecutor on litestar-queues</title>
+        <desc id="lm-task-q-desc">tools/call with params.task persists a TaskRecord in MCPTaskStore (litestar_mcp_tasks), snapshots PrincipalSnapshot and SecurityContext, enqueues to litestar-queues, rehydrates Dishka Scope.REQUEST on any worker replica, and supports cooperative tasks/cancel and multi-round MCPInputRequiredResult via tasks/update.</desc>
+
+        <rect x="16" y="24" width="194" height="164" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-blue)" stroke-width="2" />
+        <circle class="lm-pulse" cx="34" cy="44" r="5" fill="var(--lm-t-blue)" />
+        <text x="113" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">1. Task Submission</text>
+        <text x="113" y="72" text-anchor="middle" fill="var(--lm-t-blue)" font-size="11" font-family="monospace">tools/call (params.task)</text>
+        <text x="113" y="94" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Captures PrincipalSnapshot</text>
+        <text x="113" y="112" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">request.user &amp; request.auth</text>
+        <text x="113" y="130" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">SecurityContext (scopes/roles)</text>
+        <text x="113" y="148" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Owner ID: user:&lt;subject&gt;</text>
+        <text x="113" y="168" text-anchor="middle" fill="var(--lm-t-emerald)" font-size="10" font-family="monospace">Returns CreateTaskResult</text>
+
+        <line class="lm-flow-forward" x1="210" y1="106" x2="256" y2="106" stroke="var(--lm-t-blue)" stroke-width="2.5" />
+
+        <rect x="256" y="24" width="198" height="164" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-amber)" stroke-width="2" />
+        <text x="355" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">2. Durable Store &amp; Broker</text>
+        <text x="355" y="72" text-anchor="middle" fill="var(--lm-t-amber)" font-size="11" font-family="monospace">MCPTaskStore + QueuePlugin</text>
+        <text x="355" y="94" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Store: litestar_mcp_tasks</text>
+        <text x="355" y="112" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">QueueTaskExecutor.submit()</text>
+        <text x="355" y="130" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Per-route queue="..." override</text>
+        <text x="355" y="148" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Postgres / Redis / SQLSpec</text>
+        <text x="355" y="168" text-anchor="middle" fill="var(--lm-t-amber)" font-size="10" font-family="monospace">status: "working"</text>
+
+        <line class="lm-flow-forward" x1="454" y1="106" x2="500" y2="106" stroke="var(--lm-t-amber)" stroke-width="2.5" />
+
+        <rect x="500" y="24" width="196" height="164" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-violet)" stroke-width="2" />
+        <circle class="lm-pulse" cx="518" cy="44" r="5" fill="var(--lm-t-violet)" />
+        <text x="598" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">3. Worker Rehydration</text>
+        <text x="598" y="72" text-anchor="middle" fill="var(--lm-t-violet)" font-size="11" font-family="monospace">Replica Worker Execution</text>
+        <text x="598" y="94" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Rehydrates user &amp; auth in scope</text>
+        <text x="598" y="112" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Restores SecurityContext</text>
+        <text x="598" y="130" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Enters Dishka Scope.REQUEST</text>
+        <text x="598" y="148" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Polls store for cancel_requested</text>
+        <text x="598" y="168" text-anchor="middle" fill="var(--lm-t-violet)" font-size="10" font-family="monospace">ToolContext.report_progress</text>
+
+        <line class="lm-flow-forward" x1="696" y1="88" x2="742" y2="88" stroke="var(--lm-t-emerald)" stroke-width="2.5" />
+        <line class="lm-flow-reverse" x1="696" y1="124" x2="742" y2="124" stroke="var(--lm-t-rose)" stroke-width="2" />
+
+        <rect x="742" y="24" width="162" height="164" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-emerald)" stroke-width="2" />
+        <text x="823" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">4. Pause / Complete</text>
+        <text x="823" y="72" text-anchor="middle" fill="var(--lm-t-emerald)" font-size="11" font-family="monospace">tasks/result &amp; update</text>
+        <text x="823" y="94" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">MCPInputRequiredResult</text>
+        <text x="823" y="112" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">-&gt; status: "input_required"</text>
+        <text x="823" y="130" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">tasks/update re-enqueues</text>
+        <text x="823" y="148" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">tasks/cancel sets flag</text>
+        <text x="823" y="168" text-anchor="middle" fill="var(--lm-t-emerald)" font-size="10" font-family="monospace">Cross-Replica Safe</text>
+
+        <rect x="16" y="210" width="888" height="58" rx="8" fill="var(--lm-t-card)" stroke="var(--lm-t-border)" stroke-width="1.5" />
+        <text x="460" y="232" text-anchor="middle" fill="var(--lm-t-text)" font-size="12" font-weight="700">Multi-Round Human-in-the-Loop &amp; Cooperative Cancellation Across Replicas</text>
+        <text x="460" y="252" text-anchor="middle" fill="var(--lm-t-muted)" font-size="11" font-family="monospace">Replica A: tools/call -&gt; Worker B: MCPInputRequiredResult -&gt; Replica C: tasks/update(input) -&gt; Worker A: tasks/result</text>
+      </svg>
+    </div>
+
+    <div class="lm-task-panel lm-panel-inproc">
+      <svg viewBox="0 0 920 290" role="img" aria-labelledby="lm-task-in-title lm-task-in-desc">
+        <title id="lm-task-in-title">Single-Process InProcessTaskExecutor Lifecycle</title>
+        <desc id="lm-task-in-desc">Default single-process task executor running background AnyIO tasks inside the Litestar process while persisting state in MCPTaskStore.</desc>
+
+        <rect x="16" y="24" width="210" height="164" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-blue)" stroke-width="2" />
+        <circle class="lm-pulse" cx="34" cy="44" r="5" fill="var(--lm-t-blue)" />
+        <text x="121" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">1. Client Request</text>
+        <text x="121" y="72" text-anchor="middle" fill="var(--lm-t-blue)" font-size="11" font-family="monospace">tools/call (params.task)</text>
+        <text x="121" y="94" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Validates task="optional"|"required"</text>
+        <text x="121" y="112" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Binds owner_id from authenticated user</text>
+        <text x="121" y="130" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Applies MCPTaskConfig.default_ttl</text>
+        <text x="121" y="148" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Enforces max_tasks capacity limit</text>
+        <text x="121" y="168" text-anchor="middle" fill="var(--lm-t-emerald)" font-size="10" font-family="monospace">Immediate taskId handle</text>
+
+        <line class="lm-flow-forward" x1="226" y1="106" x2="290" y2="106" stroke="var(--lm-t-blue)" stroke-width="2.5" />
+
+        <rect x="290" y="24" width="260" height="164" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-amber)" stroke-width="2" />
+        <text x="420" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">2. InProcessTaskExecutor</text>
+        <text x="420" y="72" text-anchor="middle" fill="var(--lm-t-amber)" font-size="11" font-family="monospace">AnyIO Background TaskGroup</text>
+        <text x="420" y="94" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Spawns local async task in same process</text>
+        <text x="420" y="112" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Holds live CancelScope &amp; input Event</text>
+        <text x="420" y="130" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Executes tool via internal ASGI dispatch</text>
+        <text x="420" y="148" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Persists TaskRecord to MCPTaskStore</text>
+        <text x="420" y="168" text-anchor="middle" fill="var(--lm-t-amber)" font-size="10" font-family="monospace">Zero external broker required</text>
+
+        <line class="lm-flow-forward" x1="550" y1="106" x2="614" y2="106" stroke="var(--lm-t-emerald)" stroke-width="2.5" />
+
+        <rect x="614" y="24" width="290" height="164" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-emerald)" stroke-width="2" />
+        <circle class="lm-pulse" cx="634" cy="44" r="5" fill="var(--lm-t-emerald)" />
+        <text x="759" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">3. Polling, Resume &amp; Cancel</text>
+        <text x="759" y="72" text-anchor="middle" fill="var(--lm-t-emerald)" font-size="11" font-family="monospace">tasks/get • list • result • cancel</text>
+        <text x="759" y="94" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Owner-isolated lookup (non-owners masked)</text>
+        <text x="759" y="112" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">tasks/result awaits terminal status</text>
+        <text x="759" y="130" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">tasks/update wakes local input waiter</text>
+        <text x="759" y="148" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">tasks/cancel triggers AnyIO CancelScope</text>
+        <text x="759" y="168" text-anchor="middle" fill="var(--lm-t-emerald)" font-size="10" font-family="monospace">notifications/tasks/status SSE</text>
+
+        <rect x="16" y="210" width="888" height="58" rx="8" fill="var(--lm-t-card)" stroke="var(--lm-t-border)" stroke-width="1.5" />
+        <text x="460" y="232" text-anchor="middle" fill="var(--lm-t-text)" font-size="12" font-weight="700">When to Use InProcessTaskExecutor vs QueueTaskExecutor</text>
+        <text x="460" y="252" text-anchor="middle" fill="var(--lm-t-muted)" font-size="11" font-family="monospace">InProcessTaskExecutor: Local dev, stdio servers &amp; single-worker apps  |  QueueTaskExecutor: Multi-replica HTTP deployments</text>
+      </svg>
+    </div>
+  </div>
+</div>
