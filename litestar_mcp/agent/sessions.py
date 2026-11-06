@@ -6,9 +6,9 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import TYPE_CHECKING, Protocol
 
 import anyio
-from litestar.serialization import decode_json, encode_json
 
 from litestar_mcp.agent.spec import AgentMessage
+from litestar_mcp.core.serialization import decode_json, encode_json
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
@@ -76,6 +76,7 @@ class MemorySessionStore:
         saved_at, messages = entry
         if time.monotonic() - saved_at > self._ttl_seconds:
             self._sessions.pop(key, None)
+            self._locks.pop(key, None)
             return None
         self._sessions.move_to_end(key)
         return list(messages)

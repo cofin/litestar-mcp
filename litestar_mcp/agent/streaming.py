@@ -5,9 +5,8 @@ from typing import TYPE_CHECKING, Any, Literal
 import httpx2
 import msgspec
 from litestar.response.sse import ServerSentEventMessage
-from litestar.serialization import decode_json
 
-from litestar_mcp.core.serialization import to_json
+from litestar_mcp.core.serialization import decode_json, to_json
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator

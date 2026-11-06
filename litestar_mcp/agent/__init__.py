@@ -1,5 +1,6 @@
 """Agent abstractions and multi-model runtime."""
 
+import importlib
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -13,7 +14,21 @@ if TYPE_CHECKING:
     from litestar_mcp.agent.bridges.mcp import (
         mcp_to_tools as mcp_to_tools,
     )
-    from litestar_mcp.agent.controller import AgentChatController as AgentChatController
+    from litestar_mcp.agent.controller import (
+        AgentChatController as AgentChatController,
+    )
+    from litestar_mcp.agent.controller import (
+        ChatRequest as ChatRequest,
+    )
+    from litestar_mcp.agent.controller import (
+        SessionHistory as SessionHistory,
+    )
+    from litestar_mcp.agent.controller import (
+        SessionNotFoundError as SessionNotFoundError,
+    )
+    from litestar_mcp.agent.controller import (
+        TurnResult as TurnResult,
+    )
     from litestar_mcp.agent.guards import (
         BudgetExceededError as BudgetExceededError,
     )
@@ -40,6 +55,18 @@ if TYPE_CHECKING:
     )
     from litestar_mcp.agent.runtime import (
         TurnResponse as TurnResponse,
+    )
+    from litestar_mcp.agent.sessions import (
+        ANONYMOUS_OWNER as ANONYMOUS_OWNER,
+    )
+    from litestar_mcp.agent.sessions import (
+        LitestarStoreSessionStore as LitestarStoreSessionStore,
+    )
+    from litestar_mcp.agent.sessions import (
+        MemorySessionStore as MemorySessionStore,
+    )
+    from litestar_mcp.agent.sessions import (
+        SessionStore as SessionStore,
     )
     from litestar_mcp.agent.spec import (
         Agent as Agent,
@@ -73,6 +100,7 @@ if TYPE_CHECKING:
     )
 
 __all__ = (
+    "ANONYMOUS_OWNER",
     "Agent",
     "AgentChatController",
     "AgentGroup",
@@ -80,15 +108,22 @@ __all__ = (
     "AgentRuntime",
     "AgentStreamFrame",
     "BudgetExceededError",
+    "ChatRequest",
     "DynamicWorkflow",
     "GoogleGenAIClient",
+    "LitestarStoreSessionStore",
+    "MemorySessionStore",
     "MockModelClient",
     "ModelClient",
     "ModelDelta",
+    "SessionHistory",
+    "SessionNotFoundError",
+    "SessionStore",
     "StepResult",
     "TurnBudget",
     "TurnRequest",
     "TurnResponse",
+    "TurnResult",
     "WorkflowContext",
     "WorkflowEngine",
     "WorkflowNode",
@@ -101,6 +136,7 @@ __all__ = (
 
 
 _MODULE_MAP: dict[str, str] = {
+    "ANONYMOUS_OWNER": "litestar_mcp.agent.sessions",
     "Agent": "litestar_mcp.agent.spec",
     "AgentGroup": "litestar_mcp.agent.spec",
     "AgentMessage": "litestar_mcp.agent.spec",
@@ -110,12 +146,19 @@ _MODULE_MAP: dict[str, str] = {
     "AgentStreamFrame": "litestar_mcp.agent.streaming",
     "iter_agent_stream": "litestar_mcp.agent.streaming",
     "AgentChatController": "litestar_mcp.agent.controller",
+    "ChatRequest": "litestar_mcp.agent.controller",
+    "SessionHistory": "litestar_mcp.agent.controller",
+    "SessionNotFoundError": "litestar_mcp.agent.controller",
+    "TurnResult": "litestar_mcp.agent.controller",
     "BudgetExceededError": "litestar_mcp.agent.guards",
     "TurnBudget": "litestar_mcp.agent.guards",
     "GoogleGenAIClient": "litestar_mcp.agent.models",
+    "LitestarStoreSessionStore": "litestar_mcp.agent.sessions",
+    "MemorySessionStore": "litestar_mcp.agent.sessions",
     "MockModelClient": "litestar_mcp.agent.models",
     "ModelClient": "litestar_mcp.agent.models",
     "ModelDelta": "litestar_mcp.agent.models",
+    "SessionStore": "litestar_mcp.agent.sessions",
     "DynamicWorkflow": "litestar_mcp.agent.workflow",
     "StepResult": "litestar_mcp.agent.workflow",
     "WorkflowContext": "litestar_mcp.agent.workflow",
@@ -131,8 +174,6 @@ _MODULE_MAP: dict[str, str] = {
 def __getattr__(name: str) -> Any:
     """Lazily import agent attributes on demand."""
     if mod_path := _MODULE_MAP.get(name):
-        import importlib
-
         mod = importlib.import_module(mod_path)
         return getattr(mod, name)
 
@@ -141,4 +182,5 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
+    """Return available module attributes including lazy exports."""
     return sorted({*globals(), *__all__})

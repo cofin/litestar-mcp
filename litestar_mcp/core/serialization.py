@@ -32,8 +32,7 @@ from threading import RLock
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast, overload
 
 import msgspec
-from litestar.serialization import decode_json as from_json
-from litestar.serialization import encode_json, get_serializer
+from litestar.serialization import decode_json, encode_json, get_serializer
 from litestar.serialization.msgspec_hooks import DEFAULT_TYPE_ENCODERS
 from litestar.types import TypeEncodersMap
 
@@ -42,10 +41,14 @@ from litestar_mcp.core._typing import PYDANTIC_INSTALLED, BaseModel
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
 
+from_json = decode_json
+
 __all__ = (
     "DEFAULT_TYPE_ENCODERS",
     "SchemaSerializer",
     "TypeEncodersMap",
+    "decode_json",
+    "encode_json",
     "format_json",
     "from_json",
     "get_collection_serializer",
@@ -269,9 +272,6 @@ def reset_serializer_cache() -> "None":
     """
     with _SERIALIZER_LOCK:
         _SCHEMA_SERIALIZERS.clear()
-
-
-# Private helper functions
 
 
 def _dump_identity_dict(value: "Any") -> "dict[str, Any]":

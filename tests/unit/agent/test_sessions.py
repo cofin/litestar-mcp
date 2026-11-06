@@ -94,3 +94,20 @@ async def test_memory_session_store_ttl_expiry(monkeypatch: pytest.MonkeyPatch) 
 
     current_time += 31.0
     assert await store.load("o", "s1") is None
+
+
+@pytest.mark.anyio
+async def test_memory_session_store_ttl_eviction_removes_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """MemorySessionStore removes the per-session lock when an expired entry is evicted on load."""
+    current_time = 1000.0
+    monkeypatch.setattr(time, "monotonic", lambda: current_time)
+
+    store = MemorySessionStore(ttl_seconds=10.0)
+    async with store.lock("alice", "sess-1"):
+        await store.save("alice", "sess-1", [AgentMessage(role="user", content="hi")])
+    assert ("alice", "sess-1") in store._locks
+
+    current_time += 11.0
+    loaded = await store.load("alice", "sess-1")
+    assert loaded is None
+    assert ("alice", "sess-1") not in store._locks
