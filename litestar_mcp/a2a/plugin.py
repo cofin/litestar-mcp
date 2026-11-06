@@ -868,6 +868,8 @@ class LitestarA2A(InitPluginProtocol):
         card_headers = {"ETag": card_etag, "Cache-Control": f"public, max-age={self.config.agent_card_max_age}"}
         base_prefix = "" if self.config.path == "/" else self.config.path
         rpc_opt = {"exclude_from_csrf": True, **self.config.route_opt}
+        if self.config.auth is not None:
+            rpc_opt["auth"] = self.config.auth
         card_opt = {"exclude_from_auth": True, "exclude_from_csrf": True, **self.config.agent_card_route_opt}
 
         @post(

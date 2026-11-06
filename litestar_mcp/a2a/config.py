@@ -38,6 +38,8 @@ class A2AConfig:
     """Path that serves the agent card. Must start with `/`; a trailing slash is removed."""
     guards: "Sequence[Guard]" = ()
     """Litestar guards applied to the JSON-RPC route. The agent card route is public."""
+    auth: Any | None = None
+    """Optional authentication policy merged into `opt["auth"]` on the JSON-RPC and HTTP+JSON routes."""
     route_opt: dict[str, Any] = field(default_factory=dict)
     """Extra `opt` entries merged into the JSON-RPC and HTTP+JSON routes, for example an authentication policy."""
     agent_card_route_opt: dict[str, Any] = field(default_factory=dict)

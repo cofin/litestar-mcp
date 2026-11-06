@@ -1,5 +1,6 @@
 """A2A 1.0 protocol bridge for Agent and AgentGroup specifications."""
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -42,7 +43,14 @@ __all__ = ("agent_to_a2a",)
 def _default_owner_resolver(context: "ServerCallContext") -> str:
     """Resolve an owner identity string from an A2A ServerCallContext."""
     user = getattr(context, "user", None)
-    user_id = getattr(user, "user_id", None) or getattr(user, "id", None)
+    user_id: Any = None
+    if isinstance(user, Mapping):
+        for key in ("user_id", "id", "sub", "user_name"):
+            if val := user.get(key):
+                user_id = val
+                break
+    elif user is not None and getattr(user, "is_authenticated", True):
+        user_id = getattr(user, "user_id", None) or getattr(user, "id", None) or getattr(user, "user_name", None)
     tenant = getattr(context, "tenant", None)
     if user_id and tenant:
         return f"{tenant}:{user_id}"
@@ -57,6 +65,7 @@ def agent_to_a2a(
     runtime: AgentRuntime | None = None,
     task_store: Any | None = None,
     owner_resolver: "Callable[[ServerCallContext], str] | None" = None,
+    auth: Any | None = None,
     security_schemes: dict[str, Any] | None = None,
     security_requirements: list[Any] | None = None,
     route_opt: dict[str, Any] | None = None,
@@ -76,6 +85,7 @@ def agent_to_a2a(
         task_store: Optional A2A TaskStore override. Defaults to an owner-scoped
             InMemoryTaskStore.
         owner_resolver: Optional callable resolving owner string from ServerCallContext.
+        auth: Optional authentication policy merged into ``opt["auth"]`` on A2A transport routes.
         security_schemes: Optional OpenAPI/A2A security schemes for the AgentCard.
         security_requirements: Optional security requirements for the AgentCard.
         route_opt: Optional route ``opt`` mapping applied to A2A transport routes.
@@ -162,9 +172,19 @@ def agent_to_a2a(
             user_input = context.get_user_input()
             call_context = getattr(context, "call_context", None)
             owner_key = effective_resolver(call_context) if call_context is not None else None
-            user_obj = {"id": owner_key} if owner_key else None
+            user_obj: dict[str, Any] | None = None
+            tenant_id: str | None = None
+            if owner_key and owner_key != "anonymous":
+                if ":" in owner_key:
+                    tenant_id, resolved_uid = owner_key.split(":", 1)
+                    user_obj = {"id": resolved_uid} if resolved_uid else None
+                else:
+                    raw_tenant = getattr(call_context, "tenant", None) if call_context is not None else None
+                    tenant_id = str(raw_tenant) if raw_tenant else None
+                    user_obj = {"id": owner_key}
             tool_ctx = ToolContext(
                 user=user_obj,
+                tenant_id=tenant_id,
                 session_id=context.context_id,
                 turn_id=context.task_id,
             )
@@ -211,6 +231,7 @@ def agent_to_a2a(
     )
     config = A2AConfig(
         path=route_path,
+        auth=auth,
         route_opt=dict(route_opt) if route_opt is not None else {},
         agent_card_route_opt=dict(agent_card_route_opt) if agent_card_route_opt is not None else {},
         tenant_header=tenant_header,
