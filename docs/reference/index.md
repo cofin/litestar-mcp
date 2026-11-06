@@ -6,8 +6,6 @@ title: API Reference
 
 This reference documents the public Python API, CLI subcommands, and contributor workflow for `litestar-mcp`. Every class, protocol, struct, decorator, and function listed in these chapters is rendered directly from static AST and PEP 257 attribute docstrings.
 
----
-
 ## Package Boundaries & Import Surface
 
 `litestar-mcp` is organized into focused subpackages so optional integrations (`litestar-queues`, `a2a-sdk`, `google-genai`, `opentelemetry-api`, `dishka`, `litestar-security`) are never imported unless configured by your application.
@@ -15,14 +13,12 @@ This reference documents the public Python API, CLI subcommands, and contributor
 | Package Namespace | Optional Extra | Responsibilities & Primary Exports |
 | :--- | :--- | :--- |
 | `litestar_mcp` | Base package | Top-level convenience re-exports (`LitestarMCP`, `MCP`, `MCPConfig`, `MCPOptKeys`, `MCPTaskConfig`, `MCPSkillsConfig`, `MCPController`, `PromptController`, `SkillController`, `@mcp_tool`, `@mcp_resource`, `@mcp_prompt`, `@tool`, `@prompt`, `Skill`, `SkillSource`, `FilesystemSkillSource`, `MCPToolResult`, `MCPResourceLink`, `MCPBlobResource`, `MCPInputRequiredResult`, `MCPRequestContext`, `MCPStdioContext`) and lazy resolution for `LitestarA2A`, `A2AConfig`, and `litestar_mcp.agent`. |
-| `litestar_mcp.core` | Base package (`otel` optional) | Protocol-agnostic primitives: `Tool`, `ToolCall`, `ToolResult`, `ToolArgumentError`, `@tool`, `ToolContext`, JSON-RPC 2.0 models (`JSONRPCRequest`, `JSONRPCError`, `JSONRPCErrorException`), SSE `SubscriptionManager`, OpenTelemetry `TelemetryConfig` and `SpanManager`, and core exceptions (`LitestarMCPError`, `MissingDependencyError`, `BridgeConnectionError`, `BridgeMessageTooLargeError`). |
+| `litestar_mcp.core` | Base package (`opentelemetry` optional) | Protocol-agnostic primitives: `Tool`, `ToolCall`, `ToolResult`, `ToolArgumentError`, `@tool`, `ToolContext`, JSON-RPC 2.0 models (`JSONRPCRequest`, `JSONRPCError`, `JSONRPCErrorException`), SSE `SubscriptionManager`, OpenTelemetry `TelemetryConfig` and `SpanManager`, JSON serialization helpers (`encode_json`, `decode_json`, `to_json`, `from_json`), and core exceptions (`LitestarMCPError`, `MissingDependencyError`, `BridgeConnectionError`, `BridgeMessageTooLargeError`). |
 | `litestar_mcp.mcp` | Base package | MCP server runtime, route discovery, `Registry`, `MCPHandlerService`, internal ASGI execution (`execute_tool`, `execute_handler_response`, `blank_http_scope`), `MCPTaskStore` and `MCPTaskRuntime`, Agent Skills (`SkillCatalog`, `SkillIntegrityError`), `stdio` transport (`ASGIStreamingTransport`, `run_stdio`, `run_stdio_async`), Streamable HTTP bridge (`run_bridge`, `run_stdio_streamable_http_bridge`), and `MCPStreamableHTTPClient`. |
 | `litestar_mcp.queues` | `litestar-mcp[queues]` | Distributed execution on `litestar-queues`: `QueueTaskExecutor`, `run_mcp_tool_task`, `DurableWorkflowEngine`, `WorkflowStore`, `WorkflowRun`, `NodeRecord`, `TaskDependencyChain`, `QueuedAgentChatController`, `QueuedTurnManager`, `QueuedTurn`, `AgentRegistry`, `PrincipalSnapshot`, and `run_agent_turn`. |
-| `litestar_mcp.agent` | Base package (`google` / `a2a` optional) | Multi-agent orchestration and in-process workflows: `Agent`, `AgentGroup`, `AgentMessage`, `AgentRuntime`, `TurnRequest`, `TurnResponse`, `TurnBudget`, `BudgetExceededError`, `AgentChatController`, `SessionStore` (`MemorySessionStore`, `LitestarStoreSessionStore`), `ModelClient` (`GoogleGenAIClient`, `MockModelClient`), `AgentStreamFrame`, `DynamicWorkflow`, `WorkflowNode`, `WorkflowEngine`, and `litestar_mcp.agent.bridges`. |
+| `litestar_mcp.agent` | Base package (`google-genai` / `a2a` optional) | Multi-agent orchestration and in-process workflows: `Agent`, `AgentGroup`, `AgentMessage`, `AgentRuntime`, `TurnRequest`, `TurnResponse`, `TurnBudget`, `BudgetExceededError`, `AgentChatController`, `SessionStore` (`ANONYMOUS_OWNER`, `MemorySessionStore`, `LitestarStoreSessionStore`), `ModelClient` (`GoogleGenAIClient`, `MockModelClient`), `AgentStreamFrame`, `DynamicWorkflow`, `WorkflowNode`, `WorkflowEngine`, and `litestar_mcp.agent.bridges`. |
 | `litestar_mcp.a2a` | `litestar-mcp[a2a]` | Agent-to-Agent (A2A 1.0) protocol plugin (`LitestarA2A`, `A2AConfig`) mounting JSON-RPC 2.0 (`POST /a2a`), optional `HTTP+JSON` REST routes, and `/.well-known/agent-card.json` discovery around `a2a-sdk`. |
 | `litestar_mcp.utils` | Base package | Route and function decorators (`mcp_tool`, `mcp_resource`, `mcp_prompt`), schema description bounds validation (`validate_tool_descriptions`), and handler signature introspection helpers. |
-
----
 
 ## Reference Chapters
 
@@ -91,8 +87,6 @@ This reference documents the public Python API, CLI subcommands, and contributor
     <a href="contributing.md">Contributing Guide &rarr;</a>
   </div>
 </div>
-
----
 
 ## Release History
 

@@ -92,6 +92,11 @@ class WorkflowNode:
 class DynamicWorkflow:
     """DAG-based workflow connecting agents and discrete task handlers."""
 
+    name: str
+    """Unique identifier name for the workflow definition."""
+    nodes: dict[str, WorkflowNode]
+    """Mapping of node names to their `WorkflowNode` definitions in the DAG."""
+
     def __init__(self, name: str = "workflow") -> None:
         """Initialize DynamicWorkflow with a name."""
         self.name = name
@@ -217,6 +222,9 @@ async def run_workflow_node(
 
 class WorkflowEngine:
     """Concurrent in-process DAG execution engine for DynamicWorkflow pipelines."""
+
+    default_runtime: AgentRuntime | None
+    """Optional default `AgentRuntime` used to execute agent-backed workflow nodes."""
 
     def __init__(self, default_runtime: AgentRuntime | None = None) -> None:
         """Initialize WorkflowEngine with optional default AgentRuntime."""

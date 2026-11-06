@@ -224,8 +224,6 @@ class MCPConfig:
     """Optional server-level instructions returned in the MCP `initialize` response."""
     guards: "list[Any] | None" = None
     """Optional list of Litestar guards protecting MCP endpoints."""
-    auth: "Any | None" = None
-    """Optional route authentication policy merged into the mounted MCP router's `opt["auth"]` (for example `litestar_security.required(...)`)."""
     allowed_origins: "list[str] | None" = None
     """Exact additional `Origin` values to accept alongside the request origin."""
     include_operations: "list[str] | None" = None
@@ -278,6 +276,8 @@ class MCPConfig:
     """Optional maximum character length for input parameter descriptions enforced during tool-spec validation."""
     max_output_field_description_length: "int | None" = None
     """Optional maximum character length for output schema property descriptions enforced during tool-spec validation."""
+    auth: "Any | None" = None
+    """Optional route authentication policy merged into the mounted MCP router's `opt["auth"]` (for example `litestar_security.required(...)`)."""
 
     def __post_init__(self) -> "None":
         validate_stream_cleanup_timeout(self.stream_cleanup_timeout)

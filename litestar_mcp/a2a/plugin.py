@@ -717,6 +717,13 @@ class LitestarA2A(InitPluginProtocol):
     them and returns HTTP 204. Explicit null request IDs still receive responses.
     """
 
+    agent_card: "AgentCard"
+    """Public A2A 1.0 `AgentCard` served at the discovery endpoint."""
+    request_handler: "RequestHandler"
+    """Resolved A2A `RequestHandler` dispatching JSON-RPC and HTTP+JSON operations."""
+    config: A2AConfig
+    """Active `A2AConfig` governing route paths, guards, and protocol bindings."""
+
     def __init__(
         self,
         agent_card: "AgentCard",

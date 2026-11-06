@@ -10,7 +10,7 @@ from litestar.status_codes import HTTP_400_BAD_REQUEST, HTTP_500_INTERNAL_SERVER
 from litestar.testing import TestClient
 from litestar.types import HTTPRequestEvent, HTTPScope, Receive
 
-from litestar_mcp import LitestarMCP, MCPConfig, PromptController, mcp_prompt, prompt
+from litestar_mcp import LitestarMCP, MCPConfig, PromptController, SkillController, mcp_prompt, prompt
 from litestar_mcp.mcp.registry import (
     PromptRegistration,
     Registry,
@@ -1221,7 +1221,7 @@ def test_litestar_mcp_accepts_prompt_and_skill_controller_instances_and_prompt_d
         async def triage(self, service: "str") -> "str":
             return f"Triage {service}"
 
-    class DocsSkills(PromptController):
+    class DocsSkills(SkillController):
         path = "/docs-skills"
         prefix = "docs"
 

@@ -36,6 +36,13 @@ class MissingDependencyError(LitestarMCPError, ImportError):
         extra: Optional project extra that installs the missing package.
     """
 
+    package: str
+    """Name of the missing Python package."""
+    install_package: str
+    """Direct package name that can be installed to satisfy the dependency."""
+    extra: str
+    """Optional `litestar-mcp` extra that installs the missing package."""
+
     def __init__(self, package: str, install_package: str | None = None, *, extra: str | None = None) -> None:
         self.package = package
         self.install_package = install_package or package

@@ -23,7 +23,7 @@ Every variant exposes the exact same MCP surface so you can compare persistence,
 <div class="lm-grid">
   <div class="lm-card">
     <div>
-      <h3>Advanced Alchemy Family (<code>advanced_alchemy</code>)</h3>
+      <h3>Advanced Alchemy Family</h3>
       <p>Implements the shared Notes contract on top of Advanced Alchemy's SQLAlchemy ORM service/repository layer with <code>UUIDAuditBase</code> audit columns and Litestar session lifecycle management.</p>
       <p><strong>Choose when:</strong> You want an ORM surface, declarative models, audit columns, and SQLAlchemy repository ergonomics.</p>
     </div>
@@ -32,7 +32,7 @@ Every variant exposes the exact same MCP surface so you can compare persistence,
 
   <div class="lm-card">
     <div>
-      <h3>SQLSpec Family (<code>sqlspec</code>)</h3>
+      <h3>SQLSpec Family</h3>
       <p>Implements the shared Notes contract using SQLSpec's explicit, typed async SQL adapter API (<code>AiosqliteConfig</code>) with parameterized queries and zero-overhead <code>msgspec.Struct</code> row mapping. Also hosts the Cloud Run and Google IAP deployment variants.</p>
       <p><strong>Choose when:</strong> You want explicit SQL, typed result mapping, or cloud deployment blueprints.</p>
     </div>

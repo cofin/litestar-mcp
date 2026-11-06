@@ -165,6 +165,21 @@ class AgentRuntime(InitPluginProtocol):
     `runtime` dependency used by `AgentChatController`.
     """
 
+    target: "Agent | AgentGroup"
+    """Root `Agent` or `AgentGroup` orchestrated by this runtime."""
+    default_model: "ModelClient | None"
+    """Optional fallback `ModelClient` used when an agent does not specify its own model."""
+    budget: TurnBudget
+    """`TurnBudget` enforcing maximum turns, tool calls, and wall-clock timeout per turn."""
+    sessions: SessionStore
+    """`SessionStore` backend persisting owner-scoped conversation histories."""
+    span_manager: SpanManager
+    """OpenTelemetry `SpanManager` recording `invoke_agent` and `execute_tool` spans."""
+    compaction_hook: "CompactionHook | None"
+    """Optional callback invoked before each model call to compact conversation history."""
+    stream_buffer: int
+    """In-memory channel buffer capacity for streamed `AgentStreamFrame` items."""
+
     def __init__(
         self,
         target: "Agent | AgentGroup",

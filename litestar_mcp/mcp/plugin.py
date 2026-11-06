@@ -17,6 +17,7 @@ from litestar_mcp.mcp.prompt_controller import PromptController
 from litestar_mcp.mcp.registry import PromptRegistration, Registry
 from litestar_mcp.mcp.routes import MCPController
 from litestar_mcp.mcp.service import MCPHandlerService
+from litestar_mcp.mcp.skill_controller import SkillController
 from litestar_mcp.mcp.skills import SkillCatalog
 from litestar_mcp.mcp.tasks import MCPTaskRuntime, MCPTaskStore, TaskRecord
 from litestar_mcp.mcp.tool_handlers import build_tool_route_handler
@@ -56,9 +57,10 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         self._dynamic_handlers: list[Any] = []
         self._dynamic_handler_paths: set[tuple[str, ...]] = set()
 
-        controllers_to_mount = (*self._config.prompt_controllers, *self._config.skill_controllers)
-        for entry in controllers_to_mount:
-            self.register_dynamic_handler(self._coerce_controller_class(entry))
+        for entry in self._config.prompt_controllers:
+            self.register_dynamic_handler(self._coerce_controller_class(entry, PromptController))
+        for entry in self._config.skill_controllers:
+            self.register_dynamic_handler(self._coerce_controller_class(entry, SkillController))
 
         if prompts:
             for prompt_item in prompts:
@@ -308,11 +310,14 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         self._task_store.set_status_callback(publish_task_status)
 
     @staticmethod
-    def _coerce_controller_class(entry: "Any") -> "type[PromptController]":
-        """Validate ``entry`` as a ``PromptController`` subclass or instance and return a mountable class."""
-        if isinstance(entry, type) and issubclass(entry, PromptController):
+    def _coerce_controller_class(
+        entry: "Any",
+        expected_base: "type[PromptController]" = PromptController,
+    ) -> "type[PromptController]":
+        """Validate ``entry`` against ``expected_base`` and return a mountable controller class."""
+        if isinstance(entry, type) and issubclass(entry, expected_base):
             return entry
-        if isinstance(entry, PromptController):
+        if isinstance(entry, expected_base):
             cls = type(entry)
             instance_attrs = {key: value for key, value in entry.__dict__.items() if key != "owner"}
             if cls.__init__ is PromptController.__init__ and all(
@@ -328,7 +333,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
             if hasattr(entry, "path"):
                 namespace["path"] = entry.path
             return cast("type[PromptController]", type(cls.__name__, (cls,), namespace))
-        msg = f"{entry!r} is not a PromptController subclass or instance"
+        msg = f"{entry!r} is not a PromptController subclass (expected {expected_base.__name__})"
         raise ImproperlyConfiguredException(msg)
 
     def _unwrap_prompt_callable(

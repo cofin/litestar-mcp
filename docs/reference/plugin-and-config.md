@@ -4,19 +4,15 @@ title: Plugin & Configuration API
 
 # Plugin & Configuration API
 
-API reference for the `LitestarMCP` plugin, the standalone `MCP` application wrapper, `MCPConfig` and its nested configuration dataclasses (`MCPOptKeys`, `MCPTaskConfig`, `MCPSkillsConfig`), tool-call lifecycle hook protocols, and the Streamable HTTP `MCPController`.
+API reference for the `LitestarMCP` plugin, the standalone `MCP` application wrapper, `MCPConfig` and its nested configuration dataclasses (`MCPOptKeys`, `MCPTaskConfig`, `MCPSkillsConfig`), tool-call lifecycle hook protocols, the Streamable HTTP `MCPController`, `MCPHandlerService`, and `Registry`.
 
 For architectural guidance and configuration examples, see [Configuration & Route Filtering](../learn/configuration.md) and [Standalone MCP Applications](../getting-started/standalone.md).
-
----
 
 ## Plugin & Standalone Application
 
 ::: litestar_mcp.mcp.plugin.LitestarMCP
 
 ::: litestar_mcp.mcp.app.MCP
-
----
 
 ## Configuration Models
 
@@ -28,16 +24,16 @@ For architectural guidance and configuration examples, see [Configuration & Rout
 
 ::: litestar_mcp.mcp.config.MCPSkillsConfig
 
----
-
 ## Tool-Call Lifecycle Hooks
 
 ::: litestar_mcp.mcp.config.BeforeToolCallHook
 
 ::: litestar_mcp.mcp.config.AfterToolCallHook
 
----
-
-## Streamable HTTP Transport Controller
+## Streamable HTTP Transport, Handler Service & Registry
 
 ::: litestar_mcp.mcp.routes.MCPController
+
+::: litestar_mcp.mcp.service.MCPHandlerService
+
+::: litestar_mcp.mcp.registry.Registry

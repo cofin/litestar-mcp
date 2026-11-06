@@ -8,8 +8,6 @@ API reference for MCP decorators (`@mcp_tool`, `@mcp_resource`, `@mcp_prompt`), 
 
 For usage guides, see [Marking Routes & Decorators](../learn/marking-routes.md), [Tools & Annotations](../learn/tools.md), [Resources & URI Templates](../learn/resources.md), [Prompts & PromptController](../learn/prompts.md), and [Agent Skills (SEP-2640)](../learn/skills.md).
 
----
-
 ## Route & Function Decorators
 
 ::: litestar_mcp.utils.mcp_tool
@@ -20,19 +18,17 @@ For usage guides, see [Marking Routes & Decorators](../learn/marking-routes.md),
 
 ::: litestar_mcp.utils.validate_tool_descriptions
 
----
-
 ## Class-Based Controllers
 
 ::: litestar_mcp.mcp.prompt_controller.PromptController
 
 ::: litestar_mcp.mcp.prompt_controller.prompt
 
+::: litestar_mcp.mcp.content.PromptMessage
+
 ::: litestar_mcp.mcp.skill_controller.SkillController
 
----
-
-## Agent Skills (`io.modelcontextprotocol/skills`)
+## Agent Skills
 
 ::: litestar_mcp.mcp.skills.SkillSource
 
@@ -46,21 +42,19 @@ For usage guides, see [Marking Routes & Decorators](../learn/marking-routes.md),
 
 ::: litestar_mcp.mcp.skills.SkillIntegrityError
 
----
-
 ## Content Blocks & Return Helpers
 
 ::: litestar_mcp.mcp.content.MCPToolResult
+
+::: litestar_mcp.mcp.executor.MCPToolErrorResult
+
+::: litestar_mcp.mcp.executor.MCPPathParamCoercionError
 
 ::: litestar_mcp.mcp.content.MCPResourceLink
 
 ::: litestar_mcp.mcp.content.MCPBlobResource
 
 ::: litestar_mcp.mcp.content.MCPInputRequiredResult
-
-::: litestar_mcp.mcp.content.PromptMessage
-
----
 
 ## Discovery Registry
 
@@ -69,8 +63,6 @@ For usage guides, see [Marking Routes & Decorators](../learn/marking-routes.md),
 ::: litestar_mcp.mcp.registry.ResourceTemplate
 
 ::: litestar_mcp.mcp.registry.PromptRegistration
-
----
 
 ## Handler Service & Request Context
 

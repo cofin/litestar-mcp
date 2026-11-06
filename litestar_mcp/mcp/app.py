@@ -288,6 +288,11 @@ class MCP:
     applications.
     """
 
+    config: MCPConfig
+    """Active `MCPConfig` instance governing the standalone MCP application."""
+    plugin: LitestarMCP
+    """Underlying `LitestarMCP` plugin registered on the Litestar application."""
+
     def __init__(
         self,
         name: "str",

@@ -462,6 +462,9 @@ class SkillCatalog:
 
     __slots__ = ("_sources", "directory_read")
 
+    directory_read: bool
+    """Whether `resources/directory/read` is enabled for skill directories."""
+
     def __init__(self, sources: "Sequence[SkillSource]", *, directory_read: "bool" = True) -> "None":
         self._sources: tuple[SkillSource, ...] = tuple(sources)
         self.directory_read = directory_read

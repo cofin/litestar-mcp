@@ -10,7 +10,7 @@ copyright = "Copyright &copy; 2025-2026 Litestar Organization"
 docs_dir = "docs"
 site_dir = "site"
 use_directory_urls = true
-exclude_docs = "examples/**"
+exclude_docs = ["examples/**", "_build/**"]
 extra_css = ["stylesheets/extra.css"]
 nav = [
   { "Home" = [
@@ -62,8 +62,6 @@ nav = [
     "security/litestar-security.md",
     "security/authorization-and-scopes.md",
     "security/observability.md",
-    "security/migration-0-14.md",
-    "security/migration-0-12.md",
   ] },
   { "Reference" = [
     "reference/index.md",
@@ -89,7 +87,6 @@ features = [
   "content.code.copy",
   "content.tabs.link",
   "navigation.footer",
-  "navigation.indexes",
   "navigation.path",
   "navigation.sections",
   "navigation.tabs",
@@ -134,6 +131,11 @@ enable_inventory = true
 
 [project.plugins.mkdocstrings.handlers.python]
 paths = ["."]
+inventories = [
+  "https://docs.python.org/3/objects.inv",
+  "https://docs.litestar.dev/latest/objects.inv",
+  "https://msgspec.dev/objects.inv",
+]
 
 [project.plugins.mkdocstrings.handlers.python.options]
 extensions = ["griffe_fieldz"]

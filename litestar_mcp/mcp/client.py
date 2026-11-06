@@ -83,6 +83,11 @@ def mcp_request_headers(message: "dict[str, Any]") -> "dict[str, str]":
 class MCPClientError(LitestarMCPError):
     """A JSON-RPC error or isError tool result returned by an MCP server."""
 
+    code: "int | None"
+    """Optional JSON-RPC 2.0 numeric error code returned by the server."""
+    data: Any
+    """Optional structured error payload or raw tool result data."""
+
     def __init__(self, message: "str", *, code: "int | None" = None, data: "Any" = None) -> "None":
         """Initialize MCPClientError with message, code, and optional data."""
         super().__init__(message)
@@ -92,6 +97,9 @@ class MCPClientError(LitestarMCPError):
 
 class MCPStreamableHTTPClient:
     """Request/response MCP client over Streamable HTTP using httpx2."""
+
+    endpoint: str
+    """Target MCP Streamable HTTP endpoint URL."""
 
     def __init__(
         self,

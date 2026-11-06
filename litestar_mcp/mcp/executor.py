@@ -126,6 +126,11 @@ class MCPPathParamCoercionError(ValueError):
     structured error that names the offending argument.
     """
 
+    name: str
+    """Name of the path parameter that failed parser coercion."""
+    raw: Any
+    """Raw argument value supplied in the `tools/call` payload."""
+
     def __init__(self, name: "str", raw: "Any", cause: "Exception") -> "None":
         """Initialize the error.
 
@@ -147,6 +152,11 @@ class MCPToolErrorResult(Exception):  # noqa: N818
     The JSON-RPC route layer catches this and maps it to ``isError: true`` in
     the ``tools/call`` result.
     """
+
+    content: Any
+    """Decoded error response body produced by the Litestar handler or exception handler."""
+    status_code: int
+    """HTTP status code (`>= 400`) returned by the handler pipeline."""
 
     def __init__(self, content: "Any", *, status_code: "int" = 500) -> "None":
         """Initialize with the already-rendered JSON-RPC content payload.

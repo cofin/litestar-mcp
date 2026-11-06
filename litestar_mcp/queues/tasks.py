@@ -187,6 +187,11 @@ run_agent_turn_task = run_agent_turn
 class QueuedTurnManager:
     """Manages queuing agent turns and publishing realtime frames to Channels."""
 
+    queue_service: Any
+    """Optional `litestar-queues` `QueueService` used to enqueue background agent turns."""
+    channels: Any
+    """Optional Litestar `ChannelsPlugin` service used to publish streamed agent frames."""
+
     def __init__(
         self,
         queue_service: NamedDependency[Any | None] = None,
