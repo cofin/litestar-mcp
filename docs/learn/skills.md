@@ -11,15 +11,15 @@
 | **Class-Based `SkillController`** | `SkillController` (`@tool`, `@prompt`, `instructions`) | `tools/list`, `tools/call`, `prompts/list`, `prompts/get`, plus `Agent(skills=[...])` | Packaging executable domain tools, prompt templates, and system instructions together with shared controller guards and DI. |
 | **A2A `AgentSkill` Metadata** | `SkillController.to_agent_skill()` / `A2AConfig` | `GET /.well-known/agent-card.json` (`skills` array) | Advertising high-level agent capabilities to remote A2A 1.0 peers. |
 
-## Enabling Static Filesystem Skills (`MCPSkillsConfig`)
+## Enabling Static Filesystem Skills (MCPSkillsConfig)
 
 Pass an `MCPSkillsConfig` instance with `paths=[...]` (`Sequence[Path]`) to `MCPConfig`:
 
 ```python title="docs/examples/snippets/configuration_skills.py"
---8<-- "docs/examples/snippets/configuration_skills.py"
+--8<-- "docs/examples/snippets/configuration_skills.py:example"
 ```
 
-### `MCPSkillsConfig` Options
+### MCPSkillsConfig Options
 
 | Field | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
@@ -96,7 +96,7 @@ When `MCPConfig.skills` is configured, `server/discover` and `initialize` advert
 }
 ```
 
-## Dynamic, Request-Aware `SkillSource` Protocol
+## Dynamic, Request-Aware SkillSource Protocol
 
 Applications that load skills from a database, object store, or tenant-scoped registry can implement the `@runtime_checkable` `SkillSource` protocol and pass instances to `MCPSkillsConfig(sources=[...])`:
 
@@ -104,7 +104,7 @@ Applications that load skills from a database, object store, or tenant-scoped re
 - **`async def get_skill(self, request: Request[Any, Any, Any], name: str, /) -> Skill | None`**: Return the named `Skill` if visible to `request`, or `None`.
 - **`async def read_file(self, request: Request[Any, Any, Any], skill: Skill, file: SkillFile, /) -> bytes`**: Return the raw bytes for `file` when `file.content` is `None`.
 
-### Constructing In-Memory Skills (`Skill.build`, `Skill.from_content`, `SkillFile.from_content`)
+### Constructing In-Memory Skills (Skill.build, Skill.from_content, SkillFile.from_content)
 
 - **`Skill.build(name, description, body="", *, metadata=None, files=None)`**: Renders YAML frontmatter around `body` and computes SHA-256 digests and byte sizes for `SKILL.md` and any auxiliary `files`.
 - **`Skill.from_content(skill_md, files=None)`**: Parses raw `SKILL.md` markdown containing frontmatter and attaches optional auxiliary files.
@@ -119,7 +119,7 @@ When both `paths` and `sources` are configured, `SkillCatalog` places `Filesyste
 !!! important "Cache Scope for Caller-Filtered Skills"
     Keep `MCPConfig.cache_scope="private"` (the default) whenever a `SkillSource` filters skills or file contents by `request.headers`, `request.user`, or tenant context so shared HTTP caches never mix responses across callers.
 
-## Class-Based `SkillController`
+## Class-Based SkillController
 
 While `MCPSkillsConfig` serves `SKILL.md` document bundles over `resources/*`, `SkillController` lets you package executable `@tool` methods, `@prompt` methods, system `instructions`, Litestar `guards`, and `dependencies` into a single Python class:
 

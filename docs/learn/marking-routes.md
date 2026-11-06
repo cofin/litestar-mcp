@@ -13,13 +13,13 @@ The `@mcp_tool`, `@mcp_resource`, and `@mcp_prompt` decorators store metadata in
 === "Route Kwargs"
 
     ```python title="docs/examples/snippets/marking_tools.py"
-    --8<-- "docs/examples/snippets/marking_tools.py"
+    --8<-- "docs/examples/snippets/marking_tools.py:example"
     ```
 
 === "Decorator"
 
     ```python title="docs/examples/snippets/marking_decorator.py"
-    --8<-- "docs/examples/snippets/marking_decorator.py"
+    --8<-- "docs/examples/snippets/marking_decorator.py:example"
     ```
 
 !!! tip "Choosing a Convention"
@@ -32,7 +32,7 @@ The `@mcp_tool`, `@mcp_resource`, and `@mcp_prompt` decorators store metadata in
 Pass `mcp_tool=True` to publish a route handler under its Python function name, or `mcp_tool="<custom_name>"` to override the advertised tool name:
 
 ```python title="docs/examples/snippets/marking_tools.py"
---8<-- "docs/examples/snippets/marking_tools.py"
+--8<-- "docs/examples/snippets/marking_tools.py:example"
 ```
 
 ### Resource Markers
@@ -40,7 +40,7 @@ Pass `mcp_tool=True` to publish a route handler under its Python function name, 
 Pass `mcp_resource=True` or `mcp_resource="<resource_name>"` to publish a read-only handler in `resources/list` and `resources/read`:
 
 ```python title="docs/examples/snippets/marking_resources.py"
---8<-- "docs/examples/snippets/marking_resources.py"
+--8<-- "docs/examples/snippets/marking_resources.py:example"
 ```
 
 ### Prompt Markers
@@ -48,10 +48,10 @@ Pass `mcp_resource=True` or `mcp_resource="<resource_name>"` to publish a read-o
 Prompts can be registered either as route-bound handlers (`mcp_prompt=True` or `mcp_prompt="<prompt_name>"`) or as standalone `@mcp_prompt` callables passed to `LitestarMCP(prompts=[...])`:
 
 ```python title="docs/examples/snippets/marking_prompts.py"
---8<-- "docs/examples/snippets/marking_prompts.py"
+--8<-- "docs/examples/snippets/marking_prompts.py:example"
 ```
 
-## `MCPOptKeys` Reference Table
+## MCPOptKeys Reference Table
 
 Downstream applications can customize every `handler.opt` key name via `MCPConfig(opt_keys=MCPOptKeys(...))` to avoid collisions with other plugins. All keys default to `mcp_<purpose>`:
 
@@ -72,7 +72,7 @@ Downstream applications can customize every `handler.opt` key name via `MCPConfi
 | `when_to_use` | `"mcp_when_to_use"` | Tools, Resources | Appends a structured `## When to use` section to the rendered description. |
 | `returns` | `"mcp_returns"` | Tools, Resources | Appends a structured `## Returns` section to the rendered description. |
 | `agent_instructions` | `"mcp_agent_instructions"` | Tools, Resources | Appends a mandatory `## Instructions` grounding section to the rendered description. |
-| `annotations` | `"mcp_annotations"` | Tools | Mapping of MCP `ToolAnnotations` hints (`title`, `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, `scopes`). |
+| `annotations` | `"mcp_annotations"` | Tools | Mapping of MCP tool annotation hints (`title`, `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, `scopes`) configured via `mcp_annotations` or `@mcp_tool(annotations=...)`. |
 | `read_only` | `"mcp_read_only"` | Tools | Boolean shorthand setting `annotations["readOnlyHint"]`. |
 | `required_client_capabilities` | `"mcp_required_client_capabilities"` | Tools | Mapping of client capabilities required before `tools/call` is allowed (returns `-32021` when missing). |
 | `task` / `task_support` | `"mcp_task"` / `"mcp_task_support"` | Tools | Declares MCP Tasks support mode (`"optional"`, `"required"`, `"forbidden"`, or aliases `True`, `False`, `"sync"`, `"disabled"`, `"inline"`). Can be set on a route, `Controller`, or `Router`. |
@@ -97,12 +97,12 @@ If `when_to_use`, `returns`, or `agent_instructions` are configured via `handler
 
 ## Universal Dependency Injection
 
-Because `litestar-mcp` dispatches tools, resources, and route-bound prompts through an internal ASGI scope (`execute_tool` and `execute_handler`), every dependency injection mechanism supported by your application works identically over Streamable HTTP, in-process `stdio`, and background `QueueTaskExecutor` workers:
+Because `litestar-mcp` dispatches tools, resources, and route-bound prompts through an internal ASGI scope (`execute_tool` and `execute_handler`), every dependency injection mechanism supported by your application works identically over Streamable HTTP, in-process `stdio`, and background `QueueTaskExecutor` workers. During schema compilation, `generate_json_schema_for_handler` strips Litestar internal DI parameters (`Provide`, `Dependency(skip_validation=True)`, `Request`, `State`, `ToolContext`, and Dishka `FromDishka[T]`) while keeping user-facing query, path, header (`x-mcp-header`), and body parameters in `inputSchema`:
 
-- **Litestar `Provide` & `Dependency`**: Route-, controller-, router-, and app-level `dependencies={"key": Provide(...)}` and `NamedDependency[T]` parameters are resolved automatically and hidden from the advertised MCP `inputSchema` (unless a provider itself takes client-facing input parameters).
+- **Litestar `Provide` & `Dependency(skip_validation=True)`**: Route-, controller-, router-, and app-level `dependencies={"key": Provide(...)}` and `Dependency(skip_validation=True)` parameters are resolved automatically and hidden from the advertised MCP `inputSchema` (unless a provider itself takes client-facing input parameters).
 - **Dishka (`FromDishka[T]`)**: Handlers using `FromDishka[T]` are unwrapped via `__dishka_orig_func__` during schema generation so `FromDishka` parameters are excluded from `inputSchema` and resolved from the active `Scope.REQUEST` Dishka container at execution time.
-- **Standalone `@tool` DI (`ToolContext`, `Inject()`, `Depends(fn)`)**: Standalone `@tool` functions and `SkillController` methods can declare `ToolContext`, `Inject("key")` (resolving from `app.dependencies` or `app.state`), `Depends(fn)`, or `FromDishka[T]` parameters alongside client arguments.
+- **Standalone `@tool` and `SkillController` DI (`ToolContext`, `Provide`, `FromDishka[T]`)**: Standalone `@tool` functions and `SkillController` methods can declare `ToolContext`, Litestar `Provide` / `Dependency(skip_validation=True)`, `Request`, `State`, or Dishka `FromDishka[T]` parameters alongside client arguments.
 
 ```python title="docs/examples/snippets/marking_dependencies.py"
---8<-- "docs/examples/snippets/marking_dependencies.py"
+--8<-- "docs/examples/snippets/marking_dependencies.py:example"
 ```

@@ -13,12 +13,12 @@ Prompts are reusable, parameterized instruction templates exposed via `prompts/l
 Use `@mcp_prompt` for MCP-only prompt templates, or tag an existing Litestar route handler with `mcp_prompt=True` (or `mcp_prompt="<name>"`) when the prompt should also be callable as a standard HTTP endpoint:
 
 ```python title="docs/examples/snippets/marking_prompts.py"
---8<-- "docs/examples/snippets/marking_prompts.py"
+--8<-- "docs/examples/snippets/marking_prompts.py:example"
 ```
 
-For route-bound prompts, you can customize metadata with `mcp_prompt_description`, `mcp_prompt_title`, `mcp_prompt_arguments`, and `mcp_prompt_icons` (see the [`MCPOptKeys` Reference Table](marking-routes.md#mcpoptkeys-reference-table)). When `arguments` is omitted, `litestar-mcp` introspects the callable's signature, excludes DI parameters, and populates argument descriptions from the function's Google-style `Args:` docstring section.
+For route-bound prompts, you can customize metadata with `mcp_prompt_description`, `mcp_prompt_title`, `mcp_prompt_arguments`, and `mcp_prompt_icons` (see the [MCPOptKeys Reference Table](marking-routes.md#mcpoptkeys-reference-table)). When `arguments` is omitted, `litestar-mcp` introspects the callable's signature, excludes DI parameters, and populates argument descriptions from the function's Google-style `Args:` docstring section.
 
-## Class-Based `PromptController`
+## Class-Based PromptController
 
 When building domain-specific prompt suites or multi-agent applications, subclass `PromptController` and decorate methods with `@prompt`:
 
@@ -28,10 +28,10 @@ When building domain-specific prompt suites or multi-agent applications, subclas
 
 Register a `PromptController` either by adding it to `Litestar(route_handlers=[CoffeePromptController])` or by passing it in `MCPConfig(prompt_controllers=[CoffeePromptController])`.
 
-### `PromptController` Capabilities
+### PromptController Capabilities
 
 - **Namespace `prefix`**: Setting `prefix = "coffee"` registers `@prompt` methods as `coffee/welcome_customer` and `coffee/roast_notes` (`qualify_prompt_name`).
-- **Prepended `instructions` (`apply_prompt_instructions`)**: When `instructions` is defined on a `PromptController`, `prompts/get` automatically prepends `f"{instructions.strip()}\n\n"` to the text of the first `"user"` role message (or inserts a leading `"user"` text message if no user text message is present).
+- **Prepended `instructions` (`apply_prompt_instructions`)**: When `instructions` is non-empty on a `PromptController`, `prompts/get` automatically prepends `f"{instructions}\n\n"` to the text of the first `"user"` role message (or inserts a leading `"user"` text message if no user text message is present).
 - **Internal Dispatch Protection**: Each `@prompt` method is mounted on an internal synthetic controller path (`/_litestar_mcp/<module>.<qualname>`) with `include_in_schema=False` and protected by the `require_internal_dispatch` guard so it can only be invoked through MCP internal ASGI dispatch (`execute_handler`), never as a public unguarded HTTP POST route.
 - **Controller `guards` and Universal DI**: Because `PromptController` subclasses `litestar.Controller`, you can declare `guards = [...]` and `dependencies = {"key": Provide(...)}` at the class level, and inject `Provide` dependencies or Dishka `FromDishka[T]` parameters directly into `@prompt` methods.
 
@@ -42,7 +42,7 @@ Every prompt callable or `@prompt` method can return any of the following Python
 | Return Type | Normalized Wire Output (`result.messages`) |
 | :--- | :--- |
 | `str` | `[{"role": "user", "content": {"type": "text", "text": "<value>"}}]` |
-| `PromptMessage` | `[message.to_dict()]` (use `PromptMessage.user("...")` or `PromptMessage.assistant("...")`) |
+| `PromptMessage` | `[message.to_mcp_dict()]` (`PromptMessage.to_mcp_dict()`; use `PromptMessage.user("...")` or `PromptMessage.assistant("...")`) |
 | `dict[str, Any]` with `"messages"` | Used directly as the top-level `prompts/get` result dictionary (with controller `instructions` applied to `result["messages"]`). |
 | `dict[str, Any]` with `"role"` & `"content"` | Wrapped in a single-element list `[result]`. |
 | `Sequence[PromptMessage]` or `list[dict]` | Each element is normalized in order into a `PromptMessage` dictionary. |

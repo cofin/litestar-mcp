@@ -11,10 +11,10 @@ SUPPORTED_PROTOCOL_VERSIONS: tuple[str, ...] = (
 ```
 
 ```python title="docs/examples/snippets/discovery_endpoints.py"
---8<-- "docs/examples/snippets/discovery_endpoints.py"
+--8<-- "docs/examples/snippets/discovery_endpoints.py:example"
 ```
 
-## Comparing `2026-07-28` vs `2025-06-18` / `2025-03-26`
+## Comparing 2026-07-28 vs 2025-06-18 and 2025-03-26
 
 Both protocol families share the same `/mcp` route and internal ASGI execution pipeline, but differ in how capability discovery and per-request metadata are exchanged:
 
@@ -27,7 +27,7 @@ Both protocol families share the same `/mcp` route and internal ASGI execution p
 | **Required Request `_meta`** | `params._meta["io.modelcontextprotocol/protocolVersion"]` and `params._meta["io.modelcontextprotocol/clientCapabilities"]` | Optional (`params.protocolVersion`, `params.capabilities`, `params.clientInfo` passed on `initialize`) |
 | **Required HTTP Routing Headers (SEP-2575)** | `MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name` (for named targets), and `Mcp-Param-*` (for header-annotated tool fields) | Optional |
 
-## Stateless `2026-07-28` Discovery (`server/discover`) & SEP-2575 Headers
+## Stateless 2026-07-28 Discovery (server/discover) & SEP-2575 Headers
 
 When a client communicates using MCP `2026-07-28`—indicated by calling `server/discover`, sending `MCP-Protocol-Version: 2026-07-28`, sending `Mcp-Method` / `Mcp-Name`, or including `io.modelcontextprotocol/*` keys in `params._meta`—`MCPController` enforces the full stateless `2026-07-28` and SEP-2575 contract:
 
@@ -91,7 +91,7 @@ When a client communicates using MCP `2026-07-28`—indicated by calling `server
 | `UNSUPPORTED_PROTOCOL_VERSION` | `-32022` | `400 Bad Request` | `protocolVersion` is not in `SUPPORTED_PROTOCOL_VERSIONS` (error `data.supportedVersions` lists `["2026-07-28", "2025-06-18", "2025-03-26"]`). |
 | `METHOD_NOT_FOUND` | `-32601` | `404 Not Found` | Unknown JSON-RPC method, or `initialize` / `ping` invoked with `2026-07-28` metadata/headers. |
 
-## `2025-06-18` and `2025-03-26` Handshake Lifecycle
+## 2025-06-18 and 2025-03-26 Handshake Lifecycle
 
 Clients targeting `2025-06-18` or `2025-03-26` (such as Claude Desktop, MCP Inspector, or standard Streamable HTTP SDKs) interact with the exact same `/mcp` endpoint without SEP-2575 routing headers:
 

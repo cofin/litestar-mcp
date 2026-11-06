@@ -2,14 +2,14 @@
 
 In addition to serving Streamable HTTP directly from your Litestar application, `litestar-mcp` registers a `litestar mcp` CLI command group with subcommands for **in-process stdio execution** (`stdio`), **remote Streamable HTTP bridging** (`bridge`), **static tool manifest export** (`export-tool-spec`), and **interactive CLI inspection** (`list-tools`, `list-resources`, `run`).
 
-## Choosing Between `stdio` and `bridge`
+## Choosing Between stdio and bridge
 
 | Transport Mode | Command / Python API | How It Executes | Best For |
 | :--- | :--- | :--- | :--- |
 | **In-Process Stdio** | `litestar --app my_app:app mcp stdio` / `run_stdio(app)` / `run_stdio_async(app)` | Boots the Litestar ASGI lifespan in-process (without binding a TCP port) and routes newline-delimited JSON-RPC over `stdin`/`stdout` via `ASGIStreamingTransport`. | Single-file PEP 723 scripts (`uv run`), local desktop MCP hosts spawning the app directly, and test harnesses. |
 | **HTTP-to-Stdio Bridge** | `litestar --app my_app:app mcp bridge` / `run_bridge(endpoint)` / `run_stdio_streamable_http_bridge(endpoint)` | Reads JSON-RPC from local `stdin`, attaches MCP `2026-07-28` `_meta`, SEP-2575 routing headers (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`, `Mcp-Param-*`), and bearer tokens, and forwards requests over HTTP/SSE to a running server. | Connecting stdio-only MCP desktop clients to a remote, containerized, or multi-replica Litestar deployment. |
 
-## In-Process Stdio (`litestar mcp stdio`)
+## In-Process Stdio (litestar mcp stdio)
 
 Run your Litestar application as an in-process stdio MCP server using the Litestar CLI:
 
@@ -19,7 +19,7 @@ litestar --app my_app:app mcp stdio
 
 During `litestar mcp stdio`, standard output is reserved exclusively for newline-delimited JSON-RPC frames; any accidental `print()` output from application code is redirected to `sys.stderr`.
 
-### Programmatic Stdio & `MCPStdioContext`
+### Programmatic Stdio & MCPStdioContext
 
 You can also drive the in-process stdio loop directly from Python using `run_stdio`, `run_stdio_async`, or `MCP.run(transport="stdio")`. Pass an `MCPStdioContext` to pre-populate caller identity, task ownership, and request state on every synthesized ASGI scope:
 
@@ -50,7 +50,7 @@ run_stdio(app, stdio_context=stdio_context)
 | `session` | `Mapping[str, Any] or None` | `None` | Optional session dictionary copied into `scope["session"]`. |
 | `state` | `Mapping[str, Any] or None` | `None` | Optional initial state keys merged into `scope["state"]`. |
 
-## HTTP-to-Stdio Bridge (`litestar mcp bridge`)
+## HTTP-to-Stdio Bridge (litestar mcp bridge)
 
 When your Litestar service runs remotely (or in a separate local process/container) and an MCP host only supports stdio, use `litestar mcp bridge`:
 
@@ -63,12 +63,12 @@ litestar --app my_app:app mcp bridge --base-url https://api.example.com
 The bridge inspects the loaded application's `LitestarMCP` plugin configuration and appends `MCPConfig.base_path` to `--base-url` (or `http://{LITESTAR_HOST}:{LITESTAR_PORT}`, defaulting to `http://127.0.0.1:8000`):
 
 ```python title="docs/examples/snippets/bridge_custom_base_path.py"
---8<-- "docs/examples/snippets/bridge_custom_base_path.py"
+--8<-- "docs/examples/snippets/bridge_custom_base_path.py:example"
 ```
 
 For the application above (`MCPConfig(base_path="/api/mcp")`), running `litestar --app my_app:app mcp bridge` targets `http://127.0.0.1:8000/api/mcp` automatically.
 
-### `litestar mcp bridge` & `litestar mcp stdio` CLI Options
+### litestar mcp bridge & litestar mcp stdio CLI Options
 
 | CLI Flag | Applies To | Default | Description |
 | :--- | :--- | :--- | :--- |
@@ -105,7 +105,7 @@ For the application above (`MCPConfig(base_path="/api/mcp")`), running `litestar
 }
 ```
 
-## Static Tool Manifest Export (`litestar mcp export-tool-spec`)
+## Static Tool Manifest Export (litestar mcp export-tool-spec)
 
 Use `litestar mcp export-tool-spec` in CI pipelines, schema registries, or documentation builds to export the exact `tools/list` JSON specification (`name`, `description`, `inputSchema`, `outputSchema`, `annotations`) without starting an HTTP server:
 
@@ -116,7 +116,7 @@ litestar --app my_app:app mcp export-tool-spec \
   --strict-bounds
 ```
 
-### Description Length Validation (`--strict-bounds`)
+### Description Length Validation (--strict-bounds)
 
 Passing `--strict-bounds` (or configuring `max_tool_description_length`, `max_param_description_length`, or `max_output_field_description_length` on `MCPConfig`) runs `validate_tool_descriptions` against every exported tool entry and exits non-zero if any description exceeds its character budget:
 
