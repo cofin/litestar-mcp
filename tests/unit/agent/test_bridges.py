@@ -9,7 +9,6 @@ import pytest
 pytest.importorskip("a2a")
 
 from a2a.server.context import ServerCallContext
-from a2a.server.events import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
 from litestar import Litestar
 
@@ -24,6 +23,7 @@ from litestar_mcp.mcp.plugin import LitestarMCP
 
 if TYPE_CHECKING:
     from a2a.server.agent_execution import RequestContext
+    from a2a.server.events import EventQueue
 
     from litestar_mcp.core.context import ToolContext
 

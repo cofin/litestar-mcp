@@ -190,11 +190,12 @@ def _serialize_tool_content(value: "Any") -> "str":
 
 def _is_resource_text_media_type(mime_type: "str") -> "bool":
     """Return whether a resource body should be sent as MCP text."""
+    base = mime_type.split(";", 1)[0].strip().lower()
     return (
-        mime_type.startswith("text/")
-        or mime_type == "application/json"
-        or mime_type.endswith(("+json", "+xml"))
-        or mime_type
+        base.startswith("text/")
+        or base == "application/json"
+        or base.endswith(("+json", "+xml"))
+        or base
         in {
             "application/javascript",
             "application/xml",
@@ -270,9 +271,14 @@ def _resource_content_from_response(
     max_blob_bytes: "int | None",
 ) -> "dict[str, Any]":
     """Build one MCP ResourceContents object from a captured handler response."""
-    return _resource_content_from_bytes(
-        uri, response.body, mime_type=response.media_type or fallback_mime_type, max_blob_bytes=max_blob_bytes
-    )
+    resolved_mime_type = response.media_type or fallback_mime_type
+    if (
+        ";" in fallback_mime_type
+        and ";" not in resolved_mime_type
+        and resolved_mime_type.lower() == fallback_mime_type.split(";", 1)[0].strip().lower()
+    ):
+        resolved_mime_type = fallback_mime_type
+    return _resource_content_from_bytes(uri, response.body, mime_type=resolved_mime_type, max_blob_bytes=max_blob_bytes)
 
 
 def _looks_like_tool_content(value: "Any") -> "bool":
