@@ -342,7 +342,9 @@ def test_zensical_toml_and_pyproject_configuration() -> None:
     zensical_data = tomllib.loads((REPO_ROOT / "zensical.toml").read_text(encoding="utf-8"))
     project = zensical_data["project"]
     assert project["site_name"] == "Litestar MCP"
+    assert isinstance(project["exclude_docs"], str)
     assert "examples/**" in project["exclude_docs"]
+    assert "_build/**" in project["exclude_docs"]
     assert project["extra_css"] == ["stylesheets/extra.css"]
     assert len(project["nav"]) == 7
 

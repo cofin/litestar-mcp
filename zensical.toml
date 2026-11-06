@@ -10,7 +10,10 @@ copyright = "Copyright &copy; 2025-2026 Litestar Organization"
 docs_dir = "docs"
 site_dir = "site"
 use_directory_urls = true
-exclude_docs = ["examples/**", "_build/**"]
+exclude_docs = """
+examples/**
+_build/**
+"""
 extra_css = ["stylesheets/extra.css"]
 nav = [
   { "Home" = [
