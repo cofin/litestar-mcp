@@ -11,7 +11,7 @@ title: OpenTelemetry Tracing & Tool Callbacks
 
 ---
 
-## 1. Installing OpenTelemetry Support
+## Installing OpenTelemetry Support
 
 Install the optional `opentelemetry` extra (`opentelemetry-api>=1.20.0`) using your package manager:
 
@@ -44,26 +44,26 @@ Install the optional `opentelemetry` extra (`opentelemetry-api>=1.20.0`) using y
 
 ---
 
-## 2. Configuring `TelemetryConfig` and `SpanManager`
+## Configuring TelemetryConfig and SpanManager
 
 `TelemetryConfig` (`litestar_mcp.core.observability.TelemetryConfig`) controls span emission, custom `TracerProvider` resolution, resource attributes, and the instrumentation scope name:
 
 | `TelemetryConfig` Field | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `enable_spans` | `bool` | `False` | Enables OpenTelemetry span creation for agent turns, tool calls, and `SpanManager.span(...)` blocks. |
-| `provider_factory` | `Callable[[], Any] \| None` | `None` | Optional factory returning a custom OpenTelemetry `TracerProvider`. When `None`, `SpanManager` uses the global `opentelemetry.trace.get_tracer(tracer_name)`. |
+| `provider_factory` | `Callable[[], Any] or None` | `None` | Optional factory returning a custom OpenTelemetry `TracerProvider`. When `None`, `SpanManager` uses the global `opentelemetry.trace.get_tracer(tracer_name)`. |
 | `resource_attributes` | `dict[str, Any]` | `{}` | Key-value attributes merged onto every span started by `SpanManager` (for example, `{"service.name": "notes-mcp", "deployment.environment": "production"}`). |
 | `tracer_name` | `str` | `"litestar_mcp"` | Instrumentation scope name passed to `get_tracer(tracer_name)`. |
 
 Pass a configured `SpanManager(telemetry)` to `AgentRuntime(..., span_manager=...)` and use it inside `MCPConfig` tool callbacks or route dependencies:
 
 ```python title="docs/examples/snippets/observability_telemetry.py"
---8<-- "docs/examples/snippets/observability_telemetry.py"
+--8<-- "docs/examples/snippets/observability_telemetry.py:example"
 ```
 
 ---
 
-## 3. Emitted Span Hierarchy & GenAI Semantic Conventions
+## Emitted Span Hierarchy and GenAI Semantic Conventions
 
 `SpanManager` (`litestar_mcp.core.observability.SpanManager`) and `litestar_mcp.core.observability.semantics` follow the OpenTelemetry Semantic Conventions for Generative AI systems (`SpanKind.INTERNAL`):
 
@@ -75,7 +75,7 @@ Pass a configured `SpanManager(telemetry)` to `AgentRuntime(..., span_manager=..
 | **Tool Execution** | `start_tool_span(tool_name, call_id=..., ...)` | `execute_tool <tool_name>` | `"execute_tool"` |
 | **Custom Instrumentation Block** | `span(name, attributes=...)` / `start_span(name, attributes=...)` | `<name>` | *(caller-supplied)* |
 
-### Span Attributes Reference (`litestar_mcp.core.observability.semantics`)
+### Span Attributes Reference
 
 | Constant | Attribute Key | Emitted On | Value / Description |
 | :--- | :--- | :--- | :--- |
@@ -94,15 +94,15 @@ Pass a configured `SpanManager(telemetry)` to `AgentRuntime(..., span_manager=..
 
 ---
 
-## 4. MCP Tool-Call Lifecycle Hooks (`before_tool_call` & `after_tool_call`)
+## MCP Tool-Call Lifecycle Hooks
 
 For MCP server observability independent of `AgentRuntime`, `MCPConfig` exposes `before_tool_call` (`BeforeToolCallHook`) and `after_tool_call` (`AfterToolCallHook`):
 
 ```python title="docs/examples/snippets/configuration_tool_callbacks.py"
---8<-- "docs/examples/snippets/configuration_tool_callbacks.py"
+--8<-- "docs/examples/snippets/configuration_tool_callbacks.py:example"
 ```
 
-### Callback Signatures & Execution Order
+### Callback Signatures and Execution Order
 
 1. **`before_tool_call(tool_name: str, arguments: dict[str, Any], request: Request[Any, Any, Any], /) -> Awaitable[None] | None`**:
    - Runs once before every `tools/call` execution, immediately after the synthesized internal HTTP `Request` is created and **before** route guards or dependencies run.

@@ -10,7 +10,7 @@ Because `litestar-mcp` dispatches every primitive through Litestar's internal AS
 
 ---
 
-## 1. Enforcing Access Control with Litestar Guards
+## Enforcing Access Control with Litestar Guards
 
 Attach Litestar `Guard` functions at any layer of your application hierarchy:
 
@@ -19,14 +19,14 @@ Attach Litestar `Guard` functions at any layer of your application hierarchy:
 - **Individual Route Level (`@get(..., guards=[...])`, `@mcp.tool(guards=[...])`)**: Protects a specific tool, resource, or prompt handler during internal ASGI execution.
 
 ```python title="docs/examples/snippets/authorization_guard.py"
---8<-- "docs/examples/snippets/authorization_guard.py"
+--8<-- "docs/examples/snippets/authorization_guard.py:example"
 ```
 
 Guards receive the same `ASGIConnection` and `BaseRouteHandler` during an MCP `tools/call` as they do during a direct HTTP request. Raising `PermissionDeniedException` or `NotAuthorizedException` inside a guard aborts execution before handler dependencies or tool logic run.
 
 ---
 
-## 2. Discovery Scopes (`@mcp_tool(scopes=[...])`) vs Runtime Enforcement
+## Discovery Scopes vs Runtime Enforcement
 
 The `scopes` parameter on `@mcp_tool(scopes=["report:read"])` (or `mcp_annotations={"scopes": ["report:read"]}`) is **discovery metadata only**:
 
@@ -38,13 +38,13 @@ The `scopes` parameter on `@mcp_tool(scopes=["report:read"])` (or `mcp_annotatio
 | :--- | :--- | :--- | :--- |
 | `@mcp_tool(scopes=["report:read"])` | Route decorator / `mcp_annotations` | Advertised in `tools/list` under `tools[].annotations.scopes` | **None** (discovery metadata only) |
 | `guards=[require_scope("report:read")]` | Route, `Controller`, `Router`, or `MCPConfig(guards=[...])` | Not advertised in `tools/list` | **Enforced** before handler execution on both HTTP and MCP paths |
-| `MCPConfig(route_opt={"auth": required(...)})` | `MCPConfig.route_opt` | Emits `WWW-Authenticate` on `401` when configured with `litestar-security` | **Enforced** by `litestar-security` on `/mcp` and synthesized tool scopes |
+| `MCPConfig(auth=required(...))` | `MCPConfig.auth` / `MCPConfig.route_opt` | Emits `WWW-Authenticate` on `401` when configured with `litestar-security` | **Enforced** by `litestar-security` on `/mcp` and synthesized tool scopes |
 
 ---
 
-## 3. Task `owner_id` Transport Isolation vs Domain Object Ownership
+## Task Owner Transport Isolation vs Domain Object Ownership
 
-### Transport-Level Task Isolation (`TaskRecord.owner_id`)
+### Transport-Level Task Isolation
 
 When the `io.modelcontextprotocol/tasks` extension is enabled, `MCPHandlerService` derives an `owner_id` from the authenticated request (for example, `user:<subject>` from `request.user` / `request.auth` or `MCPStdioContext.owner_id`) and binds it to the created `TaskRecord` in `MCPTaskStore`:
 
@@ -59,12 +59,12 @@ Transport-level `owner_id` isolation only proves that the caller polling `tasks/
 Always validate domain object ownership against `request.user` / `request.auth` using Litestar `Provide` dependencies, Dishka request-scoped services, or repository query filters:
 
 ```python title="docs/examples/snippets/domain_authorization.py"
---8<-- "docs/examples/snippets/domain_authorization.py"
+--8<-- "docs/examples/snippets/domain_authorization.py:example"
 ```
 
 ---
 
-## 4. Cryptographic Protection for Multi-Round `requestState` (AEAD / HMAC)
+## Cryptographic Protection for Multi-Round Request State
 
 Tools, resources, and prompts can pause execution to request interactive user confirmation or additional parameters by returning `MCPInputRequiredResult(input_requests=..., request_state=...)`.
 
@@ -149,7 +149,7 @@ def unseal_request_state(
 
 ---
 
-## 5. Remote-Safe File & Path Arguments and `SkillIntegrityError`
+## Remote-Safe File and Path Arguments and Skill Integrity
 
 ### Why Raw Filesystem Paths Are Unsafe on Remote MCP Servers
 
@@ -166,7 +166,7 @@ Prefer remote-safe tool argument contracts:
 
 If a local or sandboxed MCP tool intentionally operates on server-side files, restrict it to an explicit allowlisted root directory, resolve symlinks with `Path.resolve()`, verify containment with `resolved_path.is_relative_to(allowed_root)`, and authorize the caller before opening the file.
 
-### Built-In Agent Skills (`SEP-2640`) Containment & `SkillIntegrityError`
+### Built-In Agent Skills Containment and SkillIntegrityError
 
 `litestar-mcp` applies strict filesystem containment and cryptographic integrity verification to Agent Skills (`MCPSkillsConfig`, `FilesystemSkillSource`, `SkillCatalog`, `SkillFile`):
 

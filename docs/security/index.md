@@ -8,7 +8,7 @@ title: Security Model & Trust Boundaries
 
 ---
 
-## 1. End-to-End Security Pipeline
+## End-to-End Security Pipeline
 
 Authentication and authorization are separated into two explicit layers:
 
@@ -25,7 +25,7 @@ flowchart LR
 
 ---
 
-## 2. Trust Boundaries by Transport & Execution Mode
+## Trust Boundaries by Transport and Execution Mode
 
 The source of caller identity depends on how the request enters your application and whether execution stays in-process or crosses into a `litestar-queues` worker:
 
@@ -40,14 +40,14 @@ The source of caller identity depends on how the request enters your application
 
 ---
 
-## 3. Transport Authentication vs Domain Object Authorization
+## Transport Authentication vs Domain Object Authorization
 
 Authenticating a caller and isolating their protocol-level task or session records does not prove that the caller is permitted to read or mutate the domain entity referenced in tool arguments.
 
 | Security Layer | Question Answered | Enforced By | Example |
 | :--- | :--- | :--- | :--- |
 | **Transport Authentication** | *Who is the caller making this MCP, stdio, or A2A request?* | Litestar authentication middleware, `litestar-security`, `MCPStdioContext` | Verifying a Bearer JWT or `x-goog-iap-jwt-assertion` header and binding `request.user` |
-| **Capability / Route Authorization** | *Is this principal allowed to invoke this tool, prompt, or controller?* | Litestar `Guard` functions, `MCPConfig.guards`, `MCPConfig.route_opt` | Checking that `request.auth` includes the `report:read` scope or `admin` role |
+| **Capability / Route Authorization** | *Is this principal allowed to invoke this tool, prompt, or controller?* | Litestar `Guard` functions, `MCPConfig.guards`, `MCPConfig.auth`, `MCPConfig.route_opt` | Checking that `request.auth` includes the `report:read` scope or `admin` role |
 | **Protocol Task & Session Isolation** | *Did the caller create the `taskId` or `session_id` they are polling or cancelling?* | `MCPTaskStore` (`TaskRecord.owner_id`), `SessionStore` (`owner_id`), `a2a-sdk` task store | Rejecting `tasks/get` when `record.owner_id != current_owner_id` |
 | **Domain Object Authorization** | *Does the authenticated principal own or have access to the requested `workspace_id`, `note_id`, or file handle?* | Application `Provide` / `FromDishka` dependencies and repository queries (`WHERE owner_sub = :sub`) | Verifying `request.user.sub == workspace.owner_id` before exporting a workspace |
 
@@ -56,7 +56,7 @@ Authenticating a caller and isolating their protocol-level task or session recor
 
 ---
 
-## 4. Security & Operations Guides
+## Security and Operations Guides
 
 <div class="lm-grid">
   <div class="lm-card">
@@ -69,8 +69,8 @@ Authenticating a caller and isolating their protocol-level task or session recor
 
   <div class="lm-card">
     <div>
-      <h3>First-Party <code>litestar-security</code> Integration</h3>
-      <p>Bind mechanism policies with <code>MCPConfig(route_opt={"auth": required(...)})</code>, publish RFC 9728 protected-resource metadata, and rehydrate <code>SecurityContext</code> in queue workers.</p>
+      <h3>First-Party litestar-security Integration</h3>
+      <p>Configure optional mechanism policies with <code>MCPConfig(auth=required(...))</code>, publish RFC 9728 protected-resource metadata, and rehydrate <code>SecurityContext</code> in queue workers.</p>
     </div>
     <a href="litestar-security/">litestar-security Guide &rarr;</a>
   </div>
@@ -89,21 +89,5 @@ Authenticating a caller and isolating their protocol-level task or session recor
       <p>Emit GenAI semantic convention spans with <code>TelemetryConfig</code> and <code>SpanManager</code>, and wire <code>before_tool_call</code> / <code>after_tool_call</code> audit hooks.</p>
     </div>
     <a href="observability/">Observability Guide &rarr;</a>
-  </div>
-
-  <div class="lm-card">
-    <div>
-      <h3>Migrating to <code>v0.14</code>–<code>v0.18</code></h3>
-      <p>Upgrade across the modular package layout, Litestar-native auth middleware, dual-version Streamable HTTP, A2A 1.0 REST, and zero-config <code>litestar-queues</code> execution.</p>
-    </div>
-    <a href="migration-0-14/">v0.14–v0.18 Migration &rarr;</a>
-  </div>
-
-  <div class="lm-card">
-    <div>
-      <h3>Migrating to <code>v0.12</code> Stateless MCP</h3>
-      <p>Historical reference for the stateless MCP <code>2026-07-28</code> transport, <code>MCPTaskConfig</code>, multi-round <code>MCPInputRequiredResult</code>, and <code>subscriptions/listen</code>.</p>
-    </div>
-    <a href="migration-0-12/">v0.12 Migration &rarr;</a>
   </div>
 </div>
