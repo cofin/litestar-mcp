@@ -1,5 +1,6 @@
 """Async Streamable HTTP client and request-header helpers for Litestar MCP endpoints."""
 
+import base64
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -28,18 +29,20 @@ __all__ = (
 )
 
 _DEFAULT_CLIENT_INFO = {"name": "litestar-mcp-client", "version": __version__}
+_MIN_VISIBLE_ASCII = 0x20
+_MAX_VISIBLE_ASCII = 0x7E
 
 
 def _encode_header_value(value: str) -> str:
-    """Encode header value if it contains non-ASCII characters."""
-    try:
-        value.encode("ascii")
-    except UnicodeEncodeError:
-        import base64
-
-        return f"?utf-8?B?{base64.b64encode(value.encode('utf-8')).decode('ascii')}?="
-    else:
+    """Encode header value with the MCP `=?base64?...` sentinel when non-visible-ASCII or colliding."""
+    if (
+        value
+        and all(_MIN_VISIBLE_ASCII <= ord(char) <= _MAX_VISIBLE_ASCII for char in value)
+        and not value.startswith("=?base64?")
+    ):
         return value
+    encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
+    return f"=?base64?{encoded}?="
 
 
 def prepare_mcp_request(

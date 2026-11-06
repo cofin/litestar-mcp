@@ -88,8 +88,6 @@ Commands for inspecting discovered MCP tools and resources or invoking a tool di
 
 List all available MCP tools.
 
-Uses plain description so terminal output never shows ``##`` headers.
-
 ```bash
 litestar mcp list-tools
 ```
@@ -97,8 +95,6 @@ litestar mcp list-tools
 ### `litestar mcp list-resources`
 
 List all available MCP resources.
-
-Uses plain description so terminal output never shows ``##`` headers.
 
 ```bash
 litestar mcp list-resources
