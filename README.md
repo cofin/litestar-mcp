@@ -42,10 +42,10 @@
 
 | Capability | Primary Symbols | Documentation |
 | :--- | :--- | :--- |
-| **Route Marking & Decorators** | `LitestarMCP`, `MCP`, `MCPConfig`, `mcp_tool`, `mcp_resource`, `mcp_prompt`, `ToolAnnotations`, `PromptController` | [MCP Core Guide](https://cofin.github.io/litestar-mcp/learn/marking-routes/) |
+| **Route Marking & Decorators** | `LitestarMCP`, `MCP`, `MCPConfig`, `mcp_tool`, `mcp_resource`, `mcp_prompt`, `MCPOptKeys`, `PromptController` | [MCP Core Guide](https://cofin.github.io/litestar-mcp/learn/marking-routes/) |
 | **Dual-Version Streamable HTTP & CLI** | `2026-07-28` (`server/discover` + SEP-2575 headers) and `2025-06-18` (`initialize`, `ping`, `DELETE /mcp`), `litestar mcp stdio`, `bridge`, `export-tool-spec` | [Transport & Discovery](https://cofin.github.io/litestar-mcp/learn/discovery/) |
 | **Agent Skills (`SEP-2640`)** | `MCPSkillsConfig`, `FilesystemSkillSource`, `SkillSource`, `Skill`, `SkillFile`, `SkillCatalog`, `SkillController` | [Agent Skills Guide](https://cofin.github.io/litestar-mcp/learn/skills/) |
-| **Distributed MCP Tasks & Queues** | `MCPTaskConfig`, `QueueTaskExecutor`, `InProcessTaskExecutor`, `MCPTaskStore`, `MCPInputRequiredResult`, `PrincipalSnapshot` | [Distributed Task Queues](https://cofin.github.io/litestar-mcp/queues/distributed-task-queues/) |
+| **Distributed MCP Tasks & Queues** | `MCPTaskConfig`, `QueueTaskExecutor`, `MCPTaskExecutor`, `MCPTaskStore`, `MCPInputRequiredResult`, `PrincipalSnapshot` | [Distributed Task Queues](https://cofin.github.io/litestar-mcp/queues/distributed-task-queues/) |
 | **Durable DAG Workflows** | `DynamicWorkflow`, `WorkflowNode`, `WorkflowEngine`, `DurableWorkflowEngine`, `WorkflowStore`, `WorkflowRun`, `NodeRecord` | [Durable Workflows](https://cofin.github.io/litestar-mcp/queues/durable-workflows/) |
 | **Multi-Agent Runtime & Streaming** | `Agent`, `AgentGroup`, `AgentRuntime`, `TurnBudget`, `GoogleGenAIClient`, `SessionStore`, `AgentChatController`, `QueuedAgentChatController` | [Agents & Runtime](https://cofin.github.io/litestar-mcp/agents/runtime-and-budgets/) |
 | **A2A 1.0 & Protocol Bridges** | `LitestarA2A`, `A2AConfig` (JSON-RPC 2.0 + `HTTP+JSON` REST, `/{tenant:str}` + `X-A2A-Tenant`), `agent_to_mcp`, `mcp_to_tools`, `discover_mcp_tools`, `agent_to_a2a` | [A2A 1.0 Protocol](https://cofin.github.io/litestar-mcp/agents/a2a-protocol/) |
@@ -92,9 +92,9 @@ uv add "litestar-mcp[a2a,queues,google-genai,opentelemetry]"
 
 ## Quickstart
 
-### 1. Expose Existing Litestar Routes (`LitestarMCP` Plugin)
+### Expose Existing Litestar Routes (LitestarMCP Plugin)
 
-Pass `mcp_tool=True`, `mcp_resource=True`, or `mcp_prompt=True` (or an explicit string name) directly to Litestar route decorators. `LitestarMCP` infers MCP `ToolAnnotations` from the HTTP method (`GET` sets `readOnlyHint=True`, `PUT` sets `idempotentHint=True`, `DELETE` sets `destructiveHint=True`) and strips DI parameters (`Provide`, `FromDishka[T]`, `Request`, `State`, `ToolContext`) from public JSON Schemas while resolving them at invocation time:
+Pass `mcp_tool=True`, `mcp_resource=True`, or `mcp_prompt=True` (or an explicit string name) directly to Litestar route decorators. `LitestarMCP` infers MCP tool annotation hints (`mcp_annotations`) from the HTTP method (`GET` sets `readOnlyHint=True`, `PUT` sets `idempotentHint=True`, `DELETE` sets `destructiveHint=True`) and strips DI parameters (`Provide`, `FromDishka[T]`, `Request`, `State`, `ToolContext`) from public JSON Schemas while resolving them at invocation time:
 
 ```python
 from litestar import Litestar, delete, get, post
@@ -137,7 +137,7 @@ app = Litestar(
 )
 ```
 
-### 2. Standalone Declarative Server (`MCP` Wrapper)
+### Standalone Declarative Server (MCP Wrapper)
 
 When building a dedicated MCP service, use the standalone `MCP` class. Its `@mcp.tool()`, `@mcp.resource()`, and `@mcp.prompt()` decorators accept full Litestar route kwargs (`dependencies`, `guards`, `opt`, DTOs) and expose `mcp.app` for the Litestar CLI:
 
@@ -165,7 +165,7 @@ if __name__ == "__main__":
     mcp.run(port=8000)
 ```
 
-### 3. Dual-Version Stateless Streamable HTTP & CLI
+### Dual-Version Stateless Streamable HTTP & CLI
 
 A single `/mcp` endpoint negotiates both MCP `2026-07-28` (`server/discover` with SEP-2575 `MCP-Protocol-Version` and `Mcp-Method` headers) and MCP `2025-06-18` / `2025-03-26` (`initialize`, `notifications/initialized`, `ping`, `202 Accepted` notifications, and `204 No Content` on `DELETE /mcp`):
 
@@ -197,7 +197,7 @@ litestar mcp bridge --base-url https://api.example.com --endpoint /mcp
 litestar --app my_app:app mcp export-tool-spec --indent 2
 ```
 
-### 4. Distributed MCP Tasks & Durable Workflows (`litestar-queues`)
+### Distributed MCP Tasks & Durable Workflows (litestar-queues)
 
 Pair `LitestarMCP` with `QueuePlugin` from `litestar-queues` to execute long-running `io.modelcontextprotocol/tasks` and durable DAG workflows across worker processes. `QueueTaskExecutor` snapshots `request.user`, `request.auth`, and `litestar-security` `SecurityContext` at submission time, rehydrates the internal HTTP scope and Dishka `Scope.REQUEST` container on the worker, and supports cooperative cancellation plus multi-round `MCPInputRequiredResult` resume across replicas:
 
@@ -226,7 +226,7 @@ async def extract_step(ctx: WorkflowContext) -> dict[str, object]:
 pipeline = DynamicWorkflow("etl_pipeline")
 pipeline.add_node("extract", handler=extract_step)
 
-queue_plugin = QueuePlugin(QueueConfig(backend="memory"))
+queue_plugin = QueuePlugin(QueueConfig(queue_backend="memory"))
 task_executor = QueueTaskExecutor(queue="mcp", timeout=3600)
 workflow_engine = DurableWorkflowEngine([pipeline])
 
@@ -250,7 +250,7 @@ app = Litestar(
 )
 ```
 
-### 5. Multi-Agent Runtime & `GoogleGenAIClient`
+### Multi-Agent Runtime & GoogleGenAIClient
 
 Orchestrate single agents or hierarchical `AgentGroup` coordinator-specialist trees under `AgentRuntime` with strict `TurnBudget` guardrails (`max_turns`, `max_tool_calls`, `timeout_seconds`) and `GoogleGenAIClient` (defaulting to `gemini-3.8-flash` with thought-signature round-tripping):
 
@@ -264,7 +264,7 @@ from litestar_mcp.agent import (
     MemorySessionStore,
     TurnBudget,
 )
-from litestar_mcp.core.tools import tool
+from litestar_mcp.core import tool
 
 
 @tool
@@ -290,7 +290,7 @@ runtime = AgentRuntime(
 app = Litestar(route_handlers=[AgentChatController], plugins=[runtime])
 ```
 
-### 6. Official A2A 1.0 JSON-RPC + `HTTP+JSON` REST (`LitestarA2A`)
+### Official A2A 1.0 JSON-RPC + HTTP+JSON REST (LitestarA2A)
 
 Mount `LitestarA2A` (or use the `agent_to_a2a` bridge) to expose an `Agent` or official `a2a-sdk` `AgentExecutor` over A2A 1.0 JSON-RPC 2.0 (`POST /a2a`), native A2A 1.0 `HTTP+JSON` REST routes (`/a2a/message:send`, `/a2a/message:stream`, `/a2a/tasks/{id}:cancel`, `/a2a/tasks/{id}:subscribe`), and `GET /.well-known/agent-card.json` with optional `/{tenant:str}` path and `X-A2A-Tenant` header multi-tenancy:
 
@@ -310,7 +310,7 @@ app = Litestar(plugins=[runtime, a2a_plugin])
 
 ---
 
-## Single-File Reference Examples (`uv run` & `uvx`)
+## Single-File Reference Examples (uv run & uvx)
 
 The repository ships a 10-variant Notes reference application under [`docs/examples/notes/`](https://cofin.github.io/litestar-mcp/architecture/reference-examples/) comparing **SQLSpec** and **Advanced Alchemy** across **Litestar `Provide`** and **Dishka `FromDishka[T]`** dependency injection and four authentication tiers (`no-auth`, `JWT`, `Cloud Run`, and Google `IAP`). Every variant embeds a PEP 723 script block so `uv run` provisions dependencies automatically:
 
@@ -331,10 +331,10 @@ Full documentation, interactive architecture diagrams, and API reference are pub
 
 - [**Getting Started**](https://cofin.github.io/litestar-mcp/getting-started/) — Installation, optional extras, 5-minute quickstart, standalone `MCP` servers, and core concepts
 - [**Architecture & Examples**](https://cofin.github.io/litestar-mcp/architecture/) — Interactive system diagrams, Notes reference matrix, and single-file PEP 723 guide
-- [**MCP Core**](https://cofin.github.io/litestar-mcp/learn/) — `MCPConfig`, route markers, `ToolAnnotations`, resources, prompts, Agent Skills (`SEP-2640`), discovery, stdio, and bridge
+- [**MCP Core**](https://cofin.github.io/litestar-mcp/learn/) — `MCPConfig`, route markers, `MCPOptKeys`, resources, prompts, Agent Skills (`SEP-2640`), discovery, stdio, and bridge
 - [**Tasks, Queues & Workflows**](https://cofin.github.io/litestar-mcp/queues/) — `io.modelcontextprotocol/tasks`, `QueueTaskExecutor`, `DurableWorkflowEngine`, `QueuedAgentChatController`, and multi-replica deployment
 - [**Agents & A2A**](https://cofin.github.io/litestar-mcp/agents/) — `AgentRuntime`, `TurnBudget`, `GoogleGenAIClient`, `AgentGroup`, protocol bridges, `LitestarA2A`, and multi-tenancy
-- [**Security & Operations**](https://cofin.github.io/litestar-mcp/security/) — Authentication middleware, `litestar-security` & RFC 9728 metadata, authorization guards/scopes, OpenTelemetry, and migration guides
+- [**Security & Operations**](https://cofin.github.io/litestar-mcp/security/) — Authentication middleware, `litestar-security` & RFC 9728 metadata, authorization guards/scopes, and OpenTelemetry
 - [**API Reference & CLI**](https://cofin.github.io/litestar-mcp/reference/) — Curated API reference, `litestar mcp` CLI reference, contributor guide, and [Changelog](https://cofin.github.io/litestar-mcp/changelog/)
 
 ---

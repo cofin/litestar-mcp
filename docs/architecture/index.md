@@ -10,7 +10,7 @@ This page collects all six interactive architectural diagrams and links each sub
 
 ---
 
-## 1. Request & Transport Dispatch Pipeline
+## Request & Transport Dispatch Pipeline
 
 `MCPController` mounts at `MCPConfig.base_path` (default `/mcp`) and delegates JSON-RPC framing and version negotiation to `MCPHandlerService`. Both `2026-07-28` stateless discovery (`server/discover` + SEP-2575 headers) and `2025-06-18` initialization (`initialize`, `ping`, `notifications/initialized`, `DELETE /mcp`) share the same registry and internal ASGI execution path.
 
@@ -23,14 +23,14 @@ When a client calls `tools/call` or `prompts/get`, `MCPHandlerService` dispatche
 
 ---
 
-## 2. Primitives & Discovery Compilation
+## Primitives & Discovery Compilation
 
 At application startup (`on_app_init`), `LitestarMCP` inspects every registered Litestar route handler, `PromptController`, `SkillController`, and `MCPSkillsConfig` source to populate the central `Registry`:
 
-- **Tools**: Compiles route signatures, `msgspec.Struct` / Pydantic / `@dataclass` models, and `Provide` dependencies into JSON Schema while stripping internal DI parameters (`Request`, `State`, `ToolContext`, and Dishka-resolved types). Infers `ToolAnnotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`) from the HTTP verb unless overridden.
+- **Tools**: Compiles route signatures, `msgspec.Struct` / Pydantic / `@dataclass` models, and `Provide` dependencies into JSON Schema while stripping internal DI parameters (`Request`, `State`, `ToolContext`, and Dishka-resolved types). Infers `mcp_annotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`) from the HTTP verb unless overridden via `MCPOptKeys`.
 - **Resources & Templates**: Separates static URIs (`resources/list`) from parameterized RFC 6570 Level 1 templates (`resources/templates/list`) and manages `resources/subscribe` change notifications.
 - **Prompts**: Extracts `PromptArgument` metadata from route handlers or `PromptController` methods and normalizes return values into MCP message sequences.
-- **Agent Skills (`SEP-2640`)**: Combines static `SKILL.md` directories (`FilesystemSkillSource`), dynamic request-aware `SkillSource` providers, and `SkillController` endpoints under `io.modelcontextprotocol/skills` (`skills/list`, `skills/load`, `skills/read_file`) and `skills://` fallback resources.
+- **Agent Skills (`SEP-2640`)**: Combines static `SKILL.md` directories (`FilesystemSkillSource`), dynamic request-aware `SkillSource` providers, and `SkillController` endpoints under `io.modelcontextprotocol/skills` (`skills/list`, `skills/get`) and `skill://<name>/...` resources.
 
 --8<-- "tools/docs/includes/diagram-primitives-and-discovery.html"
 
@@ -39,12 +39,12 @@ At application startup (`on_app_init`), `LitestarMCP` inspects every registered 
 
 ---
 
-## 3. MCP Tasks & Distributed Queue Execution
+## MCP Tasks & Distributed Queue Execution
 
 The `io.modelcontextprotocol/tasks` capability lets clients request asynchronous execution on any tool by supplying `params.task`. `MCPTaskStore` persists `TaskRecord` metadata in the `litestar_mcp_tasks` store namespace and delegates execution to a pluggable `MCPTaskExecutor`:
 
 - **`QueueTaskExecutor` (`litestar-mcp[queues]`)**: Auto-attaches when `QueuePlugin` from `litestar-queues` is present on the Litestar app (or when passed explicitly to `MCPTaskConfig(executor=...)`). Captures a `PrincipalSnapshot` (`request.user`, `request.auth`, `litestar-security` `SecurityContext` scopes/roles, and Dishka `Scope.REQUEST` context) so background worker replicas rehydrate the exact caller identity. Supports cooperative `tasks/cancel` polling and multi-round `MCPInputRequiredResult` / `tasks/update` human-in-the-loop resume across distinct replicas.
-- **`InProcessTaskExecutor`**: Default zero-dependency executor using an in-process AnyIO `TaskGroup` for local development, stdio servers, and single-worker deployments.
+- **Built-in In-Process Task Execution (`executor="in_process"`)**: Default zero-dependency task runner in `MCPTaskStore` / `MCPHandlerService` using an in-process AnyIO task group for local development, stdio servers, and single-worker deployments.
 
 --8<-- "tools/docs/includes/diagram-mcp-tasks-and-queues.html"
 
@@ -53,7 +53,7 @@ The `io.modelcontextprotocol/tasks` capability lets clients request asynchronous
 
 ---
 
-## 4. Durable DAG Workflows (`DurableWorkflowEngine`)
+## Durable DAG Workflows (DurableWorkflowEngine)
 
 `DynamicWorkflow` defines a Directed Acyclic Graph (DAG) of `WorkflowNode` steps (wrapping either an `Agent` or an async Python callable) with topological wave dependencies and conditional `WorkflowNode(condition=...)` branching.
 
@@ -70,7 +70,7 @@ The same `DynamicWorkflow` definition runs in-process via `WorkflowEngine` or ac
 
 ---
 
-## 5. Multi-Agent Runtime, Handoffs & Protocol Bridges
+## Multi-Agent Runtime, Handoffs & Protocol Bridges
 
 `AgentRuntime` manages `Agent` and `AgentGroup` execution inside your Litestar application:
 
@@ -86,13 +86,13 @@ The same `DynamicWorkflow` definition runs in-process via `WorkflowEngine` or ac
 
 ---
 
-## 6. A2A 1.0 Interoperability & Multi-Tenancy (`LitestarA2A`)
+## A2A 1.0 Interoperability & Multi-Tenancy (LitestarA2A)
 
 `LitestarA2A` (`litestar-mcp[a2a]`) integrates the official `a2a-sdk` 1.0 runtime (`AgentCard`, `AgentSkill`, `AgentExecutor`, `DefaultRequestHandler`, `TaskStore`, `ServerCallContext`) directly into Litestar:
 
 - **Dual Transport Bindings**: Serves JSON-RPC 2.0 at `POST /a2a` and, when `enable_http_json=True`, mounts native A2A 1.0 `HTTP+JSON` REST routes (`POST /a2a/message:send`, `POST /a2a/message:stream`, `GET /a2a/tasks`, `GET /a2a/tasks/{id}`, `POST /a2a/tasks/{id}:cancel`, `POST /a2a/tasks/{id}:subscribe`, and push notification config endpoints) while advertising both interfaces in `/.well-known/agent-card.json`.
 - **Split Route Security**: Applies `A2AConfig.route_opt` to execution routes while keeping discovery public (or separately scoped) via `A2AConfig.agent_card_route_opt`.
-- **Multi-Tenant Context Resolution**: Extracts tenant identity from `/{tenant:str}` path parameters or the `X-A2A-Tenant` request header (with path parameters taking precedence) and populates `ServerCallContext.tenant` via `A2AConfig.context_builder`.
+- **Multi-Tenant Context Resolution**: Extracts tenant identity with precedence `request payload > /{tenant:str} URL path > X-A2A-Tenant header` and populates `ServerCallContext.tenant` via `A2AConfig.context_builder`.
 
 --8<-- "tools/docs/includes/diagram-a2a-interoperability.html"
 
@@ -101,9 +101,9 @@ The same `DynamicWorkflow` definition runs in-process via `WorkflowEngine` or ac
 
 ---
 
-## 7. Runnable Reference Examples & PEP 723 Single-File Apps
+## Runnable Reference Examples & PEP 723 Single-File Apps
 
 Every subsystem above is accompanied by runnable, pytest-verified reference applications and single-file PEP 723 scripts:
 
-- **[Reference Examples & Notes Matrix](reference-examples.md)**: Full comparison of the `advanced_alchemy` and `sqlspec` Notes reference application families across 10 database/auth variants (`no_auth`, `jwt_auth`, `cloud_run`, `google_iap`).
+- **[Reference Examples & Notes Matrix](reference-examples.md)**: Full comparison of the `advanced_alchemy` and `sqlspec` Notes reference application families across 10 database/auth variants (`no_auth`, `jwt_auth`, `cloud_run_jwt`, `google_iap`).
 - **[Single-File `uvx` & PEP 723 Guide](uvx-and-pep723.md)**: Zero-setup execution of standalone `litestar-mcp` scripts using inline PEP 723 dependency metadata, `uv run`, and `litestar mcp bridge`.
