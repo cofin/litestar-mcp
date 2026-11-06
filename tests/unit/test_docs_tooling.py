@@ -1,7 +1,9 @@
 """Unit tests for documentation tooling, docstring scanner, CLI generator, postbuild, and artifact verifier."""
 
+import re
 import sys
 import zlib
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
@@ -18,6 +20,42 @@ else:
     import tomli as tomllib
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+INCLUDES_DIR = REPO_ROOT / "tools" / "docs" / "includes"
+FORBIDDEN_CORE_DIAGRAM_SYMBOLS = (
+    "InProcessTaskExecutor",
+    "ToolAnnotations",
+    "mcp_tool_output_schema",
+    "ToolContext.report_progress",
+    "CompositeSkillSource",
+    "skills://",
+    "skills/load",
+    "skills/read_file",
+    "tasks/result",
+    "tasks/list",
+    "notifications/tasks/status",
+    "default_ttl",
+    "max_tasks",
+    "Checks ready_nodes()",
+    "StepResult(next_nodes)",
+    "WorkflowEngine.run(context)",
+    "--url",
+)
+FORBIDDEN_AGENT_DIAGRAM_SYMBOLS = (
+    "POST /chat/stream",
+    "StreamChunk",
+    "max_steps",
+    "max_duration_s",
+    "transfer_to_&lt;agent&gt;",
+    "max_handoffs",
+    "generate() &amp; stream()",
+    "output_schema",
+    "mcp_to_tools(app)",
+    "LitestarMCP / MCPClient",
+    "Agent.run()",
+    "base_path=",
+    "path param &gt; header",
+    'context.state["litestar_request"]',
+)
 
 
 @pytest.mark.parametrize(
@@ -256,3 +294,80 @@ def test_zensical_toml_and_pyproject_configuration() -> None:
 def test_branding_assets_and_templates_exist(asset_rel_path: str) -> None:
     """Verify official `litestar-org/branding` assets, `extra.css`, and Griffe templates exist on disk."""
     assert (REPO_ROOT / asset_rel_path).is_file()
+
+
+class _SvgBlockValidator(HTMLParser):
+    """Validate SVG root attributes, balanced tags, and required accessibility elements."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.root_attrs: dict[str, str | None] = {}
+        self.seen_tags: set[str] = set()
+        self.open_stack: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        """Record opening tag and SVG root attributes."""
+        if tag == "svg" and not self.root_attrs:
+            self.root_attrs = dict(attrs)
+        self.seen_tags.add(tag)
+        self.open_stack.append(tag)
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        """Record self-closing SVG element."""
+        self.seen_tags.add(tag)
+
+    def handle_endtag(self, tag: str) -> None:
+        """Verify LIFO closing tag balance."""
+        assert self.open_stack and self.open_stack[-1] == tag
+        self.open_stack.pop()
+
+    @classmethod
+    def validate(cls, svg_block: str) -> "_SvgBlockValidator":
+        """Parse an SVG block and assert well-formed tag balance and required accessibility attributes."""
+        parser = cls()
+        parser.feed(svg_block)
+        parser.close()
+        assert parser.open_stack == []
+        assert parser.root_attrs.get("viewbox")
+        assert parser.root_attrs.get("role") == "img"
+        assert parser.root_attrs.get("aria-labelledby")
+        assert {"title", "desc"}.issubset(parser.seen_tags)
+        return parser
+
+
+@pytest.mark.parametrize(
+    "diagram_name",
+    [
+        "diagram-request-pipeline.html",
+        "diagram-primitives-and-discovery.html",
+        "diagram-mcp-tasks-and-queues.html",
+        "diagram-durable-workflows.html",
+    ],
+)
+def test_core_and_queue_svg_diagrams_have_current_symbols_and_unnumbered_titles(diagram_name: str) -> None:
+    """Core, primitives, tasks, and workflow SVG diagrams contain zero stale symbols or numbered titles."""
+    content = (INCLUDES_DIR / diagram_name).read_text(encoding="utf-8")
+    assert not re.search(r">\s*\d+\.\s+[A-Z]", content), f"{diagram_name} contains numbered box title"
+    stale_symbols = [symbol for symbol in FORBIDDEN_CORE_DIAGRAM_SYMBOLS if symbol in content]
+    assert stale_symbols == [], f"{diagram_name} still contains stale symbols: {stale_symbols}"
+    svg_blocks = re.findall(r"<svg\b.*?</svg>", content, flags=re.DOTALL)
+    assert svg_blocks, f"{diagram_name} contains no <svg> blocks"
+    assert [_SvgBlockValidator.validate(svg_block) for svg_block in svg_blocks]
+
+
+@pytest.mark.parametrize(
+    "diagram_name",
+    [
+        "diagram-agent-runtime-and-bridges.html",
+        "diagram-a2a-interoperability.html",
+    ],
+)
+def test_agent_and_a2a_svg_diagrams_have_current_symbols_and_unnumbered_titles(diagram_name: str) -> None:
+    """Agent runtime and A2A SVG diagrams contain zero stale symbols or numbered box titles."""
+    content = (INCLUDES_DIR / diagram_name).read_text(encoding="utf-8")
+    assert not re.search(r">\s*\d+\.\s+[A-Z]", content), f"{diagram_name} contains numbered box title"
+    stale_symbols = [symbol for symbol in FORBIDDEN_AGENT_DIAGRAM_SYMBOLS if symbol in content]
+    assert stale_symbols == [], f"{diagram_name} still contains stale symbols: {stale_symbols}"
+    svg_blocks = re.findall(r"<svg\b.*?</svg>", content, flags=re.DOTALL)
+    assert svg_blocks, f"{diagram_name} contains no <svg> blocks"
+    assert [_SvgBlockValidator.validate(svg_block) for svg_block in svg_blocks]

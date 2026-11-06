@@ -60,7 +60,7 @@
 
   <div class="lm-diag-tabs" role="tablist" aria-label="MCP Tasks Execution Backend">
     <label class="lm-diag-tab" for="lm-task-queue">Distributed QueueTaskExecutor (litestar-queues)</label>
-    <label class="lm-diag-tab" for="lm-task-inproc">Single-Process InProcessTaskExecutor</label>
+    <label class="lm-diag-tab" for="lm-task-inproc">Built-In MCPTaskStore &amp; Multi-Round Elicitation</label>
   </div>
 
   <div class="lm-task-panels">
@@ -71,7 +71,7 @@
 
         <rect x="16" y="24" width="194" height="164" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-blue)" stroke-width="2" />
         <circle class="lm-pulse" cx="34" cy="44" r="5" fill="var(--lm-t-blue)" />
-        <text x="113" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">1. Task Submission</text>
+        <text x="113" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">Task Submission</text>
         <text x="113" y="72" text-anchor="middle" fill="var(--lm-t-blue)" font-size="11" font-family="monospace">tools/call (params.task)</text>
         <text x="113" y="94" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Captures PrincipalSnapshot</text>
         <text x="113" y="112" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">request.user &amp; request.auth</text>
@@ -82,7 +82,7 @@
         <line class="lm-flow-forward" x1="210" y1="106" x2="256" y2="106" stroke="var(--lm-t-blue)" stroke-width="2.5" />
 
         <rect x="256" y="24" width="198" height="164" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-amber)" stroke-width="2" />
-        <text x="355" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">2. Durable Store &amp; Broker</text>
+        <text x="355" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">Durable Store &amp; Broker</text>
         <text x="355" y="72" text-anchor="middle" fill="var(--lm-t-amber)" font-size="11" font-family="monospace">MCPTaskStore + QueuePlugin</text>
         <text x="355" y="94" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Store: litestar_mcp_tasks</text>
         <text x="355" y="112" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">QueueTaskExecutor.submit()</text>
@@ -94,20 +94,20 @@
 
         <rect x="500" y="24" width="196" height="164" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-violet)" stroke-width="2" />
         <circle class="lm-pulse" cx="518" cy="44" r="5" fill="var(--lm-t-violet)" />
-        <text x="598" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">3. Worker Rehydration</text>
+        <text x="598" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">Worker Rehydration</text>
         <text x="598" y="72" text-anchor="middle" fill="var(--lm-t-violet)" font-size="11" font-family="monospace">Replica Worker Execution</text>
         <text x="598" y="94" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Rehydrates user &amp; auth in scope</text>
         <text x="598" y="112" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Restores SecurityContext</text>
         <text x="598" y="130" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Enters Dishka Scope.REQUEST</text>
-        <text x="598" y="148" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Polls store for cancel_requested</text>
-        <text x="598" y="168" text-anchor="middle" fill="var(--lm-t-violet)" font-size="10" font-family="monospace">ToolContext.report_progress</text>
+        <text x="598" y="148" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Store status="cancelled" + CancelScope</text>
+        <text x="598" y="168" text-anchor="middle" fill="var(--lm-t-violet)" font-size="10" font-family="monospace">MCPRequestContext.report_progress</text>
 
         <line class="lm-flow-forward" x1="696" y1="88" x2="742" y2="88" stroke="var(--lm-t-emerald)" stroke-width="2.5" />
         <line class="lm-flow-reverse" x1="696" y1="124" x2="742" y2="124" stroke="var(--lm-t-rose)" stroke-width="2" />
 
         <rect x="742" y="24" width="162" height="164" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-emerald)" stroke-width="2" />
-        <text x="823" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">4. Pause / Complete</text>
-        <text x="823" y="72" text-anchor="middle" fill="var(--lm-t-emerald)" font-size="11" font-family="monospace">tasks/result &amp; update</text>
+        <text x="823" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">Pause / Complete</text>
+        <text x="823" y="72" text-anchor="middle" fill="var(--lm-t-emerald)" font-size="11" font-family="monospace">tasks/get • update • cancel</text>
         <text x="823" y="94" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">MCPInputRequiredResult</text>
         <text x="823" y="112" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">-&gt; status: "input_required"</text>
         <text x="823" y="130" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">tasks/update re-enqueues</text>
@@ -116,32 +116,32 @@
 
         <rect x="16" y="210" width="888" height="58" rx="8" fill="var(--lm-t-card)" stroke="var(--lm-t-border)" stroke-width="1.5" />
         <text x="460" y="232" text-anchor="middle" fill="var(--lm-t-text)" font-size="12" font-weight="700">Multi-Round Human-in-the-Loop &amp; Cooperative Cancellation Across Replicas</text>
-        <text x="460" y="252" text-anchor="middle" fill="var(--lm-t-muted)" font-size="11" font-family="monospace">Replica A: tools/call -&gt; Worker B: MCPInputRequiredResult -&gt; Replica C: tasks/update(input) -&gt; Worker A: tasks/result</text>
+        <text x="460" y="252" text-anchor="middle" fill="var(--lm-t-muted)" font-size="11" font-family="monospace">Replica A: tools/call -&gt; Worker B: MCPInputRequiredResult -&gt; Replica C: tasks/update(input) -&gt; Replica A: tasks/get</text>
       </svg>
     </div>
 
     <div class="lm-task-panel lm-panel-inproc">
       <svg viewBox="0 0 920 290" role="img" aria-labelledby="lm-task-in-title lm-task-in-desc">
-        <title id="lm-task-in-title">Single-Process InProcessTaskExecutor Lifecycle</title>
-        <desc id="lm-task-in-desc">Default single-process task executor running background AnyIO tasks inside the Litestar process while persisting state in MCPTaskStore.</desc>
+        <title id="lm-task-in-title">Built-In MCPTaskStore and Multi-Round Task Elicitation Lifecycle</title>
+        <desc id="lm-task-in-desc">Built-in MCPTaskStore and Multi-Round Task Elicitation Lifecycle persisting owner-scoped TaskRecord state and elicitation payloads in Litestar Store.</desc>
 
         <rect x="16" y="24" width="210" height="164" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-blue)" stroke-width="2" />
         <circle class="lm-pulse" cx="34" cy="44" r="5" fill="var(--lm-t-blue)" />
-        <text x="121" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">1. Client Request</text>
+        <text x="121" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">Client Request</text>
         <text x="121" y="72" text-anchor="middle" fill="var(--lm-t-blue)" font-size="11" font-family="monospace">tools/call (params.task)</text>
         <text x="121" y="94" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Validates task="optional"|"required"</text>
         <text x="121" y="112" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Binds owner_id from authenticated user</text>
-        <text x="121" y="130" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Applies MCPTaskConfig.default_ttl</text>
-        <text x="121" y="148" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Enforces max_tasks capacity limit</text>
+        <text x="121" y="130" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Applies MCPTaskConfig.ttl_seconds</text>
+        <text x="121" y="148" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Single-writer Store keys with TTL</text>
         <text x="121" y="168" text-anchor="middle" fill="var(--lm-t-emerald)" font-size="10" font-family="monospace">Immediate taskId handle</text>
 
         <line class="lm-flow-forward" x1="226" y1="106" x2="290" y2="106" stroke="var(--lm-t-blue)" stroke-width="2.5" />
 
         <rect x="290" y="24" width="260" height="164" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-amber)" stroke-width="2" />
-        <text x="420" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">2. InProcessTaskExecutor</text>
-        <text x="420" y="72" text-anchor="middle" fill="var(--lm-t-amber)" font-size="11" font-family="monospace">AnyIO Background TaskGroup</text>
-        <text x="420" y="94" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Spawns local async task in same process</text>
-        <text x="420" y="112" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Holds live CancelScope &amp; input Event</text>
+        <text x="420" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">MCPTaskStore State Machine</text>
+        <text x="420" y="72" text-anchor="middle" fill="var(--lm-t-amber)" font-size="11" font-family="monospace">litestar_mcp_tasks Store</text>
+        <text x="420" y="94" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Persists TaskRecord &amp; input_payload</text>
+        <text x="420" y="112" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Tracks working -&gt; input_required -&gt; completed</text>
         <text x="420" y="130" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Executes tool via internal ASGI dispatch</text>
         <text x="420" y="148" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Persists TaskRecord to MCPTaskStore</text>
         <text x="420" y="168" text-anchor="middle" fill="var(--lm-t-amber)" font-size="10" font-family="monospace">Zero external broker required</text>
@@ -150,17 +150,17 @@
 
         <rect x="614" y="24" width="290" height="164" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-emerald)" stroke-width="2" />
         <circle class="lm-pulse" cx="634" cy="44" r="5" fill="var(--lm-t-emerald)" />
-        <text x="759" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">3. Polling, Resume &amp; Cancel</text>
-        <text x="759" y="72" text-anchor="middle" fill="var(--lm-t-emerald)" font-size="11" font-family="monospace">tasks/get • list • result • cancel</text>
+        <text x="759" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">Polling, Resume &amp; Cancel</text>
+        <text x="759" y="72" text-anchor="middle" fill="var(--lm-t-emerald)" font-size="11" font-family="monospace">tasks/get • update • cancel</text>
         <text x="759" y="94" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Owner-isolated lookup (non-owners masked)</text>
-        <text x="759" y="112" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">tasks/result awaits terminal status</text>
-        <text x="759" y="130" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">tasks/update wakes local input waiter</text>
-        <text x="759" y="148" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">tasks/cancel triggers AnyIO CancelScope</text>
-        <text x="759" y="168" text-anchor="middle" fill="var(--lm-t-emerald)" font-size="10" font-family="monospace">notifications/tasks/status SSE</text>
+        <text x="759" y="112" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">tasks/get returns status &amp; result payload</text>
+        <text x="759" y="130" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">tasks/update resumes input_required task</text>
+        <text x="759" y="148" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">tasks/cancel transitions to cancelled</text>
+        <text x="759" y="168" text-anchor="middle" fill="var(--lm-t-emerald)" font-size="10" font-family="monospace">JSON-RPC 2.0 Owner-Scoped Task Lifecycle</text>
 
         <rect x="16" y="210" width="888" height="58" rx="8" fill="var(--lm-t-card)" stroke="var(--lm-t-border)" stroke-width="1.5" />
-        <text x="460" y="232" text-anchor="middle" fill="var(--lm-t-text)" font-size="12" font-weight="700">When to Use InProcessTaskExecutor vs QueueTaskExecutor</text>
-        <text x="460" y="252" text-anchor="middle" fill="var(--lm-t-muted)" font-size="11" font-family="monospace">InProcessTaskExecutor: Local dev, stdio servers &amp; single-worker apps  |  QueueTaskExecutor: Multi-replica HTTP deployments</text>
+        <text x="460" y="232" text-anchor="middle" fill="var(--lm-t-text)" font-size="12" font-weight="700">MCPTaskStore + QueueTaskExecutor Architecture</text>
+        <text x="460" y="252" text-anchor="middle" fill="var(--lm-t-muted)" font-size="11" font-family="monospace">MCPTaskStore: Owner-scoped Litestar Store persistence (TTL)  |  QueueTaskExecutor: Distributed litestar-queues worker execution</text>
       </svg>
     </div>
   </div>

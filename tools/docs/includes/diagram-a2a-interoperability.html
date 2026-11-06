@@ -71,7 +71,7 @@
 
         <rect x="16" y="22" width="212" height="170" rx="10" fill="var(--lm-x-card)" stroke="var(--lm-x-blue)" stroke-width="2" />
         <circle class="lm-pulse" cx="34" cy="42" r="5" fill="var(--lm-x-blue)" />
-        <text x="122" y="46" text-anchor="middle" fill="var(--lm-x-text)" font-size="13" font-weight="700">1. Discovery &amp; Clients</text>
+        <text x="122" y="46" text-anchor="middle" fill="var(--lm-x-text)" font-size="13" font-weight="700">Discovery &amp; Clients</text>
         <text x="122" y="70" text-anchor="middle" fill="var(--lm-x-blue)" font-size="10" font-family="monospace">/.well-known/agent-card.json</text>
         <text x="122" y="92" text-anchor="middle" fill="var(--lm-x-muted)" font-size="10">agent_card_route_opt (public)</text>
         <text x="122" y="110" text-anchor="middle" fill="var(--lm-x-muted)" font-size="10">Advertises JSONRPC &amp; HTTP+JSON</text>
@@ -83,7 +83,7 @@
         <line class="lm-flow-forward" x1="228" y1="128" x2="274" y2="128" stroke="var(--lm-x-amber)" stroke-width="2.5" />
 
         <rect x="274" y="22" width="222" height="170" rx="10" fill="var(--lm-x-card)" stroke="var(--lm-x-amber)" stroke-width="2" />
-        <text x="385" y="46" text-anchor="middle" fill="var(--lm-x-text)" font-size="13" font-weight="700">2. Dual Transport Routes</text>
+        <text x="385" y="46" text-anchor="middle" fill="var(--lm-x-text)" font-size="13" font-weight="700">Dual Transport Routes</text>
         <text x="385" y="70" text-anchor="middle" fill="var(--lm-x-amber)" font-size="11" font-family="monospace">POST /a2a (JSON-RPC 2.0)</text>
         <text x="385" y="92" text-anchor="middle" fill="var(--lm-x-muted)" font-size="10">POST /a2a/message:send</text>
         <text x="385" y="110" text-anchor="middle" fill="var(--lm-x-muted)" font-size="10">POST /a2a/message:stream (SSE)</text>
@@ -94,7 +94,7 @@
         <line class="lm-flow-forward" x1="496" y1="106" x2="542" y2="106" stroke="var(--lm-x-violet)" stroke-width="2.5" />
 
         <rect x="542" y="22" width="184" height="170" rx="10" fill="var(--lm-x-card)" stroke="var(--lm-x-violet)" stroke-width="2" />
-        <text x="634" y="46" text-anchor="middle" fill="var(--lm-x-text)" font-size="13" font-weight="700">3. Request Handler</text>
+        <text x="634" y="46" text-anchor="middle" fill="var(--lm-x-text)" font-size="13" font-weight="700">Request Handler</text>
         <text x="634" y="70" text-anchor="middle" fill="var(--lm-x-violet)" font-size="10" font-family="monospace">DefaultRequestHandler</text>
         <text x="634" y="92" text-anchor="middle" fill="var(--lm-x-muted)" font-size="10">Builds ServerCallContext</text>
         <text x="634" y="110" text-anchor="middle" fill="var(--lm-x-muted)" font-size="10">context_builder hook</text>
@@ -106,7 +106,7 @@
 
         <rect x="764" y="22" width="140" height="170" rx="10" fill="var(--lm-x-card)" stroke="var(--lm-x-emerald)" stroke-width="2" />
         <circle class="lm-pulse" cx="782" cy="42" r="5" fill="var(--lm-x-emerald)" />
-        <text x="834" y="46" text-anchor="middle" fill="var(--lm-x-text)" font-size="13" font-weight="700">4. Executor</text>
+        <text x="834" y="46" text-anchor="middle" fill="var(--lm-x-text)" font-size="13" font-weight="700">Executor</text>
         <text x="834" y="70" text-anchor="middle" fill="var(--lm-x-emerald)" font-size="10" font-family="monospace">AgentExecutor</text>
         <text x="834" y="92" text-anchor="middle" fill="var(--lm-x-muted)" font-size="10">execute(ctx, queue)</text>
         <text x="834" y="110" text-anchor="middle" fill="var(--lm-x-muted)" font-size="10">cancel(ctx, queue)</text>
@@ -123,14 +123,14 @@
     <div class="lm-a2a-panel lm-panel-tenancy">
       <svg viewBox="0 0 920 290" role="img" aria-labelledby="lm-a2a-t-title lm-a2a-t-desc">
         <title id="lm-a2a-t-title">Multi-Tenant Resolution and Split Route Security</title>
-        <desc id="lm-a2a-t-desc">Multi-tenant resolution extracts tenant identity from /{tenant:str}/a2a path parameters or X-A2A-Tenant headers, passes it through context_builder into ServerCallContext.tenant, and separates public agent_card_route_opt from protected route_opt.</desc>
+        <desc id="lm-a2a-t-desc">Multi-tenant resolution extracts tenant identity from JSON-RPC/HTTP payloads, /{tenant:str}/a2a path parameters, or X-Tenant-ID / X-A2A-Tenant headers, passes it through context_builder into ServerCallContext.tenant, and separates public agent_card_route_opt from protected route_opt.</desc>
 
         <rect x="16" y="26" width="265" height="162" rx="10" fill="var(--lm-x-card)" stroke="var(--lm-x-blue)" stroke-width="2" />
-        <text x="148" y="50" text-anchor="middle" fill="var(--lm-x-text)" font-size="13" font-weight="700">1. Tenant Extraction Sources</text>
-        <text x="148" y="74" text-anchor="middle" fill="var(--lm-x-blue)" font-size="11" font-family="monospace">Path Param + Header</text>
-        <text x="148" y="98" text-anchor="middle" fill="var(--lm-x-muted)" font-size="10">base_path="/{tenant:str}/a2a"</text>
-        <text x="148" y="116" text-anchor="middle" fill="var(--lm-x-muted)" font-size="10">Or Header: X-A2A-Tenant: acme</text>
-        <text x="148" y="134" text-anchor="middle" fill="var(--lm-x-muted)" font-size="10">Precedence: path param &gt; header</text>
+        <text x="148" y="50" text-anchor="middle" fill="var(--lm-x-text)" font-size="13" font-weight="700">Tenant Extraction Sources</text>
+        <text x="148" y="74" text-anchor="middle" fill="var(--lm-x-blue)" font-size="11" font-family="monospace">Payload + Path + Header</text>
+        <text x="148" y="98" text-anchor="middle" fill="var(--lm-x-muted)" font-size="10">path="/a2a" or "/{tenant:str}/a2a"</text>
+        <text x="148" y="116" text-anchor="middle" fill="var(--lm-x-muted)" font-size="10">Header: X-Tenant-ID / X-A2A-Tenant</text>
+        <text x="148" y="134" text-anchor="middle" fill="var(--lm-x-muted)" font-size="10">Precedence: payload &gt; path &gt; header</text>
         <text x="148" y="152" text-anchor="middle" fill="var(--lm-x-muted)" font-size="10">Applies to JSON-RPC &amp; HTTP+JSON</text>
         <text x="148" y="172" text-anchor="middle" fill="var(--lm-x-blue)" font-size="10" font-family="monospace">Tenant-scoped URLs in AgentCard</text>
 
@@ -138,18 +138,18 @@
 
         <rect x="334" y="26" width="252" height="162" rx="10" fill="var(--lm-x-card)" stroke="var(--lm-x-amber)" stroke-width="2" />
         <circle class="lm-pulse" cx="354" cy="46" r="5" fill="var(--lm-x-amber)" />
-        <text x="460" y="50" text-anchor="middle" fill="var(--lm-x-text)" font-size="13" font-weight="700">2. Context Builder &amp; Auth</text>
+        <text x="460" y="50" text-anchor="middle" fill="var(--lm-x-text)" font-size="13" font-weight="700">Context Builder &amp; Auth</text>
         <text x="460" y="74" text-anchor="middle" fill="var(--lm-x-amber)" font-size="11" font-family="monospace">ServerCallContext.tenant</text>
         <text x="460" y="98" text-anchor="middle" fill="var(--lm-x-muted)" font-size="10">Default builder populates .tenant</text>
         <text x="460" y="116" text-anchor="middle" fill="var(--lm-x-muted)" font-size="10">Custom A2AConfig.context_builder</text>
         <text x="460" y="134" text-anchor="middle" fill="var(--lm-x-muted)" font-size="10">Forwards request.user &amp; request.auth</text>
         <text x="460" y="152" text-anchor="middle" fill="var(--lm-x-muted)" font-size="10">Enforces Litestar router guards</text>
-        <text x="460" y="172" text-anchor="middle" fill="var(--lm-x-amber)" font-size="10" font-family="monospace">context.state["litestar_request"]</text>
+        <text x="460" y="172" text-anchor="middle" fill="var(--lm-x-amber)" font-size="10" font-family="monospace">context.state["litestar_state"]</text>
 
         <line class="lm-flow-forward" x1="586" y1="107" x2="639" y2="107" stroke="var(--lm-x-emerald)" stroke-width="2.5" />
 
         <rect x="639" y="26" width="265" height="162" rx="10" fill="var(--lm-x-card)" stroke="var(--lm-x-emerald)" stroke-width="2" />
-        <text x="771" y="50" text-anchor="middle" fill="var(--lm-x-text)" font-size="13" font-weight="700">3. Split Route Opt Security</text>
+        <text x="771" y="50" text-anchor="middle" fill="var(--lm-x-text)" font-size="13" font-weight="700">Split Route Opt Security</text>
         <text x="771" y="74" text-anchor="middle" fill="var(--lm-x-emerald)" font-size="11" font-family="monospace">route_opt vs agent_card_route_opt</text>
         <text x="771" y="98" text-anchor="middle" fill="var(--lm-x-muted)" font-size="10">route_opt={"auth": required(...)}</text>
         <text x="771" y="116" text-anchor="middle" fill="var(--lm-x-muted)" font-size="10">Protects RPC &amp; REST execution routes</text>
@@ -159,7 +159,7 @@
 
         <rect x="16" y="212" width="888" height="58" rx="8" fill="var(--lm-x-card)" stroke="var(--lm-x-border)" stroke-width="1.5" />
         <text x="460" y="234" text-anchor="middle" fill="var(--lm-x-text)" font-size="12" font-weight="700">Zero-Leakage Tenant Isolation</text>
-        <text x="460" y="254" text-anchor="middle" fill="var(--lm-x-muted)" font-size="11" font-family="monospace">GET /acme/a2a/tasks?tenant=acme  |  X-A2A-Tenant: acme  -&gt;  ServerCallContext(tenant="acme")</text>
+        <text x="460" y="254" text-anchor="middle" fill="var(--lm-x-muted)" font-size="11" font-family="monospace">Payload tenant  |  /{tenant}/a2a  |  X-Tenant-ID: acme  -&gt;  ServerCallContext(tenant="acme")</text>
       </svg>
     </div>
   </div>
