@@ -155,8 +155,8 @@ async def test_bridge_agent_executor_tool_context_owner_alignment(
     captured_contexts: list[ToolContext | None] = []
 
     class RecordingRuntime(AgentRuntime):
-        async def run_turn(self, request: TurnRequest) -> TurnResponse:
-            captured_contexts.append(request.context)
+        async def run_turn(self, turn: TurnRequest) -> TurnResponse:
+            captured_contexts.append(turn.context)
             return cast("TurnResponse", SimpleNamespace(content="ok"))
 
     agent = Agent(name="bridge_agent", description="Bridge A2A agent.")
@@ -178,6 +178,7 @@ async def test_bridge_agent_executor_tool_context_owner_alignment(
         call_context=call_ctx,
         get_user_input=lambda: "hello",
     )
+
     async def _noop_enqueue(_event: Any) -> None:
         return None
 
