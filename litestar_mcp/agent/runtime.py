@@ -45,7 +45,7 @@ class TurnRequest:
     """Optional session identifier to resume an existing conversation."""
     turn_id: "str | None" = None
     """Optional caller-supplied identifier for the turn."""
-    dynamic_context: "str | None" = None
+    dynamic_context: "dict[str, Any] | str | None" = None
     """Optional per-turn context prepended to the active agent's instructions."""
     context: "ToolContext | None" = None
     """Request-scoped tool execution and principal ownership context."""

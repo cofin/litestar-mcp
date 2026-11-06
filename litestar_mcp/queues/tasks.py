@@ -1,6 +1,7 @@
 """Queue task definitions and turn manager for optional litestar-queues integration."""
 
 import importlib.util
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
@@ -61,7 +62,7 @@ class QueuedTurn(msgspec.Struct, kw_only=True):
     """User message string or structured payload initiating the turn."""
     agent_name: str = "root"
     """Registered agent runtime name in `AgentRegistry` that will execute the turn."""
-    dynamic_context: str | None = None
+    dynamic_context: dict[str, Any] | str | None = None
     """Optional per-turn context prepended to the agent's system instructions."""
     principal: PrincipalSnapshot | None = None
     """Optional serialized security principal snapshot for worker rehydration."""
@@ -124,16 +125,27 @@ async def _run_agent_turn_body(envelope: dict[str, Any]) -> dict[str, Any]:
 
     user_obj = None
     tenant_id = None
+    roles: tuple[str, ...] = ()
+    scopes: tuple[str, ...] = ()
     if queued_turn.principal is not None:
         if queued_turn.principal.user_id:
             user_obj = {"id": queued_turn.principal.user_id}
         tenant_id = queued_turn.principal.tenant
+        roles = tuple(queued_turn.principal.roles)
+        scopes = tuple(queued_turn.principal.scopes)
 
     tool_context = ToolContext(
         user=user_obj,
         tenant_id=tenant_id,
+        roles=roles,
+        scopes=scopes,
         session_id=queued_turn.session_id,
         turn_id=queued_turn.turn_id,
+    )
+    dynamic_ctx: Any = (
+        dict(queued_turn.dynamic_context)
+        if isinstance(queued_turn.dynamic_context, Mapping)
+        else queued_turn.dynamic_context
     )
     user_msg = queued_turn.user_message if isinstance(queued_turn.user_message, str) else str(queued_turn.user_message)
     turn_request = TurnRequest(
@@ -141,6 +153,7 @@ async def _run_agent_turn_body(envelope: dict[str, Any]) -> dict[str, Any]:
         session_id=queued_turn.session_id,
         turn_id=queued_turn.turn_id,
         context=tool_context,
+        dynamic_context=dynamic_ctx,
     )
 
     channels = get_channels_service()
@@ -182,6 +195,8 @@ class QueuedTurnManager:
         """Initialize QueuedTurnManager with queue_service and channels dependencies."""
         self.queue_service = queue_service
         self.channels = channels
+        if channels is not None and get_channels_service() is None:
+            set_channels_service(channels)
 
     async def enqueue_turn(
         self,
@@ -190,7 +205,7 @@ class QueuedTurnManager:
         *,
         turn_id: str | None = None,
         agent_name: str = "root",
-        dynamic_context: str | None = None,
+        dynamic_context: dict[str, Any] | str | None = None,
         principal: PrincipalSnapshot | None = None,
     ) -> str:
         """Enqueue an agent turn for background execution."""
