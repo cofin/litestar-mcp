@@ -5,7 +5,7 @@ Covers the three marked regions by driving the app via
 a fresh app instance so the task store does not leak between cases.
 """
 
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from litestar.testing import TestClient
@@ -14,10 +14,10 @@ from docs.examples.task_manager.main import Task, build_app
 
 
 def _rpc(
-    client: "TestClient[Any]",
-    method: "str",
-    params: "dict[str, Any] | None" = None,
-) -> "dict[str, Any]":
+    client: TestClient[Any],
+    method: str,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Execute one stateless MCP request."""
     request_params = dict(params or {})
     request_params["_meta"] = {
@@ -36,7 +36,7 @@ def _rpc(
     }.get(method)
     if name_field is not None:
         headers["Mcp-Name"] = str(request_params[name_field])
-    return client.post("/mcp", json=body, headers=headers).json()  # type: ignore[no-any-return]
+    return cast("dict[str, Any]", client.post("/mcp", json=body, headers=headers).json())
 
 
 @pytest.fixture
@@ -123,25 +123,22 @@ def test_create_task_via_rest_round_trips(fresh_client: "TestClient[Any]") -> "N
 
 
 def test_create_task_tool_returns_envelope(fresh_client: "TestClient[Any]") -> "None":
-    """Calling the ``create_task`` tool returns a well-formed MCP envelope."""
+    """Calling the ``create_task`` tool returns a well-formed MCP envelope without a Python traceback."""
     result = _rpc(
         fresh_client,
         "tools/call",
         {"name": "create_task", "arguments": {"data": {"title": "new", "description": "todo"}}},
     )
     assert result["jsonrpc"] == "2.0"
-    # Either the result shape succeeds or surfaces an MCP-level error; a
-    # Python traceback would be a regression.
     assert ("result" in result) or ("error" in result)
 
 
 def test_delete_task_missing_id_returns_mcp_error(fresh_client: "TestClient[Any]") -> "None":
+    """Deleting a missing task returns a well-formed MCP error envelope."""
     result = _rpc(
         fresh_client,
         "tools/call",
         {"name": "delete_task", "arguments": {"task_id": 999}},
     )
-    # The response must be a well-formed MCP envelope — either an ``error``
-    # object or a ``result`` with ``isError: true`` — not a Python traceback.
     assert "jsonrpc" in result
     assert ("error" in result) or result.get("result", {}).get("isError") is True

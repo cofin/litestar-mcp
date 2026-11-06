@@ -10,12 +10,12 @@ Authentication for the `/mcp` endpoint is a native **Litestar middleware** conce
 
 ---
 
-## 1. Bring Your Own Litestar Middleware (`AbstractAuthenticationMiddleware`)
+## Bring Your Own Litestar Middleware
 
 Subclass `litestar.middleware.AbstractAuthenticationMiddleware` and register it with `DefineMiddleware` on your `Litestar` application. The middleware inspects the inbound `ASGIConnection` (headers, cookies, or client certificates) and returns an `AuthenticationResult(user=..., auth=...)`:
 
 ```python title="docs/examples/snippets/auth_middleware.py"
---8<-- "docs/examples/snippets/auth_middleware.py"
+--8<-- "docs/examples/snippets/auth_middleware.py:example"
 ```
 
 When a client sends `POST /mcp` with `X-API-Key: let-me-in`:
@@ -26,7 +26,7 @@ When a client sends `POST /mcp` with `X-API-Key: let-me-in`:
 
 ---
 
-## 2. JWT & `OAuth2PasswordBearerAuth`
+## JWT and OAuth2PasswordBearerAuth
 
 Litestar's built-in JWT backends (`litestar[jwt]`) work unchanged with `LitestarMCP`. Install `litestar[jwt]` alongside `litestar-mcp`:
 
@@ -73,7 +73,7 @@ Configure `OAuth2PasswordBearerAuth` with your `retrieve_user_handler`, `token_s
 
 ---
 
-## 3. Identity Proxies & Google Cloud IAP (`x-goog-iap-jwt-assertion`)
+## Identity Proxies and Google Cloud IAP
 
 Zero-trust identity proxies such as Google Cloud Identity-Aware Proxy (IAP) authenticate the user upstream at the load balancer and forward a signed ES256 JWT assertion in the `x-goog-iap-jwt-assertion` HTTP header.
 
@@ -91,13 +91,16 @@ To authenticate MCP and REST calls behind Google IAP, verify the `x-goog-iap-jwt
     --8<-- "docs/examples/notes/sqlspec/google_iap.py:68:126"
     ```
 
+!!! tip "Built-in GoogleIAPConfig in litestar-security"
+    If your application uses `litestar-security`, you can configure `GoogleIAPConfig` and inspect typed `GoogleIAPClaims` directly on `SecurityConfig` instead of writing a custom IAP middleware class. See [First-Party litestar-security Integration](litestar-security.md) for details.
+
 See [Notes Reference Examples Matrix](../architecture/reference-examples.md) for runnable SQLSpec and Advanced Alchemy variants covering `no-auth`, `JWT`, `Cloud Run`, and `Google IAP` with both Litestar `Provide` and Dishka (`FromDishka[T]`) dependency injection.
 
 ---
 
-## 4. Authenticating Stdio & HTTP Bridge Sessions
+## Authenticating Stdio and HTTP Bridge Sessions
 
-### In-Process Stdio (`MCPStdioContext`)
+### In-Process Stdio
 
 When running in-process over standard input/output (`litestar mcp stdio`, `run_stdio`, `run_stdio_async`, or `MCP.run(transport="stdio")`), every JSON-RPC frame is dispatched through the same ASGI application. You can authenticate stdio sessions in two ways:
 
@@ -122,7 +125,7 @@ When running in-process over standard input/output (`litestar mcp stdio`, `run_s
 !!! important "Anonymous Stdio Has No Shared Owner ID"
     When `MCPStdioContext.owner_id` is `None` and no authenticated principal is present on `scope["user"]` or `scope["auth"]`, `litestar-mcp` assigns `owner_id=None` rather than a shared `"stdio"` string. Always supply an authenticated principal or explicit `owner_id` when running multi-user or persisted task stores.
 
-### HTTP-to-Stdio Bridge (`litestar mcp bridge`)
+### HTTP-to-Stdio Bridge
 
 When desktop MCP hosts connect to a remote Litestar deployment through `litestar mcp bridge`, pass bearer credentials or custom proxy headers at the CLI boundary:
 
@@ -158,5 +161,5 @@ When `--bearer-cmd` is configured and the remote Litestar server responds with H
 
 ## Next Steps
 
-- [First-Party `litestar-security` Integration](litestar-security.md): Declare mechanism policies via `MCPConfig.route_opt`, emit RFC 9728 `WWW-Authenticate` challenges, and rehydrate `SecurityContext` in `litestar-queues` workers.
+- [First-Party litestar-security Integration](litestar-security.md): Declare optional mechanism policies via `MCPConfig(auth=...)`, emit RFC 9728 `WWW-Authenticate` challenges, and rehydrate `SecurityContext` in `litestar-queues` workers.
 - [Authorization, Guards, Scopes & Input Safety](authorization-and-scopes.md): Enforce route guards, validate domain object ownership, and protect multi-round `requestState`.

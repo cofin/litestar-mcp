@@ -5,9 +5,9 @@ since v0.5.0. Attach a Guard to enforce access control — the same guard
 protects HTTP and MCP paths.
 """
 
+# --8<-- [start:example]
 from typing import TYPE_CHECKING, Any
 
-# start-example
 from litestar import Controller, Litestar, get
 from litestar.exceptions import PermissionDeniedException
 
@@ -24,7 +24,7 @@ _UNAUTHENTICATED = "Unauthenticated"
 def requires_authenticated_user(
     connection: "ASGIConnection[Any, Any, Any, Any]",
     handler: "BaseRouteHandler",
-) -> "None":
+) -> None:
     """Reject callers whose middleware did not populate ``scope['auth']``."""
     _ = handler
     if connection.scope.get("auth") is None:
@@ -36,9 +36,9 @@ class ReportController(Controller):
     guards = [requires_authenticated_user]
 
     @get("/", mcp_tool=True, scopes=["report:read"], sync_to_thread=False)
-    def generate_report(self) -> "dict[str, str]":
+    def generate_report(self) -> dict[str, str]:
         return {"status": "ok"}
 
 
 app = Litestar(route_handlers=[ReportController], plugins=[LitestarMCP()])
-# end-example
+# --8<-- [end:example]

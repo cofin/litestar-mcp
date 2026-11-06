@@ -1,5 +1,6 @@
 """Snippet: durable workflow execution on litestar-queues."""
 
+# --8<-- [start:example]
 from litestar import Litestar, post
 from litestar_queues import QueuePlugin
 
@@ -27,6 +28,13 @@ metrics_pipeline.add_node("transform", handler=step_transform, depends_on=["extr
 async def start_metrics_pipeline(workflow_engine: DurableWorkflowEngine) -> dict[str, str]:
     """Start a durable run; any worker sharing the queue backend executes it."""
     return {"run_id": await workflow_engine.start("metrics_pipeline")}
+
+
+app = Litestar(
+    route_handlers=[start_metrics_pipeline],
+    plugins=[QueuePlugin(), DurableWorkflowEngine([metrics_pipeline])],
+)
+# --8<-- [end:example]
 
 
 def build() -> Litestar:

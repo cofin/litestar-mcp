@@ -10,15 +10,15 @@ title: Durable DAG Workflows
 
 ---
 
-## Defining DAGs (`DynamicWorkflow` & `WorkflowNode`)
+## Defining DAGs
 
 A `DynamicWorkflow` connects discrete Python functions (`handler`) and `Agent` turns (`agent`) into an acyclic dependency graph. At registration time, `WorkflowEngine.validate_dependencies(workflow)` verifies that all `depends_on` references exist and that the graph contains no cycles.
 
 ```python title="docs/examples/snippets/durable_workflow.py"
---8<-- "docs/examples/snippets/durable_workflow.py"
+--8<-- "docs/examples/snippets/durable_workflow.py:example"
 ```
 
-### `WorkflowNode` Parameters (`workflow.add_node(...)`)
+### WorkflowNode Parameters
 
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
@@ -32,7 +32,7 @@ A `DynamicWorkflow` connects discrete Python functions (`handler`) and `Agent` t
 
 ---
 
-## In-Process `WorkflowEngine` vs Distributed `DurableWorkflowEngine`
+## In-Process WorkflowEngine vs Distributed DurableWorkflowEngine
 
 The exact same `DynamicWorkflow` instance can be executed in-process or distributed across `litestar-queues`:
 
@@ -43,7 +43,7 @@ The exact same `DynamicWorkflow` instance can be executed in-process or distribu
 | **Litestar Integration** | Plain Python class instantiated on demand | `InitPluginProtocol` registering `workflow_engine` DI provider and attaching to `QueuePlugin` via `TaskDependencyChain` |
 | **Crash Recovery** | Process-bound | Per-run delayed watchdog (`wf-watchdog:{run_id}:{tick}`) + forever-unique node reservations (`wf-node:{run_id}:{node}`) |
 
-### Running In-Process with `WorkflowEngine`
+### Running In-Process with WorkflowEngine
 
 ```python
 from litestar_mcp.agent.workflow import DynamicWorkflow, WorkflowContext, WorkflowEngine
@@ -73,7 +73,7 @@ async def run_local() -> int:
 
 ---
 
-## `DurableWorkflowEngine` Plugin Architecture
+## DurableWorkflowEngine Plugin Architecture
 
 Register `DurableWorkflowEngine(workflows, ...)` in `Litestar(plugins=[QueuePlugin(...), DurableWorkflowEngine([...])])`:
 
@@ -86,7 +86,7 @@ Register `DurableWorkflowEngine(workflows, ...)` in `Litestar(plugins=[QueuePlug
 | `watchdog_interval` | `float or None` | `30.0` | Delay in seconds (`run_after`) between self-rearming `watch_workflow` ticks. Pass `None` to disable the watchdog. |
 | `run_timeout_seconds` | `float` | `86_400.0` | Maximum wall-clock lifetime in seconds (24 hours) for a workflow run before the watchdog marks the run `"failed"` with `error="workflow timed out"`. |
 
-### Automatic DI & `TaskDependencyChain` Wiring
+### Automatic DI & TaskDependencyChain Wiring
 
 During `on_app_init`, `DurableWorkflowEngine` performs three setup steps automatically:
 
@@ -96,7 +96,7 @@ During `on_app_init`, `DurableWorkflowEngine` performs three setup steps automat
 
 ---
 
-## `WorkflowStore` Single-Writer Key Separation
+## WorkflowStore Single-Writer Key Separation
 
 When parallel sibling nodes in a DAG wave finish simultaneously on different worker replicas, updating a single shared run document would cause read-modify-write races and lost node outputs. `WorkflowStore` eliminates sibling write contention by separating run metadata from write-once node records:
 
@@ -107,11 +107,12 @@ When parallel sibling nodes in a DAG wave finish simultaneously on different wor
 
 To inspect a running or completed workflow, call `await workflow_engine.snapshot(run_id)`, which loads the `WorkflowRun` and all persisted `NodeRecord` entries in parallel (`store.get_nodes`) and reconstructs a `WorkflowContext` via `store.to_context(run, nodes)`.
 
-> **Note:** Node outputs must be JSON-serializable. If a node handler returns an unserializable object (`TypeError`, `msgspec.EncodeError`, or `SerializationException`), `DurableWorkflowEngine.execute_node` catches the encoding failure and persists a `NodeRecord(node=node, status="failed", output=None, error="TypeError: node output is not JSON serializable")` so the workflow terminates deterministically instead of stalling.
+!!! note
+    Node outputs must be JSON-serializable. If a node handler returns an unserializable object (`TypeError`, `msgspec.EncodeError`, or `SerializationException`), `DurableWorkflowEngine.execute_node` catches the encoding failure and persists a `NodeRecord(node=node, status="failed", output=None, error="TypeError: node output is not JSON serializable")` so the workflow terminates deterministically instead of stalling.
 
 ---
 
-## Forever-Unique Node Scheduling & `reset_task_identity`
+## Forever-Unique Node Scheduling
 
 Multiple completed upstream nodes can trigger `advance_workflow(run_id)` concurrently. To guarantee each node in a run executes at most once:
 

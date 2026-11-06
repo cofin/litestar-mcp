@@ -3,6 +3,7 @@
 import ast
 import posixpath
 import re
+import shutil
 import sys
 import zlib
 from collections.abc import Sequence
@@ -61,8 +62,10 @@ LEGACY_REDIRECTS: dict[str, str] = {
     "usage/a2a": "agents/a2a-protocol/",
     "usage/auth": "security/authentication/",
     "usage/security": "security/authorization-and-scopes/",
-    "usage/migration_0_14": "security/migration-0-14/",
-    "usage/migration_0_12": "security/migration-0-12/",
+    "usage/migration_0_14": "changelog/",
+    "usage/migration_0_12": "changelog/",
+    "security/migration-0-14": "changelog/",
+    "security/migration-0-12": "changelog/",
     "reference/plugin": "reference/plugin-and-config/",
     "reference/config": "reference/plugin-and-config/",
     "reference/handlers": "reference/primitives-and-skills/",
@@ -81,7 +84,6 @@ DEFAULT_REFERENCE_SYMBOLS: tuple[tuple[str, str, str], ...] = (
     ("litestar_mcp.MCPOptKeys", "py:class", "reference/plugin-and-config/"),
     ("litestar_mcp.MCPTaskConfig", "py:class", "reference/plugin-and-config/"),
     ("litestar_mcp.MCPSkillsConfig", "py:class", "reference/plugin-and-config/"),
-    ("litestar_mcp.ToolAnnotations", "py:class", "reference/plugin-and-config/"),
     ("litestar_mcp.mcp_tool", "py:function", "reference/primitives-and-skills/"),
     ("litestar_mcp.mcp_resource", "py:function", "reference/primitives-and-skills/"),
     ("litestar_mcp.mcp_prompt", "py:function", "reference/primitives-and-skills/"),
@@ -100,7 +102,6 @@ DEFAULT_REFERENCE_SYMBOLS: tuple[tuple[str, str, str], ...] = (
     ("litestar_mcp.MCPTaskStore", "py:class", "reference/tasks-and-queues/"),
     ("litestar_mcp.TaskRecord", "py:class", "reference/tasks-and-queues/"),
     ("litestar_mcp.MCPTaskExecutor", "py:class", "reference/tasks-and-queues/"),
-    ("litestar_mcp.InProcessTaskExecutor", "py:class", "reference/tasks-and-queues/"),
     ("litestar_mcp.ToolTaskCall", "py:class", "reference/tasks-and-queues/"),
     ("litestar_mcp.queues.QueueTaskExecutor", "py:class", "reference/tasks-and-queues/"),
     ("litestar_mcp.queues.DurableWorkflowEngine", "py:class", "reference/tasks-and-queues/"),
@@ -121,6 +122,13 @@ DEFAULT_REFERENCE_SYMBOLS: tuple[tuple[str, str, str], ...] = (
     ("litestar_mcp.agent.SessionStore", "py:class", "reference/agents-and-workflows/"),
     ("litestar_mcp.agent.MemorySessionStore", "py:class", "reference/agents-and-workflows/"),
     ("litestar_mcp.agent.LitestarStoreSessionStore", "py:class", "reference/agents-and-workflows/"),
+    ("litestar_mcp.agent.ANONYMOUS_OWNER", "py:data", "reference/agents-and-workflows/"),
+    ("litestar_mcp.agent.ChatRequest", "py:class", "reference/agents-and-workflows/"),
+    ("litestar_mcp.agent.TurnResult", "py:class", "reference/agents-and-workflows/"),
+    ("litestar_mcp.agent.SessionHistory", "py:class", "reference/agents-and-workflows/"),
+    ("litestar_mcp.agent.SessionNotFoundError", "py:exception", "reference/agents-and-workflows/"),
+    ("litestar_mcp.agent.BudgetExceededError", "py:exception", "reference/agents-and-workflows/"),
+    ("litestar_mcp.agent.AgentStreamFrame", "py:class", "reference/agents-and-workflows/"),
     ("litestar_mcp.agent.ModelClient", "py:class", "reference/agents-and-workflows/"),
     ("litestar_mcp.agent.GoogleGenAIClient", "py:class", "reference/agents-and-workflows/"),
     ("litestar_mcp.agent.MockModelClient", "py:class", "reference/agents-and-workflows/"),
@@ -145,7 +153,17 @@ DEFAULT_REFERENCE_SYMBOLS: tuple[tuple[str, str, str], ...] = (
     ("litestar_mcp.core.ToolResult", "py:class", "reference/core-and-observability/"),
     ("litestar_mcp.core.tool", "py:function", "reference/core-and-observability/"),
     ("litestar_mcp.core.ToolContext", "py:class", "reference/core-and-observability/"),
+    ("litestar_mcp.core.ToolArgumentError", "py:exception", "reference/core-and-observability/"),
     ("litestar_mcp.core.TelemetryConfig", "py:class", "reference/core-and-observability/"),
+    ("litestar_mcp.core.SpanManager", "py:class", "reference/core-and-observability/"),
+    ("litestar_mcp.core.encode_json", "py:function", "reference/core-and-observability/"),
+    ("litestar_mcp.core.decode_json", "py:function", "reference/core-and-observability/"),
+    ("litestar_mcp.core.to_json", "py:function", "reference/core-and-observability/"),
+    ("litestar_mcp.core.from_json", "py:function", "reference/core-and-observability/"),
+    ("litestar_mcp.core.LitestarMCPError", "py:exception", "reference/core-and-observability/"),
+    ("litestar_mcp.core.MissingDependencyError", "py:exception", "reference/core-and-observability/"),
+    ("litestar_mcp.core.BridgeConnectionError", "py:exception", "reference/core-and-observability/"),
+    ("litestar_mcp.core.BridgeMessageTooLargeError", "py:exception", "reference/core-and-observability/"),
     ("litestar_mcp.JSONRPCRequest", "py:class", "reference/core-and-observability/"),
     ("litestar_mcp.JSONRPCError", "py:class", "reference/core-and-observability/"),
     ("litestar_mcp.JSONRPCErrorException", "py:exception", "reference/core-and-observability/"),
@@ -285,7 +303,7 @@ def build_llms_files(
 
 
 def write_legacy_redirects(site_dir: Path = DEFAULT_SITE_DIR) -> int:
-    """Write directory `/index.html` and flat `.html` redirect stubs for all 29 moved legacy `.rst` URLs.
+    """Write directory `/index.html` and flat `.html` redirect stubs for all 31 moved legacy URLs.
 
     Args:
         site_dir: Built documentation site directory.
@@ -323,6 +341,10 @@ def run_postbuild(site_dir: Path = DEFAULT_SITE_DIR, docs_dir: Path = DEFAULT_DO
         docs_dir: Documentation source directory.
     """
     site_dir.mkdir(parents=True, exist_ok=True)
+    for excluded_subdir in ("examples", "_build"):
+        excluded_path = site_dir / excluded_subdir
+        if excluded_path.exists():
+            shutil.rmtree(excluded_path)
     compact_site_html(site_dir=site_dir)
     (site_dir / ".nojekyll").write_text("", encoding="utf-8")
     build_objects_inv(site_dir=site_dir, docs_dir=docs_dir)

@@ -8,7 +8,7 @@ Every runnable example under `docs/examples/notes/` declares its dependencies in
 
 ---
 
-## 1. Run Any Example with `uv run`
+## Run Any Example with uv run
 
 From a repository checkout, pass any variant file directly to `uv run` without running `uv sync`:
 
@@ -35,7 +35,7 @@ uv run https://raw.githubusercontent.com/cofin/litestar-mcp/main/docs/examples/n
 
 ---
 
-## 2. Ephemeral Package Execution with `uvx`
+## Ephemeral Package Execution with uvx
 
 When launching a reference module via `uvx`, pass `--from litestar-mcp`, the required backend packages via `--with`, and the `python -m docs.examples.notes.<family>.<variant>` entrypoint:
 
@@ -54,9 +54,9 @@ uvx --from litestar-mcp --with "litestar-mcp,advanced-alchemy,aiosqlite,pyjwt,cr
 
 ---
 
-## 3. Complete Command Matrix across All 4 Auth Modes
+## Complete Command Matrix Across Auth Modes
 
-The table below maps both families (`advanced_alchemy` and `sqlspec`) across the 4 authentication modes (`no-auth`, `JWT`, `Cloud Run`, and `IAP`) and all 5 variant patterns (`no_auth.py`, `jwt_auth.py`, Dishka DI `no_auth_dishka.py` / `jwt_auth_dishka.py` / `dishka_di.py`, `cloud_run_jwt.py` / `cloud_run.py`, and `google_iap.py` / `gcp_iap.py`):
+The table below maps both families (`advanced_alchemy` and `sqlspec`) across the four authentication modes (`no-auth`, `JWT`, `Cloud Run`, and `IAP`) and the variant modules (`no_auth.py`, `no_auth_dishka.py`, `jwt_auth.py`, `jwt_auth_dishka.py`, `cloud_run_jwt.py`, `cloud_run_jwt_dishka.py`, `google_iap.py`, and `google_iap_dishka.py`):
 
 | Family / Variant | Auth Mode | Required Environment Variables | Single-File PEP 723 Command |
 | :--- | :--- | :--- | :--- |
@@ -73,7 +73,7 @@ The table below maps both families (`advanced_alchemy` and `sqlspec`) across the
 
 ---
 
-## 4. Connecting MCP Clients & CLI Bridge
+## Connecting MCP Clients & CLI Bridge
 
 Once a variant is running on `http://127.0.0.1:8000`, point any Streamable HTTP MCP client at `http://127.0.0.1:8000/mcp`:
 
@@ -88,7 +88,7 @@ Once a variant is running on `http://127.0.0.1:8000`, point any Streamable HTTP 
 }
 ```
 
-### Probing the Endpoint with `curl`
+### Probing the Endpoint with curl
 
 Verify the running server responds to `2026-07-28` `server/discover`:
 
@@ -112,7 +112,7 @@ litestar mcp bridge --base-url http://127.0.0.1:8000 --endpoint /mcp
 
 ---
 
-## 5. Common Pitfalls
+## Common Pitfalls
 
 !!! warning "JWT variants require `TOKEN_SECRET`"
     The `jwt_auth.py`, `jwt_auth_dishka.py`, and `cloud_run_jwt.py` variants validate HS256 bearer tokens. Set `TOKEN_SECRET` (at least 32 characters for HS256) in your environment before launching, then call `POST /auth/login` with `{"username": "alice", "password": "secret"}` to mint a bearer token.

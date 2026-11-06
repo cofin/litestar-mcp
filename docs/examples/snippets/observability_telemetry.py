@@ -1,6 +1,6 @@
 """Snippet: OpenTelemetry TelemetryConfig, SpanManager, and MCP tool lifecycle hooks."""
 
-# start-example
+# --8<-- [start:example]
 from typing import Any
 
 from litestar import Litestar, Request, get
@@ -82,7 +82,7 @@ app = Litestar(
     route_handlers=[summarize_notes],
     plugins=[LitestarMCP(mcp_config), agent_runtime],
 )
-# end-example
+# --8<-- [end:example]
 
 
 def build() -> Litestar:

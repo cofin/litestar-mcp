@@ -1,5 +1,6 @@
 """Litestar Channels SSE streaming bridge and QueuedAgentChatController for queued turns."""
 
+from collections.abc import Mapping
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -12,12 +13,12 @@ from litestar.exceptions import ImproperlyConfiguredException
 from litestar.params import FromPath, JSONBody
 from litestar.response import ServerSentEvent
 from litestar.response.sse import ServerSentEventMessage
-from litestar.serialization import decode_json
 from litestar.status_codes import HTTP_202_ACCEPTED
 
 from litestar_mcp.agent.streaming import TERMINAL_EVENTS, AgentStreamFrame
 from litestar_mcp.core._streaming import StreamCleanupMiddleware
-from litestar_mcp.core.serialization import to_json
+from litestar_mcp.core.context import ToolContext
+from litestar_mcp.core.serialization import decode_json, to_json
 from litestar_mcp.queues.tasks import PrincipalSnapshot, QueuedTurnManager
 
 if TYPE_CHECKING:
@@ -70,23 +71,33 @@ class QueuedAgentChatController(Controller):
         agent_name = str(data.get("agent_name") or "root")
         dynamic_context = data.get("dynamic_context")
 
-        principal: PrincipalSnapshot | None = None
-        user = None
+        ctx = ToolContext.from_connection(request)
         auth = None
         with suppress(Exception):
-            user = getattr(request, "user", None)
-        with suppress(Exception):
-            auth = getattr(request, "auth", None)
-        if user is not None or auth is not None:
-            user_id = getattr(user, "user_id", None) or getattr(user, "id", None) or getattr(auth, "sub", None)
-            tenant = getattr(request.state, "tenant", None) or getattr(auth, "tenant", None)
-            roles = getattr(auth, "roles", None) or getattr(user, "roles", [])
-            scopes = getattr(auth, "scopes", None) or getattr(user, "scopes", [])
+            auth = request.scope.get("auth") if "auth" in request.scope else getattr(request, "auth", None)
+        user_id: Any = None
+        if isinstance(ctx.user, Mapping):
+            user_id = ctx.user.get("user_id") or ctx.user.get("id") or ctx.user.get("sub") or ctx.user.get("username")
+        elif ctx.user is not None:
+            user_id = (
+                getattr(ctx.user, "user_id", None)
+                or getattr(ctx.user, "id", None)
+                or getattr(ctx.user, "sub", None)
+                or getattr(ctx.user, "username", None)
+            )
+        if user_id is None and auth is not None:
+            if isinstance(auth, Mapping):
+                user_id = auth.get("sub") or auth.get("user_id") or auth.get("id")
+            else:
+                user_id = getattr(auth, "sub", None) or getattr(auth, "user_id", None) or getattr(auth, "id", None)
+
+        principal: PrincipalSnapshot | None = None
+        if ctx.user is not None or auth is not None or ctx.tenant_id is not None or ctx.roles or ctx.scopes:
             principal = PrincipalSnapshot(
                 user_id=str(user_id) if user_id is not None else None,
-                tenant=str(tenant) if tenant is not None else None,
-                roles=list(roles) if isinstance(roles, (list, tuple)) else [],
-                scopes=list(scopes) if isinstance(scopes, (list, tuple)) else [],
+                tenant=str(ctx.tenant_id) if ctx.tenant_id is not None else None,
+                roles=list(ctx.roles),
+                scopes=list(ctx.scopes),
             )
 
         enqueued_turn_id = await turn_manager.enqueue_turn(
@@ -125,9 +136,14 @@ class QueuedAgentChatController(Controller):
 
         encoders = request.route_handler.resolve_type_encoders()
         channel_name = agent_turn_channel(turn_id)
+        raw_last_event_id = request.headers.get("last-event-id", "").strip()
+        try:
+            initial_last_seq = max(0, int(raw_last_event_id)) if raw_last_event_id else 0
+        except ValueError:
+            initial_last_seq = 0
 
         async def _generator() -> "AsyncIterator[ServerSentEventMessage]":
-            last_seq = 0
+            last_seq = initial_last_seq
             async with channels.start_subscription([channel_name], history=self.replay_limit) as subscriber:
                 event_iter = subscriber.iter_events().__aiter__()
                 done = False

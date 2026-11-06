@@ -24,6 +24,10 @@ _MARKDOWN_LINK_RE = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
 _SPHINX_DIRECTIVE_OR_ROLE_RE = re.compile(
     r"(\.\.\s+(?:code-block|literalinclude|toctree|automodule|autoclass|autofunction)::|:(?:class|func|meth|mod|attr|exc|ref|doc|pep):`)"
 )
+_NUMBERED_HEADING_RE = re.compile(r"^#{2,3}\s+\d+\.", re.MULTILINE)
+_BACKTICK_HEADING_RE = re.compile(r"^#{2,3}\s+[^\n]*`", re.MULTILINE)
+_UNSLICED_SNIPPET_RE = re.compile(r'^\s*--8<--\s+"docs/examples/snippets/[^":]+\.py"', re.MULTILINE)
+_INLINE_CODE_SPAN_RE = re.compile(r"`([^`]+)`")
 
 
 def _collect_nav_pages(node: "object") -> "list[str]":
@@ -40,10 +44,20 @@ def _collect_nav_pages(node: "object") -> "list[str]":
     return pages
 
 
+RETIRED_MIGRATION_NAV_PAGES: "frozenset[str]" = frozenset(
+    {
+        "security/migration-0-14.md",
+        "security/migration-0-12.md",
+    }
+)
+
+
 def _load_nav_pages() -> "tuple[str, ...]":
     """Load the ordered tuple of Markdown page paths registered in ``zensical.toml``."""
     zensical_data = tomllib.loads((REPO_ROOT / "zensical.toml").read_text(encoding="utf-8"))
-    return tuple(_collect_nav_pages(zensical_data["project"]["nav"]))
+    return tuple(
+        page for page in _collect_nav_pages(zensical_data["project"]["nav"]) if page not in RETIRED_MIGRATION_NAV_PAGES
+    )
 
 
 NAV_PAGES = _load_nav_pages()
@@ -60,6 +74,13 @@ NOTES_README_FILES: "tuple[Path, ...]" = (
     NOTES_DIR / "README.md",
     NOTES_DIR / "advanced_alchemy" / "README.md",
     NOTES_DIR / "sqlspec" / "README.md",
+)
+
+CH04_GUIDE_PAGES: "tuple[str, ...]" = tuple(
+    page
+    for page in NAV_PAGES
+    if page == "index.md"
+    or page.startswith(("architecture/", "getting-started/", "learn/", "queues/", "agents/", "security/"))
 )
 
 
@@ -223,3 +244,69 @@ def test_prepare_release_builds_and_inserts_markdown_changelog_entry(tmp_path: "
     _write_changelog_entry(entry, changelog_path=sample_changelog)
     updated = sample_changelog.read_text(encoding="utf-8")
     assert updated.index("## [0.19.0]") < updated.index("## [0.18.0]")
+
+
+@pytest.mark.parametrize("nav_page", CH04_GUIDE_PAGES)
+def test_guide_pages_slice_snippet_includes_and_have_clean_headings_and_tables(nav_page: "str") -> "None":
+    """Verify guide pages slice snippet includes with :example and have clean headings and table cells."""
+    raw_text = (DOCS_DIR / nav_page).read_text(encoding="utf-8")
+    assert _UNSLICED_SNIPPET_RE.search(raw_text) is None, f"Unsliced snippet include in docs/{nav_page}"
+
+    stripped = _FENCED_CODE_RE.sub("", raw_text)
+    assert _NUMBERED_HEADING_RE.search(stripped) is None, f"Numbered H2/H3 heading in docs/{nav_page}"
+    assert _BACKTICK_HEADING_RE.search(stripped) is None, f"Backtick in H2/H3 heading in docs/{nav_page}"
+
+    for line in stripped.splitlines():
+        if line.lstrip().startswith("|"):
+            assert r"\|" not in line, f"Escaped pipe in table row in docs/{nav_page}: {line!r}"
+            for code_match in _INLINE_CODE_SPAN_RE.finditer(line):
+                assert "|" not in code_match.group(1), (
+                    f"Raw pipe inside inline code in table row in docs/{nav_page}: {code_match.group(0)!r}"
+                )
+
+
+def test_queues_and_agents_guides_use_current_v018_contracts() -> "None":
+    """Verify docs/queues/ and docs/agents/ use litestar-queues>=0.13.0 and MCP 2026-07-28 contracts."""
+    deployment_text = (DOCS_DIR / "queues" / "deployment.md").read_text(encoding="utf-8")
+    assert "RedisBackendConfig" in deployment_text
+    assert "max_concurrency=8" in deployment_text
+    assert "litestar --app app:app queues run" in deployment_text
+    assert "broker_url" not in deployment_text
+    assert "litestar workers run" not in deployment_text
+    assert "litestar --app app:app workers run" not in deployment_text
+
+    mcp_tasks_text = (DOCS_DIR / "queues" / "mcp-tasks.md").read_text(encoding="utf-8")
+    assert "InProcessTaskExecutor" not in mcp_tasks_text
+    assert "| `tasks/result` |" not in mcp_tasks_text
+    assert "| `tasks/list`" not in mcp_tasks_text
+
+    turns_text = (DOCS_DIR / "queues" / "queued-agent-turns.md").read_text(encoding="utf-8")
+    assert "Store-Backed Frame Replay" not in turns_text
+    assert "Last-Event-ID" in turns_text
+
+
+def test_security_docs_retire_legacy_migrations_and_use_litestar_security_v07() -> "None":
+    """Verify legacy migration pages are removed and litestar-security guide uses v0.7+ configs."""
+    security_dir = REPO_ROOT / "docs" / "security"
+    assert not (security_dir / "migration-0-14.md").exists()
+    assert not (security_dir / "migration-0-12.md").exists()
+
+    index_text = (security_dir / "index.md").read_text(encoding="utf-8")
+    assert "migration-0-14" not in index_text
+    assert "migration-0-12" not in index_text
+    assert "<h3>First-Party litestar-security Integration</h3>" in index_text
+
+    ls_text = (security_dir / "litestar-security.md").read_text(encoding="utf-8")
+    assert "TokenMechanism" not in ls_text
+    assert "OAuthValidationConfig" not in ls_text
+    assert "oauth_jwt" not in ls_text
+    assert "APIKeyConfig" in ls_text
+    assert "ProtectedResourceConfig" in ls_text
+    assert "MCPConfig(\n    auth=required(" in ls_text or "MCPConfig(auth=required(" in ls_text
+    assert '--8<-- "docs/examples/snippets/litestar_security_mcp.py:example"' in ls_text
+
+    auth_text = (security_dir / "authentication.md").read_text(encoding="utf-8")
+    assert "GoogleIAPConfig" in auth_text
+
+    obs_text = (security_dir / "observability.md").read_text(encoding="utf-8")
+    assert r"\|" not in obs_text

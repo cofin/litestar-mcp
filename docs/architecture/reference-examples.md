@@ -23,7 +23,7 @@ Every variant exposes the exact same MCP surface so you can compare persistence,
 <div class="lm-grid">
   <div class="lm-card">
     <div>
-      <h3>Advanced Alchemy Family (<code>advanced_alchemy</code>)</h3>
+      <h3>Advanced Alchemy Family</h3>
       <p>Implements the shared Notes contract on top of Advanced Alchemy's SQLAlchemy ORM service/repository layer with <code>UUIDAuditBase</code> audit columns and Litestar session lifecycle management.</p>
       <p><strong>Choose when:</strong> You want an ORM surface, declarative models, audit columns, and SQLAlchemy repository ergonomics.</p>
     </div>
@@ -32,7 +32,7 @@ Every variant exposes the exact same MCP surface so you can compare persistence,
 
   <div class="lm-card">
     <div>
-      <h3>SQLSpec Family (<code>sqlspec</code>)</h3>
+      <h3>SQLSpec Family</h3>
       <p>Implements the shared Notes contract using SQLSpec's explicit, typed async SQL adapter API (<code>AiosqliteConfig</code>) with parameterized queries and zero-overhead <code>msgspec.Struct</code> row mapping. Also hosts the Cloud Run and Google IAP deployment variants.</p>
       <p><strong>Choose when:</strong> You want explicit SQL, typed result mapping, or cloud deployment blueprints.</p>
     </div>
@@ -44,7 +44,7 @@ Every variant exposes the exact same MCP surface so you can compare persistence,
 
 ## Complete Variant Matrix
 
-The two families cover five core architectural shapes (`no_auth.py`, `jwt_auth.py`, Dishka DI variants `no_auth_dishka.py` / `jwt_auth_dishka.py` / `dishka_di.py`, Cloud Run `cloud_run_jwt.py` / `cloud_run.py`, and Google IAP `google_iap.py` / `gcp_iap.py`) across 10 runnable PEP 723 modules:
+The two families cover all 10 runnable PEP 723 modules (`no_auth.py`, `no_auth_dishka.py`, `jwt_auth.py`, `jwt_auth_dishka.py`, `cloud_run_jwt.py`, `cloud_run_jwt_dishka.py`, `google_iap.py`, and `google_iap_dishka.py`):
 
 | Backend Family | Auth Mode | DI Container | Deployment Target | Module Path | Single-File Command |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -61,7 +61,7 @@ The two families cover five core architectural shapes (`no_auth.py`, `jwt_auth.p
 
 ---
 
-## 4-Tier Authentication Mode Comparison
+## Authentication Mode Comparison
 
 The reference variants progress through four authentication tiers (`no-auth`, `JWT`, `Cloud Run`, and `IAP`), each demonstrating how `LitestarMCP` inherits the host application's authentication middleware:
 
@@ -78,14 +78,14 @@ The reference variants progress through four authentication tiers (`no-auth`, `J
 
 All 10 modules share two read-only foundation modules under `docs/examples/notes/shared/`:
 
-1. **`docs/examples/notes/shared/contracts.py`**: Defines the canonical `msgspec.Struct` wire payloads (`Note`, `CreateNoteRequest`, `DeleteNoteResult`, `AppInfo`, and `NOTES_JSON_SCHEMA`) returned by every variant.
+1. **`docs/examples/notes/shared/contracts.py`**: Defines the canonical `msgspec.Struct` wire payloads (`Note`, `CreateNoteInput`, `DeleteNoteResult`, `AppInfo`, and `NotesSchema`) returned by every variant.
 2. **`docs/examples/notes/shared/auth.py`**: Provides `mint_hs256_token`, `build_oauth_backend`, `build_login_controller`, `build_iap_token_validator`, `IAPAuthenticationMiddleware`, and `build_iap_auth_middleware`.
 
 When Dishka is used (`no_auth_dishka.py` and `jwt_auth_dishka.py`), `setup_dishka` wires the request-scoped note service into the Litestar application. `LitestarMCP` automatically detects Dishka-managed types and strips them from the public MCP tool JSON Schema while resolving them at `tools/call` runtime.
 
 ---
 
-## Running Variants with `uv run` or `uvx`
+## Running Variants with uv run or uvx
 
 Every variant embeds a PEP 723 inline script metadata header so `uv run` provisions an isolated environment automatically:
 

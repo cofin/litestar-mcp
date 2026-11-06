@@ -29,13 +29,20 @@ unhashable builds a fresh, uncached pipeline on each call.
 """
 
 from threading import RLock
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, cast, overload
 
 import msgspec
-from litestar.serialization import decode_json as from_json
-from litestar.serialization import encode_json, get_serializer
+from litestar.serialization import (
+    decode_json as _litestar_decode_json,
+)
+from litestar.serialization import (
+    encode_json as _litestar_encode_json,
+)
+from litestar.serialization import (
+    get_serializer,
+)
 from litestar.serialization.msgspec_hooks import DEFAULT_TYPE_ENCODERS
-from litestar.types import TypeEncodersMap
+from litestar.types import Empty, EmptyType, TypeDecodersSequence, TypeEncodersMap
 
 from litestar_mcp.core._typing import PYDANTIC_INSTALLED, BaseModel
 
@@ -46,6 +53,8 @@ __all__ = (
     "DEFAULT_TYPE_ENCODERS",
     "SchemaSerializer",
     "TypeEncodersMap",
+    "decode_json",
+    "encode_json",
     "format_json",
     "from_json",
     "get_collection_serializer",
@@ -56,10 +65,119 @@ __all__ = (
 )
 
 
+_T = TypeVar("_T")
 _SerializerKey: TypeAlias = "tuple[type[Any] | None, bool, frozenset[tuple[Any, Any]] | None]"
 _PRIMITIVE_TYPES: "tuple[type[Any], ...]" = (str, bytes, int, float, bool)
 _SERIALIZER_LOCK: "RLock" = RLock()
 _SCHEMA_SERIALIZERS: "dict[_SerializerKey, SchemaSerializer]" = {}
+
+
+def encode_json(
+    value: "Any",
+    serializer: "Callable[[Any], Any] | None" = None,
+) -> "bytes":
+    """Encode a Python value into UTF-8 JSON bytes using Litestar's native serializer.
+
+    Args:
+        value: Value to encode.
+        serializer: Optional encoder hook override.
+
+    Returns:
+        UTF-8 encoded JSON bytes.
+    """
+    return _litestar_encode_json(value, serializer=serializer)
+
+
+@overload
+def decode_json(
+    value: "str | bytes",
+    target_type: "EmptyType" = ...,
+    type_decoders: "TypeDecodersSequence | None" = ...,
+    strict: "bool" = ...,
+) -> "Any": ...
+
+
+@overload
+def decode_json(
+    value: "str | bytes",
+    target_type: "type[_T]",
+    type_decoders: "TypeDecodersSequence | None" = ...,
+    strict: "bool" = ...,
+) -> "_T": ...
+
+
+def decode_json(
+    value: "str | bytes",
+    target_type: "type[_T] | EmptyType" = Empty,
+    type_decoders: "TypeDecodersSequence | None" = None,
+    strict: "bool" = True,
+) -> "Any":
+    """Decode a JSON string or bytes payload using Litestar's native decoder.
+
+    Args:
+        value: JSON string or bytes to decode.
+        target_type: Optional target type for structured decoding.
+        type_decoders: Optional sequence of custom type decoder pairs.
+        strict: Whether to enforce strict type coercion during decoding.
+
+    Returns:
+        Decoded Python value or typed instance.
+    """
+    if target_type is Empty:
+        return _litestar_decode_json(
+            value,
+            type_decoders=type_decoders,
+            strict=strict,
+        )
+    return _litestar_decode_json(
+        value,
+        target_type=cast("type[Any]", target_type),
+        type_decoders=type_decoders,
+        strict=strict,
+    )
+
+
+@overload
+def from_json(
+    value: "str | bytes",
+    target_type: "EmptyType" = ...,
+    type_decoders: "TypeDecodersSequence | None" = ...,
+    strict: "bool" = ...,
+) -> "Any": ...
+
+
+@overload
+def from_json(
+    value: "str | bytes",
+    target_type: "type[_T]",
+    type_decoders: "TypeDecodersSequence | None" = ...,
+    strict: "bool" = ...,
+) -> "_T": ...
+
+
+def from_json(
+    value: "str | bytes",
+    target_type: "type[_T] | EmptyType" = Empty,
+    type_decoders: "TypeDecodersSequence | None" = None,
+    strict: "bool" = True,
+) -> "Any":
+    """Decode a JSON string or bytes payload using Litestar's native decoder.
+
+    Args:
+        value: JSON string or bytes to decode.
+        target_type: Optional target type for structured decoding.
+        type_decoders: Optional sequence of custom type decoder pairs.
+        strict: Whether to enforce strict type coercion during decoding.
+
+    Returns:
+        Decoded Python value or typed instance.
+    """
+    return decode_json(
+        value,
+        target_type=cast("Any", target_type),
+        type_decoders=type_decoders,
+        strict=strict,
+    )
 
 
 @overload
@@ -269,9 +387,6 @@ def reset_serializer_cache() -> "None":
     """
     with _SERIALIZER_LOCK:
         _SCHEMA_SERIALIZERS.clear()
-
-
-# Private helper functions
 
 
 def _dump_identity_dict(value: "Any") -> "dict[str, Any]":

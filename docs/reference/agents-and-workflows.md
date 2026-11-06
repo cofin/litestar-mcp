@@ -4,11 +4,9 @@ title: Agents, Sessions & Workflows API
 
 # Agents, Sessions & Workflows API
 
-API reference for `litestar_mcp.agent`: declarative `Agent` and `AgentGroup` specs, `AgentRuntime` and `TurnBudget`, `AgentChatController`, pluggable `SessionStore` implementations (`MemorySessionStore`, `LitestarStoreSessionStore`), model adapters (`ModelClient`, `GoogleGenAIClient`, `MockModelClient`), SSE `AgentStreamFrame` streaming, and in-process `DynamicWorkflow` / `WorkflowEngine` DAG execution.
+API reference for `litestar_mcp.agent`: declarative `Agent` and `AgentGroup` specs, `AgentRuntime` and `TurnBudget`, `AgentChatController`, pluggable `SessionStore` implementations (`ANONYMOUS_OWNER`, `MemorySessionStore`, `LitestarStoreSessionStore`), model adapters (`ModelClient`, `GoogleGenAIClient`, `MockModelClient`), SSE `AgentStreamFrame` streaming, and in-process `DynamicWorkflow` / `WorkflowEngine` DAG execution.
 
 For guides and patterns, see [Agent Runtime & Turn Budgets](../agents/runtime-and-budgets.md), [Agent Groups & Handoffs](../agents/groups-and-handoffs.md), [Sessions & SSE Streaming](../agents/sessions-and-streaming.md), and [Durable DAG Workflows](../queues/durable-workflows.md).
-
----
 
 ## Agent & Group Specifications
 
@@ -17,8 +15,6 @@ For guides and patterns, see [Agent Runtime & Turn Budgets](../agents/runtime-an
 ::: litestar_mcp.agent.spec.AgentGroup
 
 ::: litestar_mcp.agent.spec.AgentMessage
-
----
 
 ## Agent Runtime & Turn Budgets
 
@@ -32,8 +28,6 @@ For guides and patterns, see [Agent Runtime & Turn Budgets](../agents/runtime-an
 
 ::: litestar_mcp.agent.guards.BudgetExceededError
 
----
-
 ## HTTP & SSE Chat Controller
 
 ::: litestar_mcp.agent.controller.AgentChatController
@@ -46,17 +40,15 @@ For guides and patterns, see [Agent Runtime & Turn Budgets](../agents/runtime-an
 
 ::: litestar_mcp.agent.controller.SessionNotFoundError
 
----
-
 ## Session Stores
+
+::: litestar_mcp.agent.sessions.ANONYMOUS_OWNER
 
 ::: litestar_mcp.agent.sessions.SessionStore
 
 ::: litestar_mcp.agent.sessions.MemorySessionStore
 
 ::: litestar_mcp.agent.sessions.LitestarStoreSessionStore
-
----
 
 ## Model Clients & Streaming Frames
 
@@ -72,9 +64,7 @@ For guides and patterns, see [Agent Runtime & Turn Budgets](../agents/runtime-an
 
 ::: litestar_mcp.agent.streaming.iter_agent_stream
 
----
-
-## DAG Workflows (`DynamicWorkflow` & `WorkflowEngine`)
+## DAG Workflows
 
 ::: litestar_mcp.agent.workflow.DynamicWorkflow
 

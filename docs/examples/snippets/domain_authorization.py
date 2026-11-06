@@ -1,6 +1,6 @@
 """Snippet: validate domain object access for MCP tools."""
 
-# start-example
+# --8<-- [start:example]
 from typing import Any
 
 from litestar import Litestar, Request, get
@@ -12,9 +12,9 @@ from litestar_mcp import LitestarMCP
 
 
 async def require_workspace_owner(
-    workspace_owner_id: "FromPath[str]",
-    request: "Request[Any, Any, Any]",
-) -> "None":
+    workspace_owner_id: FromPath[str],
+    request: Request[Any, Any, Any],
+) -> None:
     """Reject a request for a workspace not owned by the authenticated user."""
     user_id = getattr(request.user, "id", None) or getattr(request.user, "sub", None)
     if user_id != workspace_owner_id:
@@ -27,12 +27,10 @@ async def require_workspace_owner(
     mcp_tool=True,
     dependencies={"_owner_check": Provide(require_workspace_owner)},
 )
-async def export_workspace(
-    workspace_owner_id: "FromPath[str]", _owner_check: "NamedDependency[None]"
-) -> "dict[str, str]":
+async def export_workspace(workspace_owner_id: FromPath[str], _owner_check: NamedDependency[None]) -> dict[str, str]:
     """Export a workspace after the dependency authorizes the object ID."""
     return {"workspace_id": workspace_owner_id, "status": "queued"}
 
 
 app = Litestar(route_handlers=[export_workspace], plugins=[LitestarMCP()])
-# end-example
+# --8<-- [end:example]

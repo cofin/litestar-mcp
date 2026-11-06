@@ -7,7 +7,7 @@ The `LitestarMCP` plugin is configured through `MCPConfig`, along with companion
 When `LitestarMCP()` is registered without arguments, it uses the default `MCPConfig`, mounts the Streamable HTTP controller at `/mcp`, derives the server name and version from the application's OpenAPI configuration, and discovers all marked routes.
 
 ```python title="docs/examples/snippets/configuration_minimal.py"
---8<-- "docs/examples/snippets/configuration_minimal.py"
+--8<-- "docs/examples/snippets/configuration_minimal.py:example"
 ```
 
 ## Custom Configuration
@@ -15,7 +15,7 @@ When `LitestarMCP()` is registered without arguments, it uses the default `MCPCo
 Override `base_path`, `name`, `include_in_schema`, filtering rules, or protocol extensions by passing an `MCPConfig` instance to `LitestarMCP`:
 
 ```python title="docs/examples/snippets/configuration_custom.py"
---8<-- "docs/examples/snippets/configuration_custom.py"
+--8<-- "docs/examples/snippets/configuration_custom.py:example"
 ```
 
 ## Standalone Prompts & Controllers
@@ -23,10 +23,10 @@ Override `base_path`, `name`, `include_in_schema`, filtering rules, or protocol 
 Standalone prompt functions decorated with `@mcp_prompt` can be passed to `LitestarMCP(config, prompts=[...])`, while class-based `PromptController` and `SkillController` types can either be included in `app.route_handlers` or registered via `MCPConfig(prompt_controllers=[...], skill_controllers=[...])`:
 
 ```python title="docs/examples/snippets/configuration_prompts.py"
---8<-- "docs/examples/snippets/configuration_prompts.py"
+--8<-- "docs/examples/snippets/configuration_prompts.py:example"
 ```
 
-## Complete `MCPConfig` Reference
+## Complete MCPConfig Reference
 
 | Field | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
@@ -34,6 +34,7 @@ Standalone prompt functions decorated with `@mcp_prompt` can be passed to `Lites
 | `include_in_schema` | `bool` | `False` | Whether to include the mounted MCP transport routes in Litestar's generated OpenAPI schema. |
 | `name` | `str or None` | `None` | Optional server name override. When `None`, falls back to `app.openapi_config.title` (or `"Litestar MCP Server"`). Server version is derived from `app.openapi_config.version` (default `"1.0.0"`), and the application's OpenAPI document is always served via the built-in `litestar://openapi` resource. |
 | `instructions` | `str or None` | `None` | Optional server-level grounding instructions returned in `server/discover` and `initialize` responses. |
+| `auth` | `Any or None` | `None` | Optional authentication policy (for example, `required("api-key")` from `litestar-security`) applied to the mounted MCP router via `route_opt["auth"]` when `route_opt` does not already define `"auth"`. |
 | `guards` | `list[Any] or None` | `None` | Litestar guard callables applied to the mounted MCP router. |
 | `route_opt` | `dict[str, Any] or None` | `None` | Optional `opt` dictionary applied to the mounted MCP router and merged into the JSON-RPC handler (for example, `{"auth": required("api-key")}` with `litestar-security`). |
 | `allowed_origins` | `list[str] or None` | `None` | Exact additional `Origin` header values accepted alongside the request's own origin. Mismatched `Origin` headers are rejected with `403 Forbidden`. |
@@ -42,7 +43,7 @@ Standalone prompt functions decorated with `@mcp_prompt` can be passed to `Lites
 | `include_tags` | `list[str] or None` | `None` | Optional allowlist of Litestar route handler `tags` to expose over MCP. |
 | `exclude_tags` | `list[str] or None` | `None` | Optional denylist of Litestar route handler `tags` to hide from MCP. |
 | `opt_keys` | `MCPOptKeys` | `MCPOptKeys()` | Configurable `handler.opt` key names inspected during route discovery. |
-| `infer_http_method_annotations` | `bool` | `True` | Automatically infer default MCP `ToolAnnotations` hints (`readOnlyHint`, `destructiveHint`, `idempotentHint`) from the route handler's HTTP verb when not explicitly overridden. |
+| `infer_http_method_annotations` | `bool` | `True` | Automatically infer default MCP tool annotation hints (`readOnlyHint`, `destructiveHint`, `idempotentHint`) from the route handler's HTTP verb when not explicitly overridden (`mcp_annotations` / `annotations`). |
 | `max_tool_description_length` | `int or None` | `None` | Optional maximum character length for tool descriptions enforced during `validate_tool_descriptions` and `litestar mcp export-tool-spec`. |
 | `max_param_description_length` | `int or None` | `None` | Optional maximum character length for tool input parameter descriptions enforced during tool-spec validation. |
 | `max_output_field_description_length` | `int or None` | `None` | Optional maximum character length for tool output schema property descriptions enforced during tool-spec validation. |
@@ -85,14 +86,14 @@ Standalone prompt functions decorated with `@mcp_prompt` can be passed to `Lites
 Filters apply identically to `*/list` responses and direct invocation (`tools/call`, `resources/read`, `prompts/get`). Calling a filtered tool, resource, or prompt returns the same `INVALID_PARAMS` (`-32602`) not-found response as an unregistered name.
 
 !!! warning "Filtering vs Authorization"
-    Tag and operation filters control global catalog visibility across the entire MCP server. For per-request, per-principal access control, attach Litestar `guards` or `litestar-security` `route_opt` policies—see [Authorization, Guards & Scopes](../security/authorization-and-scopes.md).
+    Tag and operation filters control global catalog visibility across the entire MCP server. For per-request, per-principal access control, attach Litestar `guards` or `litestar-security` `MCPConfig(auth=...)` and `route_opt` policies—see [Authorization, Guards & Scopes](../security/authorization-and-scopes.md).
 
-## Enabling MCP Tasks (`MCPTaskConfig`)
+## Enabling MCP Tasks (MCPTaskConfig)
 
 Pass `tasks=True` or an `MCPTaskConfig` instance to enable the `io.modelcontextprotocol/tasks` extension:
 
 ```python title="docs/examples/snippets/configuration_tasks.py"
---8<-- "docs/examples/snippets/configuration_tasks.py"
+--8<-- "docs/examples/snippets/configuration_tasks.py:example"
 ```
 
 When `litestar-queues` `QueuePlugin` is registered on the same `Litestar` application, `LitestarMCP` automatically enables MCP Tasks and wires `QueueTaskExecutor` with zero configuration. Install the optional `queues` extra to distribute background MCP Tasks across `litestar-queues` workers:
@@ -123,12 +124,12 @@ When `litestar-queues` `QueuePlugin` is registered on the same `Litestar` applic
 
 See [MCP Tasks](../queues/mcp-tasks.md) and [Distributed Task Queues](../queues/distributed-task-queues.md) for `MCPTaskConfig` options (`store`, `default_ttl_ms`, `max_ttl_ms`, `poll_interval_ms`, `status_callback`, `executor`) and worker rehydration details.
 
-## Enabling Agent Skills (`MCPSkillsConfig`)
+## Enabling Agent Skills (MCPSkillsConfig)
 
 Pass an `MCPSkillsConfig` instance to `MCPConfig(skills=...)` to advertise and serve Agent Skills (`io.modelcontextprotocol/skills`, SEP-2640) from filesystem directories (`paths`) or dynamic request-aware `SkillSource` providers (`sources`):
 
 ```python title="docs/examples/snippets/configuration_skills.py"
---8<-- "docs/examples/snippets/configuration_skills.py"
+--8<-- "docs/examples/snippets/configuration_skills.py:example"
 ```
 
 See [Agent Skills (SEP-2640)](skills.md) for directory layout rules, startup validation, wire methods, and dynamic `SkillSource` composition.
@@ -138,7 +139,7 @@ See [Agent Skills (SEP-2640)](skills.md) for directory layout rules, startup val
 Configure `before_tool_call` and `after_tool_call` on `MCPConfig` to run audit logging, custom metrics, or structured tracing around every `tools/call` invocation independently of route ownership layers:
 
 ```python title="docs/examples/snippets/configuration_tool_callbacks.py"
---8<-- "docs/examples/snippets/configuration_tool_callbacks.py"
+--8<-- "docs/examples/snippets/configuration_tool_callbacks.py:example"
 ```
 
 - **`before_tool_call(tool_name, arguments, request, /)`**: Invoked once per `tools/call` after the synthetic internal HTTP `Request` is constructed and before Litestar guards execute. Receives a shallow copy of `arguments`.

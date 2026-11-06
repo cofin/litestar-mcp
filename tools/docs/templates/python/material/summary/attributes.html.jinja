@@ -1,4 +1,4 @@
-{#- Render class attributes as a 3-column Attributes table even when members: false hides method children. -#}
+{#- Render class attributes as a captioned 3-column Attributes table even when members: false hides method children. -#}
 {% if not obj.docstring.parsed | selectattr("kind.value", "eq", "attributes") | list %}
   {% with summary_members_list = None if config.members is sameas false else members_list %}
     {% with section = obj.attributes

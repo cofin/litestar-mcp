@@ -1,4 +1,6 @@
-# [start-run-stdio]
+"""Snippet: running a standalone MCP server over stdio with MCPStdioContext."""
+
+# --8<-- [start:example]
 import os
 from types import SimpleNamespace
 
@@ -10,12 +12,11 @@ mcp = MCP("stdio-server")
 
 
 @mcp.tool()
-def current_user(request: "Request") -> "dict[str, str]":
+def current_user(request: Request) -> dict[str, str]:
     """Return the current stdio identity."""
     return {"user_id": request.user.id}
 
 
-# Expose the app instance globally
 app = mcp.app
 
 if __name__ == "__main__":
@@ -27,4 +28,4 @@ if __name__ == "__main__":
             auth={"sub": user_id},
         ),
     )
-# [end-run-stdio]
+# --8<-- [end:example]

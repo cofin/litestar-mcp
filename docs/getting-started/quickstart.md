@@ -8,7 +8,7 @@ This walkthrough attaches `LitestarMCP` to a Litestar application, exposes a too
 
 ---
 
-## 1. Install `litestar-mcp` and an ASGI Server
+## Install litestar-mcp and an ASGI Server
 
 === "uv"
 
@@ -36,14 +36,14 @@ This walkthrough attaches `LitestarMCP` to a Litestar application, exposes a too
 
 ---
 
-## 2. Register `LitestarMCP` and Mark Routes
+## Register LitestarMCP and Mark Routes
 
 Every Litestar route decorator (`@get`, `@post`, `@put`, `@patch`, `@delete`) forwards extra keyword arguments into `handler.opt`. Passing `mcp_tool`, `mcp_resource`, or `mcp_prompt` exposes the route over `/mcp` while keeping its normal REST endpoint active.
 
 Minimal plugin registration requires a single entry in `plugins`:
 
 ```python title="docs/examples/snippets/configuration_minimal.py"
---8<-- "docs/examples/snippets/configuration_minimal.py"
+--8<-- "docs/examples/snippets/configuration_minimal.py:example"
 ```
 
 Create `app.py` with a tool (`mcp_tool`), a resource (`mcp_resource`), and a prompt (`mcp_prompt`):
@@ -93,7 +93,7 @@ litestar --app app:app run --reload
 
 ---
 
-## 3. Probe `/mcp` with `curl` (Dual-Version Streamable HTTP)
+## Probe /mcp with curl (Dual-Version Streamable HTTP)
 
 `LitestarMCP` supports both the `2026-07-28` stateless `server/discover` flow and the `2025-06-18` `initialize` lifecycle on `/mcp`.
 
@@ -137,7 +137,7 @@ litestar --app app:app run --reload
 
 ---
 
-## 4. List & Call Primitives and Read `litestar://openapi`
+## List & Call Primitives and Read litestar://openapi
 
 === "List & Call Tools"
 
@@ -196,7 +196,7 @@ litestar --app app:app run --reload
 
 ---
 
-## 5. Export Tool Specs or Launch Over Stdio from the CLI
+## Export Tool Specs or Launch Over Stdio from the CLI
 
 Use the built-in `litestar mcp` CLI group to inspect compiled tool JSON Schemas or connect desktop MCP hosts without starting an HTTP server:
 
@@ -211,4 +211,4 @@ litestar --app app:app mcp stdio
 
 - [Standalone MCP Application](standalone.md): Build dedicated MCP servers using the declarative `MCP` wrapper.
 - [Core Architectural Concepts](concepts.md): Learn how internal ASGI dispatch, Dishka/Litestar dependency injection, and tag filtering work.
-- [MCP Core Guides](../learn/index.md): Configure `ToolAnnotations`, RFC 6570 resource templates, `PromptController`, and Agent Skills (`SEP-2640`).
+- [MCP Core Guides](../learn/index.md): Configure tool annotations (`mcp_annotations`), RFC 6570 resource templates, `PromptController`, and Agent Skills (`SEP-2640`).

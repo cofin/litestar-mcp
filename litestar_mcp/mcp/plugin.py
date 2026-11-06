@@ -17,6 +17,7 @@ from litestar_mcp.mcp.prompt_controller import PromptController
 from litestar_mcp.mcp.registry import PromptRegistration, Registry
 from litestar_mcp.mcp.routes import MCPController
 from litestar_mcp.mcp.service import MCPHandlerService
+from litestar_mcp.mcp.skill_controller import SkillController
 from litestar_mcp.mcp.skills import SkillCatalog
 from litestar_mcp.mcp.tasks import MCPTaskRuntime, MCPTaskStore, TaskRecord
 from litestar_mcp.mcp.tool_handlers import build_tool_route_handler
@@ -42,7 +43,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
     def __init__(
         self,
         config: "MCPConfig | None" = None,
-        prompts: "Sequence[Callable[..., Any]] | None" = None,
+        prompts: "Sequence[Callable[..., Any] | BaseRouteHandler] | None" = None,
     ) -> "None":
         """Initialize the MCP plugin.
 
@@ -56,22 +57,17 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         self._dynamic_handlers: list[Any] = []
         self._dynamic_handler_paths: set[tuple[str, ...]] = set()
 
-        controllers_to_mount = (*self._config.prompt_controllers, *self._config.skill_controllers)
-        for entry in controllers_to_mount:
-            if not (isinstance(entry, type) and issubclass(entry, PromptController)):
-                msg = f"{entry!r} is not a PromptController subclass"
-                raise ImproperlyConfiguredException(msg)
-            self.register_dynamic_handler(entry)
+        for entry in self._config.prompt_controllers:
+            self.register_dynamic_handler(self._coerce_controller_class(entry, PromptController))
+        for entry in self._config.skill_controllers:
+            self.register_dynamic_handler(self._coerce_controller_class(entry, SkillController))
 
         if prompts:
-            for fn in prompts:
-                metadata = get_mcp_metadata(fn) or {}
-                if metadata.get("type") != "prompt":
-                    msg = f"Function {fn!r} is not decorated with @mcp_prompt"
-                    raise ValueError(msg)
+            for prompt_item in prompts:
+                callable_fn, metadata = self._unwrap_prompt_callable(prompt_item)
                 self._registry.register_prompt(
                     name=metadata["name"],
-                    fn=fn,
+                    fn=callable_fn,
                     title=metadata.get("title"),
                     description=metadata.get("description"),
                     arguments=metadata.get("arguments"),
@@ -88,18 +84,6 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         self._skill_catalog: SkillCatalog | None = (
             SkillCatalog.from_config(self._config.skills) if isinstance(self._config.skills, MCPSkillsConfig) else None
         )
-
-    def _ensure_task_store(self, task_config: "MCPTaskConfig") -> "MCPTaskStore":
-        """Initialize the task store if it has not been created yet."""
-        if self._task_store is None:
-            self._task_store = MCPTaskStore(
-                store=task_config.store,
-                default_ttl_ms=task_config.default_ttl_ms,
-                max_ttl_ms=task_config.max_ttl_ms,
-                poll_interval_ms=task_config.poll_interval_ms,
-                status_callback=task_config.status_callback,
-            )
-        return self._task_store
 
     @property
     def config(self) -> "MCPConfig":
@@ -171,38 +155,6 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         """Configure CLI commands for MCP operations."""
         cli.add_command(mcp_group)
 
-    def _configure_task_runtime(self, app_config: "AppConfig") -> "None":
-        """Auto-enable queue task execution when ``QueuePlugin`` is present and configure the task store."""
-        if _has_queue_plugin(app_config) and self._config.tasks is not False:
-            if self._config.tasks is None or self._config.tasks is True:
-                self._config.tasks = MCPTaskConfig()
-            auto_task_config = self._config.task_config
-            if auto_task_config is not None:
-                self._ensure_task_store(auto_task_config)
-                if auto_task_config.executor is None and not getattr(auto_task_config, "_disable_auto_executor", False):
-                    auto_task_config.executor = _create_default_queue_task_executor()
-
-        task_config = self._config.task_config
-        if self._task_store is None or task_config is None:
-            return
-
-        if task_config.store is None:
-            self._task_store.store = resolve_app_store(app_config, TASK_STORE_NAME)
-        executor = task_config.executor
-        if executor is not None and not isinstance(executor, (bool, str)):
-            executor.configure(app_config)
-        user_status_callback = self._task_store.status_callback
-
-        async def publish_task_status(record: "TaskRecord") -> "None":
-            if user_status_callback is not None:
-                await user_status_callback(record)
-            await self._registry.publish_notification(
-                "notifications/tasks",
-                record.to_dict(),
-            )
-
-        self._task_store.set_status_callback(publish_task_status)
-
     def on_app_init(self, app_config: "AppConfig") -> "AppConfig":
         """Initialize the MCP integration when the Litestar app starts."""
         self._discover_mcp_routes(app_config.route_handlers)
@@ -242,8 +194,11 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         }
         if self._config.guards is not None:
             router_kwargs["guards"] = self._config.guards
-        if self._config.route_opt is not None:
-            router_kwargs["opt"] = dict(self._config.route_opt)
+        router_opt: dict[str, Any] = dict(self._config.route_opt) if self._config.route_opt is not None else {}
+        if self._config.auth is not None:
+            router_opt["auth"] = self._config.auth
+        if router_opt:
+            router_kwargs["opt"] = router_opt
 
         mcp_router = Router(**router_kwargs)
         app_config.route_handlers.append(mcp_router)
@@ -310,9 +265,109 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         if self._task_store is not None:
             await self._task_store.close()
 
+    def _ensure_task_store(self, task_config: "MCPTaskConfig") -> "MCPTaskStore":
+        """Initialize the task store if it has not been created yet."""
+        if self._task_store is None:
+            self._task_store = MCPTaskStore(
+                store=task_config.store,
+                default_ttl_ms=task_config.default_ttl_ms,
+                max_ttl_ms=task_config.max_ttl_ms,
+                poll_interval_ms=task_config.poll_interval_ms,
+                status_callback=task_config.status_callback,
+            )
+        return self._task_store
+
+    def _configure_task_runtime(self, app_config: "AppConfig") -> "None":
+        """Auto-enable queue task execution when ``QueuePlugin`` is present and configure the task store."""
+        if _has_queue_plugin(app_config) and self._config.tasks is not False:
+            if self._config.tasks is None or self._config.tasks is True:
+                self._config.tasks = MCPTaskConfig()
+            auto_task_config = self._config.task_config
+            if auto_task_config is not None:
+                self._ensure_task_store(auto_task_config)
+                if auto_task_config.executor is None and not getattr(auto_task_config, "_disable_auto_executor", False):
+                    auto_task_config.executor = _create_default_queue_task_executor()
+
+        task_config = self._config.task_config
+        if self._task_store is None or task_config is None:
+            return
+
+        if task_config.store is None:
+            self._task_store.store = resolve_app_store(app_config, TASK_STORE_NAME)
+        executor = task_config.executor
+        if executor is not None and not isinstance(executor, (bool, str)):
+            executor.configure(app_config)
+        user_status_callback = self._task_store.status_callback
+
+        async def publish_task_status(record: "TaskRecord") -> "None":
+            if user_status_callback is not None:
+                await user_status_callback(record)
+            await self._registry.publish_notification(
+                "notifications/tasks",
+                record.to_dict(),
+            )
+
+        self._task_store.set_status_callback(publish_task_status)
+
+    @staticmethod
+    def _coerce_controller_class(
+        entry: "Any",
+        expected_base: "type[PromptController]" = PromptController,
+    ) -> "type[PromptController]":
+        """Validate ``entry`` against ``expected_base`` and return a mountable controller class."""
+        if isinstance(entry, type) and issubclass(entry, expected_base):
+            return entry
+        if isinstance(entry, expected_base):
+            cls = type(entry)
+            instance_attrs = {key: value for key, value in entry.__dict__.items() if key != "owner"}
+            if cls.__init__ is PromptController.__init__ and all(
+                getattr(cls, key, object()) == value for key, value in instance_attrs.items()
+            ):
+                return cls
+            namespace: dict[str, Any] = {
+                **instance_attrs,
+                "__module__": cls.__module__,
+                "__qualname__": cls.__qualname__,
+                "__init__": PromptController.__init__,
+            }
+            if hasattr(entry, "path"):
+                namespace["path"] = entry.path
+            return cast("type[PromptController]", type(cls.__name__, (cls,), namespace))
+        msg = f"{entry!r} is not a PromptController subclass (expected {expected_base.__name__})"
+        raise ImproperlyConfiguredException(msg)
+
+    def _unwrap_prompt_callable(
+        self,
+        fn: "Callable[..., Any] | BaseRouteHandler",
+    ) -> "tuple[Callable[..., Any], dict[str, Any]]":
+        """Extract the underlying callable and prompt metadata from ``fn``."""
+        callable_fn = get_handler_function(fn) if isinstance(fn, BaseRouteHandler) else fn
+        metadata = get_mcp_metadata(fn) or get_mcp_metadata(callable_fn) or {}
+        if metadata.get("type") != "prompt" and isinstance(fn, BaseRouteHandler) and isinstance(fn.opt, dict):
+            opt_keys = self._config.opt_keys
+            if opt_keys.prompt in fn.opt:
+                metadata = {
+                    "type": "prompt",
+                    "name": self._opt_name(fn, opt_keys.prompt),
+                    "title": fn.opt.get(opt_keys.prompt_title),
+                    "description": fn.opt.get(opt_keys.prompt_description),
+                    "arguments": fn.opt.get(opt_keys.prompt_arguments),
+                    "icons": fn.opt.get(opt_keys.prompt_icons),
+                }
+        if metadata.get("type") != "prompt":
+            msg = f"Function {fn!r} is not decorated with @mcp_prompt"
+            raise ValueError(msg)
+        return callable_fn, metadata
+
     def _discover_mcp_routes(self, route_handlers: "Sequence[Any]") -> "None":
         """Discover routes marked for MCP exposure via opt attribute or decorators."""
         for handler in route_handlers:
+            if isinstance(handler, type) and issubclass(handler, PromptController):
+                self._discover_mcp_routes(handler().get_route_handlers())
+                continue
+            if isinstance(handler, PromptController):
+                self._discover_mcp_routes(handler.get_route_handlers())
+                continue
             if isinstance(handler, BaseRouteHandler):
                 metadata = get_mcp_metadata(handler)
                 if not metadata:

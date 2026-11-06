@@ -21,7 +21,7 @@ title: Protocol Bridges
 
 ---
 
-## Complete Example: Bridging MCP Routes, `AgentRuntime`, and A2A 1.0
+## Complete Example: Bridging MCP Routes, AgentRuntime, and A2A 1.0
 
 The snippet below demonstrates all three bridge directions in a single self-contained Litestar application:
 
@@ -30,12 +30,12 @@ The snippet below demonstrates all three bridge directions in a single self-cont
 3. `agent_to_a2a(inventory_agent, path="/a2a", base_url="https://agents.example.com", runtime=runtime)` mounts the agent's `AgentRuntime` as an A2A 1.0 `AgentExecutor` serving `/.well-known/agent-card.json`, JSON-RPC 2.0 at `/a2a`, and `HTTP+JSON` REST routes.
 
 ```python title="docs/examples/snippets/protocol_bridges.py"
---8<-- "docs/examples/snippets/protocol_bridges.py"
+--8<-- "docs/examples/snippets/protocol_bridges.py:example"
 ```
 
 ---
 
-## 1. Exposing Agents Over MCP (`agent_to_mcp`)
+## Exposing Agents Over MCP
 
 `agent_to_mcp(agent_or_group, path="/mcp")` inspects an `Agent` or `AgentGroup` and builds a `LitestarMCP` plugin:
 
@@ -70,13 +70,13 @@ def runtime_as_mcp_tool(runtime: AgentRuntime, *, name: str = "ask_agent", descr
 
 ---
 
-## 2. Consuming Local & Remote MCP Tools (`mcp_to_tools` & `discover_mcp_tools`)
+## Consuming Local & Remote MCP Tools
 
-### Local `LitestarMCP` Route Handlers (`mcp_to_tools`)
+### Local LitestarMCP Route Handlers
 
 When passed a `LitestarMCP` plugin instance after route discovery, `mcp_to_tools(plugin)` iterates over `plugin.discovered_tools` and wraps each handler's underlying callable in a `Tool(handler_fn, name=tool_name)`. This lets an in-process `Agent` invoke your existing `@get` / `@post` MCP-marked route handlers with full `ToolContext` and DI resolution.
 
-### Remote Streamable HTTP Servers (`discover_mcp_tools`)
+### Remote Streamable HTTP Servers
 
 To equip an `Agent` with tools hosted on an external MCP server (or an in-process ASGI app tested over `httpx2.ASGITransport`), use `discover_mcp_tools` with `MCPStreamableHTTPClient` (`litestar_mcp.MCPStreamableHTTPClient`):
 
@@ -105,21 +105,21 @@ async def build_remote_equipped_agent(http_client: httpx2.AsyncClient) -> Agent:
 
 ---
 
-## 3. Adapting `AgentRuntime` to Official A2A 1.0 (`agent_to_a2a`)
+## Adapting AgentRuntime to Official A2A 1.0
 
 `agent_to_a2a` (`litestar_mcp.agent.agent_to_a2a`, enabled via `litestar-mcp[a2a]`) bridges an `Agent` or `AgentGroup` and its `AgentRuntime` into an official `a2a-sdk` 1.0 `LitestarA2A` plugin:
 
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `agent_or_group` | `Agent \| AgentGroup` | *(required)* | Target `Agent` or `AgentGroup` (uses `group.coordinator` for card metadata). |
+| `agent_or_group` | `Agent or AgentGroup` | *(required)* | Target `Agent` or `AgentGroup` (uses `group.coordinator` for card metadata). |
 | `path` | `str` | `"/a2a"` | Relative mount path (or absolute URL) for the A2A JSON-RPC and `HTTP+JSON` routes. |
 | `base_url` | `str` | *(required)* | Public base URL combined with `path` to populate `AgentCard.supported_interfaces`. |
-| `runtime` | `AgentRuntime \| None` | `None` | `AgentRuntime` executing incoming A2A requests. Defaults to `AgentRuntime(target=agent_or_group)`. |
-| `task_store` | `TaskStore \| None` | `None` | Custom A2A `TaskStore`. Defaults to `InMemoryTaskStore(owner_resolver=...)`. |
-| `owner_resolver` | `Callable[[ServerCallContext], str] \| None` | `None` | Resolves an owner key from `ServerCallContext` (defaults to `"{tenant}:{user_id}"`). |
+| `runtime` | `AgentRuntime or None` | `None` | `AgentRuntime` executing incoming A2A requests. Defaults to `AgentRuntime(target=agent_or_group)`. |
+| `task_store` | `TaskStore or None` | `None` | Custom A2A `TaskStore`. Defaults to `InMemoryTaskStore(owner_resolver=...)`. |
+| `owner_resolver` | `Callable[[ServerCallContext], str] or None` | `None` | Resolves an owner key from `ServerCallContext` (defaults to `"{tenant}:{user_id}"`). |
 | `security_schemes` / `security_requirements` | `dict` / `list` | `None` | Optional A2A security declarations included on the generated `AgentCard`. |
-| `route_opt` / `agent_card_route_opt` | `dict[str, Any] \| None` | `None` | Litestar route `opt` dictionaries forwarded to `A2AConfig`. |
-| `tenant_header` | `str \| None` | `"X-A2A-Tenant"` | HTTP fallback header for multi-tenant resolution. |
+| `route_opt` / `agent_card_route_opt` | `dict[str, Any] or None` | `None` | Litestar route `opt` dictionaries forwarded to `A2AConfig`. |
+| `tenant_header` | `str or None` | `"X-A2A-Tenant"` | HTTP fallback header for multi-tenant resolution. |
 | `enable_http_json` | `bool` | `True` | Mount and advertise both `JSONRPC` and `HTTP+JSON` 1.0 interfaces. |
 
 When an A2A client sends a message to the bridged endpoint:

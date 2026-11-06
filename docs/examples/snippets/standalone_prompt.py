@@ -1,3 +1,6 @@
+"""Snippet: registering a prompt on a standalone MCP server."""
+
+# --8<-- [start:example]
 from typing import Any
 
 from litestar_mcp import MCP
@@ -6,10 +9,13 @@ mcp = MCP("my-mcp-server")
 
 
 @mcp.prompt(name="explain_code", description="Ask the model to explain a code snippet.")
-def explain(code: "str") -> "list[dict[str, Any]]":
+def explain(code: str) -> list[dict[str, Any]]:
     return [
         {
             "role": "user",
             "content": f"Explain this python code:\n\n{code}",
         }
     ]
+
+
+# --8<-- [end:example]

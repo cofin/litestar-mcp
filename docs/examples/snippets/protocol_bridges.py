@@ -1,6 +1,6 @@
 """Snippet: Bidirectional protocol bridges connecting Litestar MCP routes, AgentRuntime, and A2A 1.0."""
 
-# start-example
+# --8<-- [start:example]
 from litestar import Litestar, get
 
 from litestar_mcp import LitestarMCP, SkillController, tool
@@ -61,7 +61,7 @@ app = Litestar(
     route_handlers=[AgentChatController],
     plugins=[runtime, mcp_bridge_plugin, a2a_bridge_plugin],
 )
-# end-example
+# --8<-- [end:example]
 
 
 def build() -> Litestar:

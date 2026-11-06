@@ -269,10 +269,10 @@ def _build_usage_line(cmd_name: str, cmd: click.Command) -> str:
 
 
 def _render_command_section(cmd_name: str, cmd: click.Command) -> list[str]:
-    """Render a single Click subcommand section at H3 depth."""
+    """Render a single Click subcommand section at H3 depth without inline backticks."""
     help_text = _clean_help(cmd.help or cmd.short_help or "")
     arguments, options = _extract_params(cmd)
-    lines: list[str] = [f"### `litestar mcp {cmd_name}`", ""]
+    lines: list[str] = [f"### litestar mcp {cmd_name}", ""]
     if help_text:
         lines.extend([help_text, ""])
 

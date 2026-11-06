@@ -114,7 +114,7 @@
 
         <rect x="16" y="206" width="888" height="54" rx="8" fill="var(--lm-p-card)" stroke="var(--lm-p-border)" stroke-width="1.5" />
         <text x="460" y="228" text-anchor="middle" fill="var(--lm-p-text)" font-size="12" font-weight="700">Cross-Cutting Observability &amp; Registry Layer</text>
-        <text x="460" y="246" text-anchor="middle" fill="var(--lm-p-muted)" font-size="11" font-family="monospace">Registry (Tools • Resources • Prompts • Skills)  |  TelemetryConfig OpenTelemetry Spans (mcp.request • mcp.tool.call)</text>
+        <text x="460" y="246" text-anchor="middle" fill="var(--lm-p-muted)" font-size="11" font-family="monospace">Registry (Tools • Resources • Prompts • Skills)  |  SpanManager (TelemetryConfig) OpenTelemetry Spans (mcp.request • mcp.tool.call)</text>
       </svg>
     </div>
 
@@ -150,7 +150,7 @@
         <text x="613" y="50" text-anchor="middle" fill="var(--lm-p-text)" font-size="13" font-weight="700">Synthetic ASGI Scope</text>
         <text x="613" y="74" text-anchor="middle" fill="var(--lm-p-violet)" font-size="11" font-family="monospace">MCPHandlerService</text>
         <text x="613" y="96" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">In-Memory ASGI Dispatch</text>
-        <text x="613" y="114" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Or Remote HTTP Relay (--url)</text>
+        <text x="613" y="114" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Or Remote HTTP Relay (--endpoint)</text>
         <text x="613" y="132" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Owner ID: user:&lt;subject&gt;</text>
         <text x="613" y="150" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">SSE Progress Notification Loop</text>
 
@@ -168,7 +168,7 @@
 
         <rect x="16" y="206" width="888" height="54" rx="8" fill="var(--lm-p-card)" stroke="var(--lm-p-border)" stroke-width="1.5" />
         <text x="460" y="228" text-anchor="middle" fill="var(--lm-p-text)" font-size="12" font-weight="700">Two CLI Modes: Local In-Process vs Remote HTTP Relay</text>
-        <text x="460" y="246" text-anchor="middle" fill="var(--lm-p-muted)" font-size="11" font-family="monospace">litestar --app app:app mcp stdio (in-process ASGI)  |  litestar mcp bridge --url https://api.example.com/mcp (remote HTTP)</text>
+        <text x="460" y="246" text-anchor="middle" fill="var(--lm-p-muted)" font-size="11" font-family="monospace">litestar --app app:app mcp stdio (in-process ASGI)  |  litestar mcp bridge --endpoint https://api.example.com/mcp (remote HTTP)</text>
       </svg>
     </div>
   </div>

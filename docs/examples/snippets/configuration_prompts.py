@@ -1,12 +1,13 @@
-"""Snippet: register standalone prompts. Referenced from docs/usage/configuration.rst."""
+"""Snippet: register standalone prompts."""
 
+# --8<-- [start:example]
 from litestar import Litestar
 
 from litestar_mcp import LitestarMCP, MCPConfig, mcp_prompt
 
 
 @mcp_prompt(description="Greet a user by name.")
-async def greet(name: "str") -> "str":
+async def greet(name: str) -> str:
     """Build a greeting prompt.
 
     Args:
@@ -15,16 +16,18 @@ async def greet(name: "str") -> "str":
     return f"Please greet {name} warmly."
 
 
-def build() -> "Litestar":
-    # start-example
-    app = Litestar(
-        route_handlers=[],
-        plugins=[
-            LitestarMCP(
-                MCPConfig(name="prompt-demo"),
-                prompts=[greet],
-            ),
-        ],
-    )
-    # end-example
+app = Litestar(
+    route_handlers=[],
+    plugins=[
+        LitestarMCP(
+            MCPConfig(name="prompt-demo"),
+            prompts=[greet],
+        ),
+    ],
+)
+# --8<-- [end:example]
+
+
+def build() -> Litestar:
+    """Return the configured Litestar application for snippet smoke testing."""
     return app

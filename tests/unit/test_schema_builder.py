@@ -18,11 +18,13 @@ from litestar_mcp.core.schema_builder import (
     collection_type_to_json_schema,
     dataclass_to_json_schema,
     generate_schema_for_handler,
+    iter_mcp_header_fields,
     msgspec_to_json_schema,
     pydantic_to_json_schema,
     type_to_json_schema,
     union_type_to_json_schema,
 )
+from litestar_mcp.mcp.bridge import _iter_header_schema
 from litestar_mcp.utils.handler_signature import _unwrap_annotated
 from tests.unit.conftest import create_app_with_handler
 
@@ -1354,3 +1356,44 @@ def test_attrs_class_parameter_is_described_with_required_fields() -> "None":
 
     assert schema["properties"] == {"name": {"type": "string"}, "retries": {"type": "integer"}}
     assert schema["required"] == ["name"]
+
+
+def test_iter_mcp_header_fields_resolves_hoisted_defs_and_optional_refs() -> "None":
+    """iter_mcp_header_fields and _iter_header_schema resolve $ref into $defs and anyOf branches."""
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "body": {"$ref": "#/$defs/BodyPayload"},
+            "optional_filter": {
+                "anyOf": [
+                    {"$ref": "#/$defs/FilterPayload"},
+                    {"type": "null"},
+                ]
+            },
+            "dangling": {"$ref": "#/$defs/Missing"},
+        },
+        "$defs": {
+            "BodyPayload": {
+                "type": "object",
+                "properties": {
+                    "workspace_id": {"type": "string", "x-mcp-header": "X-Workspace-Id"},
+                    "self_ref": {"$ref": "#/$defs/BodyPayload"},
+                },
+            },
+            "FilterPayload": {
+                "type": "object",
+                "properties": {
+                    "region": {"type": "string", "x-mcp-header": "X-Region"},
+                },
+            },
+        },
+    }
+    extracted = [(path, header) for path, header, _ in iter_mcp_header_fields(schema)]
+    assert extracted == [
+        (("body", "workspace_id"), "X-Workspace-Id"),
+        (("optional_filter", "region"), "X-Region"),
+    ]
+    assert list(_iter_header_schema(schema)) == [
+        (("body", "workspace_id"), "X-Workspace-Id"),
+        (("optional_filter", "region"), "X-Region"),
+    ]

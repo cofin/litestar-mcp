@@ -33,6 +33,7 @@ BRIDGE_ERROR = -32001
 DEFAULT_MAX_STDIN_MESSAGE_SIZE = 16 * 1024 * 1024
 _MIN_VISIBLE_ASCII = 0x20
 _MAX_VISIBLE_ASCII = 0x7E
+_DEFS_REF_PREFIX = "#/$defs/"
 _DEFAULT_CLIENT_INFO = {"name": "litestar-mcp-stdio-bridge", "version": __version__}
 BEARER_TOKEN_PREFIX = "Bearer "  # noqa: S105
 DEFAULT_AUTH_HEADER_NAME = "Authorization"
@@ -264,6 +265,12 @@ class _StreamableHTTPBridgeClient:
             scope.cancel()
 
     async def post_message(self, message: dict[str, Any]) -> None:
+        """Forward a stdio JSON-RPC message over Streamable HTTP and stream responses.
+
+        JSON-RPC error envelopes that arrive with 4xx HTTP statuses are forwarded
+        as protocol responses on stdout, whereas non-JSON-RPC error payloads
+        raise HTTP status errors.
+        """
         if message.get("method") == "notifications/cancelled":
             params = message.get("params")
             if isinstance(params, dict):
@@ -294,9 +301,6 @@ class _StreamableHTTPBridgeClient:
                             return
                         content_type = response.headers.get("content-type", "").lower()
                         if content_type.startswith("application/json"):
-                            # JSON-RPC error envelopes travel with 4xx statuses; forward them as
-                            # protocol responses. Any other JSON body (for example an HTTP
-                            # authentication failure) is a transport error.
                             try:
                                 payload = from_json(await response.aread())
                             except SerializationException:
@@ -545,14 +549,47 @@ def _encode_header_value(value: str) -> str:
     return f"=?base64?{encoded}?="
 
 
-def _iter_header_schema(schema: Any, path: tuple[str, ...] = ()) -> Iterator[tuple[tuple[str, ...], str]]:
+def _iter_header_schema(
+    schema: Any,
+    path: tuple[str, ...] = (),
+    defs: dict[str, Any] | None = None,
+    visited_refs: frozenset[str] = frozenset(),
+) -> Iterator[tuple[tuple[str, ...], str]]:
     """Yield ``(property_path, header_name)`` pairs from an input schema."""
     if not isinstance(schema, dict):
         return
+    schema_defs = schema.get("$defs")
+    root_defs: dict[str, Any] = defs if defs is not None else (schema_defs if isinstance(schema_defs, dict) else {})
     header_name = schema.get("x-mcp-header")
     if isinstance(header_name, str):
         yield path, header_name
+    ref = schema.get("$ref")
+    if isinstance(ref, str) and ref.startswith(_DEFS_REF_PREFIX) and ref not in visited_refs:
+        target = root_defs.get(ref[len(_DEFS_REF_PREFIX) :])
+        if isinstance(target, dict):
+            yield from _iter_header_schema(
+                target,
+                path=path,
+                defs=root_defs,
+                visited_refs=visited_refs | {ref},
+            )
     properties = schema.get("properties")
     if isinstance(properties, dict):
         for name, child in properties.items():
-            yield from _iter_header_schema(child, (*path, name))
+            if isinstance(name, str):
+                yield from _iter_header_schema(
+                    child,
+                    path=(*path, name),
+                    defs=root_defs,
+                    visited_refs=visited_refs,
+                )
+    for combinator in ("anyOf", "oneOf", "allOf"):
+        branches = schema.get(combinator)
+        if isinstance(branches, list):
+            for branch in branches:
+                yield from _iter_header_schema(
+                    branch,
+                    path=path,
+                    defs=root_defs,
+                    visited_refs=visited_refs,
+                )

@@ -2,14 +2,24 @@
 
 import base64
 from pathlib import Path  # noqa: TC003
-from typing import Any, cast
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, cast
 
+import pytest
 from litestar import Litestar, get
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig, MCPSkillsConfig
 from litestar_mcp.mcp.service import SKILLS_EXTENSION, TASKS_EXTENSION
+from litestar_mcp.mcp.skills import Skill, SkillCatalog
 from tests.unit.conftest import mcp_envelope, mcp_post
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from litestar import Request
+
+    from litestar_mcp.mcp.skills import SkillFile
 
 
 def _write_skill(root: "Path", name: "str", description: "str", extra_files: "dict[str, str] | None" = None) -> "None":
@@ -376,3 +386,53 @@ def test_resources_read_skill_file_wins_over_colliding_handler_uri(tmp_path: "Pa
     content = result["contents"][0]
     assert content["text"] == (tmp_path / "alpha" / "SKILL.md").read_text()
     assert "HANDLER OUTPUT" not in content["text"]
+
+
+class _StaticSkillSource:
+    def __init__(self, skills: "Sequence[Skill]") -> "None":
+        self._skills = tuple(skills)
+
+    async def list_skills(self, request: "Request[Any, Any, Any]", /) -> "Sequence[Skill]":
+        del request
+        return self._skills
+
+    async def get_skill(self, request: "Request[Any, Any, Any]", name: "str", /) -> "Skill | None":
+        del request
+        for skill in self._skills:
+            if skill.name == name:
+                return skill
+        return None
+
+    async def read_file(self, request: "Request[Any, Any, Any]", skill: "Skill", file: "SkillFile", /) -> "bytes":
+        del request, skill
+        return file.content or b""
+
+
+@pytest.mark.asyncio
+async def test_skill_catalog_get_accepts_shorthand_and_canonical_skill_uri() -> "None":
+    """SkillCatalog.get resolves both skill://<name> and skill://<name>/SKILL.md."""
+    skill = Skill.build(
+        name="sql-optimization",
+        description="Optimize SQL queries.",
+        body="# SQL Optimization",
+        files={"references/guide.md": "Guide content"},
+    )
+    catalog = SkillCatalog(sources=[_StaticSkillSource([skill])])
+    request = cast("Any", SimpleNamespace())
+
+    by_canonical = await catalog.get(request, "skill://sql-optimization/SKILL.md")
+    by_shorthand = await catalog.get(request, "skill://sql-optimization")
+    by_subfile = await catalog.get(request, "skill://sql-optimization/references/guide.md")
+
+    assert by_canonical is skill
+    assert by_shorthand is skill
+    assert by_subfile is None
+
+
+def test_skills_get_accepts_shorthand_skill_uri(tmp_path: "Path") -> "None":
+    """skills/get accepts shorthand skill://<name> URI over JSON-RPC."""
+    with TestClient(app=_make_skills_app(tmp_path)) as client:
+        result = _rpc(client, "skills/get", {"uri": "skill://alpha"})["result"]
+
+    assert result["skill"]["frontmatter"]["name"] == "alpha"
+    assert result["skill"]["uri"] == "skill://alpha/SKILL.md"

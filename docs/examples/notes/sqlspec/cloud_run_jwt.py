@@ -74,7 +74,7 @@ class CloudRunSettings:
         port_raw = source.get("PORT", "8080")
         try:
             port = int(port_raw)
-        except ValueError as exc:  # pragma: no cover - defensive
+        except ValueError as exc:
             msg = f"PORT must be an integer, got {port_raw!r}"
             raise RuntimeError(msg) from exc
         return cls(
@@ -183,7 +183,7 @@ def create_app(settings: "CloudRunSettings | None" = None) -> "Litestar":
     )
 
 
-if __name__ == "__main__":  # pragma: no cover - manual smoke entry point
+if __name__ == "__main__":
     import uvicorn
 
     _settings = CloudRunSettings.from_env()

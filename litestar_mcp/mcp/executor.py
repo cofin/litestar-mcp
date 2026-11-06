@@ -126,6 +126,11 @@ class MCPPathParamCoercionError(ValueError):
     structured error that names the offending argument.
     """
 
+    name: str
+    """Name of the path parameter that failed parser coercion."""
+    raw: Any
+    """Raw argument value supplied in the `tools/call` payload."""
+
     def __init__(self, name: "str", raw: "Any", cause: "Exception") -> "None":
         """Initialize the error.
 
@@ -147,6 +152,11 @@ class MCPToolErrorResult(Exception):  # noqa: N818
     The JSON-RPC route layer catches this and maps it to ``isError: true`` in
     the ``tools/call`` result.
     """
+
+    content: Any
+    """Decoded error response body produced by the Litestar handler or exception handler."""
+    status_code: int
+    """HTTP status code (`>= 400`) returned by the handler pipeline."""
 
     def __init__(self, content: "Any", *, status_code: "int" = 500) -> "None":
         """Initialize with the already-rendered JSON-RPC content payload.
@@ -311,11 +321,37 @@ async def execute_handler_response(
     return response
 
 
-# Generic alias used by non-tool MCP primitives (resources, prompts) that
-# dispatch through the same Litestar pipeline. Keeping a thin alias instead
-# of a single name avoids implying that the prompt/resource path is
-# semantically a "tool call" — the underlying machinery is the same.
 execute_handler = execute_tool
+
+
+def blank_http_scope(app: "Litestar") -> "dict[str, Any]":
+    """Return a minimum ASGI HTTP scope for stdio-mode dispatch.
+
+    Keys mirror `litestar.testing.RequestFactory._create_scope` so
+    Litestar's native dispatch pipeline finds everything it expects.
+    Parity audited 2026-04-19 — the only delta is ``asgi.spec_version``:
+    RequestFactory uses ``"3.0"`` (stale), we use the current ASGI spec
+    version ``"2.4"``. Every other key matches what RequestFactory emits
+    (after ``_build_dispatch_scope`` adds the per-request ``method``,
+    ``path``, ``raw_path``, ``query_string``, ``headers``, ``path_params``,
+    ``route_handler``, and ``path_template`` values).
+    """
+    return {
+        "type": "http",
+        "app": app,
+        "litestar_app": app,
+        "asgi": {"version": "3.0", "spec_version": "2.4"},
+        "http_version": "1.1",
+        "scheme": "http",
+        "root_path": "",
+        "server": ("mcp-stdio", 0),
+        "client": ("mcp-stdio", 0),
+        "state": {},
+        "session": {},
+        "user": None,
+        "auth": None,
+        "extensions": {},
+    }
 
 
 async def _run_handler_pipeline(
@@ -546,7 +582,7 @@ async def _capture_asgi_response(
             headers = cast("Sequence[tuple[bytes, bytes]]", message.get("headers", ()) or ())
             for key, value in headers:
                 if key.lower() == b"content-type":
-                    media_type = value.decode("latin-1").split(";")[0].strip()
+                    media_type = _normalize_content_type(value.decode("latin-1"))
                     break
         elif msg_type == "http.response.body":
             body = cast("bytes", message.get("body", b"") or b"")
@@ -558,10 +594,6 @@ async def _capture_asgi_response(
     await asgi_app(scope, receive, send)
 
     if status_code == 0:
-        # ASGI app exited without sending http.response.start. Treat as a
-        # transport invariant violation rather than a 0-status success — the
-        # downstream caller would otherwise pass the (None, 0) result through
-        # the < _ERROR_STATUS_FLOOR check and surface "None" as a successful body.
         return MCPHandlerResponse(
             content={"error": "MCP handler exited without sending an ASGI response"},
             status_code=_NON_JSON_STATUS,
@@ -595,14 +627,34 @@ async def _capture_asgi_response(
     return MCPHandlerResponse(content=body, status_code=status_code, body=body, media_type=media_type)
 
 
+def _normalize_content_type(raw_value: "str") -> "str":
+    """Normalize an HTTP ``content-type`` header value while preserving non-charset parameters."""
+    parts = raw_value.split(";")
+    base = parts[0].strip()
+    if not base:
+        return ""
+    kept_params: list[str] = []
+    for raw_param in parts[1:]:
+        stripped = raw_param.strip()
+        if not stripped:
+            continue
+        param_name = stripped.split("=", 1)[0].strip().lower()
+        if param_name == "charset":
+            continue
+        kept_params.append(raw_param.rstrip())
+    return ";".join([base, *kept_params])
+
+
 def _is_json_media_type(media_type: "str") -> "bool":
     """Return whether ``media_type`` is JSON-compatible."""
-    return media_type == "application/json" or media_type.endswith("+json")
+    base = media_type.split(";", 1)[0].strip().lower()
+    return base == "application/json" or base.endswith("+json")
 
 
 def _is_text_media_type(media_type: "str") -> "bool":
     """Return whether ``media_type`` can be safely exposed as MCP text."""
-    return media_type.startswith("text/") or media_type in _TEXT_MEDIA_TYPES or media_type.endswith("+xml")
+    base = media_type.split(";", 1)[0].strip().lower()
+    return base.startswith("text/") or base in _TEXT_MEDIA_TYPES or base.endswith("+xml")
 
 
 async def _dispatch_via_exception_handlers(
@@ -636,8 +688,6 @@ async def _dispatch_via_exception_handlers(
         media_type = str(getattr(raw, "media_type", "") or "application/json")
         return MCPHandlerResponse(content=raw.content, status_code=status, body=body, media_type=media_type)
 
-    # Exception handler returned raw data — treat as an error render since
-    # it was triggered by a raised exception.
     return MCPHandlerResponse(content=raw, status_code=500, body=encode_json(raw), media_type="application/json")
 
 
@@ -796,36 +846,6 @@ def _split_tool_args(
     return path_values, query_payload, body
 
 
-def blank_http_scope(app: "Litestar") -> "dict[str, Any]":
-    """Return a minimum ASGI HTTP scope for stdio-mode dispatch.
-
-    Keys mirror `litestar.testing.RequestFactory._create_scope` so
-    Litestar's native dispatch pipeline finds everything it expects.
-    Parity audited 2026-04-19 — the only delta is ``asgi.spec_version``:
-    RequestFactory uses ``"3.0"`` (stale), we use the current ASGI spec
-    version ``"2.4"``. Every other key matches what RequestFactory emits
-    (after ``_build_dispatch_scope`` adds the per-request ``method``,
-    ``path``, ``raw_path``, ``query_string``, ``headers``, ``path_params``,
-    ``route_handler``, and ``path_template`` values).
-    """
-    return {
-        "type": "http",
-        "app": app,
-        "litestar_app": app,
-        "asgi": {"version": "3.0", "spec_version": "2.4"},
-        "http_version": "1.1",
-        "scheme": "http",
-        "root_path": "",
-        "server": ("mcp-stdio", 0),
-        "client": ("mcp-stdio", 0),
-        "state": {},
-        "session": {},
-        "user": None,
-        "auth": None,
-        "extensions": {},
-    }
-
-
 def _build_dispatch_scope(
     handler: "BaseRouteHandler",
     tool_args: "dict[str, Any]",
@@ -849,9 +869,6 @@ def _build_dispatch_scope(
 
     scope = blank_http_scope(app)
     if base_scope is not None:
-        # Cherry-pick middleware-populated keys from the inbound request so
-        # auth / Dishka / session context flows through, but skip cached body
-        # / header / path state that would confuse the dispatch pipeline.
         inherited_state = dict(base_scope.get("state", {}))
         inherited_state.pop("_ls_connection_state", None)
         scope["state"] = inherited_state

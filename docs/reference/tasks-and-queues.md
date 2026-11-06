@@ -8,9 +8,7 @@ API reference for the MCP Tasks protocol runtime (`MCPTaskExecutor`, `MCPTaskRun
 
 For architectural guides, see [MCP Tasks & Human-in-the-Loop](../queues/mcp-tasks.md), [Distributed Task Queues](../queues/distributed-task-queues.md), [Durable DAG Workflows](../queues/durable-workflows.md), and [Queued Agent Turns](../queues/queued-agent-turns.md).
 
----
-
-## MCP Tasks Store & Executor Protocol (`io.modelcontextprotocol/tasks`)
+## MCP Tasks Store & Executor Protocol
 
 ::: litestar_mcp.mcp.tasks.MCPTaskExecutor
 
@@ -26,15 +24,11 @@ For architectural guides, see [MCP Tasks & Human-in-the-Loop](../queues/mcp-task
 
 ::: litestar_mcp.mcp.tasks.TaskStateError
 
----
-
-## Distributed Queue Task Execution (`litestar_mcp.queues`)
+## Distributed Queue Task Execution
 
 ::: litestar_mcp.queues.mcp_tasks.QueueTaskExecutor
 
 ::: litestar_mcp.queues.mcp_tasks.run_mcp_tool_task
-
----
 
 ## Durable DAG Workflow Engine & Persistence
 
@@ -47,8 +41,6 @@ For architectural guides, see [MCP Tasks & Human-in-the-Loop](../queues/mcp-task
 ::: litestar_mcp.queues.workflow_store.NodeRecord
 
 ::: litestar_mcp.queues.dependencies.TaskDependencyChain
-
----
 
 ## Queued Agent Turns & Streaming Bridge
 

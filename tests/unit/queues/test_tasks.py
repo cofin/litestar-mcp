@@ -1,6 +1,7 @@
 """Unit tests for queued agent tasks and AgentRegistry."""
 
 from collections.abc import AsyncIterator
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -14,6 +15,8 @@ from litestar_mcp.queues.tasks import (
     AgentRegistry,
     PrincipalSnapshot,
     QueuedTurnManager,
+    _run_agent_turn_body,
+    get_channels_service,
     get_queues_module,
     run_agent_turn,
     set_agent_registry,
@@ -88,3 +91,72 @@ async def test_queued_turn_manager_enqueue() -> None:
     assert call_kwargs["key"] == "agent-turn:session-1:turn-abc"
     assert call_kwargs["envelope"]["session_id"] == "session-1"
     assert call_kwargs["envelope"]["turn_id"] == "turn-abc"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "dynamic_context",
+    [
+        None,
+        "extra system rules",
+        {"region": "us-central1"},
+    ],
+)
+async def test_run_agent_turn_body_forwards_dynamic_context_and_principal_roles_scopes(
+    dynamic_context: dict[str, Any] | str | None,
+) -> None:
+    """_run_agent_turn_body forwards dynamic_context to TurnRequest and roles/scopes to ToolContext."""
+    captured_requests: list[TurnRequest] = []
+    mock_runtime = AsyncMock(spec=AgentRuntime)
+
+    async def _mock_stream(req: TurnRequest) -> AsyncIterator[AgentStreamFrame]:
+        """Record TurnRequest and yield completion frame."""
+        captured_requests.append(req)
+        yield AgentStreamFrame(event_type="complete", text="ok", turn_id=req.turn_id or "t1", seq=1)
+
+    mock_runtime.stream = _mock_stream
+    registry = AgentRegistry({"worker": mock_runtime})
+    set_agent_registry(registry)
+    set_channels_service(None)
+
+    envelope: dict[str, Any] = {
+        "session_id": "sess-ctx",
+        "turn_id": "turn-ctx",
+        "user_message": "Check context",
+        "agent_name": "worker",
+        "dynamic_context": dynamic_context,
+        "principal": {
+            "user_id": "user-7",
+            "tenant": "acme",
+            "roles": ["admin", "ops"],
+            "scopes": ["read", "write"],
+        },
+    }
+
+    await _run_agent_turn_body(envelope)
+    assert len(captured_requests) == 1
+    turn_req = captured_requests[0]
+    assert turn_req.dynamic_context == dynamic_context
+    if isinstance(dynamic_context, dict):
+        assert turn_req.dynamic_context is not dynamic_context
+    assert turn_req.context is not None
+    assert turn_req.context.user == {"id": "user-7"}
+    assert turn_req.context.tenant_id == "acme"
+    assert turn_req.context.roles == ("admin", "ops")
+    assert turn_req.context.scopes == ("read", "write")
+
+
+def test_queued_turn_manager_binds_channels_when_unset() -> None:
+    """QueuedTurnManager.__init__ sets global channels service only when currently unset."""
+    set_channels_service(None)
+    ch1 = object()
+    ch2 = object()
+
+    manager1 = QueuedTurnManager(channels=ch1)
+    assert manager1.channels is ch1
+    assert get_channels_service() is ch1
+
+    manager2 = QueuedTurnManager(channels=ch2)
+    assert manager2.channels is ch2
+    assert get_channels_service() is ch1
+    set_channels_service(None)

@@ -1,6 +1,6 @@
 """Snippet: MCP ToolAnnotations, HTTP verb inference, and route opt overrides."""
 
-# start-example
+# --8<-- [start:example]
 from litestar import Litestar, delete, get, post, put
 
 from litestar_mcp import LitestarMCP, MCPConfig, mcp_tool
@@ -63,7 +63,7 @@ app = Litestar(
     route_handlers=[list_items, search_items, replace_item, inspect_item, delete_item],
     plugins=[LitestarMCP(config)],
 )
-# end-example
+# --8<-- [end:example]
 
 
 def build() -> Litestar:

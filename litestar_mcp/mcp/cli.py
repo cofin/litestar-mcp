@@ -26,7 +26,12 @@ from litestar_mcp.mcp import stdio as stdio_transport
 from litestar_mcp.mcp.bridge import BEARER_TOKEN_PREFIX, DEFAULT_AUTH_HEADER_NAME
 from litestar_mcp.mcp.executor import NotCallableInCLIContextError, execute_tool
 from litestar_mcp.mcp.service import MCPHandlerService
-from litestar_mcp.utils import get_handler_function, render_description, validate_tool_descriptions
+from litestar_mcp.utils import (
+    get_handler_function,
+    render_description,
+    should_include_handler,
+    validate_tool_descriptions,
+)
 from litestar_mcp.utils.handler_signature import iter_dependency_input_parameters
 
 try:
@@ -79,8 +84,7 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
         """List the names of all discovered tools and resources."""
         try:
             plugin = _get_ctx_plugin(ctx)
-            # Include both tools and resources
-            all_commands = set(plugin.discovered_tools.keys()) | set(plugin.discovered_resources.keys())
+            all_commands = set(_filtered_tools(plugin).keys()) | set(_filtered_resources(plugin).keys())
             return sorted(all_commands)
         except RuntimeError:
             return []
@@ -92,20 +96,19 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
         except RuntimeError:
             return None
 
-        # Check both tools and resources
-        handler = plugin.discovered_tools.get(cmd_name) or plugin.discovered_resources.get(cmd_name)
+        tools = _filtered_tools(plugin)
+        resources = _filtered_resources(plugin)
+        handler = tools.get(cmd_name) or resources.get(cmd_name)
         if not handler:
             return None
-        kind: Literal["tool", "resource"] = "tool" if cmd_name in plugin.discovered_tools else "resource"
+        kind: Literal["tool", "resource"] = "tool" if cmd_name in tools else "resource"
         fn = get_handler_function(handler)
         sig = inspect.signature(fn)
 
-        # Dependencies that are handled by the executor, not the CLI
         di_params: set[str] = set()
         with contextlib.suppress(Exception):
             di_params = set(handler.resolve_dependencies().keys())
 
-        # Create CLI options from function signature + provider params.
         params: list[click.Option] = []
         seen: set[str] = set()
         for param in sig.parameters.values():
@@ -119,8 +122,6 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
         def callback(ctx: "click.Context", /, **kwargs: "Any") -> "None":
             """The actual command callback that executes the tool."""
             app = _get_ctx_app(ctx)
-
-            # Parse JSON strings
             parsed_kwargs: dict[str, Any] = _parse_cli_kwargs(kwargs)
 
             try:
@@ -135,8 +136,6 @@ class ToolExecutor(click.MultiCommand):  # type: ignore[valid-type,misc,unused-i
                 self._console.print(str(e))
                 ctx.exit(1)
 
-        # Use the description helper in plain (unstructured) mode so CLI
-        # output stays terminal-friendly — no ``##`` markdown headers.
         fn_doc = render_description(
             handler,
             fn,
@@ -166,22 +165,19 @@ def mcp_group(ctx: "click.Context | None" = None, app: "Litestar | None" = None)
 
 @mcp_group.command(name="list-tools")  # type: ignore[untyped-decorator]
 def list_tools(app: "Litestar") -> "None":
-    """List all available MCP tools.
+    """List all available MCP tools."""
+    plugin = get_mcp_plugin(app)
+    console = Console()
+    tools = _filtered_tools(plugin)
 
-    Uses plain description so terminal output never shows ``##`` headers.
-    """
-    plugin = get_mcp_plugin(app)  # pragma: no cover
-    console = Console()  # pragma: no cover
+    if not tools:  # pragma: no cover
+        console.print("[yellow]No MCP tools discovered.[/yellow]")
+        return
 
-    if not plugin.discovered_tools:  # pragma: no cover
-        console.print("[yellow]No MCP tools discovered.[/yellow]")  # pragma: no cover
-        return  # pragma: no cover
-
-    console.print(f"[bold green]Discovered {len(plugin.discovered_tools)} tools:[/bold green]")  # pragma: no cover
-    for name in sorted(plugin.discovered_tools.keys()):  # pragma: no cover
-        handler = plugin.discovered_tools[name]  # pragma: no cover
-        fn = get_handler_function(handler)  # pragma: no cover
-        # pragma: no cover
+    console.print(f"[bold green]Discovered {len(tools)} tools:[/bold green]")
+    for name in sorted(tools.keys()):
+        handler = tools[name]
+        fn = get_handler_function(handler)
         description = render_description(
             handler,
             fn,
@@ -189,32 +185,27 @@ def list_tools(app: "Litestar") -> "None":
             fallback_name=name,
             structured=False,
             opt_keys=plugin.config.opt_keys,
-        )  # pragma: no cover
-        first_line = description.split("\n")[0].strip()  # pragma: no cover
-        console.print(f"- [bold]{name}[/bold]: {first_line}")  # pragma: no cover
+        )
+        first_line = description.split("\n")[0].strip()
+        console.print(f"- [bold]{name}[/bold]: {first_line}")
 
 
 @mcp_group.command(name="list-resources")  # type: ignore[untyped-decorator]
 def list_resources(app: "Litestar") -> "None":
-    """List all available MCP resources.
+    """List all available MCP resources."""
+    plugin = get_mcp_plugin(app)
+    console = Console()
+    resources = _filtered_resources(plugin)
 
-    Uses plain description so terminal output never shows ``##`` headers.
-    """
-    plugin = get_mcp_plugin(app)  # pragma: no cover
-    console = Console()  # pragma: no cover
+    if not resources:  # pragma: no cover
+        console.print("[yellow]No MCP resources discovered.[/yellow]")
+        return
 
-    if not plugin.discovered_resources:  # pragma: no cover
-        console.print("[yellow]No MCP resources discovered.[/yellow]")  # pragma: no cover
-        return  # pragma: no cover
-
-    console.print(
-        f"[bold green]Discovered {len(plugin.discovered_resources)} resources:[/bold green]"
-    )  # pragma: no cover
-    for name in sorted(plugin.discovered_resources.keys()):  # pragma: no cover
-        handler = plugin.discovered_resources[name]  # pragma: no cover
-        fn = get_handler_function(handler)  # pragma: no cover
-        # pragma: no cover
-        description = render_description(  # pragma: no cover
+    console.print(f"[bold green]Discovered {len(resources)} resources:[/bold green]")
+    for name in sorted(resources.keys()):
+        handler = resources[name]
+        fn = get_handler_function(handler)
+        description = render_description(
             handler,
             fn,
             kind="resource",
@@ -222,8 +213,8 @@ def list_resources(app: "Litestar") -> "None":
             structured=False,
             opt_keys=plugin.config.opt_keys,
         )
-        first_line = description.split("\n")[0].strip()  # pragma: no cover
-        console.print(f"- [bold]{name}[/bold]: {first_line}")  # pragma: no cover
+        first_line = description.split("\n")[0].strip()
+        console.print(f"- [bold]{name}[/bold]: {first_line}")
 
 
 mcp_group.add_command(ToolExecutor(name="run", help="Run a discovered MCP tool by name."))  # pragma: no cover
@@ -447,6 +438,27 @@ def _get_ctx_app(ctx: "click.Context") -> "Litestar":
         ctx.obj = obj
     env = cast("LitestarEnv", obj)
     return env.app
+
+
+def _handler_tags(handler: "Any") -> "set[str]":
+    raw_tags = getattr(handler, "tags", None) or ()
+    return {str(tag) for tag in raw_tags}
+
+
+def _filtered_tools(plugin: "LitestarMCP") -> "dict[str, Any]":
+    return {
+        name: handler
+        for name, handler in plugin.discovered_tools.items()
+        if should_include_handler(name, _handler_tags(handler), plugin.config)
+    }
+
+
+def _filtered_resources(plugin: "LitestarMCP") -> "dict[str, Any]":
+    return {
+        name: handler
+        for name, handler in plugin.discovered_resources.items()
+        if should_include_handler(name, _handler_tags(handler), plugin.config)
+    }
 
 
 def _get_ctx_plugin(ctx: "click.Context") -> "LitestarMCP":

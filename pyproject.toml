@@ -35,7 +35,7 @@ maintainers = [
 name = "litestar-mcp"
 readme = "README.md"
 requires-python = ">=3.10"
-version = "0.18.0"
+version = "0.19.0"
 
 [project.urls]
 Changelog = "https://cofin.github.io/litestar-mcp/latest/changelog"
@@ -100,7 +100,7 @@ test = [
 allow_dirty = true
 commit = false
 commit_args = "--no-verify"
-current_version = "0.18.0"
+current_version = "0.19.0"
 ignore_missing_files = false
 ignore_missing_version = false
 message = "chore(release): bump to v{new_version}"
@@ -177,7 +177,6 @@ ignore = [
     "PLC0415", # import should be at the top of the file
     "PLR0904", # too many public methods
     "PLR0917",
-    "PGH003",
     "PLC2701",
     "PLW3201",
     "PLR6301",

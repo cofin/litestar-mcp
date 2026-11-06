@@ -90,7 +90,7 @@ Every MCP tool and prompt invocation passes through `MCPController` and `MCPHand
     Attach `LitestarMCP` to any existing `Litestar` application to expose selected routes over `/mcp` alongside your standard REST and OpenAPI endpoints:
 
     ```python title="docs/examples/snippets/framework_litestar.py"
-    --8<-- "docs/examples/snippets/framework_litestar.py"
+    --8<-- "docs/examples/snippets/framework_litestar.py:example"
     ```
 
 === "Standalone MCP App"
@@ -98,7 +98,7 @@ Every MCP tool and prompt invocation passes through `MCPController` and `MCPHand
     Use the declarative `MCP` wrapper when building a dedicated MCP server with `@mcp.tool()`, `@mcp.resource()`, and `@mcp.prompt()` decorators:
 
     ```python title="docs/examples/snippets/standalone_minimal.py"
-    --8<-- "docs/examples/snippets/standalone_minimal.py"
+    --8<-- "docs/examples/snippets/standalone_minimal.py:example"
     ```
 
 ---
@@ -143,8 +143,8 @@ Install `litestar-mcp` and any optional integration extras (`a2a`, `queues`, `go
 | :--- | :--- |
 | [**Architecture & Examples**](architecture/index.md) | Interactive HTML/SVG system diagrams, the 10-variant Notes reference application matrix (`advanced_alchemy` and `sqlspec`), and single-file PEP 723 `uv run` / `uvx` execution |
 | [**Getting Started**](getting-started/index.md) | Entry-point comparison, optional extra matrix, step-by-step quickstart, standalone `MCP` server guide, and core architectural concepts |
-| [**MCP Core**](learn/index.md) | `MCPConfig`, route markers, `ToolAnnotations`, resources and RFC 6570 URI templates, `PromptController`, Agent Skills (`SEP-2640`), Streamable HTTP discovery, stdio, and bridge |
+| [**MCP Core**](learn/index.md) | `MCPConfig`, route markers, `MCPOptKeys` and tool annotations, resources and RFC 6570 URI templates, `PromptController`, Agent Skills (`SEP-2640`), Streamable HTTP discovery, stdio, and bridge |
 | [**Tasks, Queues & Workflows**](queues/index.md) | `io.modelcontextprotocol/tasks`, `MCPInputRequiredResult`, distributed `QueueTaskExecutor`, `DurableWorkflowEngine` DAGs, `QueuedAgentChatController`, and multi-replica deployment |
 | [**Agents & A2A**](agents/index.md) | `Agent`, `AgentRuntime`, `TurnBudget`, `GoogleGenAIClient`, `AgentGroup` handoffs, SSE session streaming, bidirectional protocol bridges, `LitestarA2A`, and multi-tenancy |
-| [**Security & Operations**](security/index.md) | Litestar authentication middleware, first-party `litestar-security` & RFC 9728 OAuth Protected Resource Metadata, guards/scopes, OpenTelemetry `TelemetryConfig`, and migration guides |
+| [**Security & Operations**](security/index.md) | Litestar authentication middleware, first-party `litestar-security` & RFC 9728 OAuth Protected Resource Metadata, guards/scopes, and OpenTelemetry `TelemetryConfig` |
 | [**Reference**](reference/index.md) | Curated API reference across all modules, auto-generated `litestar mcp` CLI documentation, contributor workflow, and release changelog |

@@ -36,7 +36,7 @@ SNIPPET_MODULES = [
 
 
 @pytest.mark.parametrize("module_name", SNIPPET_MODULES)
-def test_snippet_build_returns_litestar(module_name: "str") -> "None":
+def test_snippet_build_returns_litestar(module_name: str) -> None:
     """Import the snippet module and verify it defines or builds a Litestar application."""
     if module_name in OPTIONAL_SNIPPET_DEPENDENCIES:
         pytest.importorskip(OPTIONAL_SNIPPET_DEPENDENCIES[module_name])
@@ -53,13 +53,13 @@ def test_snippet_build_returns_litestar(module_name: "str") -> "None":
 
 
 @pytest.mark.parametrize("module_name", sorted(HANDLER_ONLY_SNIPPET_MODULES))
-def test_non_app_snippet_imports(module_name: "str") -> "None":
+def test_non_app_snippet_imports(module_name: str) -> None:
     """Import handler-only snippets that do not define a Litestar application."""
     importlib.import_module(f"docs.examples.snippets.{module_name}")
 
 
 @pytest.mark.parametrize("module_name", sorted(CONFIG_SNIPPET_MODULES))
-def test_config_snippet_exposes_mcp_config(module_name: "str") -> "None":
+def test_config_snippet_exposes_mcp_config(module_name: str) -> None:
     """Import configuration snippets and verify they define a module-level ``MCPConfig``."""
     mod = importlib.import_module(f"docs.examples.snippets.{module_name}")
     assert isinstance(mod.config, MCPConfig)

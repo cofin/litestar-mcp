@@ -8,7 +8,7 @@ title: Core Architectural Concepts
 
 ---
 
-## 1. Internal ASGI Dispatch Pipeline
+## Internal ASGI Dispatch Pipeline
 
 When an MCP client invokes `tools/call` or `prompts/get` on `/mcp` (or over `litestar mcp stdio`), `MCPHandlerService` constructs a synthetic ASGI scope and dispatches it directly through the host `Litestar` application:
 
@@ -23,12 +23,12 @@ This design provides four structural guarantees:
 
 ---
 
-## 2. Plugin Registration & Ordering
+## Plugin Registration & Ordering
 
 Register `LitestarMCP` in your application's `plugins` list:
 
 ```python title="docs/examples/snippets/framework_litestar.py"
---8<-- "docs/examples/snippets/framework_litestar.py"
+--8<-- "docs/examples/snippets/framework_litestar.py:example"
 ```
 
 !!! important "Register `LitestarMCP` after route-mutating plugins"
@@ -36,7 +36,7 @@ Register `LitestarMCP` in your application's `plugins` list:
 
 ---
 
-## 3. Universal Dependency Injection
+## Universal Dependency Injection
 
 `litestar-mcp` supports five dependency injection mechanisms across route handlers, `PromptController`, `SkillController`, and `@mcp.tool()` functions. Internal DI parameters are automatically stripped from the public MCP JSON Schema so LLM clients only see user-supplied arguments:
 
@@ -44,13 +44,13 @@ Register `LitestarMCP` in your application's `plugins` list:
 | :--- | :--- | :--- | :--- |
 | **Litestar `Provide(...)`** | `dependencies={"svc": Provide(fn)}` on app, router, controller, or route | Stripped if return type is an internal service; included if provider takes user query/body arguments | Resolved by Litestar's native dependency graph per request |
 | **Dishka `FromDishka[T]`** | Route handlers, `PromptController`, `SkillController`, background tasks | Always stripped from public MCP tool/prompt JSON Schema | Resolved from the active Dishka `Scope.REQUEST` container (including rehydrated worker scopes in `QueueTaskExecutor` and `DurableWorkflowEngine`) |
-| **`Inject()` Marker** | `svc: Annotated[MyService, Inject()]` or `svc: MyService = Inject()` on `PromptController` / `SkillController` | Always stripped from public MCP schema | Resolved from Litestar `dependencies` or the Dishka request container |
-| **`Depends(fn)` Marker** | `svc: Annotated[MyService, Depends(build_svc)]` on `PromptController` / `SkillController` | Always stripped from public MCP schema | Calls `fn` (sync or async, accepting `Request` if annotated) per invocation |
-| **`ToolContext`** | `ctx: ToolContext` parameter on any MCP tool handler | Always stripped from public MCP tool JSON Schema | Injected by `MCPHandlerService` and `MCPTaskExecutor`; provides `ctx.report_progress(...)`, `ctx.request_input(...)`, `ctx.task_id`, and `ctx.request` |
+| **Litestar `Dependency(skip_validation=True)`** | `svc: MyService = Dependency(skip_validation=True)` on route handlers, `PromptController`, or `SkillController` | Stripped when resolved from internal `Provide` dependencies | Resolved by Litestar's native dependency graph per request |
+| **`Request` & `State`** | `request: Request` and `state: State` parameters | Always stripped from public MCP JSON Schemas | Resolved from the internal ASGI scope |
+| **`ToolContext`** | `ctx: ToolContext` parameter on any MCP tool handler | Always stripped from public MCP tool JSON Schema | Injected by `MCPHandlerService` and `MCPTaskExecutor`; provides `ctx.user`, `ctx.tenant_id`, `ctx.roles`, `ctx.scopes`, `ctx.session_id`, and `ctx.turn_id` (use `get_mcp_request_context().report_progress(...)` and `MCPInputRequiredResult` inside MCP tool handlers) |
 
 ---
 
-## 4. OpenAPI Integration
+## OpenAPI Integration
 
 - **Marked Routes in OpenAPI**: Routes marked with `mcp_tool`, `mcp_resource`, or `mcp_prompt` remain normal Litestar handlers and appear in your application's OpenAPI documentation unless you set `include_in_schema=False` on the route decorator.
 - **The `/mcp` Transport Route**: The `/mcp` JSON-RPC endpoint itself is excluded from OpenAPI by default (`MCPConfig.include_in_schema=False`). Set `MCPConfig(include_in_schema=True)` if you want `/mcp` listed in your OpenAPI specification.
@@ -58,16 +58,16 @@ Register `LitestarMCP` in your application's `plugins` list:
 
 ---
 
-## 5. Tag and Operation Filtering
+## Tag and Operation Filtering
 
 Use `MCPConfig` filtering options to expose a subset of marked routes on `/mcp` without modifying individual route decorators:
 
 | `MCPConfig` Field | Type | Behavior |
 | :--- | :--- | :--- |
-| `include_tags` | `set[str] | None` | Only expose marked handlers that carry at least one matching Litestar `tags=[...]` entry |
-| `exclude_tags` | `set[str] | None` | Hide any marked handler carrying a matching tag (takes precedence over `include_tags`) |
-| `include_operations` | `set[str] | None` | Only expose marked handlers whose MCP tool/resource name or `operation_id` is in this set |
-| `exclude_operations` | `set[str] | None` | Hide any marked handler whose MCP name or `operation_id` is in this set (takes precedence over `include_operations`) |
+| `include_tags` | `list[str] or None` | Only expose marked handlers that carry at least one matching Litestar `tags=[...]` entry |
+| `exclude_tags` | `list[str] or None` | Hide any marked handler carrying a matching tag (takes precedence over `include_tags`) |
+| `include_operations` | `list[str] or None` | Only expose marked handlers whose MCP tool/resource name or `operation_id` is in this set |
+| `exclude_operations` | `list[str] or None` | Hide any marked handler whose MCP name or `operation_id` is in this set (takes precedence over `include_operations`) |
 
 Filters apply consistently across discovery (`tools/list`, `resources/list`, `resources/templates/list`) and direct invocation (`tools/call`, `resources/read`).
 

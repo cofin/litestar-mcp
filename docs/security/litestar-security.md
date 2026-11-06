@@ -2,17 +2,18 @@
 title: First-Party litestar-security Integration
 ---
 
-# First-Party `litestar-security` Integration
+# First-Party litestar-security Integration
 
-Applications that standardize on `litestar-security` for multi-mechanism authentication, role/permission/scope evaluation, and RFC 9728 OAuth 2.0 Protected Resource Metadata integrate with `litestar-mcp` without any adapter boilerplate:
+`litestar-security` is an **optional** integration (`litestar-mcp` works standalone or with standard Litestar authentication middleware and guards). Applications that standardize on `litestar-security` (`>=0.7.0`) for multi-mechanism authentication (`APIKeyConfig`, `GoogleIAPConfig`, cookie sessions), role/permission/scope evaluation, and RFC 9728 OAuth 2.0 Protected Resource Metadata integrate with `litestar-mcp` without adapter boilerplate:
 
-1. **Router Policy Forwarding (`MCPConfig.route_opt`)**: `LitestarMCP` forwards `MCPConfig.route_opt` directly onto the mounted `/mcp` Litestar `Router` and merges it into the JSON-RPC handler's `opt` mapping.
-2. **Native `Principal` & `SecurityContext` Propagation**: Internal ASGI tool and prompt dispatch (`execute_tool`, `execute_prompt`) preserves `connection.user` (`Principal`), `connection.auth` (`SecurityContext`), and `scope["litestar_security"]`.
-3. **Zero-Config Worker Rehydration (`QueueTaskExecutor`)**: When task-augmented `tools/call` executions run asynchronously on `litestar-queues` workers, `litestar-mcp` automatically snapshots and rehydrates `Principal`, `AuthorizationSnapshot`, `CredentialRestrictions`, and `SecurityContext` into the worker's synthesized request scope.
+1. **Zero-Boilerplate Default Enforcement (`SecurityPlugin`)**: When `SecurityPlugin(security_config)` is registered with any default-participating mechanism, `SecurityPlugin` automatically compiles routes with no explicit policy—including `/mcp`—to an implicit `required()` policy, so `LitestarMCP()` works out of the box with zero `MCPConfig` auth configuration.
+2. **Optional Mechanism Narrowing (`MCPConfig(auth=...)`)**: Both `MCPConfig(auth=...)` and `A2AConfig(auth=...)` are optional promoted parameters (`router_opt["auth"] = config.auth`) used when narrowing `/mcp` or `/a2a` to specific authentication mechanisms (for example, `MCPConfig(auth=required("api-key"))` when browser cookie sessions are also configured on the app). `MCPConfig(route_opt=...)` remains available for arbitrary extra Litestar route `opt` keys.
+3. **Native `Principal` & `SecurityContext` Propagation**: Internal ASGI tool and prompt dispatch (`execute_tool`, `execute_prompt`) preserves `connection.user` (`Principal`), `connection.auth` (`SecurityContext`), and `scope["litestar_security"]`.
+4. **Zero-Config Worker Rehydration (`QueueTaskExecutor`)**: When task-augmented `tools/call` executions run asynchronously on `litestar-queues` workers, `litestar-mcp` automatically snapshots and rehydrates `Principal`, `AuthorizationSnapshot`, `CredentialRestrictions`, and `SecurityContext` into the worker's synthesized request scope.
 
 ---
 
-## 1. Installation
+## Installation
 
 Install `litestar-mcp` alongside `litestar-security` (and include the `queues` extra if you run distributed MCP Tasks on `litestar-queues`):
 
@@ -42,19 +43,21 @@ Install `litestar-mcp` alongside `litestar-security` (and include the `queues` e
 
 ---
 
-## 2. Declaring Mechanism Policies with `MCPConfig(route_opt=...)`
+## Optional Mechanism Policies with MCPConfig
 
-In `litestar-security`, routes declare which authentication mechanisms protect them via `opt={"auth": required("api-key")}` (where `required` is exported from `litestar_security`). Pass that policy dictionary to `MCPConfig(route_opt=...)` so the `/mcp` router and every MCP JSON-RPC dispatch require the named mechanism:
+Both `litestar-security` and `MCPConfig(auth=...)` are optional. When `SecurityPlugin(security_config)` is installed on your `Litestar` application, routes without an explicit policy (including `/mcp`) automatically default to `required()` across all default-participating mechanisms.
+
+When your application configures multiple mechanisms (such as cookie sessions for browser routes and API keys for machine clients) and you want to restrict `/mcp` to specific authentication mechanisms, pass `auth=required("api-key")` directly to `MCPConfig`:
 
 ```python title="docs/examples/snippets/litestar_security_mcp.py"
---8<-- "docs/examples/snippets/litestar_security_mcp.py"
+--8<-- "docs/examples/snippets/litestar_security_mcp.py:example"
 ```
 
-When `SecurityPlugin` is installed on the `Litestar` application, you import `required` directly from `litestar_security` and pass `MCPConfig(route_opt={"auth": required("api-key")})`. `litestar-mcp` forwards `route_opt` to the `/mcp` router and relies on `SecurityPlugin` to evaluate credentials.
+`LitestarMCP` sets `router_opt["auth"] = config.auth` on the `/mcp` router (`A2AConfig(auth=...)` applies the same contract to `/a2a`). Use `MCPConfig(route_opt=...)` whenever you need to attach additional custom Litestar route `opt` keys alongside `auth`.
 
 ---
 
-## 3. Reading `Principal` and `SecurityContext` in Tools and Guards
+## Reading Principal and SecurityContext in Tools and Guards
 
 When `litestar-security` authenticates a request on `/mcp`, it populates three scope keys that remain available inside every MCP tool handler, dependency provider (`Provide` or Dishka `FromDishka[T]`), and route `Guard`:
 
@@ -68,23 +71,22 @@ When `litestar-security` authenticates a request on `/mcp`, it populates three s
 
 ---
 
-## 4. RFC 9728 Protected Resource Metadata & `WWW-Authenticate` Challenges
+## RFC 9728 Protected Resource Metadata and WWW-Authenticate Challenges
 
 MCP clients that support OAuth 2.1 / RFC 9728 discover your authorization server by inspecting the `WWW-Authenticate: Bearer resource_metadata="..."` response header returned when an unauthenticated request hits `/mcp`, then fetching `GET /.well-known/oauth-protected-resource`.
 
-In `litestar-security`, configure both the challenge emission and the RFC 9728 metadata document on `SecurityConfig`:
+In `litestar-security`, configure bearer token acceptance and the RFC 9728 metadata document on `SecurityConfig`:
 
-1. **Declare a Bearer `SecurityScheme` on the Mechanism**: `litestar-security` emits the `WWW-Authenticate: Bearer resource_metadata=...` header **only** when the failing mechanism declares `security_scheme=SecurityScheme(type="http", scheme="bearer")` and **only** on authentication evaluator failures (`401 Unauthorized`), never on post-authentication guard failures (`403 Forbidden`).
+1. **Configure a Bearer-Capable Mechanism on `SecurityConfig`**: Pass `APIKeyConfig(..., accept_authorization_bearer=True)` (or another bearer-enabled mechanism config) on `SecurityConfig`. `litestar-security` emits the `WWW-Authenticate: Bearer resource_metadata=...` header on authentication evaluator failures (`401 Unauthorized`), never on post-authentication guard failures (`403 Forbidden`).
 2. **Publish `ProtectedResourceConfig` on `SecurityConfig.protected_resource`**: `SecurityPlugin` mounts `/.well-known/oauth-protected-resource` advertising your resource identifier, `authorization_servers`, and `scopes_supported`.
 
 ```python
 from litestar import Litestar, Request, get
-from litestar.openapi.spec import SecurityScheme
 from litestar_security import (
+    APIKeyConfig,
     ProtectedResourceConfig,
     SecurityConfig,
     SecurityPlugin,
-    TokenMechanism,
     required,
 )
 
@@ -101,22 +103,19 @@ async def list_notes(request: Request) -> dict[str, object]:
 
 
 security_config = SecurityConfig(
-    mechanisms=[
-        TokenMechanism(
-            name="bearer-jwt",
-            security_scheme=SecurityScheme(type="http", scheme="bearer", bearer_format="JWT"),
-            verifier=...,
-        ),
-    ],
+    api_key=APIKeyConfig(
+        store=api_key_store,
+        accept_authorization_bearer=True,
+    ),
     protected_resource=ProtectedResourceConfig(
         resource="https://api.example.com/mcp",
-        authorization_servers=["https://auth.example.com"],
-        scopes_supported=["notes:read", "notes:write"],
+        authorization_servers=("https://auth.example.com",),
+        scopes_supported=("notes:read", "notes:write"),
     ),
 )
 
 mcp_config = MCPConfig(
-    route_opt={"auth": required("bearer-jwt")},
+    auth=required("api-key"),
 )
 
 app = Litestar(
@@ -133,7 +132,7 @@ app = Litestar(
 
 ---
 
-## 5. Automatic Worker Rehydration in `QueueTaskExecutor`
+## Automatic Worker Rehydration in QueueTaskExecutor
 
 When a client invokes a task-augmented tool (`params.task` under `io.modelcontextprotocol/tasks`) and `QueueTaskExecutor` dispatches the execution attempt to a separate `litestar-queues` worker process, the live HTTP connection is no longer present.
 
@@ -147,7 +146,7 @@ flowchart LR
     D --> E["Worker Guards, Dishka & Tool Handler"]
 ```
 
-### What Is Captured at Enqueue Time (`extract_principal_snapshot`)
+### What Is Captured at Enqueue Time
 
 When `MCPHandlerService` creates the `ToolTaskCall` envelope, `extract_principal_snapshot` inspects `request.user`, `request.auth`, and `request.scope.get("litestar_security")` and serializes:
 
@@ -156,7 +155,7 @@ When `MCPHandlerService` creates the `ToolTaskCall` envelope, `extract_principal
 - **`AuthorizationSnapshot` (`__litestar_security__.authorization`)**: `roles`, `permissions`, `scopes`, `attributes`, and `tenant_roles`.
 - **Context `CredentialRestrictions` (`__litestar_security__.restrictions`)**: `scopes`, `tenant_ids`, and `roles` restriction sets.
 
-### What Is Rehydrated in the Worker (`rehydrate_security_scope`)
+### What Is Rehydrated in the Worker
 
 When `run_mcp_tool_task` executes on a `litestar-queues` worker:
 
@@ -164,7 +163,7 @@ When `run_mcp_tool_task` executes on a `litestar-queues` worker:
 2. It imports `Principal`, `AuthorizationSnapshot`, `CredentialRestrictions`, and `SecurityContext` from `litestar_security.context` (falling back to structurally identical frozen dataclasses if `litestar_security` is not imported) and reconstructs the immutable security graph.
 3. It populates `scope["user"] = principal_obj`, `scope["auth"] = security_ctx`, and `scope["litestar_security"] = security_ctx` on the worker's synthetic HTTP scope before Dishka `Scope.REQUEST` dependencies, Litestar `Provide` dependencies, and route `guards` execute.
 
-### Custom Fail-Closed Principal Rehydration (`principal_loader`)
+### Custom Fail-Closed Principal Rehydration
 
 If your worker must re-fetch the live account record from a database on every attempt (for example, to check whether an account was suspended between enqueue time and worker execution), pass an async `principal_loader` callback to `QueueTaskExecutor`:
 

@@ -92,6 +92,11 @@ class WorkflowNode:
 class DynamicWorkflow:
     """DAG-based workflow connecting agents and discrete task handlers."""
 
+    name: str
+    """Unique identifier name for the workflow definition."""
+    nodes: dict[str, WorkflowNode]
+    """Mapping of node names to their `WorkflowNode` definitions in the DAG."""
+
     def __init__(self, name: str = "workflow") -> None:
         """Initialize DynamicWorkflow with a name."""
         self.name = name
@@ -218,6 +223,9 @@ async def run_workflow_node(
 class WorkflowEngine:
     """Concurrent in-process DAG execution engine for DynamicWorkflow pipelines."""
 
+    default_runtime: AgentRuntime | None
+    """Optional default `AgentRuntime` used to execute agent-backed workflow nodes."""
+
     def __init__(self, default_runtime: AgentRuntime | None = None) -> None:
         """Initialize WorkflowEngine with optional default AgentRuntime."""
         self.default_runtime = default_runtime
@@ -323,8 +331,13 @@ class WorkflowEngine:
                             in_degrees[dep] -= 1
                             if in_degrees[dep] == 0:
                                 await send_channel.send(dep)
-                    except Exception:
-                        ctx.step_results[node_name] = StepResult(node_name=node_name, output=None, status="failed")
+                    except Exception as exc:
+                        ctx.step_results[node_name] = StepResult(
+                            node_name=node_name,
+                            output=None,
+                            status="failed",
+                            error=f"{type(exc).__name__}: {exc}",
+                        )
                         tg.cancel_scope.cancel()
                         raise
 

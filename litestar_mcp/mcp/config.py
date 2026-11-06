@@ -264,9 +264,9 @@ class MCPConfig:
     """Maximum raw byte length for base64-embedded MCP blobs (`None` disables the cap)."""
     route_opt: "dict[str, Any] | None" = None
     """Optional route `opt` mapping applied to the mounted MCP router and merged into the JSON-RPC handler's `opt`."""
-    prompt_controllers: "Sequence[type[Any]]" = ()
+    prompt_controllers: "Sequence[type[Any] | Any]" = ()
     """Optional sequence of `PromptController` classes or instances to register on startup."""
-    skill_controllers: "Sequence[type[Any]]" = ()
+    skill_controllers: "Sequence[type[Any] | Any]" = ()
     """Optional sequence of `SkillController` classes or instances to register on startup."""
     infer_http_method_annotations: "bool" = True
     """Automatically infer default MCP `ToolAnnotations` hints (`readOnlyHint`, `destructiveHint`, `idempotentHint`) from the route handler's HTTP method when not explicitly overridden."""
@@ -276,6 +276,8 @@ class MCPConfig:
     """Optional maximum character length for input parameter descriptions enforced during tool-spec validation."""
     max_output_field_description_length: "int | None" = None
     """Optional maximum character length for output schema property descriptions enforced during tool-spec validation."""
+    auth: "Any | None" = None
+    """Optional route authentication policy merged into the mounted MCP router's `opt["auth"]` (for example `litestar_security.required(...)`)."""
 
     def __post_init__(self) -> "None":
         validate_stream_cleanup_timeout(self.stream_cleanup_timeout)

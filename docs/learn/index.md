@@ -5,7 +5,7 @@
 The plugin follows a direct compilation pipeline:
 
 1. **Declare or Mark**: Tag existing Litestar route handlers with `mcp_tool`, `mcp_resource`, or `mcp_prompt` keyword arguments, apply `@mcp_tool` / `@mcp_resource` / `@mcp_prompt` decorators, or mount class-based `PromptController` and `SkillController` routers.
-2. **Discover & Compile**: During `on_app_init`, `LitestarMCP` inspects `app.routes` and `MCPConfig`, builds JSON Schema 2020-12 contracts from `parsed_fn_signature`, infers `ToolAnnotations` hints from HTTP methods, and populates the `Registry` and `SkillCatalog`.
+2. **Discover & Compile**: During `on_app_init`, `LitestarMCP` inspects `app.routes` and `MCPConfig`, builds JSON Schema 2020-12 contracts from `parsed_fn_signature`, infers MCP tool annotation hints from HTTP methods, and populates the `Registry` and `SkillCatalog`.
 3. **Dispatch via Internal ASGI Scope**: Incoming JSON-RPC 2.0 calls over Streamable HTTP (`POST /mcp`, `DELETE /mcp`) or in-process `stdio` execute through a synthesized internal HTTP scope (`execute_tool`, `execute_handler`), running your Litestar middleware, guards, `Provide` dependencies, and Dishka `Scope.REQUEST` containers identically across every transport.
 
 --8<-- "tools/docs/includes/diagram-primitives-and-discovery.html"

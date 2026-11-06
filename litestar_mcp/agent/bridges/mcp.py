@@ -1,6 +1,6 @@
 """MCP protocol bridge for Agent and AgentGroup instances."""
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import httpx2
@@ -10,6 +10,7 @@ from litestar_mcp.core.tools import Tool
 from litestar_mcp.mcp.client import MCPStreamableHTTPClient
 from litestar_mcp.mcp.config import MCPConfig
 from litestar_mcp.mcp.plugin import LitestarMCP
+from litestar_mcp.utils import get_handler_function
 
 __all__ = (
     "agent_to_mcp",
@@ -49,34 +50,16 @@ def agent_to_mcp(agent_or_group: Agent | AgentGroup, path: str = "/mcp") -> Lite
     return plugin
 
 
-def _extract_tool_metadata(item: Any) -> tuple[str, str, dict[str, Any]]:
-    """Extract tool name, description, and input schema from a dict or object."""
-    if isinstance(item, dict):
-        name = str(item.get("name", "tool"))
-        description = str(item.get("description", ""))
-        schema = item.get("inputSchema") or item.get("parameters") or {"type": "object", "properties": {}}
-        return name, description, dict(schema)
-    name = str(getattr(item, "name", item))
-    description = str(getattr(item, "description", ""))
-    raw_schema = getattr(item, "inputSchema", None) or getattr(item, "parameters", None) or {}
-    schema = dict(raw_schema) if isinstance(raw_schema, dict) else {"type": "object", "properties": {}}
-    return name, description, schema
-
-
 def mcp_to_tools(
     client: MCPStreamableHTTPClient | LitestarMCP | Any,
     *,
     tools: Sequence[Any] | None = None,
 ) -> list[Tool]:
     """Convert remote tools discovered from an MCP client or LitestarMCP plugin into callable Tool instances."""
-    converted: list[Tool] = []
-
     if isinstance(client, LitestarMCP):
-        for tool_name, handler in client.discovered_tools.items():
-            handler_fn = getattr(handler, "fn", None)
-            if handler_fn is not None:
-                converted.append(Tool(handler_fn, name=tool_name))
-        return converted
+        return _collect_litestar_mcp_tools(client)
+
+    converted: list[Tool] = []
 
     raw_tools = tools
     if raw_tools is None:
@@ -123,3 +106,50 @@ async def discover_mcp_tools(
 
     raw_tools = await client.list_tools()
     return mcp_to_tools(client, tools=raw_tools)
+
+
+def _collect_litestar_mcp_tools(client: LitestarMCP) -> list[Tool]:
+    """Collect Tool instances from a LitestarMCP plugin before or after app init."""
+    converted: list[Tool] = []
+    merged_handlers: dict[str, Any] = {}
+    dynamic_handlers = getattr(client, "_dynamic_handlers", ())
+    if isinstance(dynamic_handlers, Mapping):
+        merged_handlers.update(dynamic_handlers)
+    else:
+        for dyn_handler in dynamic_handlers:
+            opt = getattr(dyn_handler, "opt", None)
+            opt_meta = opt.get("mcp_tool") if isinstance(opt, Mapping) else None
+            dyn_fn = get_handler_function(dyn_handler)
+            dyn_name = (
+                opt_meta
+                if isinstance(opt_meta, str) and opt_meta
+                else (opt_meta.get("name") if isinstance(opt_meta, Mapping) else getattr(opt_meta, "name", None))
+            )
+            if not isinstance(dyn_name, str) or not dyn_name:
+                raw_name = getattr(dyn_fn, "__name__", None) or getattr(dyn_handler, "name", None)
+                dyn_name = raw_name.removeprefix("_tool_endpoint_") if isinstance(raw_name, str) else None
+            if isinstance(dyn_name, str) and dyn_name:
+                merged_handlers[dyn_name] = dyn_handler
+    merged_handlers.update(client.discovered_tools)
+    for tool_name, handler in merged_handlers.items():
+        if isinstance(handler, Tool):
+            converted.append(handler)
+            continue
+        handler_fn = get_handler_function(handler)
+        if handler_fn is not None:
+            converted.append(Tool(handler_fn, name=tool_name))
+    return converted
+
+
+def _extract_tool_metadata(item: Any) -> tuple[str, str, dict[str, Any]]:
+    """Extract tool name, description, and input schema from a dict or object."""
+    if isinstance(item, dict):
+        name = str(item.get("name", "tool"))
+        description = str(item.get("description", ""))
+        schema = item.get("inputSchema") or item.get("parameters") or {"type": "object", "properties": {}}
+        return name, description, dict(schema)
+    name = str(getattr(item, "name", item))
+    description = str(getattr(item, "description", ""))
+    raw_schema = getattr(item, "inputSchema", None) or getattr(item, "parameters", None) or {}
+    schema = dict(raw_schema) if isinstance(raw_schema, dict) else {"type": "object", "properties": {}}
+    return name, description, schema

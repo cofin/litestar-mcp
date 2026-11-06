@@ -144,12 +144,10 @@ def union_type_to_json_schema(annotation: "Any") -> "dict[str, Any] | None":
     if origin is type(None):
         return {"type": "null"}
 
-    # Handle Union types, including Optional[T] which is Union[T, None]
     if origin in {Union, UnionType}:
         args = get_args(annotation)
         if len(args) == 1:
             return type_to_json_schema(args[0])
-        # Build anyOf for all member types (including NoneType → {"type": "null"})
         any_of = []
         for arg in args:
             if arg is type(None):
@@ -161,7 +159,7 @@ def union_type_to_json_schema(annotation: "Any") -> "dict[str, Any] | None":
     return None
 
 
-def type_to_json_schema(annotation: "Any") -> "dict[str, Any]":  # noqa: PLR0911
+def type_to_json_schema(annotation: "Any") -> "dict[str, Any]":
     """Convert a Python type annotation to JSON Schema format.
 
     Args:
@@ -185,14 +183,14 @@ def type_to_json_schema(annotation: "Any") -> "dict[str, Any]":  # noqa: PLR0911
         if isinstance(annotation, dict):
             return annotation
 
-    if result := basic_type_to_json_schema(annotation):
-        return result
-    if result := collection_type_to_json_schema(annotation):
-        return result
-    if result := literal_type_to_json_schema(annotation):
-        return result
-    if result := model_to_json_schema(annotation):
-        return result
+    for converter in (
+        basic_type_to_json_schema,
+        collection_type_to_json_schema,
+        literal_type_to_json_schema,
+        model_to_json_schema,
+    ):
+        if result := converter(annotation):
+            return result
 
     return union_type_to_json_schema(annotation) or {
         "type": "object",
@@ -329,6 +327,86 @@ def hoist_definitions(node: "Any", definitions: "dict[str, Any]") -> "None":
         hoist_definitions(value, definitions)
 
 
+_HEADER_TOKEN = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
+
+
+def iter_mcp_header_fields(
+    schema: "dict[str, Any]",
+    path: "tuple[str, ...]" = (),
+    defs: "dict[str, Any] | None" = None,
+    visited_refs: "frozenset[str]" = frozenset(),
+) -> "list[tuple[tuple[str, ...], str, dict[str, Any]]]":
+    """Return statically reachable ``x-mcp-header`` schema properties."""
+    fields: list[tuple[tuple[str, ...], str, dict[str, Any]]] = []
+    schema_defs = schema.get("$defs")
+    root_defs: dict[str, Any] = defs if defs is not None else (schema_defs if isinstance(schema_defs, dict) else {})
+    ref = schema.get("$ref")
+    if isinstance(ref, str) and ref.startswith(_DEFS_REF_PREFIX) and ref not in visited_refs:
+        target = root_defs.get(ref[len(_DEFS_REF_PREFIX) :])
+        if isinstance(target, dict):
+            fields.extend(
+                iter_mcp_header_fields(
+                    target,
+                    path=path,
+                    defs=root_defs,
+                    visited_refs=visited_refs | {ref},
+                )
+            )
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        for property_name, property_schema in properties.items():
+            if not isinstance(property_name, str) or not isinstance(property_schema, dict):
+                continue
+            property_path = (*path, property_name)
+            header_name = property_schema.get("x-mcp-header")
+            if isinstance(header_name, str):
+                fields.append((property_path, header_name, property_schema))
+            fields.extend(
+                iter_mcp_header_fields(
+                    property_schema,
+                    path=property_path,
+                    defs=root_defs,
+                    visited_refs=visited_refs,
+                )
+            )
+    for combinator in ("anyOf", "oneOf", "allOf"):
+        branches = schema.get(combinator)
+        if isinstance(branches, list):
+            for branch in branches:
+                if isinstance(branch, dict):
+                    fields.extend(
+                        iter_mcp_header_fields(
+                            branch,
+                            path=path,
+                            defs=root_defs,
+                            visited_refs=visited_refs,
+                        )
+                    )
+    return fields
+
+
+def validate_mcp_header_schema(schema: "dict[str, Any]") -> "None":
+    """Validate all custom MCP header annotations in one tool schema."""
+    seen: set[str] = set()
+    for path, header_name, property_schema in iter_mcp_header_fields(schema):
+        if not header_name or _HEADER_TOKEN.fullmatch(header_name) is None:
+            msg = f"Invalid x-mcp-header value {header_name!r} at {'.'.join(path)}"
+            raise ValueError(msg)
+        normalized = header_name.lower()
+        if normalized in seen:
+            msg = f"Duplicate x-mcp-header value {header_name!r}"
+            raise ValueError(msg)
+        seen.add(normalized)
+        schema_types = {property_schema.get("type")}
+        any_of = property_schema.get("anyOf")
+        if isinstance(any_of, list):
+            schema_types = {member.get("type") for member in any_of if isinstance(member, dict)}
+            schema_types.discard("null")
+        if schema_types not in ({"string"}, {"integer"}, {"boolean"}):
+            msg = f"x-mcp-header at {'.'.join(path)} must annotate a string, integer, or boolean"
+            raise ValueError(msg)
+
+
 def _rename_refs(node: "Any", renames: "dict[str, str]") -> "None":
     if isinstance(node, list):
         for item in node:
@@ -375,54 +453,8 @@ def _merge_parameter_meta(schema: "dict[str, Any]", meta: "ParameterKwarg") -> "
         schema.update(schema_extra)
 
 
-_HEADER_TOKEN = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
-
-
-def iter_mcp_header_fields(
-    schema: "dict[str, Any]",
-    path: "tuple[str, ...]" = (),
-) -> "list[tuple[tuple[str, ...], str, dict[str, Any]]]":
-    """Return statically reachable ``x-mcp-header`` schema properties."""
-    fields: list[tuple[tuple[str, ...], str, dict[str, Any]]] = []
-    properties = schema.get("properties")
-    if not isinstance(properties, dict):
-        return fields
-    for property_name, property_schema in properties.items():
-        if not isinstance(property_name, str) or not isinstance(property_schema, dict):
-            continue
-        property_path = (*path, property_name)
-        header_name = property_schema.get("x-mcp-header")
-        if isinstance(header_name, str):
-            fields.append((property_path, header_name, property_schema))
-        fields.extend(iter_mcp_header_fields(property_schema, property_path))
-    return fields
-
-
-def validate_mcp_header_schema(schema: "dict[str, Any]") -> "None":
-    """Validate all custom MCP header annotations in one tool schema."""
-    seen: set[str] = set()
-    for path, header_name, property_schema in iter_mcp_header_fields(schema):
-        if not header_name or _HEADER_TOKEN.fullmatch(header_name) is None:
-            msg = f"Invalid x-mcp-header value {header_name!r} at {'.'.join(path)}"
-            raise ValueError(msg)
-        normalized = header_name.lower()
-        if normalized in seen:
-            msg = f"Duplicate x-mcp-header value {header_name!r}"
-            raise ValueError(msg)
-        seen.add(normalized)
-        schema_types = {property_schema.get("type")}
-        any_of = property_schema.get("anyOf")
-        if isinstance(any_of, list):
-            schema_types = {member.get("type") for member in any_of if isinstance(member, dict)}
-            schema_types.discard("null")
-        if schema_types not in ({"string"}, {"integer"}, {"boolean"}):
-            msg = f"x-mcp-header at {'.'.join(path)} must annotate a string, integer, or boolean"
-            raise ValueError(msg)
-
-
 def _resolve_string_annotation(annotation: "str") -> "Any":
-    """Resolve a string annotation to a Python type."""
-    # Common basic types
+    """Resolve a string annotation to a Python type or fallback object schema."""
     basic_types = {
         "int": int,
         "str": str,
@@ -436,5 +468,4 @@ def _resolve_string_annotation(annotation: "str") -> "Any":
     if annotation in basic_types:
         return basic_types[annotation]
 
-    # For complex string annotations, return object schema
     return {"type": "object", "description": "Parameter of type " + str(annotation)}

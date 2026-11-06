@@ -1,6 +1,6 @@
-"""Snippet: MCP route_opt policy wiring, guard enforcement, and principal propagation."""
+"""Snippet: MCP auth policy wiring, guard enforcement, and principal propagation."""
 
-# start-example
+# --8<-- [start:example]
 from typing import TYPE_CHECKING, Any
 
 from litestar import Litestar, Request, get
@@ -54,7 +54,7 @@ async def audit_notes(request: Request[Any, Any, Any]) -> dict[str, Any]:
 
 
 config = MCPConfig(
-    route_opt={"auth": required("api-key", "bearer-jwt")},
+    auth=required("api-key", "bearer-jwt"),
     guards=[require_notes_read_scope],
 )
 
@@ -62,7 +62,7 @@ app = Litestar(
     route_handlers=[audit_notes],
     plugins=[LitestarMCP(config)],
 )
-# end-example
+# --8<-- [end:example]
 
 
 def build() -> Litestar:

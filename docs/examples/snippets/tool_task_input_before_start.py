@@ -1,11 +1,11 @@
 """Task-capable tool that completes an MRTR input round before task creation."""
 
+# --8<-- [start:example]
 from litestar import post
 
 from litestar_mcp import MCPInputRequiredResult, get_mcp_request_context, mcp_tool
 
 
-# start-example
 @mcp_tool(
     task_support="required",
     task_input_before_start=True,
@@ -26,4 +26,4 @@ async def publish_report() -> MCPInputRequiredResult | dict[str, str]:
     return {"status": "published"}
 
 
-# end-example
+# --8<-- [end:example]

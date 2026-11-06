@@ -8,17 +8,13 @@ API reference for the Agent-to-Agent (A2A 1.0) protocol plugin (`A2AConfig`, `Li
 
 For architectural guides, see [Protocol Bridges](../agents/protocol-bridges.md), [A2A 1.0 Protocol & HTTP+JSON Binding](../agents/a2a-protocol.md), [Multi-Tenant A2A Routing](../agents/multi-tenancy.md), and [Stdio, HTTP Bridge & Tool Spec](../learn/stdio-and-bridge.md).
 
----
-
-## A2A 1.0 Plugin & Configuration (`litestar_mcp.a2a`)
+## A2A 1.0 Plugin & Configuration
 
 ::: litestar_mcp.a2a.config.A2AConfig
 
 ::: litestar_mcp.a2a.plugin.LitestarA2A
 
----
-
-## Bidirectional Protocol Bridges (`litestar_mcp.agent.bridges`)
+## Bidirectional Protocol Bridges
 
 ::: litestar_mcp.agent.bridges.mcp.agent_to_mcp
 
@@ -28,9 +24,7 @@ For architectural guides, see [Protocol Bridges](../agents/protocol-bridges.md),
 
 ::: litestar_mcp.agent.bridges.a2a.agent_to_a2a
 
----
-
-## In-Process Stdio Transport (`litestar_mcp.mcp.stdio`)
+## In-Process Stdio Transport
 
 ::: litestar_mcp.mcp.stdio.MCPStdioContext
 
@@ -40,17 +34,13 @@ For architectural guides, see [Protocol Bridges](../agents/protocol-bridges.md),
 
 ::: litestar_mcp.mcp.stdio.run_stdio
 
----
-
-## Stdio-to-Streamable HTTP Bridge (`litestar_mcp.mcp.bridge`)
+## Stdio-to-Streamable HTTP Bridge
 
 ::: litestar_mcp.mcp.bridge.run_stdio_streamable_http_bridge
 
 ::: litestar_mcp.mcp.bridge.run_bridge
 
----
-
-## Streamable HTTP Client (`litestar_mcp.mcp.client`)
+## Streamable HTTP Client
 
 ::: litestar_mcp.mcp.client.MCPStreamableHTTPClient
 

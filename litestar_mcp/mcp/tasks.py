@@ -223,6 +223,17 @@ class MCPTaskStore:
     backend for fan-out.
     """
 
+    store: Store
+    """Backing Litestar `Store` used to persist serialized task records."""
+    default_ttl_ms: int
+    """Default time-to-live in milliseconds applied when a task request omits `ttlMs`."""
+    max_ttl_ms: int
+    """Maximum allowed time-to-live in milliseconds for any task record."""
+    poll_interval_ms: int
+    """Suggested client polling interval in milliseconds advertised on task records."""
+    status_callback: Callable[[TaskRecord], Awaitable[None]] | None
+    """Optional async callback invoked whenever a task record transitions state."""
+
     def __init__(
         self,
         store: Store | None = None,

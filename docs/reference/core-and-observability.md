@@ -4,13 +4,11 @@ title: Core Primitives & Observability API
 
 # Core Primitives & Observability API
 
-API reference for protocol-agnostic core primitives (`Tool`, `ToolCall`, `ToolResult`, `ToolArgumentError`, `@tool`, `ToolContext`), OpenTelemetry GenAI observability (`TelemetryConfig`, `SpanManager`), JSON-RPC 2.0 wire types (`JSONRPCRequest`, `JSONRPCError`, `JSONRPCErrorException`), SSE `SubscriptionManager`, the `litestar-mcp` exception hierarchy, and internal ASGI scope executors (`execute_tool`, `execute_handler_response`, `blank_http_scope`).
+API reference for protocol-agnostic core primitives (`Tool`, `ToolCall`, `ToolResult`, `ToolArgumentError`, `@tool`, `ToolContext`), OpenTelemetry GenAI observability (`TelemetryConfig`, `SpanManager`), JSON serialization helpers (`encode_json`, `decode_json`, `to_json`, `from_json`), JSON-RPC 2.0 wire types (`JSONRPCRequest`, `JSONRPCError`, `JSONRPCErrorException`), SSE `SubscriptionManager`, the `litestar-mcp` exception hierarchy, schema description bounds validation (`validate_tool_descriptions`), and internal ASGI scope executors (`execute_tool`, `execute_handler_response`, `blank_http_scope`).
 
 For guides, see [Core Architectural Concepts](../getting-started/concepts.md) and [OpenTelemetry & Observability](../security/observability.md).
 
----
-
-## Core Tool & Context Primitives (`litestar_mcp.core`)
+## Core Tool & Context Primitives
 
 ::: litestar_mcp.core.tools.Tool
 
@@ -24,15 +22,21 @@ For guides, see [Core Architectural Concepts](../getting-started/concepts.md) an
 
 ::: litestar_mcp.core.context.ToolContext
 
----
-
 ## OpenTelemetry GenAI Observability
 
 ::: litestar_mcp.core.observability.config.TelemetryConfig
 
 ::: litestar_mcp.core.observability._spans.SpanManager
 
----
+## JSON Serialization Helpers
+
+::: litestar_mcp.core.serialization.encode_json
+
+::: litestar_mcp.core.serialization.decode_json
+
+::: litestar_mcp.core.serialization.to_json
+
+::: litestar_mcp.core.serialization.from_json
 
 ## JSON-RPC 2.0 & Subscription Streams
 
@@ -44,9 +48,7 @@ For guides, see [Core Architectural Concepts](../getting-started/concepts.md) an
 
 ::: litestar_mcp.core.sse.SubscriptionManager
 
----
-
-## Core Exceptions
+## Core Exceptions & Schema Validation
 
 ::: litestar_mcp.core.exceptions.LitestarMCPError
 
@@ -56,9 +58,9 @@ For guides, see [Core Architectural Concepts](../getting-started/concepts.md) an
 
 ::: litestar_mcp.core.exceptions.MissingDependencyError
 
----
+::: litestar_mcp.utils.validate_tool_descriptions
 
-## Internal ASGI Scope Execution (`litestar_mcp.mcp.executor`)
+## Internal ASGI Scope Execution
 
 ::: litestar_mcp.mcp.executor.execute_tool
 

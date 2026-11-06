@@ -15,7 +15,8 @@ from litestar.cli._utils import LitestarEnv
 
 from litestar_mcp import LitestarMCP, MCPConfig
 from litestar_mcp.core.serialization import from_json
-from litestar_mcp.mcp.cli import mcp_group
+from litestar_mcp.mcp.cli import ToolExecutor, list_resources, list_tools, mcp_group
+from litestar_mcp.utils import validate_tool_descriptions
 
 
 @pytest.fixture(scope="session")
@@ -331,3 +332,161 @@ def test_mcp_export_tool_spec_stdout_file_and_strict_bounds(
     strict_fail = cli_runner.invoke(mcp_group, ["export-tool-spec", "--strict-bounds"], obj=bad_env)
     assert strict_fail.exit_code != 0
     assert "verbose_tool" in strict_fail.output
+
+
+def test_validate_tool_descriptions_traverses_defs_nested_items_combinators_and_cycles() -> None:
+    """validate_tool_descriptions catches violations in $defs, nested properties, items, and anyOf without cycling."""
+    long_param = "p" * 751
+    long_output = "o" * 301
+    tools = [
+        {
+            "name": "complex_tool",
+            "description": "Valid tool description.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "payload": {"$ref": "#/$defs/InputNode"},
+                    "dangling": {"$ref": "#/$defs/MissingNode"},
+                    "tags": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string", "description": long_param},
+                            },
+                        },
+                    },
+                    "tuple_items": {
+                        "type": "array",
+                        "prefixItems": [
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "prefix_field": {"type": "string", "description": long_param},
+                                },
+                            }
+                        ],
+                    },
+                    "extra_map": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                                "extra_field": {"type": "string", "description": long_param},
+                            },
+                        },
+                    },
+                    "choice": {
+                        "anyOf": [
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "branch_field": {"type": "string", "description": long_param},
+                                },
+                            },
+                            {"type": "null"},
+                        ]
+                    },
+                },
+                "$defs": {
+                    "InputNode": {
+                        "type": "object",
+                        "properties": {
+                            "nested_text": {"type": "string", "description": long_param},
+                            "parent": {"$ref": "#/$defs/InputNode"},
+                        },
+                    },
+                    "UnreferencedNode": {
+                        "type": "object",
+                        "properties": {
+                            "orphan_field": {"type": "string", "description": long_param},
+                        },
+                    },
+                },
+            },
+            "outputSchema": {
+                "type": "object",
+                "properties": {
+                    "result": {"$ref": "#/$defs/OutputNode"},
+                },
+                "$defs": {
+                    "OutputNode": {
+                        "type": "object",
+                        "properties": {
+                            "detail": {"type": "string", "description": long_output},
+                        },
+                    }
+                },
+            },
+        }
+    ]
+    violations = validate_tool_descriptions(tools)
+    assert (
+        "Tool 'complex_tool' parameter 'payload.nested_text' description length 751 exceeds maximum 750" in violations
+    )
+    assert "Tool 'complex_tool' parameter 'tags.label' description length 751 exceeds maximum 750" in violations
+    assert (
+        "Tool 'complex_tool' parameter 'tuple_items.prefix_field' description length 751 exceeds maximum 750"
+        in violations
+    )
+    assert (
+        "Tool 'complex_tool' parameter 'extra_map.extra_field' description length 751 exceeds maximum 750" in violations
+    )
+    assert (
+        "Tool 'complex_tool' parameter 'choice.branch_field' description length 751 exceeds maximum 750" in violations
+    )
+    assert (
+        "Tool 'complex_tool' parameter 'UnreferencedNode.orphan_field' description length 751 exceeds maximum 750"
+        in violations
+    )
+    assert "Tool 'complex_tool' output field 'result.detail' description length 301 exceeds maximum 300" in violations
+
+
+def test_cli_list_and_run_respect_should_include_handler_filters(cli_runner: CliRunner) -> None:
+    """list-tools, list-resources, and ToolExecutor filter handlers via should_include_handler."""
+
+    @get("/public-tool", mcp_tool="public_tool", tags=["public"], sync_to_thread=False)
+    def public_tool() -> dict[str, str]:
+        return {"ok": "public"}
+
+    @get("/hidden-tool", mcp_tool="hidden_tool", tags=["internal"], sync_to_thread=False)
+    def hidden_tool() -> dict[str, str]:
+        return {"ok": "hidden"}
+
+    @get("/public-res", mcp_resource="public_res", tags=["public"], sync_to_thread=False)
+    def public_res() -> dict[str, str]:
+        return {"res": "public"}
+
+    @get("/excluded-res", mcp_resource="excluded_res", tags=["public"], sync_to_thread=False)
+    def excluded_res() -> dict[str, str]:
+        return {"res": "excluded"}
+
+    config = MCPConfig(
+        exclude_tags=["internal"],
+        exclude_operations=["excluded_res"],
+    )
+    app = Litestar(
+        route_handlers=[public_tool, hidden_tool, public_res, excluded_res],
+        plugins=[LitestarMCP(config=config)],
+    )
+    env = LitestarEnv(app_path="tests.unit.test_cli:app", app=app, cwd=Path.cwd(), host=None, port=None)
+    ctx = Context(mcp_group, obj={"app": app})
+    executor = ToolExecutor(name="run")
+
+    assert executor.list_commands(ctx) == ["public_res", "public_tool"]
+    assert executor.get_command(ctx, "hidden_tool") is None
+    assert executor.get_command(ctx, "excluded_res") is None
+    assert executor.get_command(ctx, "public_tool") is not None
+
+    tools_out = cli_runner.invoke(mcp_group, ["list-tools"], obj=env)
+    assert tools_out.exit_code == 0
+    assert "public_tool" in tools_out.output
+    assert "hidden_tool" not in tools_out.output
+
+    res_out = cli_runner.invoke(mcp_group, ["list-resources"], obj=env)
+    assert res_out.exit_code == 0
+    assert "public_res" in res_out.output
+    assert "excluded_res" not in res_out.output
+
+    assert list_tools.help == "List all available MCP tools."
+    assert list_resources.help == "List all available MCP resources."

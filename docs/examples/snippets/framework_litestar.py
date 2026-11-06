@@ -1,12 +1,14 @@
-"""Snippet: framework-level Litestar registration. Referenced from docs/usage/framework.rst."""
+"""Snippet: framework-level Litestar registration."""
 
+# --8<-- [start:example]
 from litestar import Litestar
 
 from litestar_mcp import LitestarMCP
 
+app = Litestar(plugins=[LitestarMCP()])
+# --8<-- [end:example]
 
-def build() -> "Litestar":
-    # start-example
-    app = Litestar(plugins=[LitestarMCP()])
-    # end-example
+
+def build() -> Litestar:
+    """Return the configured Litestar application for snippet smoke testing."""
     return app

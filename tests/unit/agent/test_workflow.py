@@ -167,3 +167,25 @@ async def test_run_workflow_node_handler_and_agent() -> None:
     assert should_skip(dep_node, ctx) is True
     ctx.step_results["failed_dep"] = StepResult(node_name="failed_dep", output="ok", status="completed")
     assert should_skip(dep_node, ctx) is False
+
+
+@pytest.mark.anyio
+async def test_workflow_engine_records_error_on_failed_step() -> None:
+    """WorkflowEngine.execute_run records formatted exception message on failed StepResult."""
+    captured_contexts: list[WorkflowContext] = []
+
+    def failing_step(ctx: WorkflowContext) -> str:
+        captured_contexts.append(ctx)
+        msg = "database offline"
+        raise RuntimeError(msg)
+
+    wf = DynamicWorkflow("fail-wf").add_node("step_a", handler=failing_step)
+    engine = WorkflowEngine()
+    with pytest.raises(Exception, match=r"unhandled errors|database offline"):
+        await engine.execute_run(wf)
+
+    assert len(captured_contexts) == 1
+    step_result = captured_contexts[0].step_results["step_a"]
+    assert step_result.status == "failed"
+    assert step_result.output is None
+    assert step_result.error == "RuntimeError: database offline"

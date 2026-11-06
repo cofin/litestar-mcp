@@ -1,5 +1,6 @@
 """Async Streamable HTTP client and request-header helpers for Litestar MCP endpoints."""
 
+import base64
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -28,18 +29,20 @@ __all__ = (
 )
 
 _DEFAULT_CLIENT_INFO = {"name": "litestar-mcp-client", "version": __version__}
+_MIN_VISIBLE_ASCII = 0x20
+_MAX_VISIBLE_ASCII = 0x7E
 
 
 def _encode_header_value(value: str) -> str:
-    """Encode header value if it contains non-ASCII characters."""
-    try:
-        value.encode("ascii")
-    except UnicodeEncodeError:
-        import base64
-
-        return f"?utf-8?B?{base64.b64encode(value.encode('utf-8')).decode('ascii')}?="
-    else:
+    """Encode header value with the MCP `=?base64?...` sentinel when non-visible-ASCII or colliding."""
+    if (
+        value
+        and all(_MIN_VISIBLE_ASCII <= ord(char) <= _MAX_VISIBLE_ASCII for char in value)
+        and not value.startswith("=?base64?")
+    ):
         return value
+    encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
+    return f"=?base64?{encoded}?="
 
 
 def prepare_mcp_request(
@@ -80,6 +83,11 @@ def mcp_request_headers(message: "dict[str, Any]") -> "dict[str, str]":
 class MCPClientError(LitestarMCPError):
     """A JSON-RPC error or isError tool result returned by an MCP server."""
 
+    code: "int | None"
+    """Optional JSON-RPC 2.0 numeric error code returned by the server."""
+    data: Any
+    """Optional structured error payload or raw tool result data."""
+
     def __init__(self, message: "str", *, code: "int | None" = None, data: "Any" = None) -> "None":
         """Initialize MCPClientError with message, code, and optional data."""
         super().__init__(message)
@@ -89,6 +97,9 @@ class MCPClientError(LitestarMCPError):
 
 class MCPStreamableHTTPClient:
     """Request/response MCP client over Streamable HTTP using httpx2."""
+
+    endpoint: str
+    """Target MCP Streamable HTTP endpoint URL."""
 
     def __init__(
         self,
