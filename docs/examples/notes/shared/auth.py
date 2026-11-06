@@ -100,8 +100,8 @@ def build_token_validator(
             claims = jwt.decode(token, secret, algorithms=[DEFAULT_ALGORITHM], audience=audience, issuer=issuer)
         except jwt.PyJWTError:
             return None
-        if not isinstance(claims, dict):  # pragma: no cover - defensive
-            return None  # type: ignore[unreachable]
+        if not isinstance(claims, dict):
+            return None
         return claims
 
     return _validate
@@ -158,10 +158,6 @@ def build_login_controller(
     return LoginController
 
 
-# ---------------------------------------------------------------------------
-# Google IAP helpers
-# ---------------------------------------------------------------------------
-
 _JWKS_CACHE: "dict[str, tuple[float, dict[str, Any]]]" = {}
 
 
@@ -205,7 +201,11 @@ def build_iap_token_validator(
     jwks_url: "str" = DEFAULT_IAP_JWKS_URL,
     leeway_seconds: "int" = 30,
 ) -> "Callable[[str], Awaitable[dict[str, Any] | None]]":
-    """Build a validator for Google IAP signed assertions."""
+    """Build a validator for Google IAP signed assertions.
+
+    Fetches and caches the Google IAP JWKS keyset, resolves the matching signing
+    key, and verifies the ES256 signature, issuer, and audience claims.
+    """
 
     async def _validate(token: "str") -> "dict[str, Any] | None":
         try:
@@ -219,10 +219,10 @@ def build_iap_token_validator(
                 issuer=issuer,
                 leeway=leeway_seconds,
             )
-        except Exception:  # noqa: BLE001
+        except (jwt.PyJWTError, httpx2.HTTPError, ValueError, KeyError, TypeError):
             return None
-        if not isinstance(claims, dict):  # pragma: no cover - defensive
-            return None  # type: ignore[unreachable]
+        if not isinstance(claims, dict):
+            return None
         return claims
 
     return _validate

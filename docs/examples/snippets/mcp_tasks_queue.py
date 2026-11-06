@@ -1,9 +1,18 @@
 """Snippet: distributed MCP Tasks using litestar-queues."""
 
+# --8<-- [start:example]
 from litestar import Litestar
 from litestar_queues import QueuePlugin
 
 from litestar_mcp import LitestarMCP
+
+app = Litestar(
+    plugins=[
+        QueuePlugin(),
+        LitestarMCP(),
+    ],
+)
+# --8<-- [end:example]
 
 
 def build() -> Litestar:

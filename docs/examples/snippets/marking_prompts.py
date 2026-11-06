@@ -1,35 +1,40 @@
-"""Snippet: marking and registering MCP prompts. Referenced from docs/usage/marking_routes.rst."""
+"""Snippet: marking and registering MCP prompts."""
 
+# --8<-- [start:example]
 from litestar import Litestar, get
 from litestar.params import FromQuery
 
 from litestar_mcp import LitestarMCP, mcp_prompt
 
 
-def build() -> "Litestar":
-    # start-example
-    @mcp_prompt(description="Summarise a document in a chosen style.")
-    async def summarize(text: "str", style: "str" = "concise") -> "str":
-        """Build a summarisation prompt.
+@mcp_prompt(description="Summarise a document in a chosen style.")
+async def summarize(text: str, style: str = "concise") -> str:
+    """Build a summarisation prompt.
 
-        Args:
-            text: The document to summarise.
-            style: Summary style, e.g. ``concise`` or ``detailed``.
-        """
-        return f"Summarise the following in a {style} style:\n\n{text}"
+    Args:
+        text: The document to summarise.
+        style: Summary style, e.g. ``concise`` or ``detailed``.
+    """
+    return f"Summarise the following in a {style} style:\n\n{text}"
 
-    @get(
-        "/prompts/code-review",
-        mcp_prompt=True,
-        mcp_prompt_description="Ask the model to review a code diff.",
-    )
-    async def code_review(code: "FromQuery[str]") -> "dict[str, object]":
-        """Handler-based prompt: routed under HTTP *and* exposed via ``prompts/get``."""
-        return {"messages": [{"role": "user", "content": {"type": "text", "text": f"Review: {code}"}}]}
 
-    app = Litestar(
-        route_handlers=[code_review],
-        plugins=[LitestarMCP(prompts=[summarize])],
-    )
-    # end-example
+@get(
+    "/prompts/code-review",
+    mcp_prompt=True,
+    mcp_prompt_description="Ask the model to review a code diff.",
+)
+async def code_review(code: FromQuery[str]) -> dict[str, object]:
+    """Handler-based prompt: routed under HTTP *and* exposed via ``prompts/get``."""
+    return {"messages": [{"role": "user", "content": {"type": "text", "text": f"Review: {code}"}}]}
+
+
+app = Litestar(
+    route_handlers=[code_review],
+    plugins=[LitestarMCP(prompts=[summarize])],
+)
+# --8<-- [end:example]
+
+
+def build() -> Litestar:
+    """Return the configured Litestar application for snippet smoke testing."""
     return app

@@ -56,7 +56,7 @@ DEFAULT_TASKS: "dict[int, Task]" = {
 def register_resources(store: "dict[int, Task]") -> "list[Any]":
     """Return read-only MCP resource handlers bound to ``store``."""
 
-    # start-example
+    # --8<-- [start:example]
     @get("/tasks/schema", mcp_resource="task_schema")
     async def get_task_schema() -> "dict[str, Any]":
         """Get the task data model schema - exposed as MCP resource."""
@@ -83,7 +83,7 @@ def register_resources(store: "dict[int, Task]") -> "list[Any]":
             "mcp_integration": True,
         }
 
-    # end-example
+    # --8<-- [end:example]
     return [get_task_schema, get_api_info]
 
 
@@ -96,7 +96,7 @@ def register_prompts(store: "dict[int, Task]") -> "list[Any]":
     simplest form — the plugin wraps it as a single user-role text message.
     """
 
-    # start-example
+    # --8<-- [start:example]
     @mcp_prompt(
         title="Summarize tasks",
         description="Ask the model to summarize the current task list in a chosen style.",
@@ -112,14 +112,14 @@ def register_prompts(store: "dict[int, Task]") -> "list[Any]":
         body = "\n".join(lines) if lines else "(no tasks)"
         return f"Summarise the following tasks in a {style} style:\n\n{body}"
 
-    # end-example
+    # --8<-- [end:example]
     return [summarize_tasks]
 
 
 def register_tools(store: "dict[int, Task]") -> "list[Any]":
     """Return MCP tool handlers (task CRUD) bound to ``store``."""
 
-    # start-example
+    # --8<-- [start:example]
     @get("/tasks", mcp_tool=True)
     async def list_tasks(completed: "FromQuery[bool | None]" = None) -> "list[Task]":
         """List all tasks, optionally filtered by completion status."""
@@ -157,7 +157,7 @@ def register_tools(store: "dict[int, Task]") -> "list[Any]":
             raise NotFoundException(detail=f"Task {task_id} not found")
         del store[task_id]
 
-    # end-example
+    # --8<-- [end:example]
     return [list_tasks, get_task, create_task, complete_task, delete_task]
 
 
@@ -185,7 +185,7 @@ def build_app(tasks: "dict[int, Task] | None" = None) -> "Litestar":
     tool_handlers = register_tools(store)
     prompts = register_prompts(store)
 
-    # start-example
+    # --8<-- [start:example]
     app = Litestar(
         route_handlers=[
             *resource_handlers,
@@ -200,7 +200,7 @@ def build_app(tasks: "dict[int, Task] | None" = None) -> "Litestar":
             description="A simple task management system with MCP integration",
         ),
     )
-    # end-example
+    # --8<-- [end:example]
     return app
 
 

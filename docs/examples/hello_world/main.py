@@ -22,36 +22,30 @@ from litestar_mcp import LitestarMCP, MCPConfig
 
 
 @get("/")
-async def hello() -> "dict[str, str]":
+async def hello() -> dict[str, str]:
     """A simple greeting endpoint."""
     return {"message": "Hello from Litestar!"}
 
 
 @get("/status")
-async def status() -> "dict[str, str]":
+async def status() -> dict[str, str]:
     """API status endpoint."""
     return {"status": "healthy", "version": "1.0.0"}
 
 
-def build_app() -> "Litestar":
-    """Construct the Litestar app with the MCP plugin wired in.
-
-    The body between the markers is what gets rendered via
-    ``.. literalinclude:: ... :dedent: 4`` in the usage guide.
-    """
-    # start-example
+def build_app() -> Litestar:
+    """Construct the Litestar app with the MCP plugin wired in."""
+    # --8<-- [start:example]
     mcp_config = MCPConfig(name="Hello World API")
     app = Litestar(
         route_handlers=[hello, status],
         plugins=[LitestarMCP(mcp_config)],
     )
-    # end-example
+    # --8<-- [end:example]
     return app
 
 
 app = build_app()
-
-# That's it! Your app now exposes MCP endpoints at /mcp.
 
 if __name__ == "__main__":
     import uvicorn

@@ -1,8 +1,8 @@
+"""Snippet: accessing the underlying Litestar application from a standalone MCP instance."""
+
+# --8<-- [start:example]
 from litestar_mcp import MCP
 
 mcp = MCP("my-mcp-server")
-
-# [start-app]
-# Access the underlying Litestar application
 app = mcp.app
-# [end-app]
+# --8<-- [end:example]

@@ -1,11 +1,11 @@
 """Tool with an explicit JSON Schema 2020-12 input contract."""
 
+# --8<-- [start:example]
 from litestar import get
 
 from litestar_mcp import mcp_tool
 
 
-# start-example
 @mcp_tool(
     input_schema={
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -20,4 +20,4 @@ async def search_regions(region: str) -> list[str]:
     return [region]
 
 
-# end-example
+# --8<-- [end:example]

@@ -1,6 +1,6 @@
 """Snippet: background queued agent turns with QueuedAgentChatController and ChannelsPlugin."""
 
-# start-example
+# --8<-- [start:example]
 from litestar import Litestar
 from litestar.channels import ChannelsPlugin
 from litestar.channels.backends.memory import MemoryChannelsBackend
@@ -15,6 +15,7 @@ from litestar_mcp.queues import (
     QueuedAgentChatController,
     QueuedTurnManager,
     set_agent_registry,
+    set_channels_service,
 )
 
 session_store = LitestarStoreSessionStore(MemoryStore())
@@ -41,6 +42,7 @@ channels_plugin = ChannelsPlugin(
     backend=MemoryChannelsBackend(history=1000),
     arbitrary_channels_allowed=True,
 )
+set_channels_service(channels_plugin)
 queue_plugin = QueuePlugin()
 
 
@@ -60,7 +62,7 @@ app = Litestar(
         runtime,
     ],
 )
-# end-example
+# --8<-- [end:example]
 
 
 def build() -> Litestar:

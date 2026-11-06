@@ -1,24 +1,26 @@
 """Snippet: binary MCP resources with MIME metadata."""
 
+# --8<-- [start:example]
 from litestar import Litestar, get
 
 from litestar_mcp import LitestarMCP, mcp_resource
 
 
-def build() -> "Litestar":
-    # start-route-example
-    @get("/reports/latest", mcp_resource=True, media_type="application/pdf")
-    async def latest_report() -> bytes:
-        return b"...pdf bytes..."
+@get("/reports/latest", mcp_resource=True, media_type="application/pdf")
+async def latest_report() -> bytes:
+    return b"...pdf bytes..."
 
-    # end-route-example
 
-    # start-decorator-example
-    @mcp_resource(mime_type="application/pdf")
-    @get("/reports/archive")
-    async def archived_report() -> bytes:
-        return b"...pdf bytes..."
+@mcp_resource(mime_type="application/pdf")
+@get("/reports/archive")
+async def archived_report() -> bytes:
+    return b"...pdf bytes..."
 
-    # end-decorator-example
 
-    return Litestar(route_handlers=[latest_report, archived_report], plugins=[LitestarMCP()])
+app = Litestar(route_handlers=[latest_report, archived_report], plugins=[LitestarMCP()])
+# --8<-- [end:example]
+
+
+def build() -> Litestar:
+    """Return the configured Litestar application for snippet smoke testing."""
+    return app

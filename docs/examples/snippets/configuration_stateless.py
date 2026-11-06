@@ -1,5 +1,6 @@
 """Snippet: stateless MCP transport defaults."""
 
+# --8<-- [start:example]
 from litestar_mcp import MCPConfig
 
 config = MCPConfig(
@@ -8,3 +9,4 @@ config = MCPConfig(
     subscription_max_streams=10_000,
     subscription_keepalive_seconds=15,
 )
+# --8<-- [end:example]

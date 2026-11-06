@@ -1,29 +1,31 @@
-"""Validator for ``# start-example`` / ``# end-example`` marker blocks.
+"""Validator for ``# --8<-- [start:<section>]`` / ``# --8<-- [end:<section>]`` marker blocks.
 
-Walks ``docs/examples/`` and, for every Python file containing at least one
-marker pair, extracts the block between the markers, dedents it (so a block
-that sits inside a function body renders at column 0), and compiles the result
-as standalone Python. A block that depends on a symbol defined *outside* the
-marker will fail to compile in isolation — that is intentional. If a snippet
-cannot stand on its own, the marker is wrong.
+Walks ``docs/examples/`` and, for every Python file under the root, verifies that
+no disallowed inline ``#`` comments exist and compiles each extracted snippet
+section in isolation as standalone Python.
 
 Usage::
 
     uv run python tools/ci/validate_doc_markers.py
 
-Exits ``0`` when every marker block is syntactically valid standalone Python,
-``1`` otherwise. Prints a per-file summary in either case.
+Exits ``0`` when every file has zero disallowed comments and every marker block
+is syntactically valid standalone Python, ``1`` otherwise.
 """
 
+import re
 import sys
 import textwrap
+import tokenize
+from io import StringIO
 from pathlib import Path
 
 START_MARKER = "# start-example"
 END_MARKER = "# end-example"
+SECTION_START_RE = re.compile(r"^\s*#\s*--8<--\s*\[start:([a-zA-Z0-9_-]+)\]\s*$")
+SECTION_END_RE = re.compile(r"^\s*#\s*--8<--\s*\[end:([a-zA-Z0-9_-]+)\]\s*$")
 
 
-def iter_marker_blocks(text: "str") -> "list[tuple[int, int, str]]":
+def iter_marker_blocks(text: str) -> list[tuple[int, int, str]]:
     """Return ``(start_line, end_line, block_source)`` tuples for each marker pair.
 
     ``start_line`` and ``end_line`` are 1-based. ``block_source`` is the raw
@@ -31,6 +33,34 @@ def iter_marker_blocks(text: "str") -> "list[tuple[int, int, str]]":
     """
     blocks: list[tuple[int, int, str]] = []
     lines = text.splitlines()
+    has_section_markers = any(SECTION_START_RE.match(line) or SECTION_END_RE.match(line) for line in lines)
+
+    if has_section_markers:
+        i = 0
+        while i < len(lines):
+            start_match = SECTION_START_RE.match(lines[i])
+            if start_match is not None:
+                section_name = start_match.group(1)
+                start = i
+                j = i + 1
+                while j < len(lines):
+                    end_match = SECTION_END_RE.match(lines[j])
+                    if end_match is not None and end_match.group(1) == section_name:
+                        break
+                    j += 1
+                if j >= len(lines):
+                    msg = f"unterminated # --8<-- [start:{section_name}] at line {start + 1}"
+                    raise ValueError(msg)
+                block = "\n".join(lines[start + 1 : j])
+                blocks.append((start + 1, j + 1, block))
+                i = j + 1
+            elif SECTION_END_RE.match(lines[i]) is not None:
+                msg = f"unmatched {lines[i].strip()} at line {i + 1}"
+                raise ValueError(msg)
+            else:
+                i += 1
+        return blocks
+
     i = 0
     while i < len(lines):
         if START_MARKER in lines[i]:
@@ -49,7 +79,35 @@ def iter_marker_blocks(text: "str") -> "list[tuple[int, int, str]]":
     return blocks
 
 
-def validate_file(path: "Path") -> "list[str]":
+def find_disallowed_comments(text: str) -> list[tuple[int, str]]:
+    """Return ``(line_no, comment_text)`` for any non-marker, non-PEP-723 comment."""
+    disallowed: list[tuple[int, str]] = []
+    in_pep723 = False
+
+    for tok in tokenize.generate_tokens(StringIO(text).readline):
+        if tok.type != tokenize.COMMENT:
+            continue
+        comment_str = tok.string.strip()
+        line_stripped = tok.line.strip()
+
+        if not in_pep723 and comment_str == "# /// script" and line_stripped == comment_str:
+            in_pep723 = True
+            continue
+
+        if in_pep723 and tok.line.lstrip().startswith("#"):
+            if comment_str == "# ///" and line_stripped == comment_str:
+                in_pep723 = False
+            continue
+
+        if SECTION_START_RE.match(tok.line) is not None or SECTION_END_RE.match(tok.line) is not None:
+            continue
+
+        disallowed.append((tok.start[0], tok.string))
+
+    return disallowed
+
+
+def validate_file(path: Path) -> list[str]:
     """Return a list of error messages for ``path``. Empty list means OK."""
     errors: list[str] = []
     try:
@@ -58,9 +116,18 @@ def validate_file(path: "Path") -> "list[str]":
         return [f"{path}: cannot read: {exc}"]
 
     try:
+        disallowed = find_disallowed_comments(text)
+    except tokenize.TokenError as exc:
+        return [f"{path}: tokenize error: {exc}"]
+
+    for line_no, comment_text in disallowed:
+        errors.append(f"{path}:{line_no}: disallowed inline comment: {comment_text}")
+
+    try:
         blocks = iter_marker_blocks(text)
     except ValueError as exc:
-        return [f"{path}: {exc}"]
+        errors.append(f"{path}: {exc}")
+        return errors
 
     for start_line, _end_line, block in blocks:
         snippet = textwrap.dedent(block)
@@ -71,20 +138,28 @@ def validate_file(path: "Path") -> "list[str]":
     return errors
 
 
-def walk(root: "Path") -> "list[Path]":
-    """Return every ``.py`` file under ``root`` that contains a marker pair."""
+def _has_markers(text: str) -> bool:
+    return any(SECTION_START_RE.match(line) or SECTION_END_RE.match(line) for line in text.splitlines()) or (
+        START_MARKER in text and END_MARKER in text
+    )
+
+
+def walk(root: Path) -> list[Path]:
+    """Return every ``.py`` file under ``root`` when at least one marker file exists."""
     results: list[Path] = []
+    has_marker_file = False
     for path in sorted(root.rglob("*.py")):
         try:
             text = path.read_text(encoding="utf-8")
         except OSError:
             continue
-        if START_MARKER in text and END_MARKER in text:
-            results.append(path)
-    return results
+        results.append(path)
+        if _has_markers(text):
+            has_marker_file = True
+    return results if has_marker_file else []
 
 
-def main(argv: "list[str] | None" = None) -> "int":
+def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint. Returns process exit code."""
     argv = argv if argv is not None else sys.argv[1:]
     root = Path(argv[0]) if argv else Path("docs/examples")

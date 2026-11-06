@@ -1,6 +1,6 @@
 """Register a resource with an RFC 6570 Level 1 URI template."""
 
-# start-example
+# --8<-- [start:example]
 from litestar import Litestar, get
 from litestar.params import FromPath
 
@@ -13,10 +13,10 @@ from litestar_mcp import LitestarMCP
     mcp_resource_template="app://workspaces/{workspace_id}/files/{file_id}",
     sync_to_thread=False,
 )
-def read_workspace_file(workspace_id: "FromPath[str]", file_id: "FromPath[str]") -> "dict[str, str]":
+def read_workspace_file(workspace_id: FromPath[str], file_id: FromPath[str]) -> dict[str, str]:
     """Return the concrete workspace/file payload."""
     return {"workspace": workspace_id, "file": file_id}
 
 
 app = Litestar(route_handlers=[read_workspace_file], plugins=[LitestarMCP()])
-# end-example
+# --8<-- [end:example]

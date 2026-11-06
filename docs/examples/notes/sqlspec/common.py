@@ -68,33 +68,27 @@ class SQLSpecNoteService:
     async def create(self, *, title: "str", body: "str", owner_sub: "str | None" = None) -> "NoteRow":
         """Insert a note and return the typed row."""
         note_id = str(uuid4())
-        await self.driver.execute(INSERT_SQL, note_id, title, body, owner_sub)  # type: ignore[attr-defined]
-        await self.driver.commit()  # type: ignore[attr-defined]
-        return await self.driver.select_one(SELECT_ONE_SQL, note_id, schema_type=NoteRow)  # type: ignore[attr-defined]
+        await self.driver.execute(INSERT_SQL, note_id, title, body, owner_sub)
+        await self.driver.commit()
+        return await self.driver.select_one(SELECT_ONE_SQL, note_id, schema_type=NoteRow)
 
     async def list_public(self) -> "list[NoteRow]":
         """List all notes without an owner (public demo dataset)."""
-        return list(await self.driver.select(SELECT_PUBLIC_SQL, schema_type=NoteRow))  # type: ignore[attr-defined]
+        return list(await self.driver.select(SELECT_PUBLIC_SQL, schema_type=NoteRow))
 
     async def list_for_owner(self, owner_sub: "str") -> "list[NoteRow]":
         """List notes owned by ``owner_sub``."""
-        return list(
-            await self.driver.select(SELECT_BY_OWNER_SQL, owner_sub, schema_type=NoteRow)  # type: ignore[attr-defined]
-        )
+        return list(await self.driver.select(SELECT_BY_OWNER_SQL, owner_sub, schema_type=NoteRow))
 
     async def get_for_owner(self, note_id: "str", owner_sub: "str") -> "NoteRow | None":
         """Return a single owned note or ``None`` when it does not exist."""
-        rows = list(
-            await self.driver.select(  # type: ignore[attr-defined]
-                SELECT_ONE_FOR_OWNER_SQL, note_id, owner_sub, schema_type=NoteRow
-            )
-        )
+        rows = list(await self.driver.select(SELECT_ONE_FOR_OWNER_SQL, note_id, owner_sub, schema_type=NoteRow))
         return rows[0] if rows else None
 
     async def delete(self, note_id: "str") -> "None":
         """Delete a note by id."""
-        await self.driver.execute(DELETE_SQL, note_id)  # type: ignore[attr-defined]
-        await self.driver.commit()  # type: ignore[attr-defined]
+        await self.driver.execute(DELETE_SQL, note_id)
+        await self.driver.commit()
 
     async def delete_for_owner(self, note_id: "str", owner_sub: "str") -> "bool":
         """Delete a note only if the caller owns it.
@@ -107,8 +101,8 @@ class SQLSpecNoteService:
         existing = await self.get_for_owner(note_id, owner_sub)
         if existing is None:
             return False
-        await self.driver.execute(DELETE_FOR_OWNER_SQL, note_id, owner_sub)  # type: ignore[attr-defined]
-        await self.driver.commit()  # type: ignore[attr-defined]
+        await self.driver.execute(DELETE_FOR_OWNER_SQL, note_id, owner_sub)
+        await self.driver.commit()
         return True
 
 

@@ -1,6 +1,6 @@
 """Snippet: LitestarA2A with A2A 1.0 HTTP+JSON REST routes, tenant header resolution, and context_builder."""
 
-# start-example
+# --8<-- [start:example]
 from typing import Any
 from uuid import uuid4
 
@@ -104,7 +104,7 @@ app = Litestar(
     route_handlers=[get_ticket],
     plugins=[LitestarA2A(card, TenantSupportExecutor(), config)],
 )
-# end-example
+# --8<-- [end:example]
 
 
 def build() -> Litestar:
