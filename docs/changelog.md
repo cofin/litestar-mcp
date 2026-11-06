@@ -8,7 +8,40 @@ All notable `litestar-mcp` changes are summarized here. Entries are grouped by r
 
 ---
 
-## v0.18.0 (2026-11-06)
+## v0.19.0 (2026-11-06)
+
+### Features
+
+- **Add first-class optional route `auth` policy metadata across MCP and A2A** ([#107](https://github.com/cofin/litestar-mcp/pull/107))
+  Added optional `auth` fields to `MCPConfig`, `A2AConfig`, and `agent_to_a2a(..., auth=...)` so applications can declare route-level authentication policies alongside `route_opt` without breaking positional `MCPConfig` compatibility.
+
+- **Accept controller instances, `@prompt` callables, shorthand skill URIs, and lazy top-level exports** ([#107](https://github.com/cofin/litestar-mcp/pull/107))
+  Updated `LitestarMCP` to accept pre-instantiated `PromptController` and `SkillController` objects alongside subclasses and `@prompt`-decorated callables in `MCPConfig.prompts`. Updated `SkillCatalog.get` to resolve `"skill://<name>"` shorthand URIs as well as `"skill://<name>/SKILL.md"`. Added lazy package re-exports for `litestar_mcp.agent` and `litestar_mcp.core` symbols, and converted `litestar_mcp.core.serialization` (`encode_json`, `decode_json`, `to_json`, `from_json`) into documented wrapper functions.
+
+- **Extend A2A owner resolution, pre-startup MCP tool bridging, and CLI route filtering** ([#107](https://github.com/cofin/litestar-mcp/pull/107))
+  Updated `_default_owner_resolver` in `litestar_mcp.agent.bridges.a2a` to fall back to `user_name` / `username` user attributes and mapping keys, enabled `mcp_to_tools(app)` to discover routes before `on_startup` lifespan execution, evicted expired locks in `MemorySessionStore`, and propagated `route_filter` / `include_tags` / `exclude_tags` options in `litestar mcp list-tools` and `litestar mcp export-tool-spec`.
+
+### Bug Fixes
+
+- **Preserve content-type parameters on `resources/read` responses** ([#107](https://github.com/cofin/litestar-mcp/pull/107), closes [#106](https://github.com/cofin/litestar-mcp/issues/106))
+  Updated `_capture_asgi_response` and `_resource_content_from_response` so `resources/read` preserves full non-charset MIME parameters (such as `;profile=mcp-app`, `; variant=GFM`, and `;profile=mcp-schema`) declared on resource route `media_type` values while stripping transport `charset` parameters.
+
+- **Traverse hoisted `$defs` schemas, encode `Mcp-Name` headers, and propagate queued turn context** ([#107](https://github.com/cofin/litestar-mcp/pull/107))
+  Resolved `#/$defs/<name>` references across `iter_mcp_header_fields` and recursive `validate_tool_descriptions`, RFC 2047 base64-encoded non-ASCII `Mcp-Name` headers in `MCPStreamableHTTPClient`, forwarded `QueuedTurn.dynamic_context` and `PrincipalSnapshot` (`roles`, `scopes`) across `litestar-queues` worker turns, added `Last-Event-ID` SSE replay to `QueuedAgentChatController.stream_turn`, and populated `StepResult.error` on failed in-process `WorkflowEngine` steps.
+
+### Documentation
+
+- **Validate runnable examples, interactive diagrams, and all documentation sections** ([#107](https://github.com/cofin/litestar-mcp/pull/107))
+  Added named `pymdownx.snippets` section slicing across runnable `docs/examples/**/*.py` modules, fixed SVG diagram bounding boxes and accessibility labels, aligned all guides and API reference pages (retiring legacy migration pages with static HTML redirects in `tools/docs/postbuild.py`), and configured `zensical.toml` `exclude_docs` as a multiline gitignore string.
+
+### Changed
+
+- **Update locked dependencies and pre-commit hooks** ([#107](https://github.com/cofin/litestar-mcp/pull/107))
+  Updated `uv.lock` dependencies (including `google-genai`, `litestar-queues`, `sqlspec`, `ruff`, and `zensical`) and updated `ruff-pre-commit` to `v0.17.4` in `.pre-commit-config.yaml`.
+
+---
+
+## v0.18.0 (2026-11-03)
 
 ### Features
 
@@ -25,19 +58,14 @@ All notable `litestar-mcp` changes are summarized here. Entries are grouped by r
   - `AgentRuntime` is a Litestar plugin that provides itself as the `runtime` dependency used by `AgentChatController`.
   - `LitestarA2A` accepts an `AgentExecutor` in place of a `RequestHandler` and wraps it in `DefaultRequestHandler` with an `InMemoryTaskStore`.
 
-### Bug Fixes
-
-- **Harden schema `$defs` hoisting, recursive description bounds, `SkillCatalog.get` shorthand URIs, and A2A/queue bridges** ([#106](https://github.com/cofin/litestar-mcp/pull/106))
-  Recursively extract `x-mcp-header` fields through `$ref` targets, recursively validate nested object and array description bounds in `validate_tool_descriptions`, accept shorthand `skill://<name>` URIs in `SkillCatalog.get`, accept pre-instantiated `PromptController` / `SkillController` instances in `MCPConfig`, apply route inclusion/exclusion filters in CLI commands, resolve `_LitestarUser.user_name` in A2A bridges, honor `Last-Event-ID` on `QueuedAgentChatController`, and populate `StepResult.error` on failed in-process workflow steps.
-
 ### Documentation
 
-- **Overhaul documentation, interactive architecture diagrams, and PEP 257 field docstrings** ([#105](https://github.com/cofin/litestar-mcp/pull/105), [#106](https://github.com/cofin/litestar-mcp/pull/106))
+- **Overhaul documentation, interactive architecture diagrams, and PEP 257 field docstrings** ([#105](https://github.com/cofin/litestar-mcp/pull/105))
   Migrated the documentation site to Zensical with a 7-tab architecture, interactive SVG architecture diagrams, PEP 257 field docstrings across all public structs, dataclasses, and classes, automated CLI reference generation, and Sphinx v2 `objects.inv` / `llms.txt` post-build verification.
 
 ---
 
-## v0.17.0 (2026-11-05)
+## v0.17.0 (2026-11-02)
 
 ### Features
 
