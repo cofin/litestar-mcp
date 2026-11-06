@@ -1,4 +1,3 @@
-# ruff: noqa: PYI034
 """Utilities shared across the litestar-mcp package.
 
 This module is the single home for handler-introspection helpers
@@ -17,7 +16,7 @@ import inspect
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 from litestar.stores.registry import StoreRegistry
 
@@ -27,12 +26,14 @@ if TYPE_CHECKING:
     from litestar.config.app import AppConfig
     from litestar.handlers import BaseRouteHandler
     from litestar.stores.base import Store
+    from typing_extensions import Self
 
     from litestar_mcp.mcp.config import MCPConfig
 
 
 F = TypeVar("F", bound=Callable[..., Any])
 Kind = Literal["tool", "resource", "prompt"]
+_DEFS_REF_PREFIX = "#/$defs/"
 _STRUCTURED_FIELDS: "tuple[str, str, str]" = ("when_to_use", "returns", "agent_instructions")
 _VAR_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -109,21 +110,18 @@ def strip_docstring_sections(docstring: "str | None") -> "str":
     return "\n".join(prose_lines).strip()
 
 
-# Public MetadataRegistry and DescriptionSources
-
-
 class MetadataRegistry:
     """Singleton registry for MCP metadata using qualnames as keys."""
 
     _instance: "MetadataRegistry | None" = None
     _data: "dict[str, dict[str, Any]]"
 
-    def __new__(cls) -> "MetadataRegistry":
+    def __new__(cls) -> "Self":
         if cls._instance is None:
             inst = super().__new__(cls)
             inst._data = {}
             cls._instance = inst
-        return cls._instance
+        return cast("Self", cls._instance)
 
     def set(self, obj: "Any", value: "dict[str, Any]") -> "None":
         """Store MCP metadata dictionary for `obj` keyed by its resolved module and qualname."""
@@ -133,7 +131,7 @@ class MetadataRegistry:
     def get(self, obj: "Any") -> "dict[str, Any] | None":
         """Retrieve the stored MCP metadata dictionary for `obj`, or `None` if not registered."""
         key = self._get_key(obj)
-        return self._data.get(key)  # pyright: ignore[reportReturnType]
+        return self._data.get(key)
 
     def _get_key(self, obj: "Any") -> "str":
         target = obj
@@ -168,9 +166,6 @@ class DescriptionSources:
     """Optional `## Returns` section."""
     agent_instructions: "str | None"
     """Optional `## Instructions` section."""
-
-
-# Public functions
 
 
 def get_handler_function(handler: "BaseRouteHandler") -> "Callable[..., Any]":
@@ -587,28 +582,30 @@ def validate_tool_descriptions(
             )
         input_schema = tool_entry.get("inputSchema")
         if max_param_description_length is not None and isinstance(input_schema, Mapping):
-            props = input_schema.get("properties")
-            if isinstance(props, Mapping):
-                for param_name, prop_schema in props.items():
-                    if isinstance(prop_schema, Mapping):
-                        param_desc = prop_schema.get("description")
-                        if isinstance(param_desc, str) and len(param_desc) > max_param_description_length:
-                            violations.append(
-                                f"Tool '{tool_name}' parameter '{param_name}' description length {len(param_desc)} "
-                                f"exceeds maximum {max_param_description_length}"
-                            )
+            input_defs = input_schema.get("$defs")
+            resolved_input_defs = input_defs if isinstance(input_defs, Mapping) else {}
+            seen_input: set[tuple[str, int]] = set()
+            for label, param_desc in _iter_schema_field_descriptions(input_schema, resolved_input_defs):
+                desc_len = len(param_desc)
+                if desc_len > max_param_description_length and (label, desc_len) not in seen_input:
+                    seen_input.add((label, desc_len))
+                    violations.append(
+                        f"Tool '{tool_name}' parameter '{label}' description length {desc_len} "
+                        f"exceeds maximum {max_param_description_length}"
+                    )
         output_schema = tool_entry.get("outputSchema")
         if max_output_field_description_length is not None and isinstance(output_schema, Mapping):
-            out_props = output_schema.get("properties")
-            if isinstance(out_props, Mapping):
-                for field_name, field_schema in out_props.items():
-                    if isinstance(field_schema, Mapping):
-                        field_desc = field_schema.get("description")
-                        if isinstance(field_desc, str) and len(field_desc) > max_output_field_description_length:
-                            violations.append(
-                                f"Tool '{tool_name}' output field '{field_name}' description length {len(field_desc)} "
-                                f"exceeds maximum {max_output_field_description_length}"
-                            )
+            output_defs = output_schema.get("$defs")
+            resolved_output_defs = output_defs if isinstance(output_defs, Mapping) else {}
+            seen_output: set[tuple[str, int]] = set()
+            for label, field_desc in _iter_schema_field_descriptions(output_schema, resolved_output_defs):
+                desc_len = len(field_desc)
+                if desc_len > max_output_field_description_length and (label, desc_len) not in seen_output:
+                    seen_output.add((label, desc_len))
+                    violations.append(
+                        f"Tool '{tool_name}' output field '{label}' description length {desc_len} "
+                        f"exceeds maximum {max_output_field_description_length}"
+                    )
     return violations
 
 
@@ -735,7 +732,127 @@ def resolve_app_store(app_config: "AppConfig", name: "str") -> "Store":
     return registry.get(name)
 
 
-# Private helper functions and classes
+def _resolve_local_schema_ref(
+    schema: "Mapping[str, Any]",
+    defs: "Mapping[str, Any]",
+    visited_refs: "frozenset[str]",
+) -> "tuple[str, str, Mapping[str, Any]] | None":
+    """Resolve a local `#/$defs/<Name>` pointer against `defs` when not yet visited."""
+    ref = schema.get("$ref")
+    if not isinstance(ref, str) or not ref.startswith(_DEFS_REF_PREFIX) or ref in visited_refs:
+        return None
+    def_name = ref[len(_DEFS_REF_PREFIX) :]
+    target = defs.get(def_name)
+    if not isinstance(target, Mapping):
+        return None
+    return ref, def_name, target
+
+
+def _iter_schema_field_descriptions(
+    schema: "Mapping[str, Any]",
+    defs: "Mapping[str, Any]",
+    *,
+    path: "tuple[str, ...]" = (),
+    visited_refs: "frozenset[str]" = frozenset(),
+    seen_defs: "set[str] | None" = None,
+) -> "list[tuple[str, str]]":
+    """Return `(dotted_field_path, description)` pairs across nested schema nodes and `$defs`."""
+    is_root = path == () and not visited_refs and seen_defs is None
+    active_seen_defs = seen_defs if seen_defs is not None else set()
+    results: list[tuple[str, str]] = []
+
+    resolved_ref = _resolve_local_schema_ref(schema, defs, visited_refs)
+    if resolved_ref is not None:
+        ref, def_name, target = resolved_ref
+        active_seen_defs.add(def_name)
+        results.extend(
+            _iter_schema_field_descriptions(
+                target,
+                defs,
+                path=path,
+                visited_refs=visited_refs | {ref},
+                seen_defs=active_seen_defs,
+            )
+        )
+
+    props = schema.get("properties")
+    if isinstance(props, Mapping):
+        for prop_name, prop_schema in props.items():
+            if not isinstance(prop_schema, Mapping):
+                continue
+            prop_path = (*path, str(prop_name))
+            prop_desc = prop_schema.get("description")
+            if isinstance(prop_desc, str):
+                results.append((".".join(prop_path), prop_desc))
+            results.extend(
+                _iter_schema_field_descriptions(
+                    prop_schema,
+                    defs,
+                    path=prop_path,
+                    visited_refs=visited_refs,
+                    seen_defs=active_seen_defs,
+                )
+            )
+
+    items_schema = schema.get("items")
+    if isinstance(items_schema, Mapping):
+        items_desc = items_schema.get("description")
+        if isinstance(items_desc, str) and "$ref" not in items_schema:
+            items_path = (*path, "[]") if path else ("[]",)
+            results.append((".".join(items_path), items_desc))
+        results.extend(
+            _iter_schema_field_descriptions(
+                items_schema,
+                defs,
+                path=path,
+                visited_refs=visited_refs,
+                seen_defs=active_seen_defs,
+            )
+        )
+
+    additional_props = schema.get("additionalProperties")
+    if isinstance(additional_props, Mapping):
+        results.extend(
+            _iter_schema_field_descriptions(
+                additional_props,
+                defs,
+                path=path,
+                visited_refs=visited_refs,
+                seen_defs=active_seen_defs,
+            )
+        )
+
+    for key in ("prefixItems", "anyOf", "oneOf", "allOf"):
+        branches = schema.get(key)
+        if isinstance(branches, Sequence) and not isinstance(branches, (str, bytes)):
+            for branch in branches:
+                if isinstance(branch, Mapping):
+                    results.extend(
+                        _iter_schema_field_descriptions(
+                            branch,
+                            defs,
+                            path=path,
+                            visited_refs=visited_refs,
+                            seen_defs=active_seen_defs,
+                        )
+                    )
+
+    if is_root:
+        for def_name, def_schema in defs.items():
+            def_key = str(def_name)
+            if def_key not in active_seen_defs and isinstance(def_schema, Mapping):
+                active_seen_defs.add(def_key)
+                results.extend(
+                    _iter_schema_field_descriptions(
+                        def_schema,
+                        defs,
+                        path=(def_key,),
+                        visited_refs=frozenset({f"{_DEFS_REF_PREFIX}{def_key}"}),
+                        seen_defs=active_seen_defs,
+                    )
+                )
+
+    return results
 
 
 def _callable_name(fn: "Any") -> "str":
