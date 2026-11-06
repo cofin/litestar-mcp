@@ -8,7 +8,7 @@ title: Agent Runtime & Turn Budgets
 
 ---
 
-## Defining an `Agent`
+## Defining an Agent
 
 An `Agent` (`litestar_mcp.agent.Agent`) encapsulates instructions, direct tools, reusable `SkillController` classes or instances, and an optional model binding:
 
@@ -17,9 +17,9 @@ An `Agent` (`litestar_mcp.agent.Agent`) encapsulates instructions, direct tools,
 | `name` | `str` | *(required)* | Unique agent identifier within an application or `AgentGroup`. |
 | `description` | `str` | `""` | Human-readable summary of the agent's purpose and capabilities (also used for A2A `AgentCard` generation). |
 | `instructions` | `str` | `""` | Base system instructions guiding the agent's behavior. |
-| `tools` | `Sequence[Tool \| Callable[..., Any]]` | `()` | `Tool` instances or plain functions (automatically wrapped via `tool()`) exposed directly to the agent. |
-| `skills` | `Sequence[SkillController \| type[SkillController]]` | `()` | `SkillController` classes or instances contributing domain `@tool` methods and `instructions`. |
-| `model` | `ModelClient \| str \| None` | `None` | Bound `ModelClient` instance or model identifier string (for example `"gemini-3.8-flash"`). Falls back to `AgentRuntime.default_model`. |
+| `tools` | `Sequence[Tool or Callable[..., Any]]` | `()` | `Tool` instances or plain functions (automatically wrapped via `tool()`) exposed directly to the agent. |
+| `skills` | `Sequence[SkillController or type[SkillController]]` | `()` | `SkillController` classes or instances contributing domain `@tool` methods and `instructions`. |
+| `model` | `ModelClient or str or None` | `None` | Bound `ModelClient` instance or model identifier string (for example `"gemini-3.8-flash"`). Falls back to `AgentRuntime.default_model`. |
 
 During `__post_init__`, `Agent`:
 
@@ -30,7 +30,7 @@ During `__post_init__`, `Agent`:
 
 ---
 
-## Authoring Tools with `@tool` and `ToolContext`
+## Authoring Tools
 
 Decorate functions or `SkillController` methods with `@tool` (`litestar_mcp.tool` / `litestar_mcp.core.tools.tool`) to compile a callable into a `Tool` with a JSON Schema 2020-12 `parameters` contract and a `msgspec` argument validation struct:
 
@@ -38,13 +38,13 @@ Decorate functions or `SkillController` methods with `@tool` (`litestar_mcp.tool
 --8<-- "docs/examples/agent/coffee_shop_agent.py:24:68"
 ```
 
-### Type-Based `ToolContext` and DI Injection
+### Type-Based ToolContext and Dependency Injection
 
 When `@tool` builds the tool's public JSON Schema (`Tool.parameters`), it inspects parameter type annotations and strips internal context and dependency injection parameters so the LLM only sees domain arguments:
 
 - **`ToolContext` (`litestar_mcp.core.context.ToolContext`)**: Any parameter annotated as `ToolContext` receives the active turn's `ToolContext` instance. You can also access it anywhere inside an executing tool via `current_tool_context()`.
 - **`ASGIConnection` / `Request`**: Any parameter annotated as `Request` or `ASGIConnection` receives `ctx.request`.
-- **Universal DI (`Provide`, `FromDishka[T]`, `Inject()`, `Depends(fn)`)**: Parameters matched by controller/tool `dependencies={"svc": Provide(...)}`, Dishka `FromDishka[T]`, or `Annotated[T, Inject()]` / `Depends(fn)` are stripped from `Tool.parameters` (`tool.stripped_parameters`) and resolved inside an `AsyncExitStack` on each `await tool.execute(arguments, context=ctx)` call.
+- **Universal DI (`Provide`, `Dependency`, `FromDishka[T]`)**: Parameters matched by controller/tool `dependencies={"svc": Provide(...)}`, `Annotated[T, Dependency(skip_validation=True)]`, or Dishka `FromDishka[T]` are stripped from `Tool.parameters` (`tool.stripped_parameters`) and resolved inside an `AsyncExitStack` on each `await tool.execute(arguments, context=ctx)` call.
 - **Sync and Async Callables**: Async functions are awaited directly; synchronous functions are offloaded via `anyio.to_thread.run_sync`.
 
 `ToolContext` carries the caller's security and session metadata across HTTP requests, A2A tasks, and queued worker turns:
@@ -63,7 +63,7 @@ When `@tool` builds the tool's public JSON Schema (`Tool.parameters`), it inspec
 
 ---
 
-## `AgentRuntime` & Litestar Plugin Integration
+## AgentRuntime & Litestar Plugin Integration
 
 `AgentRuntime` (`litestar_mcp.agent.AgentRuntime`) implements Litestar's `InitPluginProtocol` and manages the multi-turn model invocation loop, parallel tool execution (`execute_tool_calls`), session locking/persistence, history compaction, and OpenTelemetry span emission.
 
@@ -77,15 +77,15 @@ Registering `AgentRuntime` in `Litestar(plugins=[...])` automatically registers 
 
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `target` | `Agent \| AgentGroup` | *(required)* | Single `Agent` or multi-agent `AgentGroup` executed by the runtime. |
-| `default_model` | `ModelClient \| None` | `None` | Fallback `ModelClient` used when an `Agent.model` is `None`. Defaults to `GoogleGenAIClient()` if unset. |
-| `budget` | `TurnBudget \| None` | `TurnBudget()` | Per-turn execution limits (`max_turns`, `max_tool_calls`, `timeout_seconds`). |
-| `sessions` | `SessionStore \| None` | `MemorySessionStore()` | Conversation history store keyed by `(owner, session_id)`. |
-| `span_manager` | `SpanManager \| None` | `SpanManager()` | OpenTelemetry GenAI span manager for agent turns and tool executions. |
-| `compaction_hook` | `CompactionHook \| None` | `None` | Optional sync or async `(list[AgentMessage]) -> list[AgentMessage]` callback invoked before each model iteration to summarize or prune history. |
+| `target` | `Agent or AgentGroup` | *(required)* | Single `Agent` or multi-agent `AgentGroup` executed by the runtime. |
+| `default_model` | `ModelClient or None` | `None` | Fallback `ModelClient` used when an `Agent.model` is `None`. Defaults to `GoogleGenAIClient()` if unset. |
+| `budget` | `TurnBudget or None` | `TurnBudget()` | Per-turn execution limits (`max_turns`, `max_tool_calls`, `timeout_seconds`). |
+| `sessions` | `SessionStore or None` | `MemorySessionStore()` | Conversation history store keyed by `(owner, session_id)`. |
+| `span_manager` | `SpanManager or None` | `SpanManager()` | OpenTelemetry GenAI span manager for agent turns and tool executions. |
+| `compaction_hook` | `CompactionHook or None` | `None` | Optional sync or async `(list[AgentMessage]) -> list[AgentMessage]` callback invoked before each model iteration to summarize or prune history. |
 | `stream_buffer` | `int` | `64` | Capacity of the in-memory `anyio` object stream buffering `AgentStreamFrame` events. |
 
-### Execution Methods (`TurnRequest` & `TurnResponse`)
+### Execution Methods
 
  You can invoke `AgentRuntime` directly from Python code, background tasks, or custom Litestar handlers using `TurnRequest`:
 
@@ -96,7 +96,7 @@ Registering `AgentRuntime` in `Litestar(plugins=[...])` automatically registers 
 
 ---
 
-## `TurnBudget` Guardrails & `BudgetExceededError`
+## TurnBudget Guardrails
 
 Every turn executed by `AgentRuntime` is bounded by a `TurnBudget` (`litestar_mcp.agent.TurnBudget`) to prevent runaway tool loops, unbounded token consumption, or hung upstream model calls:
 
@@ -115,7 +115,7 @@ When `BudgetExceededError` (`litestar_mcp.agent.BudgetExceededError`, a subclass
 
 ---
 
-## `ModelClient` Protocol & `MockModelClient`
+## ModelClient Protocol & MockModelClient
 
 `AgentRuntime` communicates with LLMs through the runtime-checkable `ModelClient` protocol (`litestar_mcp.agent.ModelClient`):
 
@@ -138,7 +138,7 @@ class ModelClient(Protocol):
 
 Each yielded `ModelDelta` (`litestar_mcp.agent.ModelDelta`) carries an `event_type` (`"delta"`, `"thought"`, `"tool_call"`, or `"usage"`), incremental `text` / `thought`, tool call metadata (`tool_name`, `call_id`, `arguments`, `provider_metadata`), or token counts (`prompt_tokens`, `completion_tokens`, `thought_tokens`).
 
-### Deterministic Testing with `MockModelClient`
+### Deterministic Testing with MockModelClient
 
 For fast offline unit and integration tests without network calls or API keys, pass a `MockModelClient` (`litestar_mcp.agent.MockModelClient`) pre-loaded with scripted `ModelDelta` sequences per model iteration:
 
@@ -179,7 +179,7 @@ runtime = AgentRuntime(agent)
 
 ---
 
-## `GoogleGenAIClient` (`gemini-3.8-flash`)
+## GoogleGenAIClient
 
 `GoogleGenAIClient` (`litestar_mcp.agent.GoogleGenAIClient`, enabled via `litestar-mcp[google-genai]`) wraps the official `google-genai` SDK with native support for Gemini thinking models, Vertex AI, and shared `httpx2.AsyncClient` connection pooling:
 
@@ -192,16 +192,16 @@ runtime = AgentRuntime(agent)
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `model` | `str` | `"gemini-3.8-flash"` | Gemini model identifier passed to `client.aio.models.generate_content_stream`. |
-| `api_key` | `str \| None` | `None` | Gemini Developer API key (reads `GEMINI_API_KEY` / `GOOGLE_API_KEY` from environment when omitted). |
-| `vertexai` | `bool \| None` | `None` | Enable Vertex AI endpoint routing (`provider_name` reports `"gcp.vertex_ai"` when `True`, `"gcp.gemini"` otherwise). |
-| `project` / `location` | `str \| None` | `None` | Google Cloud project ID and region for Vertex AI requests. |
-| `thinking_budget` | `int \| None` | `None` | Token budget passed to `google.genai.types.ThinkingConfig(thinking_budget=...)`. |
-| `thinking_level` | `str \| None` | `None` | Reasoning level passed to `ThinkingConfig(thinking_level=...)`. |
-| `include_thoughts` | `bool \| None` | `None` | Request reasoning traces in candidate parts (`ModelDelta(event_type="thought", ...)`). |
-| `temperature` | `float \| None` | `None` | Sampling temperature passed to `GenerateContentConfig`. |
-| `http_client` | `httpx2.AsyncClient \| None` | `None` | Shared `httpx2.AsyncClient` wired into `google.genai.types.HttpOptions(httpx_async_client=...)`. |
-| `http_options` | `Any \| None` | `None` | Explicit `google.genai.types.HttpOptions` override. |
-| `client` | `Any \| None` | `None` | Pre-constructed `google.genai.Client` instance. |
+| `api_key` | `str or None` | `None` | Gemini Developer API key (reads `GEMINI_API_KEY` / `GOOGLE_API_KEY` from environment when omitted). |
+| `vertexai` | `bool or None` | `None` | Enable Vertex AI endpoint routing (`provider_name` reports `"gcp.vertex_ai"` when `True`, `"gcp.gemini"` otherwise). |
+| `project` / `location` | `str or None` | `None` | Google Cloud project ID and region for Vertex AI requests. |
+| `thinking_budget` | `int or None` | `None` | Token budget passed to `google.genai.types.ThinkingConfig(thinking_budget=...)`. |
+| `thinking_level` | `str or None` | `None` | Reasoning level passed to `ThinkingConfig(thinking_level=...)`. |
+| `include_thoughts` | `bool or None` | `None` | Request reasoning traces in candidate parts (`ModelDelta(event_type="thought", ...)`). |
+| `temperature` | `float or None` | `None` | Sampling temperature passed to `GenerateContentConfig`. |
+| `http_client` | `httpx2.AsyncClient or None` | `None` | Shared `httpx2.AsyncClient` wired into `google.genai.types.HttpOptions(httpx_async_client=...)`. |
+| `http_options` | `Any or None` | `None` | Explicit `google.genai.types.HttpOptions` override. |
+| `client` | `Any or None` | `None` | Pre-constructed `google.genai.Client` instance. |
 
 ### Thought-Signature Preservation Across Function Calls
 

@@ -8,17 +8,17 @@ The Model Context Protocol Tasks extension (`io.modelcontextprotocol/tasks`) all
 
 ---
 
-## Enabling MCP Tasks (`MCPTaskConfig`)
+## Enabling MCP Tasks
 
 Enable the extension by setting `MCPConfig(tasks=True)` or passing an explicit `MCPTaskConfig` instance:
 
 ```python title="docs/examples/snippets/configuration_tasks.py"
---8<-- "docs/examples/snippets/configuration_tasks.py"
+--8<-- "docs/examples/snippets/configuration_tasks.py:example"
 ```
 
 When `tasks` is enabled (or auto-enabled because `litestar-queues` `QueuePlugin` is registered on the application), `LitestarMCP` advertises `"extensions": {"io.modelcontextprotocol/tasks": {}}` inside `server/discover` and `initialize` capabilities.
 
-### `MCPTaskConfig` Reference
+### MCPTaskConfig Reference
 
 | Field | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
@@ -27,7 +27,7 @@ When `tasks` is enabled (or auto-enabled because `litestar-queues` `QueuePlugin`
 | `max_ttl_ms` | `int` | `3_600_000` | Maximum time-to-live in milliseconds (1 hour) used to clamp client-requested `ttlMs` values. Must be `>= default_ttl_ms`. |
 | `poll_interval_ms` | `int` | `1_000` | Suggested polling cadence in milliseconds advertised as `pollIntervalMs` on serialized `TaskRecord` payloads. Must be positive. |
 | `status_callback` | `Callable[[TaskRecord], Awaitable[None]] or None` | `None` | Optional async callback invoked on every task state transition (`working`, `input_required`, `completed`, `failed`, `cancelled`) before `LitestarMCP` publishes a `notifications/tasks` event. |
-| `executor` | `MCPTaskExecutor or Literal["in_process"] or bool or None` | `None` | Pluggable task runner executing task-augmented tool calls outside the creating HTTP request. `None` auto-wires `QueueTaskExecutor` when `QueuePlugin` is present, or falls back to `InProcessTaskExecutor`. Pass `"in_process"` or `False` to force in-process execution even when `QueuePlugin` is installed. |
+| `executor` | `MCPTaskExecutor or Literal["in_process"] or bool or None` | `None` | Pluggable task runner executing task-augmented tool calls outside the creating HTTP request. `None` auto-wires `QueueTaskExecutor` when `QueuePlugin` is present, or falls back to the built-in in-process task runner in `MCPHandlerService` and `MCPTaskStore`. Pass `"in_process"` or `False` to force in-process execution even when `QueuePlugin` is installed. |
 
 ---
 
@@ -64,15 +64,16 @@ stateDiagram-v2
 - **`failed`**: Terminal state recorded when a protocol-level `JSONRPCErrorException` or unrecoverable worker failure occurs. Carries a structured `error: {"code": ..., "message": ..., "data": ...}` payload.
 - **`cancelled`**: Terminal state recorded after cooperative cancellation completes via `tasks/cancel`.
 
-> **Note:** Terminal statuses (`completed`, `failed`, and `cancelled`) are monotonic. Once `record.is_terminal()` is `True`, subsequent transition calls are no-ops.
+!!! note
+    Terminal statuses (`completed`, `failed`, and `cancelled`) are monotonic. Once `record.is_terminal()` is `True`, subsequent transition calls are no-ops.
 
 ---
 
-## Multi-Round Input Requests (`MCPInputRequiredResult`)
+## Multi-Round Input Requests
 
 Tools that require human confirmation, form elicitation, or client-side sampling mid-execution return an `MCPInputRequiredResult` instance and read client responses from `get_mcp_request_context()`:
 
-### 1. Mid-Task Pause and `tasks/update` Resumption
+### Mid-Task Pause and Resumption
 
 When a running background task returns `MCPInputRequiredResult(input_requests={...}, request_state="...")`:
 
@@ -94,12 +95,12 @@ When a running background task returns `MCPInputRequiredResult(input_requests={.
 3. `MCPTaskStore.update()` merges each accepted response key against the outstanding `input_requests`. If additional keys remain unanswered, the task stays in `input_required` with the remaining `inputRequests`.
 4. Once all outstanding keys are satisfied, `MCPTaskStore.update()` transitions the task back to `status="working"` and resumes the tool handler with `context.input_responses` and `context.request_state` populated on `get_mcp_request_context()`.
 
-### 2. Pre-Task Synchronous Input (`task_input_before_start=True`)
+### Pre-Task Synchronous Input
 
 Some tools need to complete an initial elicitation or approval round *before* allocating a background `TaskRecord` or enqueuing a job. Set `task_input_before_start=True` on `@mcp_tool` (or `mcp_task_input_before_start=True` in route `opt`):
 
 ```python title="docs/examples/snippets/tool_task_input_before_start.py"
---8<-- "docs/examples/snippets/tool_task_input_before_start.py"
+--8<-- "docs/examples/snippets/tool_task_input_before_start.py:example"
 ```
 
 1. **Initial `tools/call`**: Because `context.input_responses` is `None`, `MCPHandlerService` runs the handler synchronously inside the initial HTTP request. Returning `MCPInputRequiredResult` sends `{"resultType": "input_required", "inputRequests": {...}, "requestState": "..."}` directly to the caller without creating a task record.
@@ -114,15 +115,14 @@ All task methods require the caller to advertise `extensions["io.modelcontextpro
 | Method | Parameters | Response & Behavior |
 | :--- | :--- | :--- |
 | `tools/call` *(task-promoted)* | `{"name": "<tool>", "arguments": {...}}` | Creates a `TaskRecord` in `MCPTaskStore`, dispatches execution to the active `MCPTaskExecutor`, and returns `{"resultType": "task", "taskId": "...", "status": "working", "createdAt": "...", "lastUpdatedAt": "...", "ttlMs": 300000, "pollIntervalMs": 1000}`. |
-| `tasks/get` | `{"taskId": "<id>"}` | Returns the serialized `TaskRecord` (`taskId`, `status`, `createdAt`, `lastUpdatedAt`, `ttlMs`, `pollIntervalMs`, and optional `statusMessage`, `inputRequests`, `result`, or `error`). Raises `INVALID_PARAMS` (`-32602`) if the task does not exist or belongs to a different `owner_id`. |
-| `tasks/result` | *(Accessed via `tasks/get`)* | When `status == "completed"`, the `tasks/get` payload includes `"result": {"resultType": "complete", "content": [...], "isError": false | true}`. When `status == "failed"`, `tasks/get` includes `"error": {"code": ..., "message": ...}`. |
-| `tasks/list` / `notifications/tasks` | Subscription stream / `status_callback` | Task state changes invoke `MCPTaskConfig.status_callback(record)` and publish `"notifications/tasks"` with `record.to_dict()` to active subscription streams. |
+| `tasks/get` | `{"taskId": "<id>"}` | Returns the serialized `TaskRecord` (`taskId`, `status`, `createdAt`, `lastUpdatedAt`, `ttlMs`, `pollIntervalMs`, and optional `statusMessage` or `inputRequests`). When `status == "completed"`, `tasks/get` includes `"result": {"resultType": "complete", "content": [...], "isError": false}` (or `"isError": true`); when `status == "failed"`, `tasks/get` includes `"error": {"code": ..., "message": ...}`. Raises `INVALID_PARAMS` (`-32602`) if the task does not exist or belongs to a different `owner_id`. |
+| `notifications/tasks` *(server notification)* | `subscriptions/listen` stream / `status_callback` | Task state transitions invoke `MCPTaskConfig.status_callback(record)` and publish `"notifications/tasks"` with `record.to_dict()` to active `subscriptions/listen` streams. |
 | `tasks/update` | `{"taskId": "<id>", "inputResponses": {...}}` | Supplies answers to pending `inputRequests` while `status == "input_required"`. When all outstanding keys are answered, transitions the task to `working`, wakes the local runner or calls `executor.resume(call)`, and returns `{}`. |
 | `tasks/cancel` | `{"taskId": "<id>"}` | Requests cooperative cancellation of a non-terminal task (`working` or `input_required`) and returns `{}`. The task transitions to `status="cancelled"` once the in-process runner or distributed queue worker acknowledges cancellation. |
 
 ---
 
-## SEP-2663 `isError: true` vs Protocol Error Handling
+## SEP-2663 Tool Errors vs Protocol Error Handling
 
 In accordance with the MCP tool error contract (SEP-2663), `litestar-mcp` distinguishes between **application/tool errors** (which an LLM can read and recover from) and **protocol errors**:
 

@@ -15,7 +15,7 @@ title: Tasks, Queues & Workflows
 
 | Capability | Single-Process (Base Package) | Distributed (`litestar-mcp[queues]`) | Shared State & Coordination |
 | :--- | :--- | :--- | :--- |
-| **MCP Tasks (`io.modelcontextprotocol/tasks`)** | `InProcessTaskExecutor` (process-local `asyncio.Task` runners in `MCPTaskStore`) | `QueueTaskExecutor` (auto-wired when `QueuePlugin` is registered; dispatches `litestar_mcp.mcp.run_tool_task`) | `MCPTaskStore` backed by the `"litestar_mcp_tasks"` Litestar `Store` + `mcp-task:{id}:job` tracking |
+| **MCP Tasks (`io.modelcontextprotocol/tasks`)** | Built-in in-process runner (`MCPTaskConfig(executor="in_process")` or default `executor=None` without `QueuePlugin`; process-local `asyncio.Task` runners in `MCPHandlerService` and `MCPTaskStore`) | `QueueTaskExecutor` (auto-wired when `QueuePlugin` is registered; dispatches `litestar_mcp.mcp.run_tool_task`) | `MCPTaskStore` backed by the `"litestar_mcp_tasks"` Litestar `Store` + `mcp-task:{id}:job` tracking |
 | **Principal & DI Context** | Clones the active HTTP `Request` scope in-memory (stripping request-scoped Dishka containers for fresh resolution) | Captures `PrincipalSnapshot` (`user`, `auth`, `litestar-security` `SecurityContext`) and rehydrates `Provide` + Dishka `Scope.REQUEST` in workers | `ToolTaskCall` persisted in `TaskRecord.dispatch` (`dispatchInternal`) |
 | **Cooperative Cancellation & `input_required` Resume** | Local `asyncio.Event` / `asyncio.Queue` signalling within the originating process | Cross-replica `QueueService.cancel_task(include_running=True)` and stateless `executor.resume(call)` re-enqueueing on `tasks/update` | Shared `Store` record + `litestar-queues` durable cancellation signal |
 | **DAG Workflows (`DynamicWorkflow`)** | `WorkflowEngine` (topological wave execution via in-process AnyIO `TaskGroup` and memory streams) | `DurableWorkflowEngine` (plugin injecting `workflow_engine`, scheduling `advance_workflow`, `execute_workflow_node`, and `watch_workflow`) | `WorkflowStore` backed by `"litestar_mcp_workflows"` with single-writer run and write-once node keys |
@@ -25,13 +25,13 @@ title: Tasks, Queues & Workflows
 
 ## Architecture Overview
 
-The interactive diagram below illustrates how task-augmented `tools/call` requests, principal snapshots, cooperative cancellation, and multi-round `MCPInputRequiredResult` resumptions flow through `QueueTaskExecutor` and `InProcessTaskExecutor`:
+The interactive diagram below illustrates how task-augmented `tools/call` requests, principal snapshots, cooperative cancellation, and multi-round `MCPInputRequiredResult` resumptions flow through `QueueTaskExecutor` and the built-in in-process task runner:
 
 --8<-- "tools/docs/includes/diagram-mcp-tasks-and-queues.html"
 
 ---
 
-## Installing `litestar-mcp[queues]`
+## Installing litestar-mcp[queues]
 
 Install the `queues` extra to unlock `litestar_mcp.queues` (`QueueTaskExecutor`, `DurableWorkflowEngine`, `WorkflowStore`, `TaskDependencyChain`, `QueuedAgentChatController`, `QueuedTurnManager`, `AgentRegistry`, and `PrincipalSnapshot`):
 

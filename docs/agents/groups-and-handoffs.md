@@ -55,7 +55,7 @@ At construction time, `AgentGroup` validates structural invariants and raises `I
 
 ---
 
-## Automatic `transfer_to_agent` Tool Synthesis
+## Automatic Handoff Tool Synthesis
 
 When `specialists` is non-empty, `AgentGroup` synthesizes a group-owned handoff tool named `transfer_to_agent` (`litestar_mcp.agent.spec.TRANSFER_TOOL_NAME`):
 

@@ -17,12 +17,12 @@ flowchart LR
     LB --> Web2["Web Replica 2 (LitestarMCP)"]
     Web1 --> Shared["Shared StoreRegistry + ChannelsPlugin + Queue Backend"]
     Web2 --> Shared
-    Shared --> Workers["External Queue Workers (litestar workers run)"]
+    Shared --> Workers["External Queue Workers (litestar queues run)"]
 ```
 
 ---
 
-## 1. Stateless Streamable HTTP & `allowed_origins`
+## Stateless Streamable HTTP & Allowed Origins
 
 `LitestarMCP` serves Streamable HTTP on `MCPConfig.base_path` (default `/mcp`) without requiring sticky load-balancer sessions:
 
@@ -42,7 +42,7 @@ config = MCPConfig(
 
 ---
 
-## 2. Shared `StoreRegistry` (`litestar_mcp_tasks`, `litestar_mcp_workflows`, Sessions)
+## Shared StoreRegistry for Tasks, Workflows & Sessions
 
 By default, Litestar initializes an in-memory `MemoryStore` when no `stores` registry is configured. In a multi-replica deployment, a process-local `MemoryStore` causes `tasks/get`, `tasks/update`, `tasks/cancel`, `workflow_engine.snapshot()`, and multi-turn agent sessions to fail with not-found errors when routed to a different replica.
 
@@ -88,7 +88,7 @@ Because `StoreRegistry(default_factory=root_redis_store.with_namespace)` automat
 
 ---
 
-## 3. Cross-Worker `ChannelsPlugin` (`subscription_channels`)
+## Cross-Worker ChannelsPlugin
 
 Two real-time streaming subsystems use Litestar's `ChannelsPlugin` to fan out events across processes:
 
@@ -114,32 +114,33 @@ mcp_config = MCPConfig(
 
 ---
 
-## 4. Durable `litestar-queues` Backends & Worker Placement
+## Durable Queue Backends & Worker Placement
 
 For multi-replica production deployments, configure `QueuePlugin` with a durable backend (such as Redis or SQLSpec PostgreSQL) and decouple web replicas from queue workers using `WorkerConfig(placement="external")`:
 
 | `WorkerConfig.placement` | Execution Model | When to Use |
 | :--- | :--- | :--- |
-| **`"external"`** *(Recommended for Production)* | Web replicas only enqueue tasks, cancel jobs, and serve HTTP/SSE requests. Dedicated worker containers claim and execute tasks via `litestar workers run`. | Multi-replica production deployments, Kubernetes / Cloud Run worker pools, and CPU- or LLM-heavy workloads. |
+| **`"external"`** *(Recommended for Production)* | Web replicas only enqueue tasks, cancel jobs, and serve HTTP/SSE requests. Dedicated worker containers claim and execute tasks via `litestar queues run`. | Multi-replica production deployments, Kubernetes / Cloud Run worker pools, and CPU- or LLM-heavy workloads. |
 | **`"server"`** / **`"asgi"`** | Background queue workers start inside the same ASGI server lifespan as the web application. | Single-container deployments, staging previews, and local development. |
 
-### Production Configuration (`placement="external"`)
+### Production Configuration
 
 ```python
 from litestar import Litestar
 from litestar_queues import QueueConfig, QueuePlugin, WorkerConfig
+from litestar_queues.backends.redis import RedisBackendConfig
 
 from litestar_mcp import LitestarMCP, MCPConfig
 
 queue_plugin = QueuePlugin(
     config=QueueConfig(
         queue_backend="redis",
-        broker_url="redis://redis.internal:6379/0",
+        backend_config=RedisBackendConfig(url="redis://redis.internal:6379/0"),
         worker=WorkerConfig(
             placement="external",
             run_app_lifespan=True,
-            queues=["mcp", "workflow", "agent", "heavy"],
-            concurrency=8,
+            queues=("mcp", "workflow", "agent", "heavy"),
+            max_concurrency=8,
         ),
     ),
 )
@@ -152,11 +153,12 @@ app = Litestar(
 )
 ```
 
-> **Note:** Always keep `WorkerConfig(run_app_lifespan=True)` enabled for external workers. Running the Litestar application lifespan ensures `LitestarMCP.on_startup` binds `MCPTaskRuntime` to `QueueTaskExecutor`, opens shared `StoreRegistry` and `ChannelsPlugin` connections, and initializes database pools or Dishka containers before the worker claims its first job.
+!!! note
+    Always keep `WorkerConfig(run_app_lifespan=True)` enabled for external workers. Running the Litestar application lifespan ensures `LitestarMCP.on_startup` binds `MCPTaskRuntime` to `QueueTaskExecutor`, opens shared `StoreRegistry` and `ChannelsPlugin` connections, and initializes database pools or Dishka containers before the worker claims its first job.
 
 ### Launching Web Replicas and External Workers
 
-Run stateless web replicas with Uvicorn or Gunicorn, and launch dedicated queue worker processes from the same application entrypoint using `litestar workers run`:
+Run stateless web replicas with Uvicorn or Gunicorn, and launch dedicated queue worker processes from the same application entrypoint using `litestar queues run`:
 
 === "Web Replicas"
 
@@ -167,12 +169,12 @@ Run stateless web replicas with Uvicorn or Gunicorn, and launch dedicated queue 
 === "External Queue Workers"
 
     ```bash
-    litestar --app app:app workers run
+    litestar --app app:app queues run
     ```
 
 ---
 
-## 5. Production Readiness & Conformance Testing
+## Production Readiness & Conformance Testing
 
 Before promoting a deployment configuration to production, verify protocol compliance against the official MCP `2026-07-28` conformance suite under both in-process and distributed `QueueTaskExecutor` modes:
 
@@ -188,6 +190,6 @@ Before promoting a deployment configuration to production, verify protocol compl
 | **`Litestar(stores=...)`** | `MemoryStore` | Shared `StoreRegistry` (e.g. `RedisStore`) backing `"litestar_mcp_tasks"` and `"litestar_mcp_workflows"` |
 | **`AgentRuntime.sessions`** | `MemorySessionStore` | `LitestarStoreSessionStore` bound to a shared `Store` namespace |
 | **`MCPConfig.subscription_channels`** | `None` (process-local SSE) | Shared `ChannelsPlugin` (e.g. `RedisChannelsPubSubBackend`) |
-| **`QueueConfig.queue_backend`** | `"memory"` | Durable broker (`"redis"` or `"sqlspec"`) |
-| **`WorkerConfig.placement`** | In-process worker | `"external"` launched via `litestar --app app:app workers run` with `run_app_lifespan=True` |
+| **`QueueConfig.queue_backend`** | `"ephemeral"` | Durable broker (`"redis"` or `"sqlspec"`) |
+| **`WorkerConfig.placement`** | In-process worker | `"external"` launched via `litestar --app app:app queues run` with `run_app_lifespan=True` |
 | **`MCPConfig.allowed_origins`** | Same-origin only | Explicit allowlist of trusted browser / gateway origins |

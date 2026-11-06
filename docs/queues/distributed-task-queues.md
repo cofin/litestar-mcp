@@ -15,7 +15,7 @@ When `litestar-mcp[queues]` is installed and `litestar-queues` `QueuePlugin` is 
 Registering `QueuePlugin` and `LitestarMCP` on the same `Litestar` application is all that is required:
 
 ```python title="docs/examples/snippets/mcp_tasks_queue.py"
---8<-- "docs/examples/snippets/mcp_tasks_queue.py"
+--8<-- "docs/examples/snippets/mcp_tasks_queue.py:example"
 ```
 
 During `on_app_init`, `LitestarMCP._configure_task_runtime()` inspects `app_config.plugins`:
@@ -27,7 +27,7 @@ During `on_app_init`, `LitestarMCP._configure_task_runtime()` inspects `app_conf
 
 ---
 
-## Explicit `QueueTaskExecutor` Configuration
+## Explicit QueueTaskExecutor Configuration
 
 To customize the default queue name, per-attempt execution timeout, or custom principal loader callback, pass an explicit `QueueTaskExecutor` to `MCPTaskConfig(executor=...)`:
 
@@ -112,7 +112,7 @@ class AnalyticsController(Controller):
 
 ## Automatic Security, Principal & Dependency Rehydration in Workers
 
-When a task-augmented `tools/call` runs in a separate `litestar-queues` worker process (`litestar workers run`), the original HTTP connection is no longer present. `LitestarMCP` and `QueueTaskExecutor` automatically capture the caller's security context at enqueue time and reconstruct an internal ASGI request scope inside the worker:
+When a task-augmented `tools/call` runs in a separate `litestar-queues` worker process (`litestar queues run` / `litestar --app app:app queues run`), the original HTTP connection is no longer present. `LitestarMCP` and `QueueTaskExecutor` automatically capture the caller's security context at enqueue time and reconstruct an internal ASGI request scope inside the worker:
 
 ```mermaid
 flowchart LR
@@ -122,7 +122,7 @@ flowchart LR
     Scope --> Handler["Route Guards + Provide + Dishka Scope.REQUEST"]
 ```
 
-### 1. Principal & `litestar-security` `SecurityContext` Snapshot
+### Principal & SecurityContext Snapshot
 
 Before submitting a `ToolTaskCall` to `QueueTaskExecutor`, `MCPHandlerService` calls `extract_principal_snapshot(scope.get("user"), scope.get("auth"), scope.get("litestar_security"), context.owner_id)`:
 
@@ -130,7 +130,7 @@ Before submitting a `ToolTaskCall` to `QueueTaskExecutor`, `MCPHandlerService` c
 - **`litestar-security` `SecurityContext`**: When `litestar-security` is active on the request, serializes `Principal` (`account_id`, `subject`, `mechanisms`, `attributes`, `restrictions`), `AuthorizationSnapshot` (`roles`, `permissions`, `scopes`, `attributes`, `tenant_roles`), and `CredentialRestrictions` (`scopes`, `tenant_ids`, `roles`) under `"__litestar_security__"`.
 - **Standard `request.auth`**: When custom Litestar authentication middleware populates `scope["auth"]`, serializes the claims payload under `"__auth__"`.
 
-### 2. Worker Scope Rehydration (`run_task_attempt`)
+### Worker Scope Rehydration
 
 When the worker claims `run_mcp_tool_task` (`RUN_TOOL_TASK = "litestar_mcp.mcp.run_tool_task"`):
 
@@ -141,7 +141,8 @@ When the worker claims `run_mcp_tool_task` (`RUN_TOOL_TASK = "litestar_mcp.mcp.r
 3. **Existing `Provide` User Dependencies**: If `principal_loader` was not supplied on `QueueTaskExecutor`, `_rehydrate_user_from_handler_dependencies()` inspects the target route handler's Litestar `dependencies` for a provider named `current_user`, `user`, or `principal`. If found, it invokes that provider with any matching parameters (`request`, `connection`, `state`, `scope`, `owner_id`, `user_id`, `principal_id`) and binds the resolved domain user onto `request.scope["user"]`.
 4. **Litestar `Provide` & Dishka `Scope.REQUEST` Containers**: `execute_tool` runs the synthesized request through the full Litestar handler pipeline. Route guards, `Provide` dependencies, and Dishka `FromDishka[T]` request-scoped containers resolve identically to a live HTTP request.
 
-> **Note:** Standalone `litestar-queues` workers (`WorkerConfig(placement="external")`) must keep `WorkerConfig.run_app_lifespan=True` (the default in `litestar-queues`) so `LitestarMCP.on_startup` binds `MCPTaskRuntime` and initializes application lifespan resources (such as database pools and Dishka containers) before the worker claims tasks.
+!!! note
+    Standalone `litestar-queues` workers (`WorkerConfig(placement="external")`) must keep `WorkerConfig.run_app_lifespan=True` (the default in `litestar-queues`) so `LitestarMCP.on_startup` binds `MCPTaskRuntime` and initializes application lifespan resources (such as database pools and Dishka containers) before the worker claims tasks.
 
 ---
 
@@ -155,7 +156,7 @@ When the worker claims `run_mcp_tool_task` (`RUN_TOOL_TASK = "litestar_mcp.mcp.r
 - **Queue Attempt Key**: Each attempt is enqueued on `litestar-queues` with `key=f"mcp-task:{call.task_id}:{call.attempt}"`, ensuring idempotent scheduling per attempt number (`attempt` starts at `1`).
 - **Active Job Pointer Key**: After `QueueService.enqueue()` returns a queue job UUID, `QueueTaskExecutor._enqueue_attempt()` persists that UUID under `mcp-task:{task_id}:job` in `MCPTaskStore` with the task's TTL (`expires_in`).
 
-### Cooperative Cancellation (`cancel_task(include_running=True)`)
+### Cooperative Cancellation
 
 When ANY web replica receives `tasks/cancel` for `taskId`:
 
@@ -165,7 +166,7 @@ When ANY web replica receives `tasks/cancel` for `taskId`:
 4. Inside the worker executing `run_mcp_tool_task`, a background watcher coroutine (`_cancel_on_signal`) awaits `get_current_task_context().wait_cancelled()`. When the durable cancellation signal arrives, `_cancel_on_signal` cancels the AnyIO `CancelScope` wrapping `run_attempt`.
 5. `MCPTaskStore.mark_cancelled(record.task_id)` transitions the task record to `status="cancelled"` and emits `notifications/tasks`.
 
-### Cross-Replica `input_required` Resumption
+### Cross-Replica Input-Required Resumption
 
 Because `QueueTaskExecutor` does not hold open an idle worker slot while waiting for human input:
 

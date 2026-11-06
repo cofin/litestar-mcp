@@ -10,19 +10,19 @@ title: A2A 1.0 Protocol & HTTP+JSON
 
 ---
 
-## Quickstart with `LitestarA2A`
+## Quickstart with LitestarA2A
 
 Pass an official `a2a.types.AgentCard` and either an `a2a.server.request_handlers.RequestHandler` (such as `DefaultRequestHandler`) or an `a2a.server.agent_execution.AgentExecutor` directly to `LitestarA2A`:
 
 ```python title="docs/examples/snippets/a2a_plugin.py"
---8<-- "docs/examples/snippets/a2a_plugin.py"
+--8<-- "docs/examples/snippets/a2a_plugin.py:example"
 ```
 
 When you pass an `AgentExecutor` instance instead of a `RequestHandler`, `LitestarA2A.__init__` automatically wraps it in `DefaultRequestHandler(agent_executor=request_handler, task_store=InMemoryTaskStore(), agent_card=agent_card)`.
 
 ---
 
-## `A2AConfig` Reference
+## A2AConfig Reference
 
 Configure mount paths, transport bindings, route security options, caching, and stream cleanup via `A2AConfig` (`litestar_mcp.a2a.A2AConfig`):
 
@@ -33,16 +33,16 @@ Configure mount paths, transport bindings, route security options, caching, and 
 | `guards` | `Sequence[Guard]` | `()` | Litestar route guards applied to JSON-RPC and `HTTP+JSON` execution routes (the public agent card route is unguarded by `A2AConfig.guards`). |
 | `route_opt` | `dict[str, Any]` | `{}` | Extra Litestar `opt` entries merged into JSON-RPC and `HTTP+JSON` routes alongside `{"exclude_from_csrf": True}`. |
 | `agent_card_route_opt` | `dict[str, Any]` | `{}` | Extra Litestar `opt` entries merged into the agent card route alongside `{"exclude_from_auth": True, "exclude_from_csrf": True}`. |
-| `tenant_header` | `str \| None` | `"X-A2A-Tenant"` | Fallback HTTP header inspected when neither the request payload nor `/{tenant:str}` URL path specifies a tenant. |
+| `tenant_header` | `str or None` | `"X-A2A-Tenant"` | Fallback HTTP header inspected when neither the request payload nor `/{tenant:str}` URL path specifies a tenant. |
 | `enable_http_json` | `bool` | `True` | Mount native A2A 1.0 `HTTP+JSON` REST routes alongside the JSON-RPC 2.0 endpoint. |
-| `context_builder` | `Callable \| None` | `None` | Optional `(request, context) -> ServerCallContext \| Awaitable[ServerCallContext]` callback that authorizes and returns the authoritative `ServerCallContext`. |
+| `context_builder` | `Callable or None` | `None` | Optional `(request, context) -> ServerCallContext or Awaitable[ServerCallContext]` callback that authorizes and returns the authoritative `ServerCallContext`. |
 | `include_in_schema` | `bool` | `False` | Whether to include A2A transport and card routes in the application's OpenAPI schema. |
 | `agent_card_max_age` | `int` | `300` | `Cache-Control: public, max-age=<seconds>` header value on `/.well-known/agent-card.json`. Must be `>= 0`. |
 | `stream_cleanup_timeout` | `float` | `5.0` | Positive finite timeout (in seconds) bounding cooperative SSE producer cleanup after a stream response closes. |
 
 ---
 
-## Agent Card Discovery (`/.well-known/agent-card.json`)
+## Agent Card Discovery
 
 At application initialization (`on_app_init`), `LitestarA2A` validates `agent_card` and pre-renders its ProtoJSON payload:
 
@@ -51,15 +51,16 @@ At application initialization (`on_app_init`), `LitestarA2A` validates `agent_ca
 3. **Route Collision Detection**: If any existing route on the Litestar application already occupies `A2AConfig.path` or `A2AConfig.agent_card_path`, `on_app_init` raises `ValueError("A2A route collision: ...")`.
 4. **Skill Metadata & `agent_card_route_opt`**: When bridging agents with `agent_to_a2a`, attached `SkillController` instances automatically compile into `AgentSkill` entries on the card via `SkillController.to_agent_skill()`. When configuring `LitestarA2A` directly, you can tag routes and card handlers via `agent_card_route_opt` (for example `agent_card_route_opt={"a2a_skill": ...}` or public security policy markers) while keeping execution routes protected by `route_opt`.
 
-> **Note:** An `AgentCard`'s `AgentSkill` entries describe high-level A2A task capabilities advertised to peer agents and are distinct from MCP Agent Skills (`SEP-2640` `SKILL.md` bundles served over `/mcp` via `skills/list` and `skills/load`).
+!!! note
+    An `AgentCard`'s `AgentSkill` entries describe high-level A2A task capabilities advertised to peer agents and are distinct from MCP Agent Skills (`SEP-2640` `SKILL.md` bundles served over `/mcp` via `skills/list` and `skills/get`).
 
 ---
 
-## Dual Transport Bindings: JSON-RPC 2.0 & `HTTP+JSON` REST
+## Dual Transport Bindings: JSON-RPC 2.0 & HTTP+JSON REST
 
 Every request to an A2A execution endpoint must include the `A2A-Version: 1.0` header (`1.0.x` patch versions are also accepted). Missing, malformed, or legacy (`0.3`) version headers are rejected with `VersionNotSupportedError`.
 
-### 1. JSON-RPC 2.0 Binding (`POST /a2a` and `POST /a2a/{tenant:str}`)
+### JSON-RPC 2.0 Binding
 
 The JSON-RPC transport dispatches all 11 A2A 1.0 methods using protobuf JSON (`ParseDict` / `MessageToDict`):
 
@@ -79,7 +80,7 @@ The JSON-RPC transport dispatches all 11 A2A 1.0 methods using protobuf JSON (`P
 
 JSON-RPC notifications (well-formed requests without an `"id"` member) are declined with HTTP `204 No Content` before version checking and never invoke the handler. Requests with an explicit `"id": null` are treated as correlated requests and receive a JSON-RPC response.
 
-### 2. Native `HTTP+JSON` REST Binding (`enable_http_json=True`)
+### Native HTTP+JSON REST Binding
 
 When `A2AConfig.enable_http_json` is `True` (the default), `LitestarA2A` mounts the full A2A 1.0 `HTTP+JSON` REST surface under `A2AConfig.path` (and its tenant-prefixed counterpart `/{base_prefix}/{tenant:str}...`), returning `application/a2a+json` on unary responses and structured REST error payloads (`build_rest_error_payload`) on failures:
 
@@ -99,7 +100,7 @@ When `A2AConfig.enable_http_json` is `True` (the default), `LitestarA2A` mounts 
 | `GET /a2a/extendedAgentCard` | `GET /a2a/{tenant:str}/extendedAgentCard` | `GetExtendedAgentCard` (authenticated extended card) |
 
 ```python title="docs/examples/snippets/a2a_http_json_multitenant.py"
---8<-- "docs/examples/snippets/a2a_http_json_multitenant.py"
+--8<-- "docs/examples/snippets/a2a_http_json_multitenant.py:example"
 ```
 
 ---
@@ -115,7 +116,7 @@ Streaming A2A operations (`SendStreamingMessage` and `SubscribeToTask` across bo
 
 ---
 
-## Extension Activation (`a2a_activated_extensions`)
+## Extension Activation
 
 A2A 1.0 extensions declared in `AgentCard.capabilities.extensions` (`AgentExtension(uri=..., required=...)`) are negotiated per request via the `A2A-Extensions` HTTP header:
 

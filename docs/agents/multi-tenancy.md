@@ -12,15 +12,15 @@ title: Multi-Tenant A2A Routing
 
 ## Tenant Resolution Precedence
 
-On every incoming JSON-RPC or `HTTP+JSON` request, `_JsonRpcTransport._resolve_tenant` resolves the initial `ServerCallContext.tenant` string using a three-tier precedence order:
+On every incoming JSON-RPC or `HTTP+JSON` request, `_JsonRpcTransport._resolve_tenant` resolves the initial `ServerCallContext.tenant` string using the precedence order `request payload > /{tenant:str} URL path > X-A2A-Tenant header`:
 
 ```mermaid
 flowchart LR
-    Payload["1. Request Payload (params.tenant)"]
-    Path["2. URL Path (/a2a/{tenant:str}/...)"]
-    Header["3. HTTP Header (X-A2A-Tenant)"]
-    Builder["4. A2AConfig.context_builder"]
-    Store["5. Owner-Scoped TaskStore"]
+    Payload["Request Payload (params.tenant)"]
+    Path["URL Path (/a2a/{tenant:str}/...)"]
+    Header["HTTP Header (X-A2A-Tenant)"]
+    Builder["A2AConfig.context_builder"]
+    Store["Owner-Scoped TaskStore"]
 
     Payload --> Builder
     Path --> Builder
@@ -37,15 +37,15 @@ flowchart LR
 
 ---
 
-## Authoritative `context_builder` Validation
+## Authoritative Context Builder Validation
 
 A tenant string supplied in a URL path, header, or payload is an **untrusted claim** until verified against the caller's authenticated identity. Configure `A2AConfig(context_builder=...)` to validate tenant membership and enrich `ServerCallContext`:
 
 ```python title="docs/examples/snippets/a2a_http_json_multitenant.py"
---8<-- "docs/examples/snippets/a2a_http_json_multitenant.py"
+--8<-- "docs/examples/snippets/a2a_http_json_multitenant.py:example"
 ```
 
-### Prepared `ServerCallContext` Contract
+### Prepared ServerCallContext Contract
 
 Before invoking `context_builder(request, context)`, `LitestarA2A` populates `context` with:
 
@@ -64,7 +64,7 @@ Before invoking `context_builder(request, context)`, `LitestarA2A` populates `co
 
 ---
 
-## Principal `user_name` Resolution & Collision Guard
+## Principal User Name Resolution & Collision Guard
 
 The A2A SDK's owner-scoped stores (`InMemoryTaskStore` and `InMemoryPushNotificationConfigStore`) identify callers through `context.user.is_authenticated` and `context.user.user_name`.
 
@@ -78,13 +78,13 @@ If `user.is_authenticated` is `True` (which defaults to `True` whenever `request
 
 ---
 
-## Owner-Scoped `TaskStore` Isolation
+## Owner-Scoped TaskStore Isolation
 
 In a multi-tenant deployment, tenant and principal isolation must hold across every task lifecycle operation (`SendMessage`, `GetTask`, `ListTasks`, `CancelTask`, `SubscribeToTask`, and push notification config CRUD).
 
 The reference application in `docs/examples/a2a_application/main.py` demonstrates production-grade tenant and principal scoping with the official `a2a-sdk`:
 
-### 1. Authentication Middleware, `context_builder`, and Collision-Safe `owner_resolver`
+### Authentication Middleware, Context Builder, and Owner Resolver
 
 ```python title="docs/examples/a2a_application/main.py"
 --8<-- "docs/examples/a2a_application/main.py:80:117"
@@ -93,7 +93,7 @@ The reference application in `docs/examples/a2a_application/main.py` demonstrate
 - **`authorize_context`**: Calls `await request.user.authorize_workspace(context.tenant)` so any request naming an unauthorized workspace fails with `PermissionDeniedException` (`HTTP 403`) before reaching `DefaultRequestHandler`.
 - **`resolve_owner`**: Encodes `[context.tenant, context.user.user_name]` as a compact JSON array (`json.dumps([context.tenant, context.user.user_name], separators=(",", ":"))`). Using structured JSON serialization prevents delimiter-collision attacks where a tenant named `"alpha:alice"` and user `"bob"` could otherwise collide with tenant `"alpha"` and user `"alice:bob"`.
 
-### 2. Wiring Scoped Stores and Executor Lifetimes into `LitestarA2A`
+### Wiring Scoped Stores and Executor Lifetimes
 
 ```python title="docs/examples/a2a_application/main.py"
 --8<-- "docs/examples/a2a_application/main.py:218:270"

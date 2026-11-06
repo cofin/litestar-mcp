@@ -8,7 +8,7 @@ title: Sessions & SSE Streaming
 
 ---
 
-## `SessionStore` Protocol & Backends
+## SessionStore Protocol & Backends
 
 Every conversation transcript is a sequence of `AgentMessage` (`msgspec.Struct`) records keyed by `(owner, session_id)`:
 
@@ -34,7 +34,7 @@ class SessionStore(Protocol):
 | **`MemorySessionStore`** | Process-local `OrderedDict[tuple[str, str], tuple[float, list[AgentMessage]]]` | Per-`(owner, session_id)` `anyio.Lock`; LRU capacity eviction (`max_sessions=1024`) and monotonic TTL expiry (`ttl_seconds=3600.0`) | Local development, single-worker processes, and unit tests |
 | **`LitestarStoreSessionStore`** | Any Litestar `Store` in `StoreRegistry` (`RedisStore`, `FileStore`, `MemoryStore`) | Per-key `anyio.Lock`; JSON encoding via `litestar.serialization.encode_json` / `decode_json` with backend `expires_in=ttl_seconds` (`3600`) under `{key_prefix}:{owner}:{session_id}` | Multi-replica production deployments sharing a Redis or persistent Litestar `Store` |
 
-### Wiring `LitestarStoreSessionStore`
+### Wiring LitestarStoreSessionStore
 
 Pass any Litestar `Store` instance to `LitestarStoreSessionStore` (`litestar_mcp.agent.sessions.LitestarStoreSessionStore`) and supply it to `AgentRuntime(sessions=...)`:
 
@@ -71,7 +71,7 @@ app = Litestar(
 
 ---
 
-## HTTP & SSE Streaming with `AgentChatController`
+## HTTP & SSE Streaming with AgentChatController
 
 Mounting `AgentChatController` (`litestar_mcp.agent.AgentChatController`) on your `Litestar` application exposes three endpoints under `/agent` backed by the injected `runtime: NamedDependency[AgentRuntime]`:
 
@@ -89,7 +89,7 @@ Mounting `AgentChatController` (`litestar_mcp.agent.AgentChatController`) on you
 
 ---
 
-## Background Streaming & Cursor Replay (`QueuedAgentChatController`)
+## Background Streaming & Cursor Replay
 
 For long-running agent turns distributed across background workers via `litestar-queues` (`litestar-mcp[queues]`), `QueuedAgentChatController` (`litestar_mcp.queues.QueuedAgentChatController`) decouples turn submission from SSE consumption:
 
@@ -119,7 +119,7 @@ flowchart LR
 
 ---
 
-## Typed `AgentStreamFrame` Events
+## Typed AgentStreamFrame Events
 
 Every SSE message emitted by `AgentRuntime`, `AgentChatController`, and `QueuedAgentChatController` serializes an `AgentStreamFrame` (`litestar_mcp.agent.AgentStreamFrame`):
 
@@ -135,7 +135,7 @@ Every SSE message emitted by `AgentRuntime`, `AgentChatController`, and `QueuedA
 | `complete` | Yes | `turn_id`, `seq`, `agent_name`, `payload={"output": ..., "token_usage": ...}` | Turn finished normally; `payload` contains the full concatenated output and token usage counts. |
 | `error` | Yes | `turn_id`, `seq`, `agent_name`, `payload={"error": ...}` | Turn aborted due to `BudgetExceededError` or an unhandled runtime exception. |
 
-### Consuming Streams in Python with `iter_agent_stream`
+### Consuming Streams in Python
 
 Use `iter_agent_stream` (`litestar_mcp.agent.iter_agent_stream`) with an `httpx2.AsyncClient` streaming response to decode SSE events directly into typed `AgentStreamFrame` structs:
 
