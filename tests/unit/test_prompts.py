@@ -5,11 +5,12 @@ from typing import Any, cast
 
 import pytest
 from litestar import Litestar, Request, Response, get
+from litestar.exceptions import ImproperlyConfiguredException
 from litestar.status_codes import HTTP_400_BAD_REQUEST, HTTP_500_INTERNAL_SERVER_ERROR
 from litestar.testing import TestClient
 from litestar.types import HTTPRequestEvent, HTTPScope, Receive
 
-from litestar_mcp import LitestarMCP, MCPConfig, mcp_prompt
+from litestar_mcp import LitestarMCP, MCPConfig, PromptController, mcp_prompt, prompt
 from litestar_mcp.mcp.registry import (
     PromptRegistration,
     Registry,
@@ -1206,3 +1207,74 @@ class TestPromptHandlerErrorCodeMapping:
             assert "error" in data
             assert data["error"]["code"] == -32603, f"{status_code} must map to INTERNAL_ERROR"
             assert data["error"]["data"] == {"statusCode": status_code, "content": {"error": "bad input"}}
+
+
+def test_litestar_mcp_accepts_prompt_and_skill_controller_instances_and_prompt_decorator() -> "None":
+    """LitestarMCP accepts PromptController/SkillController instances and @prompt functions in prompts=[...]."""
+
+    class OpsPrompts(PromptController):
+        path = "/ops-prompts"
+        prefix = "ops"
+        instructions = "Follow ops runbook."
+
+        @prompt(name="triage", description="Triage an incident.")
+        async def triage(self, service: "str") -> "str":
+            return f"Triage {service}"
+
+    class DocsSkills(PromptController):
+        path = "/docs-skills"
+        prefix = "docs"
+
+        def __init__(self, label: "str" = "Lookup") -> "None":
+            super().__init__()
+            self.label = label
+
+        @prompt(name="lookup", description="Lookup docs.")
+        async def lookup(self, topic: "str") -> "str":
+            return f"{self.label} {topic}"
+
+    @prompt(name="standalone_review", title="Standalone Review", description="Review a diff.")
+    async def standalone_review(diff: "str") -> "str":
+        return f"Reviewing: {diff}"
+
+    plugin = LitestarMCP(
+        config=MCPConfig(
+            auth={"policy": "required"},
+            route_opt={"custom_flag": True},
+            prompt_controllers=[OpsPrompts()],
+            skill_controllers=[DocsSkills(label="Search")],
+        ),
+        prompts=[standalone_review],
+    )
+    app = Litestar(route_handlers=[], plugins=[plugin])
+    mcp_route = next(route for route in app.routes if route.path == "/mcp")
+    mcp_handler = next(iter(getattr(mcp_route, "route_handlers", ())))
+    assert mcp_handler.opt["auth"] == {"policy": "required"}
+    assert mcp_handler.opt["custom_flag"] is True
+    with TestClient(app) as client:
+        assert "ops/triage" in plugin.discovered_prompts
+        assert "docs/lookup" in plugin.discovered_prompts
+        assert "standalone_review" in plugin.discovered_prompts
+        reg = plugin.discovered_prompts["standalone_review"]
+        assert [arg["name"] for arg in reg.get_arguments()] == ["diff"]
+
+        triage_data = _rpc(client, "prompts/get", params={"name": "ops/triage", "arguments": {"service": "payments"}})
+        triage_text = triage_data["result"]["messages"][0]["content"]["text"]
+        assert "Follow ops runbook." in triage_text
+        assert "Triage payments" in triage_text
+
+        lookup_data = _rpc(client, "prompts/get", params={"name": "docs/lookup", "arguments": {"topic": "routing"}})
+        lookup_text = lookup_data["result"]["messages"][0]["content"]["text"]
+        assert lookup_text == "Search routing"
+
+        review_data = _rpc(client, "prompts/get", params={"name": "standalone_review", "arguments": {"diff": "+1"}})
+        review_text = review_data["result"]["messages"][0]["content"]["text"]
+        assert review_text == "Reviewing: +1"
+
+
+@pytest.mark.parametrize("field_name", ["prompt_controllers", "skill_controllers"])
+def test_litestar_mcp_rejects_invalid_controller_entry(field_name: "str") -> "None":
+    """Invalid entries in prompt_controllers or skill_controllers raise ImproperlyConfiguredException."""
+    kwargs: dict[str, Any] = {field_name: ["not_a_controller"]}
+    with pytest.raises(ImproperlyConfiguredException, match="PromptController"):
+        LitestarMCP(config=MCPConfig(**kwargs))

@@ -224,6 +224,8 @@ class MCPConfig:
     """Optional server-level instructions returned in the MCP `initialize` response."""
     guards: "list[Any] | None" = None
     """Optional list of Litestar guards protecting MCP endpoints."""
+    auth: "Any | None" = None
+    """Optional route authentication policy merged into the mounted MCP router's `opt["auth"]` (for example `litestar_security.required(...)`)."""
     allowed_origins: "list[str] | None" = None
     """Exact additional `Origin` values to accept alongside the request origin."""
     include_operations: "list[str] | None" = None
@@ -264,9 +266,9 @@ class MCPConfig:
     """Maximum raw byte length for base64-embedded MCP blobs (`None` disables the cap)."""
     route_opt: "dict[str, Any] | None" = None
     """Optional route `opt` mapping applied to the mounted MCP router and merged into the JSON-RPC handler's `opt`."""
-    prompt_controllers: "Sequence[type[Any]]" = ()
+    prompt_controllers: "Sequence[type[Any] | Any]" = ()
     """Optional sequence of `PromptController` classes or instances to register on startup."""
-    skill_controllers: "Sequence[type[Any]]" = ()
+    skill_controllers: "Sequence[type[Any] | Any]" = ()
     """Optional sequence of `SkillController` classes or instances to register on startup."""
     infer_http_method_annotations: "bool" = True
     """Automatically infer default MCP `ToolAnnotations` hints (`readOnlyHint`, `destructiveHint`, `idempotentHint`) from the route handler's HTTP method when not explicitly overridden."""

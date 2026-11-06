@@ -528,12 +528,12 @@ class SkillCatalog:
         return resolved[1] if resolved is not None else None
 
     async def get(self, request: "Request[Any, Any, Any]", uri: "str") -> "Skill | None":
-        """Return the skill whose canonical ``skill://<name>/SKILL.md`` URI equals ``uri``, else ``None``."""
+        """Return the skill whose canonical ``skill://<name>/SKILL.md`` or shorthand ``skill://<name>`` URI matches."""
         parsed = parse_skill_uri(uri)
         if parsed is None:
             return None
         name, relative_path = parsed
-        if relative_path != "SKILL.md":
+        if relative_path not in {"", "SKILL.md"}:
             return None
         return await self.get_skill(request, name)
 
