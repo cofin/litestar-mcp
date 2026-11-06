@@ -17,7 +17,7 @@ litestar --app app:app mcp <command> [OPTIONS]
 
 Commands for serving the Litestar application over in-process stdio or proxying stdio JSON-RPC frames to a remote Streamable HTTP endpoint.
 
-### `litestar mcp stdio`
+### litestar mcp stdio
 
 Serve this Litestar app's MCP endpoint to a local stdio client in-process.
 
@@ -37,7 +37,7 @@ litestar mcp stdio [OPTIONS]
 | `--sse-read-timeout` | `float` | `300.0` | Subscription stream read timeout in seconds. |
 | `--max-message-size` | `integer` | `16777216` | Maximum bytes for one JSON-RPC message, from stdin or from the server. Use -1 to disable the limit. |
 
-### `litestar mcp bridge`
+### litestar mcp bridge
 
 Proxy local stdio JSON-RPC to this Litestar app's MCP endpoint.
 
@@ -64,7 +64,7 @@ litestar mcp bridge [OPTIONS]
 
 Commands for exporting deterministic MCP tool manifests and validating description length bounds in CI pipelines.
 
-### `litestar mcp export-tool-spec`
+### litestar mcp export-tool-spec
 
 Export the MCP tools/list specification as formatted JSON.
 
@@ -84,7 +84,7 @@ litestar mcp export-tool-spec [OPTIONS]
 
 Commands for inspecting discovered MCP tools and resources or invoking a tool directly from the terminal.
 
-### `litestar mcp list-tools`
+### litestar mcp list-tools
 
 List all available MCP tools.
 
@@ -92,7 +92,7 @@ List all available MCP tools.
 litestar mcp list-tools
 ```
 
-### `litestar mcp list-resources`
+### litestar mcp list-resources
 
 List all available MCP resources.
 
@@ -100,7 +100,7 @@ List all available MCP resources.
 litestar mcp list-resources
 ```
 
-### `litestar mcp run`
+### litestar mcp run
 
 Run a discovered MCP tool by name.
 

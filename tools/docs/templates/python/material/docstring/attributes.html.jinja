@@ -7,8 +7,8 @@
   {% endif %}
 {% endfor %}
 {% if ns.items %}
-<p><span class="doc-section-title">{{ section.title or lang.t("Attributes:") }}</span></p>
 <table>
+  <caption class="doc-section-title">{{ (section.title or lang.t("Attributes:")).rstrip(":") }}</caption>
   <thead>
     <tr>
       <th>{{ lang.t("Name") }}</th>

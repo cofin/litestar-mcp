@@ -33,6 +33,17 @@ IGNORED_HTML_TAGS: frozenset[str] = frozenset({"pre", "code", "textarea", "scrip
 RAW_DIRECTIVE_RE = re.compile(r"(?:^|>|\s):::\s+litestar_mcp\b")
 RAW_SNIPPET_RE = re.compile(r"--8\s*<\s*--")
 RAW_SPHINX_ROLE_RE = re.compile(r":(?:class|func|meth|mod|attr|exc|obj|data|const|ref|doc|pep):`[^`]+`")
+LEAKED_SNIPPET_MARKER_RE = re.compile(
+    r"#\s*(?:start-example|end-example|\[start-[a-z0-9_-]+\]|\[end-[a-z0-9_-]+\]|--8<--)"
+)
+HEADING_TAG_RE = re.compile(r"<h([23])\b([^>]*)>(.*?)</h\1>", re.DOTALL | re.IGNORECASE)
+INLINE_CODE_TAG_RE = re.compile(r"<code\b", re.IGNORECASE)
+NUMBERED_HEADING_TEXT_RE = re.compile(r"^\s*\d+\.")
+HTML_TAG_RE = re.compile(r"<[^>]+>")
+TABLE_TAG_RE = re.compile(
+    r"((?:<p>\s*<span class=\"doc-section-title\">[^<]*</span>\s*</p>\s*)?)(<table\b[^>]*>.*?</table>)",
+    re.DOTALL | re.IGNORECASE,
+)
 
 REQUIRED_INVENTORY_SYMBOLS: tuple[str, ...] = (
     "litestar_mcp.LitestarMCP",
@@ -254,7 +265,7 @@ def _check_objects_inv(site_dir: Path) -> list[ArtifactFinding]:
     lines = inv_bytes.splitlines(keepends=True)
     try:
         decompressed = zlib.decompress(b"".join(lines[4:])).decode("utf-8")
-    except Exception as exc:  # noqa: BLE001
+    except (zlib.error, UnicodeDecodeError) as exc:
         findings.append(
             ArtifactFinding(
                 path="objects.inv",
@@ -328,6 +339,39 @@ def _check_html_files(site_dir: Path) -> list[ArtifactFinding]:
                     detail="HTML contains raw unrendered Sphinx role (`:class:`, `:func:`, `:meth:`, etc.).",
                 )
             )
+        if LEAKED_SNIPPET_MARKER_RE.search(raw_html):
+            findings.append(
+                ArtifactFinding(
+                    path=rel_path,
+                    rule="leaked-snippet-marker",
+                    detail="HTML contains leaked snippet marker comment (`# start-example`, `# end-example`, or `# --8<--`).",
+                )
+            )
+        for match in HEADING_TAG_RE.finditer(raw_html):
+            attrs = match.group(2)
+            inner_html = match.group(3)
+            if "doc-heading" in attrs:
+                continue
+            heading_text = HTML_TAG_RE.sub("", inner_html).strip()
+            if INLINE_CODE_TAG_RE.search(inner_html) or NUMBERED_HEADING_TEXT_RE.match(heading_text):
+                findings.append(
+                    ArtifactFinding(
+                        path=rel_path,
+                        rule="heading-format-violation",
+                        detail=f"Prose heading {heading_text!r} contains inline `<code>` or leading section number.",
+                    )
+                )
+        findings.extend(
+            ArtifactFinding(
+                path=rel_path,
+                rule="missing-table-caption",
+                detail="Attribute table containing `tr.doc-section-item` is missing a `<caption>` element.",
+            )
+            for prefix_html, table_html in TABLE_TAG_RE.findall(raw_html)
+            if 'class="doc-section-item"' in table_html
+            and "<caption" not in table_html.lower()
+            and 'class="doc-section-title"' not in prefix_html
+        )
         if rel_path.startswith("reference/") and html_file.stat().st_size > MAX_REFERENCE_HTML_BYTES:
             findings.append(
                 ArtifactFinding(
@@ -350,7 +394,7 @@ def _check_html_files(site_dir: Path) -> list[ArtifactFinding]:
 
 
 def _check_legacy_redirects(site_dir: Path) -> list[ArtifactFinding]:
-    """Verify all 29 legacy redirect stubs exist and compute valid relative target URLs."""
+    """Verify all 31 legacy redirect stubs exist and compute valid relative target URLs."""
     findings: list[ArtifactFinding] = []
     if not site_dir.exists():
         return findings
@@ -419,7 +463,7 @@ def _check_cli_autodoc(docs_dir: Path) -> list[ArtifactFinding]:
                 detail=f"CLI command 'litestar mcp {cmd_name}' is missing from cli-reference.md.",
             )
             for cmd_name in sorted(mcp_group.commands)
-            if f"`litestar mcp {cmd_name}`" not in cli_text
+            if f"### litestar mcp {cmd_name}" not in cli_text
         )
     return findings
 

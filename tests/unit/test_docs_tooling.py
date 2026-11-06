@@ -10,7 +10,7 @@ import pytest
 from tools.docs.generate_cli_docs import DEFAULT_OUTPUT as DEFAULT_CLI_OUTPUT
 from tools.docs.generate_cli_docs import main as cli_docs_main
 from tools.docs.generate_cli_docs import render_cli_markdown
-from tools.docs.postbuild import LEGACY_REDIRECTS, compact_site_html, run_postbuild
+from tools.docs.postbuild import DEFAULT_REFERENCE_SYMBOLS, LEGACY_REDIRECTS, compact_site_html, run_postbuild
 from tools.docs.scan_public_docstrings import scan_package
 from tools.docs.verify_docs_artifacts import REQUIRED_INVENTORY_SYMBOLS, verify_site
 
@@ -111,9 +111,10 @@ def test_litestar_mcp_public_docstrings_have_zero_findings() -> None:
     ["stdio", "bridge", "export-tool-spec", "list-tools", "list-resources", "run"],
 )
 def test_generate_cli_docs_includes_all_subcommands(subcommand: str) -> None:
-    """Verify `render_cli_markdown` documents every `litestar mcp` subcommand cleanly."""
+    """Verify `render_cli_markdown` documents every `litestar mcp` subcommand without heading backticks."""
     rendered = render_cli_markdown()
-    assert f"### `litestar mcp {subcommand}`" in rendered
+    assert f"### litestar mcp {subcommand}" in rendered
+    assert f"### `litestar mcp {subcommand}`" not in rendered
     assert "Sentinel.UNSET" not in rendered
     assert "[bold" not in rendered
 
@@ -125,12 +126,46 @@ def test_generate_cli_docs_check_matches_generated_file() -> None:
 
 
 def test_legacy_redirects_contains_all_29_moved_routes() -> None:
-    """Verify `LEGACY_REDIRECTS` maps all 29 moved legacy `.rst` URLs including `usage`."""
-    assert len(LEGACY_REDIRECTS) == 29
+    """Verify `LEGACY_REDIRECTS` maps all 31 moved legacy URLs including retired migration slugs."""
+    assert len(LEGACY_REDIRECTS) == 31
     assert LEGACY_REDIRECTS["usage"] == "learn/"
     assert LEGACY_REDIRECTS["contribution-guide"] == "reference/contributing/"
     assert LEGACY_REDIRECTS["usage/configuration"] == "learn/configuration/"
+    assert LEGACY_REDIRECTS["usage/migration_0_14"] == "changelog/"
+    assert LEGACY_REDIRECTS["usage/migration_0_12"] == "changelog/"
+    assert LEGACY_REDIRECTS["security/migration-0-14"] == "changelog/"
+    assert LEGACY_REDIRECTS["security/migration-0-12"] == "changelog/"
     assert LEGACY_REDIRECTS["reference/plugin"] == "reference/plugin-and-config/"
+
+
+@pytest.mark.parametrize(
+    "expected_symbol",
+    [
+        "litestar_mcp.agent.ANONYMOUS_OWNER",
+        "litestar_mcp.agent.ChatRequest",
+        "litestar_mcp.agent.TurnResult",
+        "litestar_mcp.agent.SessionHistory",
+        "litestar_mcp.agent.SessionNotFoundError",
+        "litestar_mcp.agent.BudgetExceededError",
+        "litestar_mcp.agent.AgentStreamFrame",
+        "litestar_mcp.core.ToolArgumentError",
+        "litestar_mcp.core.SpanManager",
+        "litestar_mcp.core.encode_json",
+        "litestar_mcp.core.decode_json",
+        "litestar_mcp.core.to_json",
+        "litestar_mcp.core.from_json",
+        "litestar_mcp.core.LitestarMCPError",
+        "litestar_mcp.core.MissingDependencyError",
+        "litestar_mcp.core.BridgeConnectionError",
+        "litestar_mcp.core.BridgeMessageTooLargeError",
+    ],
+)
+def test_default_reference_symbols_include_agent_and_core_exports(expected_symbol: str) -> None:
+    """Verify `DEFAULT_REFERENCE_SYMBOLS` omits removed symbols and includes `agent` and `core` exports."""
+    symbol_names = {entry[0] for entry in DEFAULT_REFERENCE_SYMBOLS}
+    assert "litestar_mcp.ToolAnnotations" not in symbol_names
+    assert "litestar_mcp.InProcessTaskExecutor" not in symbol_names
+    assert expected_symbol in symbol_names
 
 
 @pytest.mark.parametrize(
@@ -239,8 +274,48 @@ def test_verify_site_detects_unrendered_directives_snippets_and_roles(
     assert expected_rule in rules
 
 
+@pytest.mark.parametrize(
+    ("bad_html", "expected_rule"),
+    [
+        (
+            "<html><body><pre><code>\x23 start-example\nx = 1</code></pre></body></html>",
+            "leaked-snippet-marker",
+        ),
+        (
+            "<html><body><h2>1. Getting Started</h2></body></html>",
+            "heading-format-violation",
+        ),
+        (
+            "<html><body><h3>Using <code>LitestarMCP</code></h3></body></html>",
+            "heading-format-violation",
+        ),
+        (
+            '<html><body><table><tbody><tr class="doc-section-item"><td>x</td></tr></tbody></table></body></html>',
+            "missing-table-caption",
+        ),
+    ],
+)
+def test_verify_site_detects_snippet_markers_and_heading_violations(
+    tmp_path: Path,
+    bad_html: str,
+    expected_rule: str,
+) -> None:
+    """Verify `verify_site` catches leaked snippet markers, numbered/backticked headings, and uncaptioned tables."""
+    site_dir = tmp_path / "site"
+    docs_dir = tmp_path / "docs"
+    site_dir.mkdir(parents=True)
+    docs_dir.mkdir(parents=True)
+    (docs_dir / "index.md").write_text("# Litestar MCP\n", encoding="utf-8")
+    (site_dir / "index.html").write_text(bad_html, encoding="utf-8")
+    run_postbuild(site_dir=site_dir, docs_dir=docs_dir)
+    (site_dir / "index.html").write_text(bad_html, encoding="utf-8")
+
+    findings = verify_site(site_dir=site_dir, docs_dir=docs_dir)
+    assert expected_rule in {f.rule for f in findings}
+
+
 def test_verify_site_ignores_directives_and_roles_inside_code_and_script_elements(tmp_path: Path) -> None:
-    """Verify `verify_site` ignores `:::` and `:class:` occurrences inside `<code>`, `<pre>`, and `<script>` tags."""
+    """Verify `verify_site` ignores `:::`, `:class:`, `h3.doc-heading`, and captioned attribute tables."""
     site_dir = tmp_path / "site"
     docs_dir = tmp_path / "docs"
     site_dir.mkdir(parents=True)
@@ -250,6 +325,9 @@ def test_verify_site_ignores_directives_and_roles_inside_code_and_script_element
         "<html><body>"
         "<pre><code>::: litestar_mcp.MCPConfig</code></pre>"
         "<script >const role = ':class:`LitestarMCP`';</script >"
+        '<h3 class="doc display-name doc-heading"><code>LitestarMCP</code></h3>'
+        '<table><caption class="doc-section-title">Attributes</caption>'
+        '<tbody><tr class="doc-section-item"><td><code>base_path</code></td></tr></tbody></table>'
         "</body></html>"
     )
     (site_dir / "index.html").write_text(safe_html, encoding="utf-8")
@@ -264,13 +342,24 @@ def test_zensical_toml_and_pyproject_configuration() -> None:
     zensical_data = tomllib.loads((REPO_ROOT / "zensical.toml").read_text(encoding="utf-8"))
     project = zensical_data["project"]
     assert project["site_name"] == "Litestar MCP"
-    assert project["exclude_docs"] == "examples/**"
+    assert "examples/**" in project["exclude_docs"]
     assert project["extra_css"] == ["stylesheets/extra.css"]
     assert len(project["nav"]) == 7
 
     pyproject_data = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert "*.md" in pyproject_data["tool"]["ruff"]["format"]["exclude"]
     assert "pygments.styles" not in pyproject_data["project"].get("entry-points", {})
+
+    extra_css = (REPO_ROOT / "docs" / "stylesheets" / "extra.css").read_text(encoding="utf-8")
+    assert "--md-default-bg-color: #0f172a;" in extra_css
+    assert "flex-wrap: nowrap;" in extra_css
+    assert "caption.doc-section-title" in extra_css
+    assert ".md-nav__item:only-child)" in extra_css
+
+    attr_template = (
+        REPO_ROOT / "tools" / "docs" / "templates" / "python" / "material" / "docstring" / "attributes.html.jinja"
+    ).read_text(encoding="utf-8")
+    assert '<caption class="doc-section-title">' in attr_template
 
 
 @pytest.mark.parametrize(
