@@ -12,7 +12,7 @@ from tools.docs.generate_cli_docs import main as cli_docs_main
 from tools.docs.generate_cli_docs import render_cli_markdown
 from tools.docs.postbuild import DEFAULT_REFERENCE_SYMBOLS, LEGACY_REDIRECTS, compact_site_html, run_postbuild
 from tools.docs.scan_public_docstrings import scan_package
-from tools.docs.verify_docs_artifacts import REQUIRED_INVENTORY_SYMBOLS, verify_site
+from tools.docs.verify_docs_artifacts import MAX_REFERENCE_HTML_BYTES, REQUIRED_INVENTORY_SYMBOLS, verify_site
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -39,6 +39,8 @@ FORBIDDEN_CORE_DIAGRAM_SYMBOLS = (
     "StepResult(next_nodes)",
     "WorkflowEngine.run(context)",
     "--url",
+    "expose_as_resources",
+    "@skill_handler",
 )
 FORBIDDEN_AGENT_DIAGRAM_SYMBOLS = (
     "POST /chat/stream",
@@ -108,7 +110,7 @@ def test_litestar_mcp_public_docstrings_have_zero_findings() -> None:
 
 @pytest.mark.parametrize(
     "subcommand",
-    ["stdio", "bridge", "export-tool-spec", "list-tools", "list-resources", "run"],
+    ["stdio", "bridge", "export-tool-spec", "list-tools", "list-resources", "list-skills", "run"],
 )
 def test_generate_cli_docs_includes_all_subcommands(subcommand: str) -> None:
     """Verify `render_cli_markdown` documents every `litestar mcp` subcommand without heading backticks."""
@@ -122,6 +124,19 @@ def test_generate_cli_docs_includes_all_subcommands(subcommand: str) -> None:
 def test_generate_cli_docs_check_matches_generated_file() -> None:
     """Verify `tools/docs/generated/cli-reference.md` exists and matches `generate_cli_docs.py --check`."""
     assert DEFAULT_CLI_OUTPUT.is_file()
+    assert cli_docs_main(["--check"]) == 0
+
+
+def test_generate_cli_docs_places_list_skills_under_discovery_category() -> None:
+    """Verify `render_cli_markdown` places `list-skills` under Discovery & Interactive Execution and `--check` passes."""
+    rendered = render_cli_markdown()
+    assert "| [`litestar mcp list-skills`](#litestar-mcp-list-skills) | Discovery & Interactive Execution |" in rendered
+    assert "## Additional Commands" not in rendered
+    discovery_idx = rendered.index("## Discovery & Interactive Execution")
+    resources_idx = rendered.index("### litestar mcp list-resources")
+    skills_idx = rendered.index("### litestar mcp list-skills")
+    run_idx = rendered.index("### litestar mcp run")
+    assert discovery_idx < resources_idx < skills_idx < run_idx
     assert cli_docs_main(["--check"]) == 0
 
 
@@ -447,6 +462,61 @@ def test_core_and_queue_svg_diagrams_have_current_symbols_and_unnumbered_titles(
 
 
 @pytest.mark.parametrize(
+    ("diagram_name", "expected_tokens"),
+    [
+        (
+            "diagram-primitives-and-discovery.html",
+            (
+                "expose_as_prompts",
+                "SkillCatalog",
+                "uri=",
+                "outputSchema",
+                "_meta.ui",
+                "io.modelcontextprotocol/ui",
+                "list_changed",
+                "list-skills",
+            ),
+        ),
+        (
+            "diagram-request-pipeline.html",
+            (
+                "2025-11-25",
+                "Mcp-Session-Id",
+                "GET /mcp",
+                "DELETE /mcp",
+                "MCPSessionStore",
+                "resources/subscribe",
+                "logging/setLevel",
+                "MCPRequestContext.log()",
+                "subscription_authorizer",
+            ),
+        ),
+        (
+            "diagram-mcp-tasks-and-queues.html",
+            (
+                "progress_token",
+                "session_id",
+                "log_level",
+                "update_status_message",
+                "notifications/progress",
+                "notifications/message",
+            ),
+        ),
+    ],
+)
+def test_core_diagrams_include_mcp_2025_and_apps_contracts(
+    diagram_name: str,
+    expected_tokens: tuple[str, ...],
+) -> None:
+    """Verify updated MCP SVG diagrams document 2025-11-25 SSE, SEP-1865 UI, skills, logging, and task progress."""
+    content = (INCLUDES_DIR / diagram_name).read_text(encoding="utf-8")
+    assert 'class="lm-diagram ' in content
+    assert "& " not in content
+    missing_tokens = [token for token in expected_tokens if token not in content]
+    assert missing_tokens == [], f"{diagram_name} is missing expected tokens: {missing_tokens}"
+
+
+@pytest.mark.parametrize(
     "diagram_name",
     [
         "diagram-agent-runtime-and-bridges.html",
@@ -462,3 +532,163 @@ def test_agent_and_a2a_svg_diagrams_have_current_symbols_and_unnumbered_titles(d
     svg_blocks = re.findall(r"<svg\b.*?</svg>", content, flags=re.DOTALL)
     assert svg_blocks, f"{diagram_name} contains no <svg> blocks"
     assert [_SvgBlockValidator.validate(svg_block) for svg_block in svg_blocks]
+
+
+@pytest.mark.parametrize(
+    "symbol_entry",
+    [
+        "litestar_mcp.SkillCatalog py:class 1 reference/primitives-and-skills/#litestar_mcp.mcp.skills.SkillCatalog",
+        "litestar_mcp.utils.classify_resource_uri py:function 1 reference/primitives-and-skills/#litestar_mcp.utils.classify_resource_uri",
+        "litestar_mcp.mcp.skills.filter_skills py:function 1 reference/primitives-and-skills/#litestar_mcp.mcp.skills.filter_skills",
+        "litestar_mcp.mcp.service.MCPRequestContext.log py:method 1 reference/primitives-and-skills/#litestar_mcp.mcp.service.MCPRequestContext.log",
+        "litestar_mcp.mcp.registry.Registry.notify_resources_list_changed py:method 1 reference/primitives-and-skills/#litestar_mcp.mcp.registry.Registry.notify_resources_list_changed",
+        "litestar_mcp.mcp.registry.Registry.notify_skills_list_changed py:method 1 reference/primitives-and-skills/#litestar_mcp.mcp.registry.Registry.notify_skills_list_changed",
+        "litestar_mcp.mcp.skills.SkillCatalog.notify_list_changed py:method 1 reference/primitives-and-skills/#litestar_mcp.mcp.skills.SkillCatalog.notify_list_changed",
+    ],
+)
+def test_postbuild_indexes_primitives_and_skills_symbols(tmp_path: Path, symbol_entry: str) -> None:
+    """Verify `run_postbuild` indexes `primitives-and-skills.md` symbols and methods in `objects.inv`."""
+    site_dir = tmp_path / "site"
+    run_postbuild(site_dir=site_dir, docs_dir=REPO_ROOT / "docs")
+    inv_bytes = (site_dir / "objects.inv").read_bytes()
+    lines = inv_bytes.splitlines(keepends=True)
+    decompressed = zlib.decompress(b"".join(lines[4:])).decode("utf-8")
+    assert symbol_entry in decompressed
+
+
+@pytest.mark.parametrize(
+    ("rel_path", "required_directives", "required_tokens"),
+    [
+        (
+            "docs/reference/plugin-and-config.md",
+            (
+                "::: litestar_mcp.mcp.service.MCPSession",
+                "::: litestar_mcp.mcp.service.MCPSessionStore",
+            ),
+            (
+                "auto_output_schema",
+                "ui_mime_types",
+                "enable_get_sse",
+                "session_ttl_seconds",
+                "logging",
+                "default_log_level",
+                "subscription_authorizer",
+                "MCPOptKeys",
+                "MCPSkillsConfig",
+                "MCPSession",
+                "MCPSessionStore",
+            ),
+        ),
+        (
+            "docs/reference/core-and-observability.md",
+            (
+                "::: litestar_mcp.core.sse.validate_log_level",
+                "::: litestar_mcp.core.sse.log_level_allows",
+                "::: litestar_mcp.core.schema_builder.typed_dict_to_json_schema",
+                "::: litestar_mcp.core.schema_builder.unwrap_root_object_schema",
+                "::: litestar_mcp.core.schema_builder.type_to_output_schema",
+                "::: litestar_mcp.core.schema_builder.generate_output_schema_for_handler",
+            ),
+            (
+                "typed_dict_to_json_schema",
+                "unwrap_root_object_schema",
+                "type_to_output_schema",
+                "generate_output_schema_for_handler",
+                "validate_log_level",
+                "log_level_allows",
+            ),
+        ),
+        (
+            "docs/reference/tasks-and-queues.md",
+            (
+                "::: litestar_mcp.mcp.tasks.MCPTaskStore",
+                "::: litestar_mcp.mcp.tasks.ToolTaskCall",
+            ),
+            (
+                "progress_token",
+                "session_id",
+                "log_level",
+                "update_status_message",
+            ),
+        ),
+    ],
+)
+def test_reference_api_pages_document_ch01_to_ch06_contracts(
+    rel_path: str,
+    required_directives: tuple[str, ...],
+    required_tokens: tuple[str, ...],
+) -> None:
+    """Verify synchronized reference API pages include required directives, summary prose tokens, and clean headings."""
+    content = (REPO_ROOT / rel_path).read_text(encoding="utf-8")
+    for directive in required_directives:
+        assert directive in content
+    for token in required_tokens:
+        assert token in content
+    headings = re.findall(r"^#{2,3}\s+(.+)$", content, flags=re.MULTILINE)
+    assert headings
+    for heading in headings:
+        assert "`" not in heading
+        assert not re.match(r"^\d+\.", heading)
+
+
+@pytest.mark.parametrize(
+    "symbol_entry",
+    [
+        "litestar_mcp.mcp.service.MCPSession py:class 1 reference/plugin-and-config/#litestar_mcp.mcp.service.MCPSession",
+        "litestar_mcp.mcp.service.MCPSessionStore py:class 1 reference/plugin-and-config/#litestar_mcp.mcp.service.MCPSessionStore",
+        "litestar_mcp.core.schema_builder.typed_dict_to_json_schema py:function 1 reference/core-and-observability/#litestar_mcp.core.schema_builder.typed_dict_to_json_schema",
+        "litestar_mcp.core.schema_builder.unwrap_root_object_schema py:function 1 reference/core-and-observability/#litestar_mcp.core.schema_builder.unwrap_root_object_schema",
+        "litestar_mcp.core.schema_builder.type_to_output_schema py:function 1 reference/core-and-observability/#litestar_mcp.core.schema_builder.type_to_output_schema",
+        "litestar_mcp.core.schema_builder.generate_output_schema_for_handler py:function 1 reference/core-and-observability/#litestar_mcp.core.schema_builder.generate_output_schema_for_handler",
+        "litestar_mcp.core.sse.validate_log_level py:function 1 reference/core-and-observability/#litestar_mcp.core.sse.validate_log_level",
+        "litestar_mcp.core.sse.log_level_allows py:function 1 reference/core-and-observability/#litestar_mcp.core.sse.log_level_allows",
+        "litestar_mcp.mcp.tasks.MCPTaskStore.update_status_message py:method 1 reference/tasks-and-queues/#litestar_mcp.mcp.tasks.MCPTaskStore.update_status_message",
+    ],
+)
+def test_postbuild_indexes_ch09_reference_anchors(tmp_path: Path, symbol_entry: str) -> None:
+    """Verify `run_postbuild` indexes all synchronized `plugin-and-config`, `core-and-observability`, and `tasks-and-queues` anchors."""
+    site_dir = tmp_path / "site"
+    run_postbuild(site_dir=site_dir, docs_dir=REPO_ROOT / "docs")
+    inv_bytes = (site_dir / "objects.inv").read_bytes()
+    lines = inv_bytes.splitlines(keepends=True)
+    decompressed = zlib.decompress(b"".join(lines[4:])).decode("utf-8")
+    assert symbol_entry in decompressed
+
+
+@pytest.mark.parametrize(
+    ("payload_bytes", "expect_violation"),
+    [
+        (MAX_REFERENCE_HTML_BYTES, False),
+        (MAX_REFERENCE_HTML_BYTES + 1, True),
+    ],
+)
+def test_verify_site_enforces_reference_size_budget(
+    tmp_path: Path,
+    payload_bytes: int,
+    expect_violation: bool,
+) -> None:
+    """Verify `verify_site` allows `MAX_REFERENCE_HTML_BYTES` (240 KiB) and flags larger reference HTML pages."""
+    assert MAX_REFERENCE_HTML_BYTES == 240 * 1024
+    site_dir = tmp_path / "site"
+    docs_dir = tmp_path / "docs"
+    site_dir.mkdir(parents=True)
+    docs_dir.mkdir(parents=True)
+    (docs_dir / "index.md").write_text("# Litestar MCP\n", encoding="utf-8")
+    (site_dir / "index.html").write_text("<html><body><h1>Litestar MCP</h1></body></html>\n", encoding="utf-8")
+
+    run_postbuild(site_dir=site_dir, docs_dir=docs_dir)
+
+    ref_html = site_dir / "reference" / "plugin-and-config" / "index.html"
+    ref_html.parent.mkdir(parents=True, exist_ok=True)
+    prefix = "<html><body><p>"
+    suffix = "</p></body></html>"
+    padding_len = payload_bytes - len(prefix) - len(suffix)
+    assert padding_len > 0
+    ref_html.write_text(f"{prefix}{'a' * padding_len}{suffix}", encoding="utf-8")
+
+    findings = verify_site(site_dir=site_dir, docs_dir=docs_dir)
+    rules = {finding.rule for finding in findings}
+    if expect_violation:
+        assert "reference-size-budget" in rules
+    else:
+        assert findings == []

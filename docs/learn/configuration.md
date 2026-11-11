@@ -30,7 +30,7 @@ Standalone prompt functions decorated with `@mcp_prompt` can be passed to `Lites
 
 | Field | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `base_path` | `str` | `"/mcp"` | Base URL path where `MCPController` mounts its Streamable HTTP `POST` and `DELETE` endpoints. |
+| `base_path` | `str` | `"/mcp"` | Base URL path where `MCPController` mounts its Streamable HTTP `POST`, `GET` (`text/event-stream` SSE when `enable_get_sse=True`), and `DELETE` (`Mcp-Session-Id` termination) endpoints. |
 | `include_in_schema` | `bool` | `False` | Whether to include the mounted MCP transport routes in Litestar's generated OpenAPI schema. |
 | `name` | `str or None` | `None` | Optional server name override. When `None`, falls back to `app.openapi_config.title` (or `"Litestar MCP Server"`). Server version is derived from `app.openapi_config.version` (default `"1.0.0"`), and the application's OpenAPI document is always served via the built-in `litestar://openapi` resource. |
 | `instructions` | `str or None` | `None` | Optional server-level grounding instructions returned in `server/discover` and `initialize` responses. |
@@ -42,7 +42,9 @@ Standalone prompt functions decorated with `@mcp_prompt` can be passed to `Lites
 | `exclude_operations` | `list[str] or None` | `None` | Optional denylist of tool, resource, or prompt names to hide from MCP. |
 | `include_tags` | `list[str] or None` | `None` | Optional allowlist of Litestar route handler `tags` to expose over MCP. |
 | `exclude_tags` | `list[str] or None` | `None` | Optional denylist of Litestar route handler `tags` to hide from MCP. |
-| `opt_keys` | `MCPOptKeys` | `MCPOptKeys()` | Configurable `handler.opt` key names inspected during route discovery. |
+| `opt_keys` | `MCPOptKeys` | `MCPOptKeys()` | Configurable `handler.opt` key names inspected during route discovery (including `mcp_output_schema` and SEP-1865 `title`, `icons`, and `meta` keys—see [Marking Routes & Decorators](marking-routes.md)). |
+| `auto_output_schema` | `bool` | `False` | Automatically synthesize JSON Schema 2020-12 `outputSchema` from structured handler return annotations unless opted out per route via `output_schema=False` (`mcp_output_schema=False`). |
+| `ui_mime_types` | `Sequence[str] or None` | `None` | Optional explicit sequence of MCP Apps MIME types advertised under `capabilities.extensions["io.modelcontextprotocol/ui"]` (populated automatically with `"text/html;profile=mcp-app"` when UI resources are registered). |
 | `infer_http_method_annotations` | `bool` | `True` | Automatically infer default MCP tool annotation hints (`readOnlyHint`, `destructiveHint`, `idempotentHint`) from the route handler's HTTP verb when not explicitly overridden (`mcp_annotations` / `annotations`). |
 | `max_tool_description_length` | `int or None` | `None` | Optional maximum character length for tool descriptions enforced during `validate_tool_descriptions` and `litestar mcp export-tool-spec`. |
 | `max_param_description_length` | `int or None` | `None` | Optional maximum character length for tool input parameter descriptions enforced during tool-spec validation. |
@@ -55,7 +57,12 @@ Standalone prompt functions decorated with `@mcp_prompt` can be passed to `Lites
 | `after_tool_call` | `AfterToolCallHook or None` | `None` | Optional sync or async callback invoked after each `tools/call` dispatch with `result`, `exception`, and `duration` in seconds. |
 | `cache_ttl_ms` | `int` | `0` | Cache TTL hint in milliseconds (`ttlMs`) attached to cacheable discovery, list, and resource-read results (`0` disables caching). |
 | `cache_scope` | `Literal["private", "public"]` | `"private"` | Cache visibility scope (`cacheScope`) attached alongside `ttlMs`. Keep `"private"` whenever tools, resources, or skills depend on caller identity. |
-| `subscription_max_streams` | `int` | `10_000` | Maximum concurrent `subscriptions/listen` SSE streams permitted per process. |
+| `enable_get_sse` | `bool` | `True` | Serve server-initiated `text/event-stream` SSE streams on `GET <base_path>` for `2025-11-25`, `2025-06-18`, and `2025-03-26` `Mcp-Session-Id` sessions (`405 Method Not Allowed` when `False` or when `Accept` is omitted). |
+| `session_ttl_seconds` | `float` | `3600.0` | Positive lifetime in seconds for `2025-*` `Mcp-Session-Id` session records persisted in `MCPSessionStore` (`"litestar_mcp_sessions"`). |
+| `logging` | `bool` | `True` | Advertise `capabilities.logging = {}`, handle `logging/setLevel`, and emit threshold-filtered RFC 5424 `notifications/message` events from `await ctx.log(...)`. |
+| `default_log_level` | `str` | `"info"` | Initial RFC 5424 server log threshold (`"debug"`, `"info"`, `"notice"`, `"warning"`, `"error"`, `"critical"`, `"alert"`, `"emergency"`) before client `logging/setLevel` or `params._meta["io.modelcontextprotocol/logLevel"]` overrides. |
+| `subscription_authorizer` | `Callable[[Request, str], Awaitable[bool] or bool] or None` | `None` | Optional fail-closed sync or async callback authorizing caller access to target URIs on `resources/subscribe` and `subscriptions/listen` (`resourceSubscriptions`). |
+| `subscription_max_streams` | `int` | `10_000` | Maximum concurrent `subscriptions/listen` and `GET <base_path>` SSE streams permitted per process. |
 | `subscription_keepalive_seconds` | `float` | `15.0` | Interval in seconds between `: keepalive` SSE comments on active subscription streams. |
 | `subscription_channels` | `Any or None` | `None` | Optional Litestar `ChannelsPlugin` backend used to fan out subscription notifications across worker processes. |
 | `stream_queue_capacity` | `int` | `256` | Bounded in-memory queue capacity per active progress or subscription stream (`stream_queue_capacity`). Progress streams apply backpressure; slow subscription consumers are disconnected cleanly. |
@@ -83,7 +90,7 @@ Standalone prompt functions decorated with `@mcp_prompt` can be passed to `Lites
 4. If `include_operations` is set and the primitive name is not in `include_operations`, the handler is **excluded**.
 5. Otherwise, the handler is **included**.
 
-Filters apply identically to `*/list` responses and direct invocation (`tools/call`, `resources/read`, `prompts/get`). Calling a filtered tool, resource, or prompt returns the same `INVALID_PARAMS` (`-32602`) not-found response as an unregistered name.
+Filters apply identically to `*/list` responses and direct invocation (`tools/call`, `resources/read`, `prompts/get`), as well as SEP-2640 Agent Skills via `filter_skills` (`skills/list`, `skills/get`, `resources/read`, and projected skill prompts when `MCPSkillsConfig.expose_as_prompts=True`). Calling a filtered tool, resource, prompt, or skill returns the same `INVALID_PARAMS` (`-32602`) not-found response as an unregistered name.
 
 !!! warning "Filtering vs Authorization"
     Tag and operation filters control global catalog visibility across the entire MCP server. For per-request, per-principal access control, attach Litestar `guards` or `litestar-security` `MCPConfig(auth=...)` and `route_opt` policies—see [Authorization, Guards & Scopes](../security/authorization-and-scopes.md).
@@ -132,7 +139,7 @@ Pass an `MCPSkillsConfig` instance to `MCPConfig(skills=...)` to advertise and s
 --8<-- "docs/examples/snippets/configuration_skills.py:example"
 ```
 
-See [Agent Skills (SEP-2640)](skills.md) for directory layout rules, startup validation, wire methods, and dynamic `SkillSource` composition.
+See [Agent Skills (SEP-2640)](skills.md) for `MCPSkillsConfig` fields—including `expose_as_prompts` (`False` by default, projecting visible skills into `prompts/list` and `prompts/get`) and `list_changed` (`True` by default, advertising `listChanged: true` and emitting `notifications/skills/list_changed`)—along with directory layout rules, startup validation, and request-optional `SkillCatalog` injection.
 
 ## Tool-Call Lifecycle Callbacks
 

@@ -4,10 +4,11 @@ title: OpenTelemetry Tracing & Tool Callbacks
 
 # OpenTelemetry Tracing & Tool Callbacks
 
-`litestar-mcp` provides two complementary observability mechanisms:
+`litestar-mcp` provides complementary observability and diagnostic mechanisms across agent turns, MCP handlers, and background tasks:
 
 1. **OpenTelemetry Tracing (`TelemetryConfig` & `SpanManager`)**: Emits vendor-neutral OpenTelemetry spans with standard GenAI semantic conventions (`gen_ai.operation.name`, `gen_ai.agent.name`, `gen_ai.tool.name`, token usage, and turn metadata) across `AgentRuntime` turns, tool executions, and custom instrumentation blocks.
 2. **Tool-Call Lifecycle Hooks (`MCPConfig.before_tool_call` & `MCPConfig.after_tool_call`)**: Runs synchronous or asynchronous callbacks around every MCP `tools/call` dispatch for structured audit logging, latency histograms, and request-state tagging.
+3. **Structured MCP Server Logging (`MCPConfig.logging`, `logging/setLevel`, & `ctx.log`)**: Streams threshold-filtered RFC 5424 `notifications/message` diagnostics to authorized client sessions and opted-in subscription streams without leaking logs across principals or unrelated streams.
 
 ---
 
@@ -114,3 +115,55 @@ For MCP server observability independent of `AgentRuntime`, `MCPConfig` exposes 
 3. **Fault Isolation**:
    - Both hooks accept either synchronous functions or `async def` coroutines.
    - Any exception raised inside `before_tool_call` or `after_tool_call` is caught and logged by `litestar-mcp` so a failing metrics sink or audit logger never aborts a valid tool execution.
+
+---
+
+## Structured MCP Server Logging
+
+When `MCPConfig.logging` is `True` (default, paired with `MCPConfig.default_log_level = "info"`), `LitestarMCP` advertises `capabilities.logging = {}` in `server/discover` and `initialize`, accepts RFC 5424 severity threshold updates, and streams structured `notifications/message` frames emitted via `await ctx.log(level, data, logger=None)`. Setting `MCPConfig(logging=False)` omits `capabilities.logging`, rejects `logging/setLevel` with `METHOD_NOT_FOUND` (`-32601`), and turns `ctx.log(...)` into a no-op.
+
+### Severity Hierarchy and Client Threshold Control
+
+`MCPLogLevel` follows the ascending RFC 5424 severity ordering from `"debug"` through `"emergency"`:
+
+| Severity Rank | `MCPLogLevel` Literal | Typical Diagnostic Use |
+| :--- | :--- | :--- |
+| `0` | `"debug"` | Verbose step-by-step execution traces and query plans |
+| `1` | `"info"` | Standard operational milestones (`default_log_level` default) |
+| `2` | `"notice"` | Normal but notable configuration or catalog transitions |
+| `3` | `"warning"` | Recoverable retries, rate-limit throttling, or fallback paths |
+| `4` | `"error"` | Tool-level or upstream failures impacting the active request |
+| `5` | `"critical"` | Subsystem outages or corrupted external dependencies |
+| `6` | `"alert"` | Conditions requiring immediate operator intervention |
+| `7` | `"emergency"` | Unrecoverable service-wide failure state |
+
+Clients control their active log threshold according to their negotiated Streamable HTTP mode:
+
+- **Session-Aware `2025-11-25`, `2025-06-18`, and `2025-03-26` (`logging/setLevel`)**: Clients send JSON-RPC `logging/setLevel` with `{"level": "warning"}`—or call `await client.set_logging_level("warning")` on `MCPStreamableHTTPClient`—to persist the new threshold on their `MCPSession` (unknown level names fail with `INVALID_PARAMS` `-32602`). Matching `notifications/message` frames stream over the session's `GET /mcp` SSE connection, scoped strictly to `owner_id` and `session_id`.
+- **Stateless `2026-07-28` (`io.modelcontextprotocol/logLevel` & `subscriptions/listen`)**: Stateless requests supply per-request `params._meta["io.modelcontextprotocol/logLevel"]`, and `POST /mcp` `subscriptions/listen` streams opt into log notifications explicitly with `"notifications": {"logLevel": "info"}`. Subscription streams that omit `"logLevel"` receive zero `notifications/message` frames.
+
+### Emitting Server Logs in Handlers and Background Tasks
+
+Inside any MCP tool, resource, prompt, or promoted background task (both in-process and distributed `QueueTaskExecutor` workers), call `await ctx.log(level, data, logger=None)` on `get_mcp_request_context()`:
+
+```python
+from litestar import post
+
+from litestar_mcp import LitestarMCP, MCPConfig, get_mcp_request_context
+
+
+@post("/deployments", mcp_tool="rollout_service")
+async def rollout_service(service: str) -> dict[str, str]:
+    """Emit structured RFC 5424 diagnostics to the calling MCP session."""
+    ctx = get_mcp_request_context()
+    await ctx.log(
+        "info",
+        {"event": "rollout_started", "service": service},
+        logger="deployments",
+    )
+    return {"service": service, "status": "deployed"}
+
+
+config = MCPConfig(logging=True, default_log_level="info")
+plugin = LitestarMCP(config)
+```

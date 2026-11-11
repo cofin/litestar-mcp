@@ -42,14 +42,14 @@
 
 | Capability | Primary Symbols | Documentation |
 | :--- | :--- | :--- |
-| **Route Marking & Decorators** | `LitestarMCP`, `MCP`, `MCPConfig`, `mcp_tool`, `mcp_resource`, `mcp_prompt`, `MCPOptKeys`, `PromptController` | [MCP Core Guide](https://cofin.github.io/litestar-mcp/learn/marking-routes/) |
-| **Dual-Version Streamable HTTP & CLI** | `2026-07-28` (`server/discover` + SEP-2575 headers) and `2025-06-18` (`initialize`, `ping`, `DELETE /mcp`), `litestar mcp stdio`, `bridge`, `export-tool-spec` | [Transport & Discovery](https://cofin.github.io/litestar-mcp/learn/discovery/) |
-| **Agent Skills (`SEP-2640`)** | `MCPSkillsConfig`, `FilesystemSkillSource`, `SkillSource`, `Skill`, `SkillFile`, `SkillCatalog`, `SkillController` | [Agent Skills Guide](https://cofin.github.io/litestar-mcp/learn/skills/) |
-| **Distributed MCP Tasks & Queues** | `MCPTaskConfig`, `QueueTaskExecutor`, `MCPTaskExecutor`, `MCPTaskStore`, `MCPInputRequiredResult`, `PrincipalSnapshot` | [Distributed Task Queues](https://cofin.github.io/litestar-mcp/queues/distributed-task-queues/) |
+| **Route Marking & Decorators** | `LitestarMCP`, `MCP`, `MCPConfig`, `mcp_tool`, `mcp_resource` (`uri=`), `mcp_prompt`, `MCPOptKeys`, opt-in `outputSchema` / `structuredContent`, `SEP-1865` `io.modelcontextprotocol/ui` (`_meta.ui`, `title`, `icons`), `PromptController` | [MCP Core Guide](https://cofin.github.io/litestar-mcp/learn/marking-routes/) |
+| **Dual-Mode Streamable HTTP & CLI** | Stateless `2026-07-28` (`server/discover`, SEP-2575 headers, `POST subscriptions/listen`) and session-aware `2025-11-25` / `2025-06-18` / `2025-03-26` (`initialize`, `Mcp-Session-Id`, `GET /mcp` SSE, `resources/subscribe`, `logging/setLevel`, `ping`, `DELETE /mcp`), plus `litestar mcp stdio`, `bridge`, `export-tool-spec`, `list-tools`, `list-resources`, `list-skills`, `run` | [Transport & Discovery](https://cofin.github.io/litestar-mcp/learn/discovery/) |
+| **Agent Skills (`SEP-2640`)** | `MCPSkillsConfig` (`expose_as_prompts`, `list_changed`), `SkillCatalog`, `FilesystemSkillSource`, `SkillSource`, `Skill`, `SkillFile`, `SkillController` | [Agent Skills Guide](https://cofin.github.io/litestar-mcp/learn/skills/) |
+| **Distributed MCP Tasks & Queues** | `MCPTaskConfig`, `QueueTaskExecutor`, `MCPTaskExecutor`, `MCPTaskStore`, `MCPInputRequiredResult`, `PrincipalSnapshot`, `progress_token` forwarding | [Distributed Task Queues](https://cofin.github.io/litestar-mcp/queues/distributed-task-queues/) |
 | **Durable DAG Workflows** | `DynamicWorkflow`, `WorkflowNode`, `WorkflowEngine`, `DurableWorkflowEngine`, `WorkflowStore`, `WorkflowRun`, `NodeRecord` | [Durable Workflows](https://cofin.github.io/litestar-mcp/queues/durable-workflows/) |
 | **Multi-Agent Runtime & Streaming** | `Agent`, `AgentGroup`, `AgentRuntime`, `TurnBudget`, `GoogleGenAIClient`, `SessionStore`, `AgentChatController`, `QueuedAgentChatController` | [Agents & Runtime](https://cofin.github.io/litestar-mcp/agents/runtime-and-budgets/) |
 | **A2A 1.0 & Protocol Bridges** | `LitestarA2A`, `A2AConfig` (JSON-RPC 2.0 + `HTTP+JSON` REST, `/{tenant:str}` + `X-A2A-Tenant`), `agent_to_mcp`, `mcp_to_tools`, `discover_mcp_tools`, `agent_to_a2a` | [A2A 1.0 Protocol](https://cofin.github.io/litestar-mcp/agents/a2a-protocol/) |
-| **Security & Observability** | Litestar auth middleware, `litestar-security` (`route_opt={"auth": required(...)}` + RFC 9728 metadata), guards/scopes, `TelemetryConfig` | [Security & Operations](https://cofin.github.io/litestar-mcp/security/) |
+| **Security & Observability** | Litestar auth middleware, `litestar-security` (`MCPConfig(auth=required(...))` + RFC 9728 metadata), `MCPSessionStore` owner isolation, `subscription_authorizer`, guards/scopes, RFC 5424 server logging (`MCPRequestContext.log()`), `TelemetryConfig` | [Security & Operations](https://cofin.github.io/litestar-mcp/security/) |
 
 ---
 
@@ -165,9 +165,9 @@ if __name__ == "__main__":
     mcp.run(port=8000)
 ```
 
-### Dual-Version Stateless Streamable HTTP & CLI
+### Dual-Mode Streamable HTTP & CLI
 
-A single `/mcp` endpoint negotiates both MCP `2026-07-28` (`server/discover` with SEP-2575 `MCP-Protocol-Version` and `Mcp-Method` headers) and MCP `2025-06-18` / `2025-03-26` (`initialize`, `notifications/initialized`, `ping`, `202 Accepted` notifications, and `204 No Content` on `DELETE /mcp`):
+A single `/mcp` endpoint negotiates stateless MCP `2026-07-28` (`server/discover` with SEP-2575 `MCP-Protocol-Version` and `Mcp-Method` headers, plus `POST subscriptions/listen`) alongside session-aware MCP `2025-11-25`, `2025-06-18`, and `2025-03-26` (`initialize` issuing `Mcp-Session-Id`, `GET /mcp` Server-Sent Events with `Accept: text/event-stream`, `resources/subscribe`, `logging/setLevel`, `notifications/initialized`, `ping`, and `204 No Content` on `DELETE /mcp`). Tools can advertise JSON Schema 2020-12 `outputSchema` with automatic `structuredContent` population (`MCPConfig(auto_output_schema=True)` or `mcp_output_schema=True`) and attach `SEP-1865` MCP Apps metadata (`io.modelcontextprotocol/ui`, `text/html;profile=mcp-app`):
 
 ```bash
 # MCP 2026-07-28 stateless discovery
@@ -177,11 +177,30 @@ curl -sX POST http://127.0.0.1:8000/mcp \
   -H 'Mcp-Method: server/discover' \
   -d '{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
 
-# MCP 2025-06-18 initialize handshake
+# MCP 2025-11-25 initialize handshake (returns Mcp-Session-Id response header)
+curl -siX POST http://127.0.0.1:8000/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}'
+
+# Open session-scoped GET /mcp SSE notification stream
+curl -N http://127.0.0.1:8000/mcp \
+  -H 'Accept: text/event-stream' \
+  -H 'MCP-Protocol-Version: 2025-11-25' \
+  -H "Mcp-Session-Id: $SESSION_ID"
+
+# Subscribe to resource updates and adjust RFC 5424 server log threshold
 curl -sX POST http://127.0.0.1:8000/mcp \
   -H 'Content-Type: application/json' \
-  -H 'MCP-Protocol-Version: 2025-06-18' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}'
+  -H 'MCP-Protocol-Version: 2025-11-25' \
+  -H "Mcp-Session-Id: $SESSION_ID" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"resources/subscribe","params":{"uri":"litestar://openapi"}}'
+
+curl -sX POST http://127.0.0.1:8000/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'MCP-Protocol-Version: 2025-11-25' \
+  -H "Mcp-Session-Id: $SESSION_ID" \
+  -d '{"jsonrpc":"2.0","id":3,"method":"logging/setLevel","params":{"level":"debug"}}'
 ```
 
 For local desktop hosts and CI pipelines, `litestar-mcp` registers subcommands under `litestar mcp`:
@@ -192,6 +211,11 @@ litestar --app my_app:app mcp stdio
 
 # Bridge local stdio to a remote Streamable HTTP deployment
 litestar mcp bridge --base-url https://api.example.com --endpoint /mcp
+
+# Inspect discovered tools, resources, and SEP-2640 skills from the terminal
+litestar --app my_app:app mcp list-tools
+litestar --app my_app:app mcp list-resources
+litestar --app my_app:app mcp list-skills
 
 # Export static {"tools": [...]} JSON schemas without booting an HTTP server
 litestar --app my_app:app mcp export-tool-spec --indent 2
@@ -331,7 +355,7 @@ Full documentation, interactive architecture diagrams, and API reference are pub
 
 - [**Getting Started**](https://cofin.github.io/litestar-mcp/getting-started/) — Installation, optional extras, 5-minute quickstart, standalone `MCP` servers, and core concepts
 - [**Architecture & Examples**](https://cofin.github.io/litestar-mcp/architecture/) — Interactive system diagrams, Notes reference matrix, and single-file PEP 723 guide
-- [**MCP Core**](https://cofin.github.io/litestar-mcp/learn/) — `MCPConfig`, route markers, `MCPOptKeys`, resources, prompts, Agent Skills (`SEP-2640`), discovery, stdio, and bridge
+- [**MCP Core**](https://cofin.github.io/litestar-mcp/learn/) — `MCPConfig`, route markers, `MCPOptKeys`, `outputSchema` and `structuredContent`, MCP Apps (`io.modelcontextprotocol/ui`), resources, prompts, Agent Skills (`SEP-2640` & `SkillCatalog`), RFC 5424 server logging, `2026-07-28` & `2025-11-25` Streamable HTTP, stdio, and bridge
 - [**Tasks, Queues & Workflows**](https://cofin.github.io/litestar-mcp/queues/) — `io.modelcontextprotocol/tasks`, `QueueTaskExecutor`, `DurableWorkflowEngine`, `QueuedAgentChatController`, and multi-replica deployment
 - [**Agents & A2A**](https://cofin.github.io/litestar-mcp/agents/) — `AgentRuntime`, `TurnBudget`, `GoogleGenAIClient`, `AgentGroup`, protocol bridges, `LitestarA2A`, and multi-tenancy
 - [**Security & Operations**](https://cofin.github.io/litestar-mcp/security/) — Authentication middleware, `litestar-security` & RFC 9728 metadata, authorization guards/scopes, and OpenTelemetry

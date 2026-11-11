@@ -38,8 +38,8 @@ COMMAND_CATEGORIES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ),
     (
         "Discovery & Interactive Execution",
-        "Commands for inspecting discovered MCP tools and resources or invoking a tool directly from the terminal.",
-        ("list-tools", "list-resources", "run"),
+        "Commands for inspecting discovered MCP tools, resources, and skills or invoking a tool directly from the terminal.",
+        ("list-tools", "list-resources", "list-skills", "run"),
     ),
 )
 

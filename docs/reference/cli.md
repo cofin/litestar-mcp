@@ -73,6 +73,12 @@ litestar --app my_app.main:app mcp list-tools
 # Inspect all discovered static resources and RFC 6570 URI templates
 litestar --app my_app.main:app mcp list-resources
 
+# Inspect all discovered MCP skills across configured sources
+litestar --app my_app.main:app mcp list-skills
+
+# Filter discovered MCP skills by repeatable tag and substring query
+litestar --app my_app.main:app mcp list-skills --tag ops --query deploy
+
 # Interactively invoke a discovered tool by name
 litestar --app my_app.main:app mcp run
 ```

@@ -65,102 +65,111 @@
 
   <div class="lm-task-panels">
     <div class="lm-task-panel lm-panel-queue">
-      <svg viewBox="0 0 920 290" role="img" aria-labelledby="lm-task-q-title lm-task-q-desc">
-        <title id="lm-task-q-title">Distributed QueueTaskExecutor on litestar-queues</title>
-        <desc id="lm-task-q-desc">tools/call with params.task persists a TaskRecord in MCPTaskStore (litestar_mcp_tasks), snapshots PrincipalSnapshot and SecurityContext, enqueues to litestar-queues, rehydrates Dishka Scope.REQUEST on any worker replica, and supports cooperative tasks/cancel and multi-round MCPInputRequiredResult via tasks/update.</desc>
+      <svg viewBox="0 0 920 310" role="img" aria-labelledby="lm-task-q-title lm-task-q-desc">
+        <title id="lm-task-q-title">Distributed QueueTaskExecutor and Task Progress/Log Forwarding on litestar-queues</title>
+        <desc id="lm-task-q-desc">tools/call with params.task persists TaskRecord and ToolTaskCall (progress_token, session_id, log_level, PrincipalSnapshot) in MCPTaskStore, runs on litestar-queues workers calling ctx.report_progress() and ctx.log() to update MCPTaskStore.update_status_message() and fan out notifications/progress and notifications/message via ChannelsPlugin onto 2025-11-25 GET /mcp session SSE streams (excluding 2026-07-28 POST subscriptions/listen), and refreshes log_level from MCPSessionStore on tasks/update.</desc>
 
-        <rect x="16" y="24" width="194" height="164" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-blue)" stroke-width="2" />
+        <rect x="16" y="24" width="198" height="180" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-blue)" stroke-width="2" />
         <circle class="lm-pulse" cx="34" cy="44" r="5" fill="var(--lm-t-blue)" />
-        <text x="113" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">Task Submission</text>
-        <text x="113" y="72" text-anchor="middle" fill="var(--lm-t-blue)" font-size="11" font-family="monospace">tools/call (params.task)</text>
-        <text x="113" y="94" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Captures PrincipalSnapshot</text>
-        <text x="113" y="112" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">request.user &amp; request.auth</text>
-        <text x="113" y="130" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">SecurityContext (scopes/roles)</text>
-        <text x="113" y="148" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Owner ID: user:&lt;subject&gt;</text>
-        <text x="113" y="168" text-anchor="middle" fill="var(--lm-t-emerald)" font-size="10" font-family="monospace">Returns CreateTaskResult</text>
+        <text x="115" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">Task Promotion</text>
+        <text x="115" y="70" text-anchor="middle" fill="var(--lm-t-blue)" font-size="10.5" font-family="monospace">tools/call (params.task)</text>
+        <text x="115" y="90" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Captures PrincipalSnapshot &amp; owner_id</text>
+        <text x="115" y="108" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">ToolTaskCall.progress_token</text>
+        <text x="115" y="126" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Persists session_id &amp; log_level</text>
+        <text x="115" y="144" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">request.user &amp; SecurityContext</text>
+        <text x="115" y="162" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Persists TaskRecord before return</text>
+        <text x="115" y="186" text-anchor="middle" fill="var(--lm-t-emerald)" font-size="9.5" font-family="monospace">Returns CreateTaskResult</text>
 
-        <line class="lm-flow-forward" x1="210" y1="106" x2="256" y2="106" stroke="var(--lm-t-blue)" stroke-width="2.5" />
+        <line class="lm-flow-forward" x1="214" y1="114" x2="252" y2="114" stroke="var(--lm-t-blue)" stroke-width="2.5" />
 
-        <rect x="256" y="24" width="198" height="164" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-amber)" stroke-width="2" />
-        <text x="355" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">Durable Store &amp; Broker</text>
-        <text x="355" y="72" text-anchor="middle" fill="var(--lm-t-amber)" font-size="11" font-family="monospace">MCPTaskStore + QueuePlugin</text>
-        <text x="355" y="94" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Store: litestar_mcp_tasks</text>
-        <text x="355" y="112" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">QueueTaskExecutor.submit()</text>
-        <text x="355" y="130" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Per-route queue="..." override</text>
-        <text x="355" y="148" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Postgres / Redis / SQLSpec</text>
-        <text x="355" y="168" text-anchor="middle" fill="var(--lm-t-amber)" font-size="10" font-family="monospace">status: "working"</text>
+        <rect x="252" y="24" width="202" height="180" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-amber)" stroke-width="2" />
+        <text x="353" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">Durable Store &amp; Broker</text>
+        <text x="353" y="70" text-anchor="middle" fill="var(--lm-t-amber)" font-size="10.5" font-family="monospace">MCPTaskStore + QueuePlugin</text>
+        <text x="353" y="90" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Store: litestar_mcp_tasks (TTL)</text>
+        <text x="353" y="108" text-anchor="middle" fill="var(--lm-t-muted)" font-size="9.5" font-family="monospace">MCPTaskStore.update_status_message()</text>
+        <text x="353" y="126" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">QueueTaskExecutor.submit() / resume()</text>
+        <text x="353" y="144" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">MCPSessionStore log_level refresh</text>
+        <text x="353" y="162" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">on tasks/update • queue="..."</text>
+        <text x="353" y="186" text-anchor="middle" fill="var(--lm-t-amber)" font-size="9.5" font-family="monospace">Postgres / Redis / SQLSpec</text>
 
-        <line class="lm-flow-forward" x1="454" y1="106" x2="500" y2="106" stroke="var(--lm-t-amber)" stroke-width="2.5" />
+        <line class="lm-flow-forward" x1="454" y1="114" x2="492" y2="114" stroke="var(--lm-t-amber)" stroke-width="2.5" />
 
-        <rect x="500" y="24" width="196" height="164" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-violet)" stroke-width="2" />
-        <circle class="lm-pulse" cx="518" cy="44" r="5" fill="var(--lm-t-violet)" />
-        <text x="598" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">Worker Rehydration</text>
-        <text x="598" y="72" text-anchor="middle" fill="var(--lm-t-violet)" font-size="11" font-family="monospace">Replica Worker Execution</text>
-        <text x="598" y="94" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Rehydrates user &amp; auth in scope</text>
-        <text x="598" y="112" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Restores SecurityContext</text>
-        <text x="598" y="130" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Enters Dishka Scope.REQUEST</text>
-        <text x="598" y="148" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Store status="cancelled" + CancelScope</text>
-        <text x="598" y="168" text-anchor="middle" fill="var(--lm-t-violet)" font-size="10" font-family="monospace">MCPRequestContext.report_progress</text>
+        <rect x="492" y="24" width="200" height="180" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-violet)" stroke-width="2" />
+        <circle class="lm-pulse" cx="510" cy="44" r="5" fill="var(--lm-t-violet)" />
+        <text x="592" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">Worker Rehydration</text>
+        <text x="592" y="70" text-anchor="middle" fill="var(--lm-t-violet)" font-size="10.5" font-family="monospace">Replica Worker Execution</text>
+        <text x="592" y="90" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Rehydrates user, auth &amp; Dishka</text>
+        <text x="592" y="108" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Restores progress_token &amp; log_level</text>
+        <text x="592" y="126" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">ctx.report_progress() -&gt; statusMessage</text>
+        <text x="592" y="144" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">ctx.log() RFC 5424 severity filter</text>
+        <text x="592" y="162" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">ChannelsPlugin cross-replica fan-out</text>
+        <text x="592" y="186" text-anchor="middle" fill="var(--lm-t-violet)" font-size="9.5" font-family="monospace">Cooperative CancelScope</text>
 
-        <line class="lm-flow-forward" x1="696" y1="88" x2="742" y2="88" stroke="var(--lm-t-emerald)" stroke-width="2.5" />
-        <line class="lm-flow-reverse" x1="696" y1="124" x2="742" y2="124" stroke="var(--lm-t-rose)" stroke-width="2" />
+        <line class="lm-flow-forward" x1="692" y1="96" x2="730" y2="96" stroke="var(--lm-t-emerald)" stroke-width="2.5" />
+        <line class="lm-flow-reverse" x1="692" y1="132" x2="730" y2="132" stroke="var(--lm-t-rose)" stroke-width="2" />
 
-        <rect x="742" y="24" width="162" height="164" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-emerald)" stroke-width="2" />
-        <text x="823" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">Pause / Complete</text>
-        <text x="823" y="72" text-anchor="middle" fill="var(--lm-t-emerald)" font-size="11" font-family="monospace">tasks/get • update • cancel</text>
-        <text x="823" y="94" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">MCPInputRequiredResult</text>
-        <text x="823" y="112" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">-&gt; status: "input_required"</text>
-        <text x="823" y="130" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">tasks/update re-enqueues</text>
-        <text x="823" y="148" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">tasks/cancel sets flag</text>
-        <text x="823" y="168" text-anchor="middle" fill="var(--lm-t-emerald)" font-size="10" font-family="monospace">Cross-Replica Safe</text>
+        <rect x="730" y="24" width="174" height="180" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-emerald)" stroke-width="2" />
+        <text x="817" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">SSE &amp; Task Control</text>
+        <text x="817" y="70" text-anchor="middle" fill="var(--lm-t-emerald)" font-size="10.5" font-family="monospace">tasks/get • update • cancel</text>
+        <text x="817" y="90" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">2025-11-25 GET /mcp SSE push:</text>
+        <text x="817" y="108" text-anchor="middle" fill="var(--lm-t-muted)" font-size="9.5" font-family="monospace">notifications/progress</text>
+        <text x="817" y="126" text-anchor="middle" fill="var(--lm-t-muted)" font-size="9.5" font-family="monospace">notifications/message</text>
+        <text x="817" y="144" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">MCPInputRequiredResult pause</text>
+        <text x="817" y="162" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">tasks/update refreshes log_level</text>
+        <text x="817" y="186" text-anchor="middle" fill="var(--lm-t-emerald)" font-size="9.5" font-family="monospace">Cross-Replica Safe</text>
 
-        <rect x="16" y="210" width="888" height="58" rx="8" fill="var(--lm-t-card)" stroke="var(--lm-t-border)" stroke-width="1.5" />
-        <text x="460" y="232" text-anchor="middle" fill="var(--lm-t-text)" font-size="12" font-weight="700">Multi-Round Human-in-the-Loop &amp; Cooperative Cancellation Across Replicas</text>
-        <text x="460" y="252" text-anchor="middle" fill="var(--lm-t-muted)" font-size="11" font-family="monospace">Replica A: tools/call -&gt; Worker B: MCPInputRequiredResult -&gt; Replica C: tasks/update(input) -&gt; Replica A: tasks/get</text>
+        <rect x="16" y="220" width="888" height="72" rx="8" fill="var(--lm-t-card)" stroke="var(--lm-t-border)" stroke-width="1.5" />
+        <text x="460" y="240" text-anchor="middle" fill="var(--lm-t-text)" font-size="12" font-weight="700">Cross-Replica Progress, Logging &amp; Transport Isolation</text>
+        <text x="460" y="259" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10" font-family="monospace">Worker ctx.report_progress() &amp; ctx.log() -&gt; update_status_message() + ChannelsPlugin -&gt; 2025-11-25 GET /mcp SSE</text>
+        <text x="460" y="277" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10" font-family="monospace">2026-07-28 POST subscriptions/listen task streams excluded from progress/log SSE  |  tasks/get returns statusMessage</text>
       </svg>
     </div>
 
     <div class="lm-task-panel lm-panel-inproc">
-      <svg viewBox="0 0 920 290" role="img" aria-labelledby="lm-task-in-title lm-task-in-desc">
-        <title id="lm-task-in-title">Built-In MCPTaskStore and Multi-Round Task Elicitation Lifecycle</title>
-        <desc id="lm-task-in-desc">Built-in MCPTaskStore and Multi-Round Task Elicitation Lifecycle persisting owner-scoped TaskRecord state and elicitation payloads in Litestar Store.</desc>
+      <svg viewBox="0 0 920 310" role="img" aria-labelledby="lm-task-in-title lm-task-in-desc">
+        <title id="lm-task-in-title">Built-In MCPTaskStore, Promoted Progress/Logging, and Elicitation Lifecycle</title>
+        <desc id="lm-task-in-desc">Built-in MCPTaskStore persists owner-scoped TaskRecord and ToolTaskCall metadata (progress_token, session_id, log_level), updates TaskRecord.statusMessage via MCPTaskStore.update_status_message(), and forwards notifications/progress and notifications/message onto 2025-11-25 GET /mcp session SSE streams while excluding 2026-07-28 subscriptions/listen streams.</desc>
 
-        <rect x="16" y="24" width="210" height="164" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-blue)" stroke-width="2" />
+        <rect x="16" y="24" width="224" height="180" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-blue)" stroke-width="2" />
         <circle class="lm-pulse" cx="34" cy="44" r="5" fill="var(--lm-t-blue)" />
-        <text x="121" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">Client Request</text>
-        <text x="121" y="72" text-anchor="middle" fill="var(--lm-t-blue)" font-size="11" font-family="monospace">tools/call (params.task)</text>
-        <text x="121" y="94" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Validates task="optional"|"required"</text>
-        <text x="121" y="112" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Binds owner_id from authenticated user</text>
-        <text x="121" y="130" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Applies MCPTaskConfig.ttl_seconds</text>
-        <text x="121" y="148" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Single-writer Store keys with TTL</text>
-        <text x="121" y="168" text-anchor="middle" fill="var(--lm-t-emerald)" font-size="10" font-family="monospace">Immediate taskId handle</text>
+        <text x="128" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">Promoted Context</text>
+        <text x="128" y="70" text-anchor="middle" fill="var(--lm-t-blue)" font-size="10.5" font-family="monospace">tools/call (params.task)</text>
+        <text x="128" y="90" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Validates task="optional" | "required"</text>
+        <text x="128" y="108" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Captures ToolTaskCall(progress_token,</text>
+        <text x="128" y="126" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">session_id, log_level, owner_id)</text>
+        <text x="128" y="144" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Single-writer Store keys with TTL</text>
+        <text x="128" y="162" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Detaches runner after HTTP return</text>
+        <text x="128" y="186" text-anchor="middle" fill="var(--lm-t-emerald)" font-size="9.5" font-family="monospace">Immediate taskId handle</text>
 
-        <line class="lm-flow-forward" x1="226" y1="106" x2="290" y2="106" stroke="var(--lm-t-blue)" stroke-width="2.5" />
+        <line class="lm-flow-forward" x1="240" y1="114" x2="288" y2="114" stroke="var(--lm-t-blue)" stroke-width="2.5" />
 
-        <rect x="290" y="24" width="260" height="164" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-amber)" stroke-width="2" />
-        <text x="420" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">MCPTaskStore State Machine</text>
-        <text x="420" y="72" text-anchor="middle" fill="var(--lm-t-amber)" font-size="11" font-family="monospace">litestar_mcp_tasks Store</text>
-        <text x="420" y="94" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Persists TaskRecord &amp; input_payload</text>
-        <text x="420" y="112" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Tracks working -&gt; input_required -&gt; completed</text>
-        <text x="420" y="130" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Executes tool via internal ASGI dispatch</text>
-        <text x="420" y="148" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Persists TaskRecord to MCPTaskStore</text>
-        <text x="420" y="168" text-anchor="middle" fill="var(--lm-t-amber)" font-size="10" font-family="monospace">Zero external broker required</text>
+        <rect x="288" y="24" width="272" height="180" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-amber)" stroke-width="2" />
+        <text x="424" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">MCPTaskStore State Machine</text>
+        <text x="424" y="70" text-anchor="middle" fill="var(--lm-t-amber)" font-size="10.5" font-family="monospace">litestar_mcp_tasks Store</text>
+        <text x="424" y="90" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">working -&gt; input_required -&gt; completed</text>
+        <text x="424" y="108" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Executes tool via internal ASGI dispatch</text>
+        <text x="424" y="126" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10" font-family="monospace">MCPTaskStore.update_status_message()</text>
+        <text x="424" y="144" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Updates TaskRecord.statusMessage live</text>
+        <text x="424" y="162" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Filters ctx.log() by session log_level</text>
+        <text x="424" y="186" text-anchor="middle" fill="var(--lm-t-amber)" font-size="9.5" font-family="monospace">Zero external broker required</text>
 
-        <line class="lm-flow-forward" x1="550" y1="106" x2="614" y2="106" stroke="var(--lm-t-emerald)" stroke-width="2.5" />
+        <line class="lm-flow-forward" x1="560" y1="114" x2="608" y2="114" stroke="var(--lm-t-emerald)" stroke-width="2.5" />
 
-        <rect x="614" y="24" width="290" height="164" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-emerald)" stroke-width="2" />
-        <circle class="lm-pulse" cx="634" cy="44" r="5" fill="var(--lm-t-emerald)" />
-        <text x="759" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">Polling, Resume &amp; Cancel</text>
-        <text x="759" y="72" text-anchor="middle" fill="var(--lm-t-emerald)" font-size="11" font-family="monospace">tasks/get • update • cancel</text>
-        <text x="759" y="94" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Owner-isolated lookup (non-owners masked)</text>
-        <text x="759" y="112" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">tasks/get returns status &amp; result payload</text>
-        <text x="759" y="130" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">tasks/update resumes input_required task</text>
-        <text x="759" y="148" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">tasks/cancel transitions to cancelled</text>
-        <text x="759" y="168" text-anchor="middle" fill="var(--lm-t-emerald)" font-size="10" font-family="monospace">JSON-RPC 2.0 Owner-Scoped Task Lifecycle</text>
+        <rect x="608" y="24" width="296" height="180" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-emerald)" stroke-width="2" />
+        <circle class="lm-pulse" cx="628" cy="44" r="5" fill="var(--lm-t-emerald)" />
+        <text x="756" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">Session SSE, Poll &amp; Resume</text>
+        <text x="756" y="70" text-anchor="middle" fill="var(--lm-t-emerald)" font-size="10.5" font-family="monospace">GET /mcp SSE • tasks/get • update</text>
+        <text x="756" y="90" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Forwards notifications/progress &amp; message</text>
+        <text x="756" y="108" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">onto 2025-11-25 GET /mcp session SSE</text>
+        <text x="756" y="126" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Excludes 2026-07-28 subscriptions/listen</text>
+        <text x="756" y="144" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">tasks/get returns statusMessage &amp; result</text>
+        <text x="756" y="162" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">tasks/update resumes &amp; refreshes log_level</text>
+        <text x="756" y="186" text-anchor="middle" fill="var(--lm-t-emerald)" font-size="9.5" font-family="monospace">Owner-isolated lookup &amp; tasks/cancel</text>
 
-        <rect x="16" y="210" width="888" height="58" rx="8" fill="var(--lm-t-card)" stroke="var(--lm-t-border)" stroke-width="1.5" />
-        <text x="460" y="232" text-anchor="middle" fill="var(--lm-t-text)" font-size="12" font-weight="700">MCPTaskStore + QueueTaskExecutor Architecture</text>
-        <text x="460" y="252" text-anchor="middle" fill="var(--lm-t-muted)" font-size="11" font-family="monospace">MCPTaskStore: Owner-scoped Litestar Store persistence (TTL)  |  QueueTaskExecutor: Distributed litestar-queues worker execution</text>
+        <rect x="16" y="220" width="888" height="72" rx="8" fill="var(--lm-t-card)" stroke="var(--lm-t-border)" stroke-width="1.5" />
+        <text x="460" y="240" text-anchor="middle" fill="var(--lm-t-text)" font-size="12" font-weight="700">Post-Promotion Progress, RFC 5424 Logging &amp; Transport Rules</text>
+        <text x="460" y="259" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10" font-family="monospace">ToolTaskCall(progress_token, session_id, log_level) -&gt; MCPTaskStore.update_status_message() -&gt; TaskRecord.statusMessage</text>
+        <text x="460" y="277" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10" font-family="monospace">2025-11-25 GET /mcp receives notifications/progress + notifications/message  |  2026-07-28 subscriptions/listen excluded</text>
       </svg>
     </div>
   </div>

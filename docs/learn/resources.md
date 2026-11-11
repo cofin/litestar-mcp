@@ -10,7 +10,12 @@ Mark any Litestar route handler with `mcp_resource=True` (or `mcp_resource="<nam
 --8<-- "docs/examples/snippets/marking_resources.py:example"
 ```
 
-By default, a resource named `api_schema` is assigned the URI `litestar://api_schema`. Pass `mcp_resource_uri="custom://schema/v1"` on the route decorator to override the concrete URI.
+By default, a resource named `api_schema` is assigned the URI `litestar://api_schema`. Override the URI via route `opt` `mcp_resource_uri="custom://schema/v1"`, decorator `@mcp_resource(..., uri="custom://schema/v1")`, or standalone `@mcp.resource("custom://schema/v1")`.
+
+`classify_resource_uri` separates concrete resources from templates solely by the presence of `{var}` segments:
+
+- **Static custom-scheme URIs** (such as `uri="config://runtime/flags"` or `uri="ui://widgets/orders"`, containing no `{var}` placeholder) register exclusively in `Registry.resources` and `resources/list` with their exact scheme preserved (never rewritten to `litestar://<name>` or routed into `resources/templates/list`).
+- **Templated URIs** containing one or more `{var}` placeholders (supplied via `uri=`, `uri_template=`, `mcp_resource_uri`, or `mcp_resource_template`) register exclusively in `Registry.templates` and `resources/templates/list`, never leaking a static `litestar://<name>` entry into `resources/list`.
 
 ## Built-In litestar://openapi Resource
 
@@ -22,11 +27,12 @@ Every `LitestarMCP` application automatically advertises and serves a synthetic 
 
 1. **MIME Type Precedence**:
    - Route `opt` `mcp_resource_mime_type="..."`.
-   - Decorator `@mcp_resource(mime_type="...")`.
-   - The Litestar route handler's own `media_type` attribute (for example, `@get("/reports/latest", mcp_resource=True, media_type="application/pdf")`).
-   - Fallback default: `"application/json"`.
-2. **Parameterized MIME Type Preservation**:
-   - `resources/read` preserves parameterized MIME types (such as `text/html;profile=mcp-app` for MCP Apps or `text/markdown; variant=GFM`) from both the route response `Content-Type` header and `mcp_resource_mime_type`, while stripping only automatic `charset` suffixes.
+   - Decorator `@mcp_resource(..., mime_type="...")` or standalone `MCP.resource(..., mime_type="...")`.
+   - Explicit Litestar route `media_type` attribute (for example, `@get("/reports/latest", mcp_resource=True, media_type="application/pdf")`). Explicit `mcp_resource_mime_type` and `mime_type=` always take precedence over Litestar's implicit `text/plain` default on raw `str` or `bytes` handler return types.
+   - Fallback default: `"application/json"` for structured route returns, `"text/plain"` for standalone raw `str` resources, and `"application/octet-stream"` for standalone raw `bytes` resources.
+2. **Raw Media Passthrough & Parameterized MIME Type Preservation**:
+   - Standalone `MCP.resource` handlers returning `str` or `bytes` emit their raw UTF-8 text or binary bytes directly without JSON-quoting strings.
+   - `resources/read` preserves parameterized MIME types (such as `text/html;profile=mcp-app` for MCP Apps or `text/markdown; variant=GFM`) across `mcp_resource_mime_type`, `mime_type=`, and route `Content-Type` headers, stripping only automatic `charset` suffixes.
 3. **Text vs Base64 Blob Routing**:
    - Text-compatible MIME types (`text/*`, `application/json`, `*+json`, `*+xml`, `application/xml`, `application/javascript`, `application/yaml`, `application/x-yaml`) are decoded as UTF-8 and returned under `contents[].text`.
    - Binary MIME types (or text MIME payloads containing non-UTF-8 bytes) are base64-encoded and returned under `contents[].blob`, bounded by `MCPConfig.max_blob_bytes` (default `25 MiB`).
@@ -47,9 +53,39 @@ Pass `mcp_resource_template="scheme://path/{var}"` alongside `mcp_resource` (or 
 - **Variable Extraction (`resources/read`)**: When a client requests a concrete URI matching the template (for example, `app://workspaces/acme/files/readme`), `match_uri` extracts each `{var}` segment and passes `{"workspace_id": "acme", "file_id": "readme"}` into the internal ASGI dispatch scope, binding directly to the route handler's path or scalar parameters.
 - **Segment Matching Rules**: Each `{var}` placeholder matches a single non-empty segment and never crosses `/`. If multiple templates could match a URI, the first registered template in `Registry.templates` wins.
 
+## MCP Apps UI and Resource Metadata
+
+Static and templated resources accept SEP-1865 presentation and extension metadata via `@mcp_resource(..., title=..., icons=..., meta=...)`, standalone `MCP.resource(..., title=..., icons=..., meta=...)`, or route `opt` keys `mcp_resource_title`, `mcp_resource_icons`, and `mcp_resource_meta` (`MCPOptKeys`). When both decorator `meta` and route `mcp_resource_meta` are present, route `opt` entries shallow-merge over decorator defaults.
+
+- **Catalog & Read Wire Output**: Resolved `title`, `icons`, and `_meta` fields are emitted on `resources/list` and `resources/templates/list` entries, and `resources/read` attaches the resource's `_meta` dictionary to `contents[0]._meta` alongside `uri`, `mimeType`, and `text` or `blob`.
+- **Automatic MCP Apps Extension Advertisement (`io.modelcontextprotocol/ui`)**: Registering any static or templated resource with `mime_type="text/html;profile=mcp-app"` (`UI_MIME_TYPE`)—or configuring explicit `MCPConfig(ui_mime_types=[...])`—automatically advertises `capabilities.extensions["io.modelcontextprotocol/ui"] = {"mimeTypes": [...]}` in both `server/discover` and `initialize`.
+
+```python
+from litestar import Litestar, get
+
+from litestar_mcp import LitestarMCP, mcp_resource
+
+
+@get("/ui/orders")
+@mcp_resource(
+    "orders_panel",
+    uri="ui://widgets/orders",
+    mime_type="text/html;profile=mcp-app",
+    title="Orders Panel",
+    icons=[{"src": "https://cdn.example.com/icons/orders.svg", "mimeType": "image/svg+xml"}],
+    meta={"ui": {"csp": {"connectDomains": ["https://api.example.com"]}}},
+)
+async def orders_panel() -> str:
+    """Serve the interactive MCP App HTML bundle."""
+    return "<main id='orders-panel'>Orders ready</main>"
+
+
+app = Litestar(route_handlers=[orders_panel], plugins=[LitestarMCP()])
+```
+
 ## URI Resolution Precedence & skill:// Interaction
 
-When `resources/read` receives a `params.uri` string, `MCPHandlerService` resolves the URI in a strict four-stage order:
+When `resources/read` receives a `params.uri` string, `MCPHandlerService` resolves the URI in strict precedence order:
 
 1. **`litestar://openapi`**: Returns the application's serialized OpenAPI schema.
 2. **Agent Skills (`skill://<name>/<relative_path>`)**: When `MCPConfig.skills` is enabled and the URI starts with `skill://`, resolution delegates exclusively to `SkillCatalog`. Any unmatched `skill://` URI fails immediately with `INVALID_PARAMS` (`-32602`) without falling through to route handlers.
@@ -61,11 +97,33 @@ When `resources/read` receives a `params.uri` string, `MCPHandlerService` resolv
 
 ## Resource Subscriptions & Change Notifications
 
-`LitestarMCP` maintains a `SubscriptionManager` on `plugin.registry.subscription_manager` for real-time catalog and resource change notifications:
+`LitestarMCP` maintains a `SubscriptionManager` on `plugin.registry.subscription_manager` supporting both stateless `2026-07-28` subscription streams and session-scoped `2025-11-25` (`2025-06-18` / `2025-03-26`) resource subscriptions:
 
-- **Opening a Subscription Stream (`subscriptions/listen`)**: Clients send a `POST /mcp` request with `"method": "subscriptions/listen"` and `"params": {"notifications": {"notifications/resources/list_changed": true, ...}}` to receive a long-lived `text/event-stream` SSE response with periodic `: keepalive` comments (`MCPConfig.subscription_keepalive_seconds`).
-- **Dynamic Registration Broadcasts**: Calling `plugin.registry.register_resource(name, handler)` (or `register_tool` / `register_prompt`) at runtime automatically broadcasts `notifications/resources/list_changed` to subscribed streams.
-- **Cross-Worker Fan-Out**: Pass a configured Litestar `ChannelsPlugin` to `MCPConfig(subscription_channels=channels_plugin)` so notification broadcasts fan out across all worker processes.
+- **MCP `2026-07-28` Filtered Streams (`subscriptions/listen`)**: Clients send `POST /mcp` with `"method": "subscriptions/listen"` and camelCase filter keys in `"params": {"notifications": {...}}` to open a `text/event-stream` SSE response with periodic `: keepalive` comments (`MCPConfig.subscription_keepalive_seconds`). Supported filter keys are `"resourcesListChanged"`, `"toolsListChanged"`, `"promptsListChanged"`, `"skillsListChanged"` (booleans), `"resourceSubscriptions"` (list of concrete URIs emitting `notifications/resources/updated` with `_meta["io.modelcontextprotocol/subscriptionId"]`), `"taskIds"` (list of task IDs), and `"logLevel"` (RFC 5424 severity string):
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "subscriptions/listen",
+  "params": {
+    "notifications": {
+      "resourcesListChanged": true,
+      "skillsListChanged": true,
+      "resourceSubscriptions": ["custom://schema/v1"],
+      "logLevel": "info"
+    },
+    "_meta": {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities": {}
+    }
+  }
+}
+```
+
+- **Session-Aware `resources/subscribe` & `resources/unsubscribe` (`2025-11-25`)**: During `2025-11-25`, `2025-06-18`, and `2025-03-26` handshakes, `initialize` advertises `capabilities.resources = {"subscribe": true, "listChanged": true}`. Clients send `resources/subscribe` (`{"uri": "custom://schema/v1"}`) and `resources/unsubscribe` bound to their `Mcp-Session-Id`, and listen on `GET /mcp` (`Accept: text/event-stream` with `Mcp-Session-Id`, controlled by `MCPConfig.enable_get_sse`) to receive session-scoped `notifications/resources/updated` events.
+- **Catalog & Resource Update Broadcasts**: Calling `plugin.registry.notify_resource_updated(uri)` pushes `notifications/resources/updated` to authorized subscribers of `uri`. Calling `plugin.registry.notify_resources_list_changed()`—or registering resources dynamically with `plugin.registry.register_resource(name, handler)`—broadcasts `notifications/resources/list_changed` across connected streams.
+- **Per-URI Authorization (`subscription_authorizer`) & Cross-Worker Fan-Out**: Configure `MCPConfig(subscription_authorizer=authorize_uri)` (`Callable[[Request, str], Awaitable[bool] | bool] | None`) to enforce fail-closed caller authorization on `resources/subscribe` and `subscriptions/listen` (`resourceSubscriptions`). Pass a Litestar `ChannelsPlugin` to `MCPConfig(subscription_channels=channels_plugin)` so update and list-changed events fan out across worker processes while preserving `owner_id` and URI filtering.
 
 ## Resource Error Contract
 

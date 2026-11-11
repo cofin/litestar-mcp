@@ -15,8 +15,8 @@ title: Protocol Bridges
 | Bridge Function | Source | Target | Description |
 | :--- | :--- | :--- | :--- |
 | **`agent_to_mcp(agent_or_group, path="/mcp")`** | `Agent` or `AgentGroup` | `LitestarMCP` plugin | Exposes every unique `Tool` and `SkillController` attached to an `Agent` or `AgentGroup` as an MCP server endpoint while excluding synthetic `transfer_to_agent` handoff tools. |
-| **`mcp_to_tools(client, *, tools=None)`** | `LitestarMCP` plugin or `MCPStreamableHTTPClient` | `list[Tool]` | Converts local discovered MCP route handlers (`client.discovered_tools`) or remote MCP tool schemas into callable `Tool` objects for an `Agent`. |
-| **`await discover_mcp_tools(client_or_url, *, url="/mcp")`** | `MCPStreamableHTTPClient`, `httpx2.AsyncClient`, or URL `str` | `list[Tool]` | Queries `tools/list` over Streamable HTTP via `MCPStreamableHTTPClient` and wraps every remote tool as an async `Tool.from_schema(...)` callable. |
+| **`mcp_to_tools(client, *, tools=None, include_app_only=False)`** | `LitestarMCP` plugin or `MCPStreamableHTTPClient` | `list[Tool]` | Converts model-visible local MCP tools and route handlers (dispatched via `execute_tool` with full ASGI DI and filtering) or remote MCP tool schemas into callable `Tool` objects for an `Agent`. |
+| **`await discover_mcp_tools(client_or_url, *, url="/mcp", include_app_only=False)`** | `MCPStreamableHTTPClient`, `httpx2.AsyncClient`, or URL `str` | `list[Tool]` | Queries `tools/list` over Streamable HTTP via `MCPStreamableHTTPClient`, filters by `_meta.ui.visibility`, and wraps each model-visible remote tool as an async `Tool.from_schema(...)` callable. |
 | **`agent_to_a2a(agent_or_group, path="/a2a", *, base_url=..., runtime=...)`** | `Agent` or `AgentGroup` (+ `AgentRuntime`) | `LitestarA2A` plugin | Synthesizes an A2A 1.0 `AgentCard` (converting attached `SkillController` instances via `to_agent_skill()`), wraps `AgentRuntime` in an official `a2a-sdk` `AgentExecutor`, and returns a configured `LitestarA2A` plugin. |
 
 ---
@@ -72,11 +72,15 @@ def runtime_as_mcp_tool(runtime: AgentRuntime, *, name: str = "ask_agent", descr
 
 ## Consuming Local & Remote MCP Tools
 
-### Local LitestarMCP Route Handlers
+### Local LitestarMCP Route Handlers and Visibility Filtering
 
-When passed a `LitestarMCP` plugin instance after route discovery, `mcp_to_tools(plugin)` iterates over `plugin.discovered_tools` and wraps each handler's underlying callable in a `Tool(handler_fn, name=tool_name)`. This lets an in-process `Agent` invoke your existing `@get` / `@post` MCP-marked route handlers with full `ToolContext` and DI resolution.
+When passed a `LitestarMCP` plugin instance, `mcp_to_tools(plugin, *, include_app_only=False)` preserves full MCP visibility, configuration filtering, and ASGI dependency injection:
 
-### Remote Streamable HTTP Servers
+- **SEP-1865 UI Visibility Filtering (`include_app_only=False`)**: Both `mcp_to_tools` and `discover_mcp_tools` inspect `_meta.ui.visibility` (`meta["ui"]["visibility"]`) on every tool descriptor. By default (`include_app_only=False`), only tools visible to `"model"` (or omitting `_meta.ui.visibility`) are exposed to agents; UI-only callback tools declaring `visibility: ["app"]` or `[]` remain excluded unless `include_app_only=True` is passed.
+- **Safe Primitive Collection & `should_include_handler` Filtering**: Inspecting `LitestarMCP` gathers standalone `Tool` registrations, expands `@tool` methods from `SkillController` classes/instances exclusively (skipping `PromptController` registrations and standalone `@mcp_resource` or `@mcp_prompt` endpoints), and enforces `MCPConfig` `should_include_handler` (`include_tags`, `exclude_tags`, `include_operations`, `exclude_operations`) so bridged agents never receive filtered-out operations.
+- **Internal ASGI DI Dispatch (`execute_tool`)**: Once `LitestarMCP` is bound to a `Litestar` app (`plugin._app` and route `ownership_layers`), `mcp_to_tools` builds `Tool.from_schema(...)` wrappers backed by `execute_tool`. Calling the bridged tool inside `AgentRuntime` synthesizes an internal ASGI scope populated from `ToolContext` (`user`, `auth`, `tenant_id`, `session_id`, and `state`), resolving route/controller/router/app `Provide` dependencies, path parameters, `guards`, `type_encoders`, and Dishka `FromDishka[T]` containers identically to `POST /mcp` `tools/call`. When called before app startup (`app is None`), pre-init `LitestarMCP` instances fall back cleanly to wrapping undecorated tool callables until `on_app_init` binds the app.
+
+### Remote Streamable HTTP Servers and Result Normalization
 
 To equip an `Agent` with tools hosted on an external MCP server (or an in-process ASGI app tested over `httpx2.ASGITransport`), use `discover_mcp_tools` with `MCPStreamableHTTPClient` (`litestar_mcp.MCPStreamableHTTPClient`):
 
@@ -101,7 +105,7 @@ async def build_remote_equipped_agent(http_client: httpx2.AsyncClient) -> Agent:
     )
 ```
 
-`discover_mcp_tools` invokes `await client.list_tools()` and delegates to `mcp_to_tools(client, tools=raw_tools)`, which constructs a `Tool.from_schema(name=..., description=..., parameters=..., call=...)` for each remote tool. When the LLM calls one of those tools during an `AgentRuntime` turn, the synthesized async `call` coroutine forwards the validated keyword arguments to `await client.call_tool(target_name, kwargs)`.
+`discover_mcp_tools` invokes `await client.list_tools()` and delegates to `mcp_to_tools(client, tools=raw_tools, include_app_only=include_app_only)`, constructing a `Tool.from_schema(name=..., description=..., parameters=..., call=...)` for each model-visible remote tool. Both local `execute_tool` executions and remote `await client.call_tool(target_name, kwargs)` responses pass through `litestar_mcp.mcp.content` result normalization—preferring `structuredContent` when present, decoding single JSON text blocks, and preserving multi-block content arrays—and raise `litestar_mcp.mcp.executor.MCPToolErrorResult` whenever `is_error=True` (`isError: true`) so `AgentRuntime` records structured tool failures cleanly with `is_error=True`.
 
 ---
 

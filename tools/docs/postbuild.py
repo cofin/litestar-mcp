@@ -168,6 +168,88 @@ DEFAULT_REFERENCE_SYMBOLS: tuple[tuple[str, str, str], ...] = (
     ("litestar_mcp.JSONRPCError", "py:class", "reference/core-and-observability/"),
     ("litestar_mcp.JSONRPCErrorException", "py:exception", "reference/core-and-observability/"),
     ("litestar_mcp.SubscriptionManager", "py:class", "reference/core-and-observability/"),
+    ("litestar_mcp.SUPPORTED_PROTOCOL_VERSIONS", "py:data", "reference/"),
+    ("litestar_mcp.mcp.config.SUPPORTED_PROTOCOL_VERSIONS", "py:data", "reference/plugin-and-config/"),
+    ("litestar_mcp.mcp.config.UI_EXTENSION", "py:data", "reference/plugin-and-config/"),
+    ("litestar_mcp.mcp.config.UI_MIME_TYPE", "py:data", "reference/plugin-and-config/"),
+    ("litestar_mcp.mcp.routes.MCP_SESSION_ID_HEADER", "py:data", "reference/plugin-and-config/"),
+    ("litestar_mcp.mcp.service.SESSION_STORE_NAME", "py:data", "reference/plugin-and-config/"),
+    ("litestar_mcp.mcp.config.MCPOptKeys.for_field", "py:method", "reference/plugin-and-config/"),
+    ("litestar_mcp.mcp.service.MCPSession", "py:class", "reference/plugin-and-config/"),
+    ("litestar_mcp.mcp.service.MCPSessionStore", "py:class", "reference/plugin-and-config/"),
+    ("litestar_mcp.utils.classify_resource_uri", "py:function", "reference/primitives-and-skills/"),
+    ("litestar_mcp.utils.get_all_mcp_metadata", "py:function", "reference/primitives-and-skills/"),
+    ("litestar_mcp.mcp.skills.filter_skills", "py:function", "reference/primitives-and-skills/"),
+    ("litestar_mcp.mcp.skills.SkillCatalog.bind_app", "py:method", "reference/primitives-and-skills/"),
+    ("litestar_mcp.mcp.skills.SkillCatalog.notify_list_changed", "py:method", "reference/primitives-and-skills/"),
+    ("litestar_mcp.mcp.service.MCPRequestContext.log", "py:method", "reference/primitives-and-skills/"),
+    (
+        "litestar_mcp.mcp.registry.Registry.notify_resources_list_changed",
+        "py:method",
+        "reference/primitives-and-skills/",
+    ),
+    ("litestar_mcp.mcp.registry.Registry.notify_skills_list_changed", "py:method", "reference/primitives-and-skills/"),
+    ("litestar_mcp.core.schema_builder.typed_dict_to_json_schema", "py:function", "reference/core-and-observability/"),
+    ("litestar_mcp.core.schema_builder.unwrap_root_object_schema", "py:function", "reference/core-and-observability/"),
+    ("litestar_mcp.core.schema_builder.type_to_output_schema", "py:function", "reference/core-and-observability/"),
+    (
+        "litestar_mcp.core.schema_builder.generate_output_schema_for_handler",
+        "py:function",
+        "reference/core-and-observability/",
+    ),
+    (
+        "litestar_mcp.core.schema_builder.cached_output_schema_for_handler",
+        "py:function",
+        "reference/core-and-observability/",
+    ),
+    ("litestar_mcp.core.sse.MCPLogLevel", "py:data", "reference/core-and-observability/"),
+    ("litestar_mcp.core.sse.MCP_LOG_LEVELS", "py:data", "reference/core-and-observability/"),
+    ("litestar_mcp.core.sse.LOG_LEVEL_SEVERITY", "py:data", "reference/core-and-observability/"),
+    ("litestar_mcp.core.sse.validate_log_level", "py:function", "reference/core-and-observability/"),
+    ("litestar_mcp.core.sse.log_level_allows", "py:function", "reference/core-and-observability/"),
+    ("litestar_mcp.core.sse.SubscriptionManager.open_session_stream", "py:method", "reference/core-and-observability/"),
+    (
+        "litestar_mcp.core.sse.SubscriptionManager.add_resource_subscription",
+        "py:method",
+        "reference/core-and-observability/",
+    ),
+    (
+        "litestar_mcp.core.sse.SubscriptionManager.remove_resource_subscription",
+        "py:method",
+        "reference/core-and-observability/",
+    ),
+    ("litestar_mcp.core.sse.SubscriptionManager.close_session", "py:method", "reference/core-and-observability/"),
+    (
+        "litestar_mcp.core.sse.SubscriptionManager.set_session_log_level",
+        "py:method",
+        "reference/core-and-observability/",
+    ),
+    (
+        "litestar_mcp.core.sse.SubscriptionManager.get_session_log_level",
+        "py:method",
+        "reference/core-and-observability/",
+    ),
+    (
+        "litestar_mcp.core.sse.SubscriptionManager.clear_session_log_level",
+        "py:method",
+        "reference/core-and-observability/",
+    ),
+    (
+        "litestar_mcp.core.sse.SubscriptionManager.set_default_log_level",
+        "py:method",
+        "reference/core-and-observability/",
+    ),
+    ("litestar_mcp.mcp.tasks.MCPTaskStore.update_status_message", "py:method", "reference/tasks-and-queues/"),
+    ("litestar_mcp.mcp.client.MCPStreamableHTTPClient.initialize", "py:method", "reference/a2a-and-bridges/"),
+    ("litestar_mcp.mcp.client.MCPStreamableHTTPClient.notify", "py:method", "reference/a2a-and-bridges/"),
+    ("litestar_mcp.mcp.client.MCPStreamableHTTPClient.open_event_stream", "py:method", "reference/a2a-and-bridges/"),
+    ("litestar_mcp.mcp.client.MCPStreamableHTTPClient.subscribe_resource", "py:method", "reference/a2a-and-bridges/"),
+    ("litestar_mcp.mcp.client.MCPStreamableHTTPClient.unsubscribe_resource", "py:method", "reference/a2a-and-bridges/"),
+    ("litestar_mcp.mcp.client.MCPStreamableHTTPClient.set_logging_level", "py:method", "reference/a2a-and-bridges/"),
+    ("litestar_mcp.mcp.client.MCPStreamableHTTPClient.terminate_session", "py:method", "reference/a2a-and-bridges/"),
+    ("litestar_mcp.mcp.client.MCPStreamableHTTPClient.list_skills", "py:method", "reference/a2a-and-bridges/"),
+    ("litestar_mcp.mcp.client.MCPStreamableHTTPClient.get_skill", "py:method", "reference/a2a-and-bridges/"),
+    ("litestar_mcp.mcp.client.MCPStreamableHTTPClient.read_skill_directory", "py:method", "reference/a2a-and-bridges/"),
 )
 
 
@@ -178,7 +260,7 @@ class InventoryEntry(msgspec.Struct, frozen=True, gc=False):
     """Fully qualified Python symbol name."""
 
     domain_role: str
-    """Sphinx domain and role (`py:module`, `py:class`, `py:function`, `py:method`, `py:exception`)."""
+    """Sphinx domain and role (`py:module`, `py:class`, `py:function`, `py:method`, `py:data`, `py:exception`)."""
 
     priority: int
     """Search priority (`1` for primary symbols)."""
@@ -268,7 +350,7 @@ def build_llms_files(
     llms_index_lines = [
         "# Litestar MCP",
         "",
-        "> Model Context Protocol (MCP 2026-07-28 & 2025-06-18), Agent Runtime, Durable Workflows, and A2A 1.0 Integration for Litestar.",
+        "> Model Context Protocol (MCP 2026-07-28, 2025-11-25 & 2025-06-18), Agent Runtime, Durable Workflows, and A2A 1.0 Integration for Litestar.",
         "",
         "## Documentation Index",
         "",

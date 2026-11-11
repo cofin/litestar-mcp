@@ -8,7 +8,7 @@
 
 Litestar automatically forwards unknown keyword arguments on route decorators (`@get`, `@post`, `@put`, `@patch`, `@delete`, `@route`) into `handler.opt`. Passing `mcp_tool=True` (or a custom string name like `mcp_tool="get_user"`) directly to the route decorator is the most concise way to expose an existing endpoint.
 
-The `@mcp_tool`, `@mcp_resource`, and `@mcp_prompt` decorators store metadata in `MetadataRegistry` and are useful when you want IDE autocompletion on MCP-specific options (`input_schema`, `output_schema`, `annotations`, `scopes`, `task`, `queue`) or when declaring standalone prompt functions.
+The `@mcp_tool`, `@mcp_resource`, and `@mcp_prompt` decorators store metadata in a role-keyed `MetadataRegistry` (`(role, qualname)`) and provide full autocompletion on MCP-specific options (`uri`, `uri_template`, `mime_type`, `input_schema`, `output_schema`, `title`, `icons`, `meta`, `annotations`, `scopes`, `task`, `queue`). Because `MetadataRegistry` isolates entries by primitive role, stacking `@mcp_tool`, `@mcp_resource`, and `@mcp_prompt` on the same Litestar route handler preserves independent `title`, `icons`, `meta`, and schemas for each role.
 
 === "Route Kwargs"
 
@@ -53,15 +53,22 @@ Prompts can be registered either as route-bound handlers (`mcp_prompt=True` or `
 
 ## MCPOptKeys Reference Table
 
-Downstream applications can customize every `handler.opt` key name via `MCPConfig(opt_keys=MCPOptKeys(...))` to avoid collisions with other plugins. All keys default to `mcp_<purpose>`:
+Downstream applications can customize every `handler.opt` key name via `MCPConfig(opt_keys=MCPOptKeys(...))` to avoid collisions with other plugins (`MCPOptKeys.for_field(field_name, kind)` resolves kind-specific keys dynamically during startup discovery). All keys default to `mcp_<purpose>`:
 
 | `MCPOptKeys` Attribute | Default `handler.opt` Key | Applies To | Description |
 | :--- | :--- | :--- | :--- |
 | `tool` | `"mcp_tool"` | Tools | Marks a route handler as an MCP tool (`True` uses the function name; a `str` sets an explicit tool name). |
+| `output_schema` | `"mcp_output_schema"` | Tools | Explicit output JSON Schema `dict[str, Any]`, `True` to synthesize `outputSchema` from the return annotation, or `False` to opt out when `MCPConfig.auto_output_schema=True`. |
+| `tool_title` | `"mcp_tool_title"` | Tools | Sets an optional human-readable display title emitted on `tools/list` entries. |
+| `tool_icons` | `"mcp_tool_icons"` | Tools | Optional `list[dict[str, Any]]` of MCP icon descriptors (`src`, `mimeType`, `sizes`) emitted on `tools/list` entries. |
+| `tool_meta` | `"mcp_tool_meta"` | Tools | Optional `_meta` mapping (such as SEP-1865 `{"ui": {"resourceUri": "ui://...", "visibility": ["model", "app"]}}`) shallow-merged over `@mcp_tool(meta=...)`. |
 | `resource` | `"mcp_resource"` | Resources | Marks a route handler as an MCP resource (`True` uses the function name; a `str` sets an explicit resource name). |
-| `resource_uri` | `"mcp_resource_uri"` | Resources | Overrides the default `litestar://<name>` resource URI with a concrete URI. |
-| `resource_mime_type` | `"mcp_resource_mime_type"` | Resources | Overrides the resource MIME type advertised in `resources/list` and used as a fallback in `resources/read`. |
+| `resource_uri` | `"mcp_resource_uri"` | Resources | Overrides the default `litestar://<name>` resource URI (`classify_resource_uri` routes URIs containing `{var}` exclusively to `Registry.templates`). |
+| `resource_mime_type` | `"mcp_resource_mime_type"` | Resources | Overrides the resource MIME type advertised in `resources/list` and enforced ahead of Litestar's implicit `text/plain` default in `resources/read`. |
 | `resource_template` | `"mcp_resource_template"` | Resources | Declares an RFC 6570 Level 1 URI template (for example, `"app://workspaces/{workspace_id}/files/{file_id}"`). |
+| `resource_title` | `"mcp_resource_title"` | Resources | Sets an optional human-readable display title emitted on resource and template entries. |
+| `resource_icons` | `"mcp_resource_icons"` | Resources | Optional `list[dict[str, Any]]` of MCP icon descriptors emitted on resource and template entries. |
+| `resource_meta` | `"mcp_resource_meta"` | Resources | Optional `_meta` mapping emitted on `resources/list`, `resources/templates/list`, and `resources/read` (`contents[0]._meta`), shallow-merged over `@mcp_resource(meta=...)`. |
 | `prompt` | `"mcp_prompt"` | Prompts | Marks a route handler as an MCP prompt (`True` uses the function name; a `str` sets an explicit prompt name). |
 | `description` | `"mcp_description"` | Tools | Overrides the primary LLM-facing tool description. |
 | `resource_description` | `"mcp_resource_description"` | Resources | Overrides the primary resource description (distinct from `mcp_description` so dual-role handlers can carry separate prose). |
@@ -69,6 +76,7 @@ Downstream applications can customize every `handler.opt` key name via `MCPConfi
 | `prompt_title` | `"mcp_prompt_title"` | Prompts | Sets an optional human-readable display title for UI clients. |
 | `prompt_arguments` | `"mcp_prompt_arguments"` | Prompts | Explicit `list[dict[str, Any]]` of prompt argument definitions (`name`, `title`, `description`, `required`). |
 | `prompt_icons` | `"mcp_prompt_icons"` | Prompts | Optional `list[dict[str, Any]]` of MCP icon descriptors (`src`, `mimeType`, `sizes`). |
+| `prompt_meta` | `"mcp_prompt_meta"` | Prompts | Optional `_meta` mapping emitted on `prompts/list` entries, shallow-merged over `@mcp_prompt(meta=...)` and `@prompt(meta=...)`. |
 | `when_to_use` | `"mcp_when_to_use"` | Tools, Resources | Appends a structured `## When to use` section to the rendered description. |
 | `returns` | `"mcp_returns"` | Tools, Resources | Appends a structured `## Returns` section to the rendered description. |
 | `agent_instructions` | `"mcp_agent_instructions"` | Tools, Resources | Appends a mandatory `## Instructions` grounding section to the rendered description. |
@@ -97,7 +105,7 @@ If `when_to_use`, `returns`, or `agent_instructions` are configured via `handler
 
 ## Universal Dependency Injection
 
-Because `litestar-mcp` dispatches tools, resources, and route-bound prompts through an internal ASGI scope (`execute_tool` and `execute_handler`), every dependency injection mechanism supported by your application works identically over Streamable HTTP, in-process `stdio`, and background `QueueTaskExecutor` workers. During schema compilation, `generate_json_schema_for_handler` strips Litestar internal DI parameters (`Provide`, `Dependency(skip_validation=True)`, `Request`, `State`, `ToolContext`, and Dishka `FromDishka[T]`) while keeping user-facing query, path, header (`x-mcp-header`), and body parameters in `inputSchema`:
+Because `litestar-mcp` dispatches tools, resources, and route-bound prompts through an internal ASGI scope (`execute_tool` and `execute_handler`), every dependency injection mechanism supported by your application works identically over Streamable HTTP, in-process `stdio`, and background `QueueTaskExecutor` workers. During schema compilation, `generate_schema_for_handler` strips Litestar internal DI parameters (`Provide`, `Dependency(skip_validation=True)`, `Request`, `State`, `ToolContext`, and Dishka `FromDishka[T]`) while keeping user-facing query, path, header (`x-mcp-header`), and body parameters in `inputSchema`:
 
 - **Litestar `Provide` & `Dependency(skip_validation=True)`**: Route-, controller-, router-, and app-level `dependencies={"key": Provide(...)}` and `Dependency(skip_validation=True)` parameters are resolved automatically and hidden from the advertised MCP `inputSchema` (unless a provider itself takes client-facing input parameters).
 - **Dishka (`FromDishka[T]`)**: Handlers using `FromDishka[T]` are unwrapped via `__dishka_orig_func__` during schema generation so `FromDishka` parameters are excluded from `inputSchema` and resolved from the active `Scope.REQUEST` Dishka container at execution time.

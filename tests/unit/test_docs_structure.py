@@ -1,8 +1,12 @@
 """Structural and integrity tests for the Markdown documentation tree and zensical.toml navigation."""
 
+import ast
 import datetime as dt
+import io
 import re
 import sys
+import textwrap
+import tokenize
 from pathlib import Path
 
 import pytest
@@ -28,6 +32,10 @@ _NUMBERED_HEADING_RE = re.compile(r"^#{2,3}\s+\d+\.", re.MULTILINE)
 _BACKTICK_HEADING_RE = re.compile(r"^#{2,3}\s+[^\n]*`", re.MULTILINE)
 _UNSLICED_SNIPPET_RE = re.compile(r'^\s*--8<--\s+"docs/examples/snippets/[^":]+\.py"', re.MULTILINE)
 _INLINE_CODE_SPAN_RE = re.compile(r"`([^`]+)`")
+_FENCED_PYTHON_BLOCK_RE = re.compile(
+    r"^([ \t]*)```python[^\n]*\n(.*?)^\1```[ \t]*$",
+    re.MULTILINE | re.DOTALL,
+)
 
 
 def _collect_nav_pages(node: "object") -> "list[str]":
@@ -82,6 +90,22 @@ CH04_GUIDE_PAGES: "tuple[str, ...]" = tuple(
     if page == "index.md"
     or page.startswith(("architecture/", "getting-started/", "learn/", "queues/", "agents/", "security/"))
 )
+
+
+def _collect_guide_fenced_python_blocks() -> "list[tuple[str, int, str]]":
+    """Collect non-include fenced Python code blocks across ``CH04_GUIDE_PAGES``."""
+    collected: list[tuple[str, int, str]] = []
+    for nav_page in CH04_GUIDE_PAGES:
+        raw_text = (DOCS_DIR / nav_page).read_text(encoding="utf-8")
+        for idx, match in enumerate(_FENCED_PYTHON_BLOCK_RE.finditer(raw_text), start=1):
+            lines = [ln for ln in match.group(2).splitlines() if not ln.lstrip().startswith("--8<--")]
+            code = textwrap.dedent("\n".join(lines)).strip()
+            if code:
+                collected.append((nav_page, idx, code))
+    return collected
+
+
+GUIDE_FENCED_PYTHON_BLOCKS: "tuple[tuple[str, int, str], ...]" = tuple(_collect_guide_fenced_python_blocks())
 
 
 def test_zero_rst_files_remain_under_docs() -> "None":
@@ -310,3 +334,472 @@ def test_security_docs_retire_legacy_migrations_and_use_litestar_security_v07() 
 
     obs_text = (security_dir / "observability.md").read_text(encoding="utf-8")
     assert r"\|" not in obs_text
+
+
+def test_guide_fenced_python_blocks_matched() -> "None":
+    """Verify the fenced Python block collector matches at least one guide snippet."""
+    checked_blocks = len(GUIDE_FENCED_PYTHON_BLOCKS)
+    assert checked_blocks > 0
+
+
+@pytest.mark.parametrize(
+    ("nav_page", "block_index", "code"),
+    GUIDE_FENCED_PYTHON_BLOCKS,
+    ids=[f"{page}#{idx}" for page, idx, _ in GUIDE_FENCED_PYTHON_BLOCKS],
+)
+def test_guide_fenced_python_blocks_parse_with_ast(nav_page: "str", block_index: "int", code: "str") -> "None":
+    """Verify every non-include fenced Python block parses cleanly without future imports or comments."""
+    location = f"docs/{nav_page}#{block_index}"
+    assert "from __future__ import annotations" not in code, f"{location} includes future annotations import"
+    ast.parse(code, filename=location)
+    comment_lines = [
+        tok.start[0] for tok in tokenize.generate_tokens(io.StringIO(code).readline) if tok.type == tokenize.COMMENT
+    ]
+    assert comment_lines == [], f"{location} contains inline # comments on lines {comment_lines}"
+
+
+@pytest.mark.parametrize(
+    ("rel_path", "required_tokens", "forbidden_tokens"),
+    (
+        (
+            "learn/resources.md",
+            (
+                "uri=",
+                "text/html;profile=mcp-app",
+                "io.modelcontextprotocol/ui",
+                "contents[0]._meta",
+                "resources/subscribe",
+                "resources/unsubscribe",
+                "notify_resources_list_changed",
+                "subscription_authorizer",
+                "resourcesListChanged",
+                "resourceSubscriptions",
+                "skillsListChanged",
+                "logLevel",
+            ),
+            ('"notifications/resources/list_changed": true',),
+        ),
+        (
+            "learn/tools.md",
+            (
+                "generate_schema_for_handler",
+                "TypedDict",
+                "outputSchema",
+                "structuredContent",
+                "auto_output_schema",
+                "output_schema=False",
+                "type_encoders",
+                "isError",
+                "io.modelcontextprotocol/ui",
+                "ui_capabilities",
+                "MetadataRegistry",
+            ),
+            ("generate_json_schema_for_handler",),
+        ),
+        (
+            "learn/discovery.md",
+            (
+                '"2025-11-25"',
+                "Mcp-Session-Id",
+                "enable_get_sse",
+                "text/event-stream",
+                "resources/subscribe",
+                "logging/setLevel",
+                "io.modelcontextprotocol/logLevel",
+            ),
+            (),
+        ),
+    ),
+    ids=("resources-guide", "tools-guide", "discovery-guide"),
+)
+def test_learn_guides_cover_mcp_2025_and_ui_contracts(
+    rel_path: "str",
+    required_tokens: "tuple[str, ...]",
+    forbidden_tokens: "tuple[str, ...]",
+) -> "None":
+    """Verify resources, tools, and discovery guides document MCP 2025-11-25, schema, and UI contracts."""
+    text = (DOCS_DIR / rel_path).read_text(encoding="utf-8")
+    missing = [token for token in required_tokens if token not in text]
+    assert missing == [], f"docs/{rel_path} missing required tokens: {missing}"
+    present = [token for token in forbidden_tokens if token in text]
+    assert present == [], f"docs/{rel_path} contains forbidden tokens: {present}"
+
+
+@pytest.mark.parametrize(
+    ("rel_path", "required_tokens", "forbidden_tokens"),
+    (
+        (
+            "learn/skills.md",
+            (
+                "expose_as_prompts",
+                "list_changed",
+                "skillsListChanged",
+                "get_mcp_request_context(None)",
+                "from litestar_mcp import SkillCatalog",
+                "list_skills",
+                "read_skill_directory",
+                "list-skills",
+            ),
+            ("_MISSING",),
+        ),
+        (
+            "learn/configuration.md",
+            (
+                "auto_output_schema",
+                "ui_mime_types",
+                "enable_get_sse",
+                "session_ttl_seconds",
+                "default_log_level",
+                "subscription_authorizer",
+                "expose_as_prompts",
+                "list_changed",
+            ),
+            (),
+        ),
+        (
+            "learn/marking-routes.md",
+            (
+                "generate_schema_for_handler",
+                "mcp_output_schema",
+                "mcp_tool_title",
+                "mcp_tool_icons",
+                "mcp_tool_meta",
+                "mcp_resource_title",
+                "mcp_resource_icons",
+                "mcp_resource_meta",
+                "mcp_prompt_meta",
+            ),
+            ("generate_json_schema_for_handler",),
+        ),
+    ),
+    ids=("skills-guide", "configuration-guide", "marking-routes-guide"),
+)
+def test_skills_config_and_marking_guides_cover_new_contracts(
+    rel_path: "str",
+    required_tokens: "tuple[str, ...]",
+    forbidden_tokens: "tuple[str, ...]",
+) -> "None":
+    """Verify skills, configuration, and marking-routes guides document SEP-2640 and MCPOptKeys updates."""
+    text = (DOCS_DIR / rel_path).read_text(encoding="utf-8")
+    missing = [token for token in required_tokens if token not in text]
+    assert missing == [], f"docs/{rel_path} missing required tokens: {missing}"
+    present = [token for token in forbidden_tokens if token in text]
+    assert present == [], f"docs/{rel_path} contains forbidden tokens: {present}"
+
+
+@pytest.mark.parametrize(
+    ("rel_path", "required_tokens", "forbidden_tokens"),
+    (
+        (
+            "learn/prompts.md",
+            (
+                "mcp_prompt_meta",
+                "meta=",
+                "expose_as_prompts",
+                "capabilities.prompts",
+                "PromptController",
+            ),
+            (),
+        ),
+        (
+            "learn/stdio-and-bridge.md",
+            (
+                "2025-11-25",
+                "Mcp-Session-Id",
+                "GET",
+                "DELETE",
+                "run_stdio_async",
+                "list-skills",
+            ),
+            (),
+        ),
+        (
+            "agents/protocol-bridges.md",
+            (
+                "include_app_only",
+                "execute_tool",
+                "should_include_handler",
+                "visibility",
+                "litestar_mcp.mcp.content",
+                "litestar_mcp.mcp.executor.MCPToolErrorResult",
+            ),
+            ("wraps each handler's underlying callable in a `Tool(handler_fn, name=tool_name)`",),
+        ),
+    ),
+    ids=("prompts-guide", "stdio-bridge-guide", "protocol-bridges-guide"),
+)
+def test_prompts_stdio_and_bridge_guides_cover_new_contracts(
+    rel_path: "str",
+    required_tokens: "tuple[str, ...]",
+    forbidden_tokens: "tuple[str, ...]",
+) -> "None":
+    """Verify prompts, stdio/bridge, and protocol-bridges guides document metadata and execute_tool dispatch."""
+    text = (DOCS_DIR / rel_path).read_text(encoding="utf-8")
+    missing = [token for token in required_tokens if token not in text]
+    assert missing == [], f"docs/{rel_path} missing required tokens: {missing}"
+    present = [token for token in forbidden_tokens if token in text]
+    assert present == [], f"docs/{rel_path} contains forbidden tokens: {present}"
+
+
+@pytest.mark.parametrize(
+    ("rel_path", "required_tokens", "forbidden_tokens"),
+    (
+        (
+            "queues/mcp-tasks.md",
+            (
+                "progress_token",
+                "session_id",
+                "log_level",
+                "status_message",
+                "statusMessage",
+                "report_progress",
+                "ctx.log",
+                "subscriptions/listen",
+            ),
+            ("InProcessTaskExecutor",),
+        ),
+        (
+            "queues/deployment.md",
+            (
+                "2025-11-25",
+                "litestar_mcp_sessions",
+                "MCPSessionStore",
+                "mcp-session:",
+                "Mcp-Session-Id",
+                "session_ttl_seconds",
+                "enable_get_sse",
+                "subscription_authorizer",
+                "subscriptions/listen",
+                "wait_published",
+            ),
+            (
+                'with_namespace("litestar_mcp_sessions")',
+                "Stateless `2026-07-28` & `2025-06-18` Routing",
+            ),
+        ),
+        (
+            "security/observability.md",
+            (
+                "default_log_level",
+                "logging/setLevel",
+                "ctx.log",
+                "notifications/message",
+                "io.modelcontextprotocol/logLevel",
+                "set_logging_level",
+                "emergency",
+            ),
+            (r"\|",),
+        ),
+    ),
+    ids=("mcp-tasks-guide", "queues-deployment-guide", "security-observability-guide"),
+)
+def test_queues_and_security_guides_cover_logging_and_dual_transport(
+    rel_path: "str",
+    required_tokens: "tuple[str, ...]",
+    forbidden_tokens: "tuple[str, ...]",
+) -> "None":
+    """Verify MCP tasks, deployment, and observability guides document progress, sessions, and RFC 5424 logs."""
+    text = (DOCS_DIR / rel_path).read_text(encoding="utf-8")
+    missing = [token for token in required_tokens if token not in text]
+    assert missing == [], f"docs/{rel_path} missing required tokens: {missing}"
+    present = [token for token in forbidden_tokens if token in text]
+    assert present == [], f"docs/{rel_path} contains forbidden tokens: {present}"
+
+
+@pytest.mark.parametrize(
+    ("doc_path", "required_tokens"),
+    (
+        (
+            REPO_ROOT / "README.md",
+            (
+                "2025-11-25",
+                "Mcp-Session-Id",
+                "GET /mcp",
+                "resources/subscribe",
+                "logging/setLevel",
+                "outputSchema",
+                "structuredContent",
+                "io.modelcontextprotocol/ui",
+                "list-skills",
+            ),
+        ),
+        (
+            DOCS_DIR / "index.md",
+            (
+                "2025-11-25",
+                "Mcp-Session-Id",
+                "GET /mcp",
+                "outputSchema",
+                "structuredContent",
+                "io.modelcontextprotocol/ui",
+                "SkillCatalog",
+                "list-skills",
+            ),
+        ),
+        (
+            ARCHITECTURE_DIR / "index.md",
+            (
+                "2025-11-25",
+                "Mcp-Session-Id",
+                "GET /mcp",
+                "logging/setLevel",
+                "outputSchema",
+                "structuredContent",
+                "io.modelcontextprotocol/ui",
+                "include_app_only",
+                "list-skills",
+            ),
+        ),
+    ),
+    ids=("readme-contracts", "docs-index-contracts", "architecture-index-contracts"),
+)
+def test_landing_and_architecture_docs_cover_mcp_2025_and_cli_contracts(
+    doc_path: "Path",
+    required_tokens: "tuple[str, ...]",
+) -> "None":
+    """Verify README, docs home, and architecture overview document MCP 2025-11-25, UI, and CLI contracts."""
+    text = doc_path.read_text(encoding="utf-8")
+    rel_label = doc_path.relative_to(REPO_ROOT).as_posix()
+    missing = [token for token in required_tokens if token not in text]
+    assert missing == [], f"{rel_label} missing required tokens: {missing}"
+
+
+@pytest.mark.parametrize(
+    ("rel_path", "required_tokens"),
+    (
+        (
+            "getting-started/index.md",
+            (
+                "2025-11-25",
+                "Mcp-Session-Id",
+                "GET /mcp",
+                "outputSchema",
+                "structuredContent",
+                "io.modelcontextprotocol/ui",
+                "SkillCatalog",
+            ),
+        ),
+        (
+            "getting-started/installation.md",
+            (
+                "2025-11-25",
+                "GET /mcp",
+                "resources/subscribe",
+                "logging/setLevel",
+                "io.modelcontextprotocol/ui",
+                "outputSchema",
+                "structuredContent",
+                "SkillCatalog",
+                "list-skills",
+            ),
+        ),
+        (
+            "getting-started/quickstart.md",
+            (
+                "2025-11-25",
+                "Mcp-Session-Id",
+                "text/event-stream",
+                "resources/subscribe",
+                "logging/setLevel",
+                "outputSchema",
+                "structuredContent",
+                "io.modelcontextprotocol/ui",
+                "list-skills",
+            ),
+        ),
+    ),
+    ids=("getting-started-index", "getting-started-installation", "getting-started-quickstart"),
+)
+def test_getting_started_docs_cover_mcp_2025_and_cli_contracts(
+    rel_path: "str",
+    required_tokens: "tuple[str, ...]",
+) -> "None":
+    """Verify getting-started guides document MCP 2025-11-25 streaming, UI, outputSchema, and list-skills."""
+    text = (DOCS_DIR / rel_path).read_text(encoding="utf-8")
+    missing = [token for token in required_tokens if token not in text]
+    assert missing == [], f"docs/{rel_path} missing required tokens: {missing}"
+
+
+@pytest.mark.parametrize(
+    ("rel_path", "required_tokens"),
+    (
+        (
+            "security/index.md",
+            (
+                "2025-11-25",
+                "GET /mcp",
+                "Mcp-Session-Id",
+                "MCPSessionStore",
+                "subscription_authorizer",
+                "logging/setLevel",
+                "MCPRequestContext.log",
+            ),
+        ),
+        (
+            "reference/index.md",
+            (
+                "SkillCatalog",
+                "SUPPORTED_PROTOCOL_VERSIONS",
+                "MCPLogLevel",
+                "UI_EXTENSION",
+                "type_to_output_schema",
+                "list-skills",
+                "v0.19.0",
+            ),
+        ),
+        (
+            "learn/index.md",
+            (
+                '("2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26")',
+                "GET /mcp",
+                "Mcp-Session-Id",
+                "io.modelcontextprotocol/ui",
+                "outputSchema",
+                "structuredContent",
+                "logging/setLevel",
+                "listChanged",
+                "list-skills",
+            ),
+        ),
+    ),
+    ids=("security-index-contracts", "reference-index-contracts", "learn-index-contracts"),
+)
+def test_security_reference_and_learn_index_cover_new_contracts(
+    rel_path: "str",
+    required_tokens: "tuple[str, ...]",
+) -> "None":
+    """Verify security, reference, and learn index pages cover MCP 2025-11-25, exports, and v0.19.0 changelog."""
+    text = (DOCS_DIR / rel_path).read_text(encoding="utf-8")
+    missing = [token for token in required_tokens if token not in text]
+    assert missing == [], f"docs/{rel_path} missing required tokens: {missing}"
+
+
+@pytest.mark.parametrize(
+    ("rel_path", "required_directives"),
+    (
+        (
+            "learn/tools.md",
+            ('--8<-- "docs/examples/snippets/mcp_apps_and_structured.py:example"',),
+        ),
+        (
+            "learn/skills.md",
+            ('--8<-- "docs/examples/snippets/skills_prompts_and_catalog.py:example"',),
+        ),
+        (
+            "reference/primitives-and-skills.md",
+            (
+                "::: litestar_mcp.utils.classify_resource_uri",
+                "::: litestar_mcp.mcp.skills.filter_skills",
+            ),
+        ),
+    ),
+    ids=("tools-snippet-embed", "skills-snippet-embed", "primitives-reference-directives"),
+)
+def test_learn_guides_embed_ch09_snippet_slices(
+    rel_path: "str",
+    required_directives: "tuple[str, ...]",
+) -> "None":
+    """Verify learn guides embed ch09 snippet slices and primitives reference includes new directives."""
+    text = (DOCS_DIR / rel_path).read_text(encoding="utf-8")
+    missing = [directive for directive in required_directives if directive not in text]
+    assert missing == [], f"docs/{rel_path} missing required directives: {missing}"
