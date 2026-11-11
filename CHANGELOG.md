@@ -1,6 +1,6 @@
 # Changelog
 
-The maintained changelog lives in [`docs/changelog.rst`](docs/changelog.rst)
+The maintained changelog lives in [`docs/changelog.md`](docs/changelog.md)
 and is published with the documentation at
 <https://cofin.github.io/litestar-mcp/latest/changelog/>.
 

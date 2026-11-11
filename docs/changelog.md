@@ -38,7 +38,7 @@ All notable `litestar-mcp` changes are summarized here. Entries are grouped by r
 ### Documentation
 
 - **Document MCP `2025-11-25` sessions, SEP-1865 MCP Apps, structured outputs, logging, and SEP-2640 skills** ([#114](https://github.com/cofin/litestar-mcp/pull/114))
-  Updated all Getting Started, MCP Core, Tasks & Queues, Agents & Bridges, Security & Observability, Architecture SVG diagrams, CLI autodocs, runnable snippets (`mcp_2025_sessions_and_logging.py`, `mcp_apps_and_structured.py`, `skills_prompts_and_catalog.py`), and `objects.inv` / API reference pages to cover the new protocol capabilities.
+  Updated all Getting Started, MCP Core, Tasks & Queues, Agents & Bridges, Security & Observability, Architecture SVG diagrams, CLI autodocs, runnable snippets (`mcp_apps_and_structured.py`, `skills_prompts_and_catalog.py`), and `objects.inv` / API reference pages to cover the new protocol capabilities.
 
 ---
 
