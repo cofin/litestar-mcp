@@ -14,7 +14,9 @@ from litestar_mcp import LitestarMCP, MCPConfig, PromptController, SkillControll
 from litestar_mcp.mcp.registry import (
     PromptRegistration,
     Registry,
+    ResourceTemplate,
     _normalize_prompt_result,
+    render_prompt_entry,
 )
 from litestar_mcp.utils import get_mcp_metadata
 from litestar_mcp.utils.handler_signature import _parse_docstring_args
@@ -1278,3 +1280,193 @@ def test_litestar_mcp_rejects_invalid_controller_entry(field_name: "str") -> "No
     kwargs: dict[str, Any] = {field_name: ["not_a_controller"]}
     with pytest.raises(ImproperlyConfiguredException, match="PromptController"):
         LitestarMCP(config=MCPConfig(**kwargs))
+
+
+def test_prompt_meta_emits_across_controller_route_and_standalone_surfaces() -> None:
+    class TriagePrompts(PromptController):
+        path = "/triage-prompts"
+        prefix = "ops"
+
+        @prompt(name="triage", title="Triage", description="Triage incident.", meta={"ui": {"surface": "panel"}})
+        async def triage(self, service: str) -> str:
+            return f"Triage {service}"
+
+        @prompt(name="bare", title="   ", description="Bare prompt.", icons=[], meta={})
+        async def bare(self) -> str:
+            return "bare"
+
+    @mcp_prompt(name="gold", description="Gold tier.", meta={"tier": "gold"})
+    def gold() -> str:
+        return "gold"
+
+    @get(
+        "/route-prompt",
+        mcp_prompt="route_p",
+        mcp_prompt_title="Route P",
+        mcp_prompt_meta={"source": "route"},
+        sync_to_thread=False,
+    )
+    def route_p() -> dict[str, Any]:
+        return {"messages": [{"role": "user", "content": {"type": "text", "text": "hi"}}]}
+
+    plugin = LitestarMCP(
+        config=MCPConfig(prompt_controllers=[TriagePrompts]),
+        prompts=[gold],
+    )
+    app = Litestar(route_handlers=[route_p], plugins=[plugin])
+    with TestClient(app) as client:
+        listed = {item["name"]: item for item in _rpc(client, "prompts/list")["result"]["prompts"]}
+
+    assert listed["ops/triage"]["title"] == "Triage"
+    assert listed["ops/triage"]["_meta"] == {"ui": {"surface": "panel"}}
+    assert listed["gold"]["_meta"] == {"tier": "gold"}
+    assert "title" not in listed["gold"]
+    assert "icons" not in listed["gold"]
+    assert listed["route_p"]["title"] == "Route P"
+    assert listed["route_p"]["_meta"] == {"source": "route"}
+    assert "title" not in listed["ops/bare"]
+    assert "icons" not in listed["ops/bare"]
+    assert "_meta" not in listed["ops/bare"]
+
+
+@pytest.mark.parametrize(
+    ("raw_title", "raw_icons", "raw_meta", "exp_title", "exp_icons", "exp_meta"),
+    [
+        (None, None, None, None, None, None),
+        ("   ", [], {}, None, None, None),
+        (
+            "  Heading  ",
+            [{"src": "https://example.com/a.svg"}],
+            {"tier": "pro"},
+            "Heading",
+            [{"src": "https://example.com/a.svg"}],
+            {"tier": "pro"},
+        ),
+    ],
+    ids=["all_none", "empty_normalized", "populated"],
+)
+def test_prompt_registration_and_resource_template_normalize_and_hash(
+    raw_title: str | None,
+    raw_icons: list[dict[str, Any]] | None,
+    raw_meta: dict[str, Any] | None,
+    exp_title: str | None,
+    exp_icons: list[dict[str, Any]] | None,
+    exp_meta: dict[str, Any] | None,
+) -> None:
+    @get("/tpl/{slug:str}", sync_to_thread=False)
+    def sample_handler(slug: str) -> str:
+        return slug
+
+    icons_in = [dict(item) for item in raw_icons] if raw_icons is not None else None
+    meta_in = dict(raw_meta) if raw_meta is not None else None
+    reg = PromptRegistration(
+        name="p",
+        handler=sample_handler,
+        title=raw_title,
+        icons=icons_in,
+        meta=meta_in,
+    )
+    tpl = ResourceTemplate(
+        name="r",
+        template="ui://demo/{slug}.html",
+        handler=sample_handler,
+        title=raw_title,
+        icons=icons_in,
+        meta=meta_in,
+    )
+    if icons_in is not None:
+        icons_in.append({"src": "https://example.com/mutated.svg"})
+    if meta_in is not None:
+        meta_in["mutated"] = True
+
+    assert reg.title == exp_title
+    assert reg.icons == exp_icons
+    assert reg.meta == exp_meta
+    assert tpl.title == exp_title
+    assert tpl.icons == exp_icons
+    assert tpl.meta == exp_meta
+    assert len({reg}) == 1
+    assert len({tpl}) == 1
+
+    registry = Registry()
+    registry.register_prompt("p", sample_handler, title=raw_title, icons=raw_icons, meta=raw_meta)
+    registry.register_resource_template(
+        "r",
+        sample_handler,
+        "ui://demo/{slug}.html",
+        title=raw_title,
+        icons=raw_icons,
+        meta=raw_meta,
+    )
+    assert registry.prompts["p"].meta == exp_meta
+    assert registry.templates["r"].title == exp_title
+    assert registry.templates["r"].icons == exp_icons
+    assert registry.templates["r"].meta == exp_meta
+
+
+@pytest.mark.parametrize(
+    ("reg_kwargs", "handler_opt", "expected_fields", "absent_fields"),
+    [
+        (
+            {
+                "title": "Reg Title",
+                "icons": [{"src": "https://example.com/reg.svg"}],
+                "meta": {"a": 1, "b": 2},
+            },
+            {
+                "mcp_prompt_title": "  Opt Title  ",
+                "mcp_prompt_icons": [{"src": "https://example.com/opt.svg"}],
+                "mcp_prompt_meta": {"b": 9, "c": 3},
+            },
+            {
+                "title": "Opt Title",
+                "icons": [{"src": "https://example.com/opt.svg"}],
+                "_meta": {"a": 1, "b": 9, "c": 3},
+            },
+            set(),
+        ),
+        (
+            {
+                "title": "Reg Title",
+                "icons": [{"src": "https://example.com/reg.svg"}],
+                "meta": {"a": 1},
+            },
+            {
+                "mcp_prompt_title": "   ",
+                "mcp_prompt_icons": [],
+                "mcp_prompt_meta": {},
+            },
+            {
+                "title": "Reg Title",
+                "icons": [{"src": "https://example.com/reg.svg"}],
+                "_meta": {"a": 1},
+            },
+            set(),
+        ),
+        (
+            {"title": None, "icons": None, "meta": None},
+            {},
+            {},
+            {"title", "icons", "_meta"},
+        ),
+    ],
+    ids=["opt_precedence_and_shallow_merge", "empty_opt_falls_back_to_reg", "omits_all_empty_descriptors"],
+)
+def test_render_prompt_entry_opt_precedence_and_meta_shallow_merge(
+    reg_kwargs: dict[str, Any],
+    handler_opt: dict[str, Any],
+    expected_fields: dict[str, Any],
+    absent_fields: set[str],
+) -> None:
+    @get("/p", opt=handler_opt, sync_to_thread=False)
+    def prompt_handler() -> dict[str, Any]:
+        return {"messages": []}
+
+    original_meta = dict(reg_kwargs["meta"]) if reg_kwargs["meta"] is not None else None
+    reg = PromptRegistration(name="sample", handler=prompt_handler, **reg_kwargs)
+    entry = render_prompt_entry(reg, MCPConfig())
+
+    assert entry["name"] == "sample"
+    assert entry | expected_fields == entry
+    assert absent_fields.isdisjoint(entry.keys())
+    assert reg.meta == original_meta

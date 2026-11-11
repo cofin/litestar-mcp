@@ -1,6 +1,7 @@
 """Unit tests for distributed MCP Tasks on litestar-queues via QueueTaskExecutor."""
 
 import asyncio
+import contextlib
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -9,19 +10,23 @@ from typing import Any, cast
 from uuid import UUID, uuid4
 
 import anyio
+import httpx2
 import pytest
+from litestar import Controller, Litestar, Request, get
+from litestar.channels import ChannelsPlugin
+from litestar.channels.backends.memory import MemoryChannelsBackend
+from litestar.connection import ASGIConnection
+from litestar.di import Provide
+from litestar.exceptions import ImproperlyConfiguredException
+from litestar.status_codes import HTTP_200_OK
+from litestar.stores.memory import MemoryStore
+from litestar.testing import AsyncTestClient
 
 pytest.importorskip("litestar_queues")
 
 from dishka import Provider, Scope, make_async_container, provide
 from dishka.integrations.litestar import FromDishka, inject, setup_dishka
-from litestar import Controller, Litestar, Request, get
-from litestar.connection import ASGIConnection
-from litestar.di import Provide
-from litestar.exceptions import ImproperlyConfiguredException
-from litestar.status_codes import HTTP_200_OK
-from litestar.testing import AsyncTestClient
-from litestar_queues import QueueConfig, QueuePlugin
+from litestar_queues import QueueConfig, QueuePlugin, QueueService
 from litestar_queues.config import WorkerConfig
 from litestar_queues.worker import Worker
 
@@ -33,7 +38,11 @@ from litestar_mcp import (
     get_mcp_request_context,
 )
 from litestar_mcp.core.jsonrpc import INTERNAL_ERROR, JSONRPCError, JSONRPCErrorException
-from litestar_mcp.mcp.service import TASKS_EXTENSION
+from litestar_mcp.core.serialization import from_json
+from litestar_mcp.mcp.client import MCPStreamableHTTPClient
+from litestar_mcp.mcp.plugin import TASK_STORE_NAME
+from litestar_mcp.mcp.service import SESSION_STORE_NAME, TASKS_EXTENSION
+from litestar_mcp.mcp.stdio import ASGIStreamingTransport
 from litestar_mcp.mcp.tasks import (
     ToolTaskCall,
     _FallbackAuthorizationSnapshot,
@@ -1262,3 +1271,483 @@ async def test_external_mcp_tool_meta_attribute_discovery() -> None:
         )
         assert call_res["result"].get("resultType") != "task"
         assert json.loads(call_res["result"]["content"][0]["text"]) == {"reply": "pong"}
+
+
+async def _mcp_post_sse_or_json(
+    client: AsyncTestClient[Litestar],
+    method: str,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    request_params = dict(params or {})
+    meta = dict(request_params.get("_meta") or {})
+    caps = dict(meta.get("io.modelcontextprotocol/clientCapabilities") or {})
+    extensions = dict(caps.get("extensions") or {})
+    extensions[TASKS_EXTENSION] = {}
+    caps["extensions"] = extensions
+    meta["io.modelcontextprotocol/clientCapabilities"] = caps
+    meta["io.modelcontextprotocol/protocolVersion"] = "2026-07-28"
+    request_params["_meta"] = meta
+
+    body, req_headers = mcp_envelope(method, request_params)
+    response = await client.post("/mcp", json=body, headers=req_headers)
+    assert response.status_code == HTTP_200_OK
+    if response.headers.get("content-type", "").startswith("text/event-stream"):
+        frames = [line for line in response.text.splitlines() if line.startswith("data:")]
+        return cast("dict[str, Any]", from_json(frames[-1].removeprefix("data:")))
+    return cast("dict[str, Any]", response.json())
+
+
+@pytest.mark.anyio
+async def test_queued_worker_progress_and_status_message() -> None:
+    """Queued worker updates task statusMessage while working, hides internal fields, and clears statusMessage on completion."""
+    step_gate = asyncio.Event()
+    step_done = asyncio.Event()
+    finish_gate = asyncio.Event()
+
+    @get("/worker-progress")
+    @mcp_tool(name="worker_progress", task_support="optional")
+    async def worker_progress() -> dict[str, bool]:
+        context = get_mcp_request_context()
+        await step_gate.wait()
+        await context.report_progress(1, total=2, message="Worker step 1")
+        step_done.set()
+        await finish_gate.wait()
+        return {"ok": True}
+
+    executor = QueueTaskExecutor()
+    app, _ = _make_queued_app(
+        executor=executor,
+        execution_backend="local",
+        extra_handlers=[worker_progress],
+    )
+
+    async with AsyncTestClient(app) as client:
+        call_res = await _mcp_post_sse_or_json(
+            client,
+            "tools/call",
+            {
+                "name": "worker_progress",
+                "arguments": {},
+                "_meta": {"progressToken": "q-tok"},
+            },
+        )
+        assert call_res["result"]["resultType"] == "task"
+        task_id = call_res["result"]["taskId"]
+
+        queue_plugin = app.plugins.get(QueuePlugin)
+        service = queue_plugin.config.get_service(app.state)
+        worker = Worker(service, queue_plugin.config.worker)
+        worker_task = asyncio.create_task(worker.run_once())
+        try:
+            step_gate.set()
+            await asyncio.wait_for(step_done.wait(), timeout=2.0)
+
+            working_res = await _mcp_post(client, "tasks/get", {"taskId": task_id})
+            working_record = working_res["result"]
+            assert working_record["status"] == "working"
+            assert working_record["statusMessage"] == "Worker step 1"
+            assert "progress_token" not in working_record
+            assert "session_id" not in working_record
+            assert "log_level" not in working_record
+            assert "dispatchInternal" not in working_record
+
+            finish_gate.set()
+            await asyncio.wait_for(worker_task, timeout=2.0)
+        finally:
+            await worker.stop()
+
+        final_res = await _mcp_post(client, "tasks/get", {"taskId": task_id})
+        final_record = final_res["result"]
+        assert final_record["status"] == "completed"
+        assert "statusMessage" not in final_record
+        assert json.loads(final_record["result"]["content"][0]["text"]) == {"ok": True}
+
+
+async def _wait_for_session_streams(plugin: LitestarMCP) -> None:
+    for _ in range(400):
+        if plugin.registry.has_subscription_manager and plugin.registry.subscription_manager._streams:
+            return
+        await asyncio.sleep(0.005)
+    raise asyncio.TimeoutError
+
+
+async def _read_next_sse_frame(lines: Any) -> dict[str, Any]:
+    while True:
+        line = await asyncio.wait_for(lines.__anext__(), timeout=2.0)
+        if line.startswith("data:"):
+            return cast("dict[str, Any]", from_json(line.removeprefix("data:").strip()))
+
+
+async def _collect_cross_replica_events(session_events: asyncio.Queue[dict[str, Any]]) -> None:
+    collected: list[dict[str, Any]] = []
+    saw_progress = False
+    saw_error_log = False
+    while not (saw_progress and saw_error_log):
+        event = await asyncio.wait_for(session_events.get(), timeout=2.0)
+        collected.append(event)
+        if event.get("method") == "notifications/progress":
+            saw_progress = True
+            assert event["params"] == {
+                "progressToken": "rep-tok",
+                "progress": 1,
+                "total": 2,
+                "message": "Phase A",
+            }
+        elif event.get("method") == "notifications/message":
+            assert event["params"] == {
+                "level": "error",
+                "data": "keep",
+                "logger": "worker",
+            }
+            saw_error_log = True
+
+    assert all(
+        not (e.get("method") == "notifications/message" and e.get("params", {}).get("data") == "drop")
+        for e in collected
+    )
+
+
+def _build_cross_replica_apps() -> tuple[
+    Litestar,
+    QueuePlugin,
+    LitestarMCP,
+    Litestar,
+    QueuePlugin,
+]:
+    shared_task_store = MemoryStore()
+    shared_session_store = MemoryStore()
+    channels = ChannelsPlugin(MemoryChannelsBackend(), channels=["litestar-mcp-subscriptions"])
+
+    @get("/replica-work")
+    @mcp_tool(name="replica_work", task_support="optional")
+    async def web_replica_work() -> dict[str, bool]:
+        return {"done": False}
+
+    @get("/replica-work")
+    @mcp_tool(name="replica_work", task_support="optional")
+    async def worker_replica_work() -> dict[str, bool]:
+        context = get_mcp_request_context()
+        await context.report_progress(1, total=2, message="Phase A")
+        await context.log("debug", "drop")
+        await context.log("error", "keep", logger="worker")
+        return {"done": True}
+
+    worker_cfg = WorkerConfig(placement="external")
+    web_qp = QueuePlugin(QueueConfig(queue_backend="memory", execution_backend="local", worker=worker_cfg))
+    web_mcp = LitestarMCP(MCPConfig(tasks=MCPTaskConfig(executor=QueueTaskExecutor())))
+    web_app = Litestar(
+        route_handlers=[web_replica_work],
+        plugins=[web_qp, channels, web_mcp],
+        stores={TASK_STORE_NAME: shared_task_store, SESSION_STORE_NAME: shared_session_store},
+    )
+
+    worker_qp = QueuePlugin(QueueConfig(queue_backend="memory", execution_backend="local", worker=worker_cfg))
+    worker_mcp = LitestarMCP(
+        MCPConfig(subscription_channels=channels, tasks=MCPTaskConfig(executor=QueueTaskExecutor()))
+    )
+    worker_app = Litestar(
+        route_handlers=[worker_replica_work],
+        plugins=[worker_qp, worker_mcp],
+        stores={TASK_STORE_NAME: shared_task_store, SESSION_STORE_NAME: shared_session_store},
+    )
+    return web_app, web_qp, web_mcp, worker_app, worker_qp
+
+
+@pytest.mark.anyio
+async def test_cross_replica_channels_session_sse_forwarding() -> None:
+    """Worker progress and filtered logs forward across replicas via ChannelsPlugin to the owning session SSE stream."""
+    web_app, web_qp, web_mcp, worker_app, worker_qp = _build_cross_replica_apps()
+
+    async with web_app.lifespan():
+        web_svc = web_qp.get_service(web_app.state)
+        worker_svc = QueueService(worker_qp.config, queue_backend=web_svc.get_queue_backend())
+        async with (
+            worker_qp.standalone_app_lifespan(worker_app, service=worker_svc),
+            MCPStreamableHTTPClient(
+                "http://testserver.local/mcp",
+                transport=ASGIStreamingTransport(web_app),
+                protocol_version="2025-11-25",
+                capabilities={"extensions": {TASKS_EXTENSION: {}}},
+            ) as session_client,
+        ):
+            await session_client.initialize()
+            assert session_client.session_id is not None
+            await session_client.set_logging_level("warning")
+
+            session_events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
+            async def _read_session_sse() -> None:
+                async for payload in session_client.open_event_stream():
+                    await session_events.put(payload)
+
+            sse_task = asyncio.create_task(_read_session_sse())
+            try:
+                await _wait_for_session_streams(web_mcp)
+
+                listen_body, listen_headers = mcp_envelope(
+                    "subscriptions/listen",
+                    {"notifications": {"toolsListChanged": True}},
+                    msg_id="listen-cross-replica",
+                )
+                async with (
+                    httpx2.AsyncClient(
+                        transport=ASGIStreamingTransport(web_app),
+                        base_url="http://testserver.local",
+                    ) as listen_http,
+                    listen_http.stream("POST", "/mcp", json=listen_body, headers=listen_headers) as listen_resp,
+                ):
+                    assert listen_resp.status_code == HTTP_200_OK
+                    lines = listen_resp.aiter_lines()
+                    while (await _read_next_sse_frame(lines)).get(
+                        "method"
+                    ) != "notifications/subscriptions/acknowledged":
+                        pass
+
+                    task_res = await session_client.request(
+                        "tools/call",
+                        {
+                            "name": "replica_work",
+                            "arguments": {},
+                            "_meta": {"progressToken": "rep-tok"},
+                        },
+                    )
+                    assert task_res["resultType"] == "task"
+                    task_id = task_res["taskId"]
+
+                    worker = Worker(worker_svc, worker_qp.config.worker)
+                    try:
+                        await worker.run_once()
+                    finally:
+                        await worker.stop()
+
+                    await _collect_cross_replica_events(session_events)
+
+                    await web_mcp.registry.subscription_manager.publish("notifications/tools/list_changed", {})
+                    frame = await _read_next_sse_frame(lines)
+                    assert frame.get("method") == "notifications/tools/list_changed"
+
+                    final_res = await session_client.request("tasks/get", {"taskId": task_id})
+                    assert final_res["status"] == "completed"
+                    assert json.loads(final_res["result"]["content"][0]["text"]) == {"done": True}
+            finally:
+                sse_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await sse_task
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("channels_arg", "arbitrary_channels_allowed", "expected_wired"),
+    [
+        (["litestar-mcp-subscriptions"], False, True),
+        (["unrelated"], False, False),
+        (None, True, True),
+    ],
+)
+async def test_bind_channels_plugin_compatibility_gate(
+    channels_arg: list[str] | None,
+    arbitrary_channels_allowed: bool,
+    expected_wired: bool,
+) -> None:
+    """QueueTaskExecutor.bind adopts ChannelsPlugin only when it carries the subscription channel or allows arbitrary channels."""
+
+    @get("/compat-echo")
+    @mcp_tool(name="compat_echo", task_support="optional")
+    async def compat_echo() -> dict[str, bool]:
+        return {"ok": True}
+
+    channels_plugin = ChannelsPlugin(
+        MemoryChannelsBackend(),
+        channels=channels_arg,
+        arbitrary_channels_allowed=arbitrary_channels_allowed,
+    )
+    executor = QueueTaskExecutor()
+    app = Litestar(
+        route_handlers=[compat_echo],
+        plugins=[
+            QueuePlugin(
+                QueueConfig(
+                    queue_backend="memory",
+                    execution_backend="local",
+                    worker=WorkerConfig(placement="external"),
+                )
+            ),
+            channels_plugin,
+            mcp_plugin := LitestarMCP(MCPConfig(tasks=MCPTaskConfig(executor=executor))),
+        ],
+    )
+
+    async with AsyncTestClient(app):
+        assert mcp_plugin.registry.has_subscription_manager is True
+        assert (mcp_plugin.registry.subscription_manager._channels is channels_plugin) is expected_wired
+
+
+async def _assert_resumed_session_events(session_events: asyncio.Queue[dict[str, Any]]) -> None:
+    received: list[dict[str, Any]] = []
+    saw_progress = False
+    saw_critical = False
+    while not (saw_progress and saw_critical):
+        event = await asyncio.wait_for(session_events.get(), timeout=2.0)
+        received.append(event)
+        if event.get("method") == "notifications/progress":
+            saw_progress = True
+            assert event["params"] == {
+                "progressToken": "res-tok",
+                "progress": 2,
+                "total": 2,
+                "message": "Resumed step 2",
+            }
+        elif event.get("method") == "notifications/message" and event["params"].get("data") == "done-crit":
+            saw_critical = True
+            assert event["params"]["level"] == "critical"
+
+    assert all(
+        not (e.get("method") == "notifications/message" and e.get("params", {}).get("data") == "skip-warn")
+        for e in received
+    )
+
+
+@pytest.mark.anyio
+async def test_queued_resume_preserves_progress_and_store_log_level() -> None:
+    """Queued multi-round resume via tasks/update preserves progress_token and refreshes log_level from MCPSessionStore."""
+
+    @get("/queued-resume")
+    @mcp_tool(name="queued_resume", task_support="optional")
+    async def queued_resume() -> MCPInputRequiredResult | dict[str, bool]:
+        context = get_mcp_request_context()
+        if not context.input_responses:
+            return MCPInputRequiredResult(
+                input_requests={"confirm": {"type": "boolean"}},
+                request_state="round-1",
+            )
+        await context.report_progress(2, total=2, message="Resumed step 2")
+        await context.log("warning", "skip-warn")
+        await context.log("critical", "done-crit")
+        return {"resumed": True}
+
+    channels = ChannelsPlugin(MemoryChannelsBackend(), channels=["litestar-mcp-subscriptions"])
+    mcp_plugin = LitestarMCP(MCPConfig(tasks=MCPTaskConfig(executor=QueueTaskExecutor())))
+    queue_plugin = QueuePlugin(
+        QueueConfig(
+            queue_backend="memory",
+            execution_backend="local",
+            worker=WorkerConfig(placement="external"),
+        )
+    )
+    app = Litestar(route_handlers=[queued_resume], plugins=[queue_plugin, channels, mcp_plugin])
+
+    async with (
+        app.lifespan(),
+        MCPStreamableHTTPClient(
+            "http://testserver.local/mcp",
+            transport=ASGIStreamingTransport(app),
+            protocol_version="2025-11-25",
+            capabilities={"extensions": {TASKS_EXTENSION: {}}},
+        ) as session_client,
+    ):
+        await session_client.initialize()
+        session_events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
+        async def _read_session_sse() -> None:
+            async for payload in session_client.open_event_stream():
+                await session_events.put(payload)
+
+        sse_task = asyncio.create_task(_read_session_sse())
+        try:
+            await _wait_for_session_streams(mcp_plugin)
+
+            task_res = await session_client.request(
+                "tools/call",
+                {
+                    "name": "queued_resume",
+                    "arguments": {},
+                    "_meta": {"progressToken": "res-tok"},
+                },
+            )
+            task_id = task_res["taskId"]
+
+            service = queue_plugin.config.get_service(app.state)
+            worker = Worker(service, queue_plugin.config.worker)
+            try:
+                await worker.run_once()
+                first_status = await session_client.request("tasks/get", {"taskId": task_id})
+                assert first_status["status"] == "input_required"
+
+                await session_client.set_logging_level("error")
+                mcp_plugin.registry.subscription_manager._session_log_levels.clear()
+
+                await session_client.request(
+                    "tasks/update",
+                    {"taskId": task_id, "inputResponses": {"confirm": True}},
+                )
+                await worker.run_once()
+            finally:
+                await worker.stop()
+
+            await _assert_resumed_session_events(session_events)
+
+            final_status = await session_client.request("tasks/get", {"taskId": task_id})
+            assert final_status["status"] == "completed"
+            assert json.loads(final_status["result"]["content"][0]["text"]) == {"resumed": True}
+        finally:
+            sse_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await sse_task
+
+
+@pytest.mark.anyio
+async def test_queued_missing_progress_token_fails_tool_cleanly() -> None:
+    """Queued tool invoking report_progress without progressToken settles as completed isError=True."""
+
+    @get("/queued-missing-tok")
+    @mcp_tool(name="queued_missing_tok", task_support="optional")
+    async def queued_missing_tok() -> dict[str, bool]:
+        await get_mcp_request_context().report_progress(1)
+        return {"ok": True}
+
+    executor = QueueTaskExecutor()
+    app, _ = _make_queued_app(
+        executor=executor,
+        execution_backend="local",
+        extra_handlers=[queued_missing_tok],
+    )
+
+    async with AsyncTestClient(app) as client:
+        call_res = await _mcp_post(
+            client,
+            "tools/call",
+            {"name": "queued_missing_tok", "arguments": {}},
+        )
+        task_id = call_res["result"]["taskId"]
+
+        queue_plugin = app.plugins.get(QueuePlugin)
+        service = queue_plugin.config.get_service(app.state)
+        worker = Worker(service, queue_plugin.config.worker)
+        try:
+            await worker.run_once()
+        finally:
+            await worker.stop()
+
+        final_res = await _mcp_post(client, "tasks/get", {"taskId": task_id})
+        final_record = final_res["result"]
+        assert final_record["status"] == "completed"
+        assert final_record["result"]["isError"] is True
+        assert "did not supply a progress token" in final_record["result"]["content"][0]["text"]
+
+
+@pytest.mark.anyio
+async def test_queue_executor_validates_log_level_on_enqueue() -> None:
+    """QueueTaskExecutor._enqueue_attempt rejects invalid log_level values with ValueError."""
+    executor = QueueTaskExecutor()
+    app, _ = _make_queued_app(executor=executor, execution_backend="local")
+
+    async with AsyncTestClient(app):
+        record = await executor.runtime.task_store.create("owner-1", local=False)
+        invalid_call = ToolTaskCall(
+            task_id=record.task_id,
+            tool_name="slow_echo",
+            arguments={"text": "x"},
+            log_level="bogus-level",
+        )
+        with pytest.raises(ValueError, match="log level"):
+            await executor.submit(record, invalid_call)

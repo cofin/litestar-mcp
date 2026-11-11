@@ -271,6 +271,7 @@ class ASGIStreamingTransport(httpx2.AsyncBaseTransport):
                     raise
             if not message.get("more_body", False):
                 state.sender.close()
+                state.disconnected.set()
 
 
 def _seed_stdio_identity(app: "ASGIApp", context: "MCPStdioContext") -> "ASGIApp":

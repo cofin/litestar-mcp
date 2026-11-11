@@ -1,5 +1,3 @@
-import json
-
 import pytest
 from litestar.testing import TestClient
 
@@ -49,14 +47,14 @@ def test_standalone_mcp_resource_integration() -> "None":
         resources = response["result"]["resources"]
         assert len(resources) == 2
         foo_resource = next(r for r in resources if r["name"] == "foo")
-        assert foo_resource["uri"] == "litestar://foo"
+        assert foo_resource["uri"] == "file://foo/bar"
 
         response = rpc(client, "resources/read", {"uri": "file://foo/bar"})
         assert "result" in response
         contents = response["result"]["contents"]
         assert len(contents) == 1
         assert contents[0]["uri"] == "file://foo/bar"
-        assert json.loads(contents[0]["text"]) == "foo-content"
+        assert contents[0]["text"] == "foo-content"
 
 
 def test_standalone_mcp_prompt_integration() -> "None":

@@ -1,5 +1,6 @@
 """Class-based controller for grouping MCP prompts with shared instructions and guards."""
 
+import copy
 import inspect
 from typing import TYPE_CHECKING, Any, cast
 
@@ -34,23 +35,29 @@ def prompt(
     description: str | None = None,
     arguments: list[dict[str, Any]] | None = None,
     icons: list[dict[str, Any]] | None = None,
+    meta: dict[str, Any] | None = None,
 ) -> "Callable[[Callable[..., Any]], HTTPRouteHandler]":
     """Mark a controller method as an MCP prompt served through the controller's guards and dependencies."""
 
     def decorator(fn: "Callable[..., Any]") -> HTTPRouteHandler:
         prompt_name = name or fn.__name__
-        metadata = {
+        cleaned_title = title.strip() if isinstance(title, str) and title.strip() else None
+        cleaned_icons = [copy.deepcopy(dict(item)) for item in icons] if icons else None
+        cleaned_meta = copy.deepcopy(dict(meta)) if meta else None
+        metadata: dict[str, Any] = {
             "type": "prompt",
             "name": prompt_name,
-            "title": title,
+            "title": cleaned_title,
             "description": description or inspect.cleandoc(fn.__doc__ or "") or None,
             "arguments": arguments,
-            "icons": icons,
+            "icons": cleaned_icons,
         }
-        set_mcp_metadata(fn, metadata)
+        if cleaned_meta is not None:
+            metadata["meta"] = cleaned_meta
+        set_mcp_metadata(fn, metadata, kind="prompt")
         target_fn = _wrap_dishka_if_needed(fn)
         if target_fn is not fn:
-            set_mcp_metadata(target_fn, metadata)
+            set_mcp_metadata(target_fn, metadata, kind="prompt")
         normalize_synthesized_handler_signature(target_fn, fn, path=f"/prompts/{prompt_name}")
         sync_option = None if inspect.iscoroutinefunction(target_fn) else False
         return post(

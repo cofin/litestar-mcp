@@ -1,5 +1,6 @@
 """Unit tests for SkillSource protocol, in-memory Skill/SkillFile models, and async SkillCatalog."""
 
+import asyncio
 import contextlib
 import logging
 from pathlib import Path  # noqa: TC003
@@ -22,6 +23,7 @@ from litestar_mcp import (
     SkillSource,
     get_mcp_request_context,
 )
+from litestar_mcp.mcp.service import MCPHandlerService, MCPRequestContext
 from litestar_mcp.mcp.skills import SkillCatalog, compute_digest
 from tests.unit.conftest import mcp_post
 
@@ -572,3 +574,91 @@ def test_dynamic_only_config_serves_skills_over_the_wire() -> "None":
 
     listed = mcp_post(client, "skills/list").json()["result"]["skills"]
     assert [item["uri"] for item in listed] == ["skill://dynamic-demo/SKILL.md"]
+
+
+def test_get_mcp_request_context_zero_arg_raises_outside_mcp() -> "None":
+    """Zero-argument get_mcp_request_context raises RuntimeError outside an active MCP handler."""
+    with pytest.raises(RuntimeError, match="No MCP request is currently executing"):
+        get_mcp_request_context()
+
+
+@pytest.mark.parametrize(
+    ("call_fn", "expected"),
+    [
+        (lambda _marker: get_mcp_request_context(None), None),
+        (lambda _marker: get_mcp_request_context(default=None), None),
+        (lambda marker: get_mcp_request_context(default=marker), "sentinel-marker"),
+    ],
+)
+def test_get_mcp_request_context_default_outside_mcp(call_fn: "Any", expected: "Any") -> "None":
+    """Supplying default positionally or by keyword returns it cleanly outside an MCP call."""
+    assert call_fn("sentinel-marker") == expected
+
+
+def test_get_mcp_request_context_default_inside_mcp_returns_active_context() -> "None":
+    """Inside an active MCP call, get_mcp_request_context(default=None) returns the live context."""
+    observed: list[Any] = []
+
+    class _ContextInspectingSource:
+        async def list_skills(self, request: "Request[Any, Any, Any]", /) -> "Sequence[Skill]":
+            del request
+            observed.append(get_mcp_request_context(default=None))
+            return [Skill.build("inspected", "Context inspected skill")]
+
+        async def get_skill(self, request: "Request[Any, Any, Any]", name: "str", /) -> "Skill | None":
+            del request, name
+            return None
+
+        async def read_file(self, request: "Request[Any, Any, Any]", skill: "Skill", file: "SkillFile", /) -> "bytes":
+            del request, skill
+            return file.content or b""
+
+    app = Litestar(plugins=[LitestarMCP(MCPConfig(skills=MCPSkillsConfig(sources=[_ContextInspectingSource()])))])
+    with TestClient(app=app) as client:
+        listed = mcp_post(client, "skills/list").json()["result"]["skills"]
+        assert [item["uri"] for item in listed] == ["skill://inspected/SKILL.md"]
+
+    assert len(observed) == 1
+    assert isinstance(observed[0], MCPRequestContext)
+    assert observed[0].request is not None
+
+
+@pytest.mark.anyio
+async def test_catalog_notify_list_changed_emits_notifications(tmp_path: "Path") -> "None":
+    """SkillCatalog.notify_list_changed emits skills, resources, and prompt notifications when bound."""
+    unbound = SkillCatalog([])
+    await unbound.notify_list_changed()
+
+    plugin = LitestarMCP(MCPConfig(skills=MCPSkillsConfig(paths=[tmp_path], expose_as_prompts=True)))
+    app = Litestar(plugins=[plugin])
+    assert app is not None
+    stream_id, stream = await plugin._subscription_manager.open_session_stream(session_id="sess-skill-notify")
+
+    assert plugin.skill_catalog is not None
+    await plugin.skill_catalog.notify_list_changed()
+
+    events = [await asyncio.wait_for(stream.__anext__(), 0.2) for _ in range(3)]
+    assert [event["method"] for event in events] == [
+        "notifications/skills/list_changed",
+        "notifications/resources/list_changed",
+        "notifications/prompts/list_changed",
+    ]
+    await plugin._subscription_manager.disconnect(stream_id)
+
+
+@pytest.mark.anyio
+async def test_service_skills_list_succeeds_with_none_request() -> "None":
+    """MCPHandlerService.skills_list succeeds cleanly when context.request is None."""
+    skill = Skill.build("headless", "Headless skill")
+    service = MCPHandlerService(
+        config=MCPConfig(skills=MCPSkillsConfig(sources=[_InMemorySource([skill])])),
+        discovered_tools={},
+        discovered_resources={},
+        discovered_prompts={},
+        app_ref=Litestar(),
+        registry=None,
+        skill_catalog=SkillCatalog([_InMemorySource([skill])]),
+    )
+    context = MCPRequestContext(client_id="c", owner_id=None, request=None)
+    result = await service.skills_list({}, context)
+    assert [entry["uri"] for entry in result["skills"]] == ["skill://headless/SKILL.md"]

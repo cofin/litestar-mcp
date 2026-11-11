@@ -217,6 +217,34 @@ def list_resources(app: "Litestar") -> "None":
         console.print(f"- [bold]{name}[/bold]: {first_line}")
 
 
+@mcp_group.command(name="list-skills")  # type: ignore[untyped-decorator]
+@click.option("--tag", "tags", multiple=True, help="Filter skills by tag.")
+@click.option("--query", default=None, help="Filter skills by substring query.")
+def list_skills(
+    ctx: "click.Context",
+    tags: "tuple[str, ...]",
+    query: "str | None",
+) -> "None":
+    """List all available MCP skills."""
+    plugin = _get_ctx_plugin(ctx)
+    console = Console()
+    if plugin.skill_catalog is None:
+        console.print("[yellow]No MCP skills configured.[/yellow]")
+        return
+
+    skills = asyncio.run(plugin.skill_catalog.list_skills(tags=tags or None, query=query))
+    visible_skills = [skill for skill in skills if should_include_handler(skill.name, set(skill.tags), plugin.config)]
+    if not visible_skills:
+        console.print("[yellow]No MCP skills discovered.[/yellow]")
+        return
+
+    console.print(f"[bold green]Discovered {len(visible_skills)} skills:[/bold green]")
+    for skill in visible_skills:
+        first_line = skill.description.strip().splitlines()[0].strip() if skill.description.strip() else ""
+        suffix = f" ({', '.join(skill.tags)})" if skill.tags else ""
+        console.print(f"- [bold]{skill.name}[/bold]: {first_line}{suffix}")
+
+
 mcp_group.add_command(ToolExecutor(name="run", help="Run a discovered MCP tool by name."))  # pragma: no cover
 
 

@@ -6,10 +6,12 @@ from uuid import UUID
 
 import anyio
 import msgspec
+from litestar.channels import ChannelsPlugin
 from litestar.exceptions import ImproperlyConfiguredException
 from litestar_queues.events.context import get_current_task_context
 from litestar_queues.task import task
 
+from litestar_mcp.core.sse import _BROKER_CHANNEL, validate_log_level
 from litestar_mcp.mcp.tasks import ToolTaskCall
 from litestar_mcp.queues.dependencies import TaskDependencyChain
 
@@ -76,8 +78,26 @@ class QueueTaskExecutor:
         )
 
     def bind(self, runtime: "MCPTaskRuntime") -> None:
-        """Bind runtime collaborators to the executor."""
+        """Bind runtime collaborators to the executor and attach compatible subscription channels."""
         self._runtime = runtime
+        channels_plugin = next(
+            (
+                plugin
+                for plugin in runtime.app.plugins
+                if isinstance(plugin, ChannelsPlugin) and self._is_compatible_channels_plugin(plugin)
+            ),
+            None,
+        )
+        if channels_plugin is None:
+            return
+        for plugin in runtime.app.plugins:
+            registry = getattr(plugin, "registry", None)
+            if registry is None or not getattr(registry, "has_subscription_manager", False):
+                continue
+            subscription_manager = registry.subscription_manager
+            if subscription_manager.channels is None:
+                subscription_manager.set_channels(channels_plugin)
+                subscription_manager.start()
 
     async def resolve_task_dependencies(
         self,
@@ -123,6 +143,8 @@ class QueueTaskExecutor:
 
     async def _enqueue_attempt(self, call: ToolTaskCall) -> None:
         """Enqueue one attempt keyed by task id and attempt number, then record its job id."""
+        if call.log_level is not None:
+            validate_log_level(call.log_level)
         result = await self._queue_service().enqueue(
             run_mcp_tool_task,
             call=msgspec.to_builtins(call),
@@ -145,6 +167,16 @@ class QueueTaskExecutor:
             )
             raise ImproperlyConfiguredException(msg)
         return self._queue_plugin.config.get_service(self.runtime.app.state)
+
+    @staticmethod
+    def _is_compatible_channels_plugin(channels_plugin: ChannelsPlugin) -> bool:
+        """Return whether `channels_plugin` accepts the MCP subscription broker channel."""
+        configured_channels = getattr(channels_plugin, "_channels", None) or ()
+        return bool(
+            getattr(channels_plugin, "_arbitrary_channels_allowed", False)
+            or getattr(channels_plugin, "arbitrary_channels_allowed", False)
+            or _BROKER_CHANNEL in configured_channels
+        )
 
 
 @task(RUN_TOOL_TASK, queue="mcp", retries=0)

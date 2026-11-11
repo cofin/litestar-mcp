@@ -13,11 +13,11 @@ from typing import TYPE_CHECKING, Any, Protocol
 from uuid import uuid4
 
 import msgspec
-from litestar.serialization import decode_json, encode_json
 from litestar.stores.base import Store
 from litestar.stores.memory import MemoryStore
 
 from litestar_mcp.core.jsonrpc import JSONRPCError
+from litestar_mcp.core.serialization import decode_json, encode_json
 
 if TYPE_CHECKING:
     from litestar import Litestar
@@ -108,6 +108,12 @@ class ToolTaskCall(msgspec.Struct, kw_only=True):
     """Opaque round-tripped state token accompanying `input_responses`."""
     attempt: int = 1
     """1-based execution attempt counter incremented on each `tasks/update` resume."""
+    progress_token: str | int | None = None
+    """Optional progress correlation token persisted from the originating request."""
+    session_id: str | None = None
+    """Optional originating MCP session identifier for scoped task SSE notifications."""
+    log_level: str | None = None
+    """Optional RFC 5424 severity threshold captured when the task was created."""
 
 
 @dataclass
@@ -328,6 +334,21 @@ class MCPTaskStore:
         async with self._lock:
             return await self._lookup(task_id, owner_id)
 
+    async def update_status_message(self, task_id: str, status_message: str) -> TaskRecord | None:
+        """Update status_message on an active non-terminal task without altering its lifecycle state."""
+        async with self._lock:
+            try:
+                record = await self._lookup(task_id, None)
+            except TaskLookupError:
+                return None
+            if record.is_terminal():
+                return record
+            record.status_message = status_message
+            record.last_updated_at = _utc_now()
+            await self._save(record)
+        await self._notify(record)
+        return record
+
     async def complete(self, task_id: str, result: dict[str, Any]) -> TaskRecord:
         """Persist a successful tool result."""
         return await self._transition(task_id, "completed", result=result, status_message=None)
@@ -418,7 +439,11 @@ class MCPTaskStore:
 
     async def close(self) -> None:
         """Cancel all process-local runners during graceful shutdown."""
-        runners = list(self._runners.values())
+        current_loop = asyncio.get_running_loop()
+        runners = [
+            runner for runner in self._runners.values() if runner.get_loop() is current_loop and not runner.done()
+        ]
+        self._runners.clear()
         for runner in runners:
             runner.cancel()
         if runners:

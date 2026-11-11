@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import contextlib
 import inspect
 import sys
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator, Mapping
@@ -14,7 +15,7 @@ from anyio import EndOfStream, get_cancelled_exc_class
 from anyio.abc import ByteReceiveStream, ByteSendStream
 from anyio.to_thread import run_sync as run_sync_in_worker_thread
 from litestar.exceptions import SerializationException
-from litestar.status_codes import HTTP_202_ACCEPTED, HTTP_401_UNAUTHORIZED
+from litestar.status_codes import HTTP_202_ACCEPTED, HTTP_401_UNAUTHORIZED, HTTP_405_METHOD_NOT_ALLOWED
 from typing_extensions import Self
 
 from litestar_mcp.__metadata__ import __version__
@@ -23,9 +24,11 @@ from litestar_mcp.core.jsonrpc import JSONRPCError, error_response
 from litestar_mcp.core.serialization import from_json, to_json
 from litestar_mcp.mcp.client import mcp_request_headers, prepare_mcp_request
 from litestar_mcp.mcp.routes import (
+    MCP_FALLBACK_SESSION_VERSION,
     MCP_METHOD_HEADER,
     MCP_PROTOCOL_VERSION,
     MCP_PROTOCOL_VERSION_HEADER,
+    MCP_SESSION_ID_HEADER,
 )
 
 TokenProvider = Callable[[], str] | Callable[[], Awaitable[str]]
@@ -35,6 +38,7 @@ _MIN_VISIBLE_ASCII = 0x20
 _MAX_VISIBLE_ASCII = 0x7E
 _DEFS_REF_PREFIX = "#/$defs/"
 _DEFAULT_CLIENT_INFO = {"name": "litestar-mcp-stdio-bridge", "version": __version__}
+_SEQUENTIAL_BRIDGE_METHODS = frozenset({"initialize", "resources/subscribe", "resources/unsubscribe"})
 BEARER_TOKEN_PREFIX = "Bearer "  # noqa: S105
 DEFAULT_AUTH_HEADER_NAME = "Authorization"
 
@@ -243,6 +247,10 @@ class _StreamableHTTPBridgeClient:
         self._stdout_lock = asyncio.Lock()
         self._subscriptions: set[Any] = set()
         self._stdin_closed = False
+        self._session_id: str | None = None
+        self._negotiated_version: str | None = None
+        self._event_stream_task: asyncio.Task[None] | None = None
+        self._event_stream_ready: asyncio.Event = asyncio.Event()
 
     async def __aenter__(self) -> Self:
         await self._client.__aenter__()
@@ -263,6 +271,21 @@ class _StreamableHTTPBridgeClient:
             self._inflight.clear()
         for scope in scopes:
             scope.cancel()
+        event_task = self._event_stream_task
+        self._event_stream_task = None
+        if event_task is not None:
+            event_task.cancel()
+            with anyio.CancelScope(shield=True):
+                await asyncio.gather(event_task, return_exceptions=True)
+        session_id = self._session_id
+        self._session_id = None
+        if session_id is not None:
+            delete_headers = {
+                MCP_PROTOCOL_VERSION_HEADER: self._negotiated_version or MCP_FALLBACK_SESSION_VERSION,
+                MCP_SESSION_ID_HEADER: session_id,
+            }
+            with anyio.CancelScope(shield=True), contextlib.suppress(httpx2.HTTPError, RuntimeError):
+                await self._client.delete(self._endpoint, headers=delete_headers)
 
     async def post_message(self, message: dict[str, Any]) -> None:
         """Forward a stdio JSON-RPC message over Streamable HTTP and stream responses.
@@ -290,35 +313,14 @@ class _StreamableHTTPBridgeClient:
                 self._inflight[request_id] = cancel_scope
         try:
             with cancel_scope:
-                try:
-                    async with self._client.stream(
-                        "POST",
-                        self._endpoint,
-                        json=prepared,
-                        headers=headers,
-                    ) as response:
-                        if response.status_code == HTTP_202_ACCEPTED:
-                            return
-                        content_type = response.headers.get("content-type", "").lower()
-                        if content_type.startswith("application/json"):
-                            try:
-                                payload = from_json(await response.aread())
-                            except SerializationException:
-                                response.raise_for_status()
-                                raise
-                            if not (isinstance(payload, dict) and payload.get("jsonrpc") == "2.0"):
-                                response.raise_for_status()
-                            async with self._stdout_lock:
-                                await _write_json_line(self._stdout, payload)
-                            return
-                        response.raise_for_status()
-                        if content_type.startswith("text/event-stream"):
-                            await self._consume_sse_response(response, expected_id=request_id)
-                        else:
-                            msg = f"Unexpected Streamable HTTP content type: {content_type or '<empty>'}"
-                            raise RuntimeError(msg)
-                except (httpx2.ConnectError, httpx2.ConnectTimeout) as exc:
-                    raise BridgeConnectionError(self._endpoint) from exc
+                should_open_stream = await self._send_post(
+                    prepared,
+                    headers=headers,
+                    request_id=request_id,
+                    is_initialize=message.get("method") == "initialize",
+                )
+                if should_open_stream:
+                    await self._start_session_event_stream()
         except (httpx2.ConnectError, httpx2.ConnectTimeout) as exc:
             raise BridgeConnectionError(self._endpoint) from exc
         finally:
@@ -341,16 +343,125 @@ class _StreamableHTTPBridgeClient:
         for scope in scopes:
             scope.cancel()
 
+    async def _send_post(
+        self,
+        prepared: dict[str, Any],
+        *,
+        headers: dict[str, str],
+        request_id: Any,
+        is_initialize: bool,
+    ) -> bool:
+        async with self._client.stream(
+            "POST",
+            self._endpoint,
+            json=prepared,
+            headers=headers,
+        ) as response:
+            if response.status_code == HTTP_202_ACCEPTED:
+                return False
+            content_type = response.headers.get("content-type", "").lower()
+            if content_type.startswith("application/json"):
+                try:
+                    payload = from_json(await response.aread())
+                except SerializationException:
+                    response.raise_for_status()
+                    raise
+                if not (isinstance(payload, dict) and payload.get("jsonrpc") == "2.0"):
+                    response.raise_for_status()
+                should_open = self._record_initialize_result(payload, response.headers) if is_initialize else False
+                async with self._stdout_lock:
+                    await _write_json_line(self._stdout, payload)
+                return should_open
+            response.raise_for_status()
+            if content_type.startswith("text/event-stream"):
+                matched = await self._consume_sse_response(response, expected_id=request_id)
+                return self._record_initialize_result(matched, response.headers) if is_initialize else False
+            msg = f"Unexpected Streamable HTTP content type: {content_type or '<empty>'}"
+            raise RuntimeError(msg)
+
+    def _record_initialize_result(self, payload: Any, headers: httpx2.Headers) -> bool:
+        if not isinstance(payload, dict) or "error" in payload:
+            return False
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            return False
+        negotiated = result.get("protocolVersion")
+        if not isinstance(negotiated, str) or not negotiated:
+            return False
+        if negotiated == MCP_PROTOCOL_VERSION:
+            self._negotiated_version = MCP_PROTOCOL_VERSION
+            self._session_id = None
+            return False
+        self._negotiated_version = negotiated
+        raw_sid = headers.get(MCP_SESSION_ID_HEADER)
+        if isinstance(raw_sid, str) and raw_sid.strip():
+            self._session_id = raw_sid.strip()
+            return not self._stdin_closed
+        self._session_id = None
+        return False
+
+    async def _start_session_event_stream(self) -> None:
+        if self._event_stream_task is not None and not self._event_stream_task.done():
+            return
+        self._event_stream_ready.clear()
+        self._event_stream_task = asyncio.create_task(self._listen_event_stream())
+        await self._event_stream_ready.wait()
+
+    async def _listen_event_stream(self) -> None:
+        session_id = self._session_id
+        protocol_version = self._negotiated_version or MCP_FALLBACK_SESSION_VERSION
+        req_headers: dict[str, str] = {
+            "Accept": "text/event-stream",
+            MCP_PROTOCOL_VERSION_HEADER: protocol_version,
+        }
+        if session_id:
+            req_headers[MCP_SESSION_ID_HEADER] = session_id
+        try:
+            async with self._client.stream("GET", self._endpoint, headers=req_headers) as response:
+                if response.status_code == HTTP_405_METHOD_NOT_ALLOWED:
+                    await response.aread()
+                    self._event_stream_ready.set()
+                    return
+                response.raise_for_status()
+                self._event_stream_ready.set()
+                content_type = response.headers.get("content-type", "").lower()
+                if not content_type.startswith("text/event-stream"):
+                    return
+                async for event in httpx2.EventSource(response, max_event_size=self._max_event_size):
+                    if not event.data:
+                        continue
+                    payload = from_json(event.data)
+                    if isinstance(payload, dict):
+                        async with self._stdout_lock:
+                            await _write_json_line(self._stdout, payload)
+        except get_cancelled_exc_class():
+            raise
+        except (httpx2.HTTPError, SerializationException, RuntimeError) as exc:
+            if not self._stdin_closed:
+                self._stderr.write(f"litestar mcp bridge sse stream stopped: {exc}\n")
+        finally:
+            self._event_stream_ready.set()
+
     async def _mcp_headers(self, message: dict[str, Any]) -> dict[str, str]:
+        if self._negotiated_version is not None and self._negotiated_version != MCP_PROTOCOL_VERSION:
+            active_session = None if message.get("method") == "initialize" else self._session_id
+            return mcp_request_headers(
+                message,
+                protocol_version=self._negotiated_version,
+                session_id=active_session,
+            )
         if self._is_legacy_handshake_or_ping(message):
             params = message.get("params")
             raw_version = params.get("protocolVersion") if isinstance(params, dict) else None
-            protocol_version = raw_version if isinstance(raw_version, str) else "2025-06-18"
-            return {
-                "Accept": "application/json, text/event-stream",
-                "Content-Type": "application/json",
-                MCP_PROTOCOL_VERSION_HEADER: protocol_version,
-            }
+            protocol_version = (
+                raw_version if isinstance(raw_version, str) and raw_version else MCP_FALLBACK_SESSION_VERSION
+            )
+            active_session = None if message.get("method") == "initialize" else self._session_id
+            return mcp_request_headers(
+                message,
+                protocol_version=protocol_version,
+                session_id=active_session,
+            )
         headers = mcp_request_headers(message)
         method = str(message.get("method", ""))
         params = message.get("params")
@@ -359,6 +470,12 @@ class _StreamableHTTPBridgeClient:
         return headers
 
     def _prepare_message(self, message: dict[str, Any]) -> dict[str, Any]:
+        if self._negotiated_version is not None and self._negotiated_version != MCP_PROTOCOL_VERSION:
+            return prepare_mcp_request(
+                message,
+                client_info=self._client_info,
+                protocol_version=self._negotiated_version,
+            )
         if self._is_legacy_handshake_or_ping(message):
             return dict(message)
         return prepare_mcp_request(message, client_info=self._client_info)
@@ -430,7 +547,9 @@ class _StreamableHTTPBridgeClient:
                 page += 1
             self._tool_headers = cache
 
-    async def _consume_sse_response(self, response: httpx2.Response, *, expected_id: Any | None) -> None:
+    async def _consume_sse_response(
+        self, response: httpx2.Response, *, expected_id: Any | None
+    ) -> dict[str, Any] | None:
         async for event in httpx2.EventSource(response, max_event_size=self._max_event_size):
             if not event.data:
                 continue
@@ -438,7 +557,8 @@ class _StreamableHTTPBridgeClient:
             async with self._stdout_lock:
                 await _write_json_line(self._stdout, payload)
             if expected_id is not None and isinstance(payload, dict) and payload.get("id") == expected_id:
-                return
+                return payload
+        return None
 
 
 class _StdinByteReceiveStream(ByteReceiveStream):
@@ -493,7 +613,10 @@ async def _pump_stdin_to_remote(
             if not isinstance(raw, dict):
                 msg = "JSON-RPC messages must be JSON objects"
                 raise TypeError(msg)
-            task_group.start_soon(bridge_client.post_message, raw)
+            if raw.get("method") in _SEQUENTIAL_BRIDGE_METHODS:
+                await bridge_client.post_message(raw)
+            else:
+                task_group.start_soon(bridge_client.post_message, raw)
         await bridge_client.close_subscriptions()
 
 

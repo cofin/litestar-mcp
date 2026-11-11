@@ -424,9 +424,68 @@ def streaming_elicitation() -> MCPInputRequiredResult:
     )
 
 
-@get("/conformance/logging", mcp_tool="test_logging_tool", sync_to_thread=False)
-def logging_tool() -> str:
-    return "No log notification was emitted."
+class _Money:
+    """Custom currency value encoded through route-level ``type_encoders``."""
+
+    def __init__(self, cents: int) -> None:
+        self.cents = cents
+
+    @staticmethod
+    def encode(money: "_Money") -> str:
+        """Encode cents as a formatted USD string."""
+        return f"${money.cents / 100:.2f}"
+
+
+@get("/conformance/logging", mcp_tool="test_logging_tool")
+async def logging_tool() -> str:
+    """Emit info and error MCP log notifications for logging conformance."""
+    ctx = get_mcp_request_context()
+    await ctx.log("info", "Conformance info log", logger="conformance")
+    await ctx.log("error", "Conformance error log", logger="conformance")
+    return "Emitted info and error log notifications."
+
+
+@get("/conformance/interop-task")
+@mcp_tool(name="interop_task_job", task_support="optional")
+async def interop_task_job(label: str = "done") -> dict[str, str]:
+    """Run an optional-task tool emitting progress and info logs."""
+    ctx = get_mcp_request_context()
+    if ctx.progress_token is not None:
+        await ctx.report_progress(1, total=2, message="Interop step 1")
+        await ctx.report_progress(2, total=2, message="Interop step 2")
+    await ctx.log("info", f"Interop task finished: {label}", logger="conformance.task")
+    return {"status": "ok", "label": label}
+
+
+@get(
+    "/conformance/quote",
+    type_encoders={_Money: _Money.encode},
+    sync_to_thread=False,
+)
+@mcp_tool(
+    name="test_structured_quote",
+    title="Structured Quote",
+    description="Return a structured quote using custom type_encoders.",
+    output_schema=True,
+    meta={"ui": {"resourceUri": "ui://conformance/widget.html"}},
+)
+def structured_quote(cents: int = 1250) -> dict[str, Any]:
+    """Return a structured quote payload encoded with ``_Money``."""
+    return {"amount": _Money(cents), "currency": "USD"}
+
+
+@get(
+    "/conformance/widget",
+    mcp_resource="conformance_widget",
+    mcp_resource_uri="ui://conformance/widget.html",
+    mcp_resource_mime_type="text/html;profile=mcp-app",
+    mcp_resource_title="Conformance Widget",
+    mcp_resource_meta={"ui": {"prefersBorder": True}},
+    sync_to_thread=False,
+)
+def conformance_widget() -> str:
+    """Return the static MCP App HTML widget resource."""
+    return '<main data-widget="conformance">Widget ready</main>'
 
 
 @get("/conformance/trigger-tool-change")
@@ -622,6 +681,9 @@ app = Litestar(
         input_required_capabilities,
         streaming_elicitation,
         logging_tool,
+        interop_task_job,
+        structured_quote,
+        conformance_widget,
         trigger_tool_change,
         trigger_prompt_change,
         task_with_input,

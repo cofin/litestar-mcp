@@ -10,8 +10,16 @@ from typing import Any
 import anyio
 import httpx2
 import pytest
+from litestar import Litestar, get
+from litestar.connection import Request  # noqa: TC002
 from typing_extensions import Self
 
+from litestar_mcp import LitestarMCP, MCPConfig
+from litestar_mcp.core.serialization import decode_json, encode_json
+from litestar_mcp.mcp.bridge import run_stdio_streamable_http_bridge
+from litestar_mcp.mcp.routes import MCP_SESSION_ID_HEADER
+from litestar_mcp.mcp.service import get_session_store
+from litestar_mcp.mcp.stdio import ASGIStreamingTransport
 from tests.conftest import BridgeBytesSink, BridgeQueuedBytesSource
 
 ENDPOINT = "https://example.test/api/mcp"
@@ -656,3 +664,205 @@ async def test_bridge_undecodable_json_error_body_reports_http_status(
     lines = [json.loads(line) for line in stdout.buffer.splitlines() if line]
     assert lines[-1]["error"]["code"] == -32001
     assert str(status) in lines[-1]["error"]["message"]
+
+
+def _bridge_rpc_line(
+    method: str,
+    params: dict[str, Any] | None = None,
+    *,
+    msg_id: int | None = None,
+) -> bytes:
+    payload: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
+    if msg_id is not None:
+        payload["id"] = msg_id
+    if params is not None:
+        payload["params"] = params
+    return encode_json(payload) + b"\n"
+
+
+class _RecordingBridgeTransport(httpx2.AsyncBaseTransport):
+    """Wrap `ASGIStreamingTransport` and capture `(method, headers, body)` tuples in request order."""
+
+    def __init__(self, app: Litestar) -> None:
+        self._inner = ASGIStreamingTransport(app)
+        self.requests: list[tuple[str, httpx2.Headers, bytes]] = []
+        self.session_ids: list[str] = []
+
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+        body = await request.aread()
+        self.requests.append((request.method, httpx2.Headers(request.headers), body))
+        response = await self._inner.handle_async_request(request)
+        sid = response.headers.get(MCP_SESSION_ID_HEADER)
+        if sid:
+            self.session_ids.append(sid)
+        return response
+
+
+class _PhasedAckGatedSource(_AckGatedSource):
+    """Deliver phase-1 chunks, wait for `phase1_gate`, deliver phase-2 chunks, then hold EOF until `eof_gate`."""
+
+    def __init__(
+        self,
+        phase1: tuple[bytes, ...],
+        phase2: tuple[bytes, ...],
+        *,
+        phase1_gate: anyio.Event,
+        eof_gate: anyio.Event,
+    ) -> None:
+        super().__init__(*phase1, gate=eof_gate)
+        self._phase2 = b"".join(phase2)
+        self._phase1_gate = phase1_gate
+        self._phase1_remaining = len(phase1)
+        self._phase2_sent = False
+
+    async def receive(self, max_bytes: int = 65536) -> bytes:
+        if self._phase1_remaining > 0:
+            self._phase1_remaining -= 1
+            return await super().receive(max_bytes)
+        if not self._phase2_sent:
+            await self._phase1_gate.wait()
+            self._phase2_sent = True
+            if self._phase2:
+                return self._phase2
+        return await super().receive(max_bytes)
+
+
+class _Bridge2025Sink(BridgeBytesSink):
+    """Track parsed JSON-RPC frames written by the bridge and fire phase/EOF readiness events."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.subscribed_update_seen = anyio.Event()
+        self.all_complete = anyio.Event()
+
+    def messages(self) -> list[dict[str, Any]]:
+        return [decode_json(bytes(line)) for line in self.buffer.splitlines() if line.strip()]
+
+    async def send(self, item: bytes) -> None:
+        await super().send(item)
+        parsed = self.messages()
+        ids = {msg.get("id") for msg in parsed if "id" in msg}
+        has_update = any(msg.get("method") == "notifications/resources/updated" for msg in parsed)
+        if {1, 2, 3}.issubset(ids) and has_update:
+            self.subscribed_update_seen.set()
+        if {1, 2, 3, 4, 5}.issubset(ids) and has_update:
+            self.all_complete.set()
+
+
+@pytest.mark.anyio
+async def test_bridge_2025_sse_readiness_sequential_subscribe_and_session_delete() -> None:
+    @get("/emit", mcp_tool="emit")
+    async def emit_update(request: "Request[Any, Any, Any]") -> dict[str, str]:
+        mcp_plugin = request.app.plugins.get(LitestarMCP)
+        await mcp_plugin.registry.notify_resource_updated("litestar://doc")
+        return {"emitted": "litestar://doc"}
+
+    plugin = LitestarMCP(MCPConfig(base_path="/mcp"))
+    app = Litestar(route_handlers=[emit_update], plugins=[plugin])
+    transport = _RecordingBridgeTransport(app)
+    stdout = _Bridge2025Sink()
+    stderr = io.StringIO()
+
+    stdin = _PhasedAckGatedSource(
+        phase1=(
+            _bridge_rpc_line(
+                "initialize",
+                {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": {"name": "bridge-test", "version": "1.0"},
+                },
+                msg_id=1,
+            ),
+            _bridge_rpc_line("notifications/initialized"),
+            _bridge_rpc_line("resources/subscribe", {"uri": "litestar://doc"}, msg_id=2),
+            _bridge_rpc_line("tools/call", {"name": "emit", "arguments": {}}, msg_id=3),
+        ),
+        phase2=(
+            _bridge_rpc_line("resources/unsubscribe", {"uri": "litestar://doc"}, msg_id=4),
+            _bridge_rpc_line("tools/call", {"name": "emit", "arguments": {}}, msg_id=5),
+        ),
+        phase1_gate=stdout.subscribed_update_seen,
+        eof_gate=stdout.all_complete,
+    )
+
+    async with app.lifespan():
+        with anyio.fail_after(5):
+            exit_code = await run_stdio_streamable_http_bridge(
+                "http://mcp-stdio/mcp",
+                transport=transport,
+                stdin=stdin,
+                stdout=stdout,
+                stderr=stderr,
+            )
+        assert transport.session_ids
+        created_sid = transport.session_ids[0]
+        remaining = await get_session_store(app, plugin.config).get(created_sid, None)
+
+    assert exit_code == 0
+    assert stderr.getvalue() == ""
+    assert remaining is None
+
+    parsed = stdout.messages()
+    by_id = {msg["id"]: msg for msg in parsed if "id" in msg}
+    assert set(by_id) == {1, 2, 3, 4, 5}
+    assert by_id[1]["result"]["protocolVersion"] == "2025-11-25"
+    assert by_id[1]["result"]["capabilities"]["resources"]["subscribe"] is True
+    assert "error" not in by_id[2]
+    assert "error" not in by_id[4]
+
+    updates = [msg for msg in parsed if msg.get("method") == "notifications/resources/updated"]
+    assert updates == [
+        {"jsonrpc": "2.0", "method": "notifications/resources/updated", "params": {"uri": "litestar://doc"}}
+    ]
+    assert "_meta" not in updates[0]["params"]
+
+    methods = [method for method, _, _ in transport.requests]
+    assert methods[0] == "POST"
+    assert methods[1] == "GET"
+    assert methods[-1] == "DELETE"
+    assert transport.requests[1][1]["mcp-session-id"] == created_sid
+    assert transport.requests[-1][1]["mcp-session-id"] == created_sid
+
+    post_after_init = [(hdrs, decode_json(raw)) for m, hdrs, raw in transport.requests[2:] if m == "POST"]
+    assert post_after_init
+    assert all(hdrs["mcp-protocol-version"] == "2025-11-25" for hdrs, _ in post_after_init)
+    assert all(hdrs["mcp-session-id"] == created_sid for hdrs, _ in post_after_init)
+    assert all("mcp-method" not in hdrs and "mcp-name" not in hdrs for hdrs, _ in post_after_init)
+    assert all("_meta" not in body.get("params", {}) for _, body in post_after_init)
+
+
+@pytest.mark.anyio
+async def test_bridge_2025_ignores_405_when_server_disables_get_sse() -> None:
+    plugin = LitestarMCP(MCPConfig(base_path="/mcp", enable_get_sse=False))
+    app = Litestar(plugins=[plugin])
+    transport = _RecordingBridgeTransport(app)
+    stdout = BridgeBytesSink()
+    stderr = io.StringIO()
+
+    async with app.lifespan():
+        with anyio.fail_after(5):
+            exit_code = await run_stdio_streamable_http_bridge(
+                "http://mcp-stdio/mcp",
+                transport=transport,
+                stdin=BridgeQueuedBytesSource(
+                    _bridge_rpc_line(
+                        "initialize",
+                        {"protocolVersion": "2025-11-25", "capabilities": {}},
+                        msg_id=1,
+                    ),
+                    _bridge_rpc_line("notifications/initialized"),
+                    _bridge_rpc_line("ping", {}, msg_id=2),
+                    _bridge_rpc_line("tools/list", {}, msg_id=3),
+                ),
+                stdout=stdout,
+                stderr=stderr,
+            )
+
+    assert exit_code == 0
+    assert stderr.getvalue() == ""
+    methods = [method for method, _, _ in transport.requests]
+    assert "GET" in methods
+    assert methods[-1] == "DELETE"
+    by_id = {msg["id"]: msg for msg in (decode_json(bytes(line)) for line in stdout.buffer.splitlines() if line)}
+    assert set(by_id) == {1, 2, 3}

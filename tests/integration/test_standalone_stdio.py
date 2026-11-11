@@ -450,7 +450,9 @@ async def test_standalone_stdio_serves_skills_end_to_end(tmp_path: "Path") -> "N
     by_id = {response["id"]: response for response in responses}
 
     discover_result = by_id[1]["result"]
-    assert discover_result["capabilities"]["extensions"] == {"io.modelcontextprotocol/skills": {"directoryRead": True}}
+    assert discover_result["capabilities"]["extensions"] == {
+        "io.modelcontextprotocol/skills": {"directoryRead": True, "listChanged": True},
+    }
     assert "resources" in discover_result["capabilities"]
 
     list_result = by_id[2]["result"]

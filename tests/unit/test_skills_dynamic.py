@@ -374,7 +374,10 @@ def test_dynamic_only_configuration_with_directory_read_disabled() -> "None":
 
     with TestClient(app=app) as client:
         discover = mcp_post(client, "server/discover").json()["result"]
-        assert discover["capabilities"]["extensions"]["io.modelcontextprotocol/skills"] == {"directoryRead": False}
+        assert discover["capabilities"]["extensions"]["io.modelcontextprotocol/skills"] == {
+            "directoryRead": False,
+            "listChanged": True,
+        }
 
         dir_resp = mcp_post(client, "resources/directory/read", {"uri": "skill://alpha"}).json()
         assert dir_resp["error"]["code"] == -32601

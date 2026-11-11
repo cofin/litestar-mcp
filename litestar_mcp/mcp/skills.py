@@ -4,20 +4,21 @@ import hashlib
 import logging
 import mimetypes
 import os
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, cast, overload, runtime_checkable
 
 import anyio
 import yaml
+from litestar import Request
 from litestar.exceptions import ImproperlyConfiguredException
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
-
-    from litestar import Request
+    from litestar import Litestar
 
     from litestar_mcp.mcp.config import MCPSkillsConfig
+    from litestar_mcp.mcp.registry import Registry
 
 __all__ = (
     "SKILL_URI_PREFIX",
@@ -29,6 +30,7 @@ __all__ = (
     "SkillIntegrityError",
     "SkillSource",
     "compute_digest",
+    "filter_skills",
     "guess_skill_mime_type",
     "load_skill",
     "parse_frontmatter",
@@ -41,6 +43,8 @@ _MARKDOWN_EXTENSIONS = {".md", ".markdown"}
 _SHA256_DIGEST_PREFIX = "sha256:"
 _SHA256_DIGEST_LENGTH = 71
 _DIGEST_HEX_CHARS = frozenset("0123456789abcdef")
+_UNSET = object()
+_MAX_POSITIONAL_ARGS = 2
 _logger = logging.getLogger(__name__)
 
 
@@ -80,9 +84,17 @@ class SkillFile:
     """`sha256:<hex>` digest recorded in the skill manifest."""
     content: "bytes | None" = field(default=None, repr=False)
     """Optional inline byte payload served without calling `source.read_file`."""
+    title: "str | None" = None
+    """Optional human-readable display title for the file."""
+    icons: "list[dict[str, Any]] | None" = field(default=None, hash=False)
+    """Optional MCP icon descriptors attached to this file."""
+    tags: "tuple[str, ...]" = ()
+    """Optional skill-file tags used for internal filtering."""
+    meta: "dict[str, Any] | None" = field(default=None, hash=False)
+    """Optional ``_meta`` payload attached to this file."""
 
     def __post_init__(self) -> "None":
-        """Validate path, URI, size, digest, and inline content invariants."""
+        """Validate path, URI, size, digest, inline content, and metadata invariants."""
         _validate_relative_path(self.relative_path)
         parsed = parse_skill_uri(self.uri)
         if parsed is None or parsed[1] != self.relative_path:
@@ -107,9 +119,23 @@ class SkillFile:
                     f"SkillFile inline content digest ({actual_digest}) does not match manifest digest ({self.digest})"
                 )
                 raise ValueError(msg)
+        object.__setattr__(self, "title", _normalize_title(self.title))
+        object.__setattr__(self, "icons", _copy_icons(self.icons))
+        object.__setattr__(self, "tags", _normalize_tags(self.tags))
+        object.__setattr__(self, "meta", _copy_meta(self.meta))
 
     @classmethod
-    def from_content(cls, skill_name: "str", relative_path: "str", content: "str | bytes") -> "SkillFile":
+    def from_content(
+        cls,
+        skill_name: "str",
+        relative_path: "str",
+        content: "str | bytes",
+        *,
+        title: "str | None" = None,
+        icons: "Sequence[Mapping[str, Any]] | None" = None,
+        tags: "Sequence[str]" = (),
+        meta: "Mapping[str, Any] | None" = None,
+    ) -> "SkillFile":
         """Construct an in-memory ``SkillFile`` with manifest metadata computed from ``content``."""
         _validate_skill_name(skill_name)
         _validate_relative_path(relative_path)
@@ -122,17 +148,30 @@ class SkillFile:
             size=len(raw),
             digest=compute_digest(raw),
             content=raw,
+            title=title,
+            icons=_copy_icons(icons),
+            tags=_normalize_tags(tags),
+            meta=_copy_meta(meta),
         )
 
     def to_manifest_entry(self) -> "dict[str, Any]":
         """Return the ``skills/list`` / ``skills/get`` resource manifest entry."""
-        return {
+        entry: dict[str, Any] = {
             "uri": self.uri,
             "name": self.relative_path,
             "mimeType": self.mime_type,
             "size": self.size,
             "digest": self.digest,
         }
+        if self.title is not None:
+            entry["title"] = self.title
+        if self.icons:
+            entry["icons"] = [dict(icon) for icon in self.icons]
+        if self.tags:
+            entry["tags"] = list(self.tags)
+        if self.meta:
+            entry["_meta"] = dict(self.meta)
+        return entry
 
     def to_resource(self, skill: "Skill") -> "dict[str, Any]":
         """Return the ``resources/list`` entry for this file within ``skill``."""
@@ -142,8 +181,18 @@ class SkillFile:
             "mimeType": self.mime_type,
             "size": self.size,
         }
-        if self.relative_path == "SKILL.md":
+        is_skill_md = self.relative_path == "SKILL.md"
+        if is_skill_md:
             entry["description"] = skill.description
+        title = self.title if self.title is not None else (skill.title if is_skill_md else None)
+        if title is not None:
+            entry["title"] = title
+        icons = self.icons if self.icons is not None else (skill.icons if is_skill_md else None)
+        if icons:
+            entry["icons"] = [dict(icon) for icon in icons]
+        meta = self.meta if self.meta is not None else (skill.meta if is_skill_md else None)
+        if meta:
+            entry["_meta"] = dict(meta)
         return entry
 
 
@@ -169,9 +218,17 @@ class Skill:
     """Full parsed YAML frontmatter mapping, preserved verbatim."""
     files: "tuple[SkillFile, ...]"
     """Every file belonging to the skill, sorted by `relative_path`."""
+    title: "str | None" = None
+    """Optional human-readable display title."""
+    icons: "list[dict[str, Any]] | None" = field(default=None, hash=False)
+    """Optional MCP icon descriptors."""
+    tags: "tuple[str, ...]" = ()
+    """Optional tags for capability and client filtering."""
+    meta: "dict[str, Any] | None" = field(default=None, hash=False)
+    """Optional ``_meta`` metadata payload."""
 
     def __post_init__(self) -> "None":
-        """Validate skill identity, frontmatter consistency, file URIs, and sort files."""
+        """Validate skill identity, frontmatter consistency, file URIs, metadata, and sort files."""
         _validate_skill_name(self.name)
         if not isinstance(self.description, str) or not self.description.strip():
             msg = "Skill description must be a non-empty string"
@@ -208,6 +265,22 @@ class Skill:
 
         sorted_files = tuple(sorted(self.files, key=lambda item: item.relative_path))
         object.__setattr__(self, "files", sorted_files)
+
+        normalized_title = (
+            _normalize_title(self.title) if self.title is not None else _normalize_title(self.frontmatter.get("title"))
+        )
+        normalized_icons = (
+            _copy_icons(self.icons) if self.icons is not None else _copy_icons(self.frontmatter.get("icons"))
+        )
+        normalized_tags = _normalize_tags(self.tags)
+        if not normalized_tags:
+            normalized_tags = _extract_frontmatter_tags(self.frontmatter.get("tags"))
+        normalized_meta = _copy_meta(self.meta) if self.meta is not None else _copy_meta(self.frontmatter.get("_meta"))
+
+        object.__setattr__(self, "title", normalized_title)
+        object.__setattr__(self, "icons", normalized_icons)
+        object.__setattr__(self, "tags", normalized_tags)
+        object.__setattr__(self, "meta", normalized_meta)
 
     @classmethod
     def from_content(
@@ -272,6 +345,10 @@ class Skill:
         *,
         metadata: "Mapping[str, Any] | None" = None,
         files: "Mapping[str, str | bytes | SkillFile] | None" = None,
+        title: "str | None" = None,
+        icons: "Sequence[Mapping[str, Any]] | None" = None,
+        tags: "Sequence[str] | None" = None,
+        meta: "Mapping[str, Any] | None" = None,
     ) -> "Skill":
         """Build an in-memory ``Skill`` by rendering YAML-safe frontmatter around ``body``."""
         _validate_skill_name(name)
@@ -287,6 +364,19 @@ class Skill:
         fm_mapping: dict[str, Any] = {"name": name, "description": description}
         if metadata:
             fm_mapping.update(metadata)
+        normalized_title = _normalize_title(title)
+        if normalized_title is not None:
+            fm_mapping["title"] = normalized_title
+        normalized_icons = _copy_icons(icons)
+        if normalized_icons is not None:
+            fm_mapping["icons"] = normalized_icons
+        if tags is not None:
+            normalized_tags = _normalize_tags(tags)
+            if normalized_tags:
+                fm_mapping["tags"] = list(normalized_tags)
+        normalized_meta = _copy_meta(meta)
+        if normalized_meta is not None:
+            fm_mapping["_meta"] = normalized_meta
         rendered_fm = yaml.safe_dump(fm_mapping, sort_keys=False, allow_unicode=True).rstrip("\n")
         skill_md_text = f"---\n{rendered_fm}\n---\n\n{body}" if body else f"---\n{rendered_fm}\n---\n"
         return cls.from_content(skill_md_text, files=files)
@@ -335,15 +425,48 @@ class Skill:
 
     def to_entry(self) -> "dict[str, Any]":
         """Return the ``skills/list`` / ``skills/get`` entry for this skill."""
-        return {
+        entry: dict[str, Any] = {
             "uri": self.uri,
             "frontmatter": dict(self.frontmatter),
             "resources": [file.to_manifest_entry() for file in self.files],
         }
+        if self.title is not None:
+            entry["title"] = self.title
+        if self.icons:
+            entry["icons"] = [dict(icon) for icon in self.icons]
+        if self.tags:
+            entry["tags"] = list(self.tags)
+        if self.meta:
+            entry["_meta"] = dict(self.meta)
+        return entry
 
     def to_resources(self) -> "list[dict[str, Any]]":
         """Return the ``resources/list`` entries for every file in this skill."""
         return [file.to_resource(self) for file in self.files]
+
+
+def filter_skills(
+    skills: "Sequence[Skill]",
+    *,
+    tags: "Sequence[str] | None" = None,
+    query: "str | None" = None,
+) -> "list[Skill]":
+    """Filter ``skills`` by tag intersection and case-insensitive substring ``query``."""
+    tag_filter = {tag for tag in tags if isinstance(tag, str) and tag} if tags else set()
+    query_text = query.strip().casefold() if isinstance(query, str) else ""
+    matched: list[Skill] = []
+    for skill in skills:
+        if tag_filter and not (tag_filter & set(skill.tags)):
+            continue
+        if query_text:
+            in_name = query_text in skill.name.casefold()
+            in_description = query_text in skill.description.casefold()
+            in_title = query_text in (skill.title or "").casefold()
+            in_tags = any(query_text in tag.casefold() for tag in skill.tags)
+            if not (in_name or in_description or in_title or in_tags):
+                continue
+        matched.append(skill)
+    return matched
 
 
 @runtime_checkable
@@ -460,14 +583,29 @@ class FilesystemSkillSource:
 class SkillCatalog:
     """Request-aware composition of `SkillSource` instances."""
 
-    __slots__ = ("_sources", "directory_read")
+    __slots__ = ("_app_ref", "_registry", "_sources", "directory_read", "expose_as_prompts", "list_changed")
 
-    directory_read: bool
+    directory_read: "bool"
     """Whether `resources/directory/read` is enabled for skill directories."""
+    list_changed: "bool"
+    """Whether `listChanged` is advertised on the skills capability extension."""
+    expose_as_prompts: "bool"
+    """Whether skills are projected as read-only MCP prompts when no `@mcp.prompt` collides."""
 
-    def __init__(self, sources: "Sequence[SkillSource]", *, directory_read: "bool" = True) -> "None":
+    def __init__(
+        self,
+        sources: "Sequence[SkillSource]",
+        *,
+        directory_read: "bool" = True,
+        list_changed: "bool" = True,
+        expose_as_prompts: "bool" = False,
+    ) -> "None":
         self._sources: tuple[SkillSource, ...] = tuple(sources)
+        self._app_ref: Litestar | None = None
+        self._registry: Registry | None = None
         self.directory_read = directory_read
+        self.list_changed = list_changed
+        self.expose_as_prompts = expose_as_prompts
 
     @property
     def sources(self) -> "tuple[SkillSource, ...]":
@@ -487,13 +625,39 @@ class SkillCatalog:
                 )
             )
         composed.extend(config.sources)
-        return cls(sources=composed, directory_read=config.directory_read)
+        return cls(
+            sources=composed,
+            directory_read=config.directory_read,
+            list_changed=config.list_changed,
+            expose_as_prompts=config.expose_as_prompts,
+        )
 
-    async def list_skills(self, request: "Request[Any, Any, Any]") -> "list[Skill]":
-        """Return every skill visible to ``request`` across all sources, deduplicated and sorted by name."""
+    def bind_app(self, app: "Litestar | None", *, registry: "Registry | None" = None) -> "None":
+        """Bind a Litestar ``app`` and optional ``registry`` for request synthesis and change notifications."""
+        if app is not None:
+            self._app_ref = app
+        if registry is not None:
+            self._registry = registry
+
+    async def notify_list_changed(self) -> "None":
+        """Emit skill list-changed (and prompt list-changed when ``expose_as_prompts`` is enabled) notifications."""
+        if self._registry is not None:
+            await self._registry.notify_skills_list_changed()
+            if self.expose_as_prompts:
+                await self._registry.notify_prompts_list_changed()
+
+    async def list_skills(
+        self,
+        request: "Request[Any, Any, Any] | None" = None,
+        *,
+        tags: "Sequence[str] | None" = None,
+        query: "str | None" = None,
+    ) -> "list[Skill]":
+        """Return every skill visible to ``request`` across all sources, optionally filtered and sorted by name."""
+        resolved_request = self._resolve_request(request)
         by_name: dict[str, Skill] = {}
         for source in self._sources:
-            source_skills = await source.list_skills(request)
+            source_skills = await source.list_skills(resolved_request)
             seen_in_source: set[str] = set()
             for skill in source_skills:
                 if skill.name in seen_in_source:
@@ -508,7 +672,182 @@ class SkillCatalog:
                     )
                     continue
                 by_name[skill.name] = skill
-        return sorted(by_name.values(), key=lambda item: item.name)
+        sorted_skills = sorted(by_name.values(), key=lambda item: item.name)
+        if tags is not None or query is not None:
+            return filter_skills(sorted_skills, tags=tags, query=query)
+        return sorted_skills
+
+    @overload
+    async def get_skill(
+        self,
+        request: "Request[Any, Any, Any] | None",
+        name: "str",
+    ) -> "Skill | None": ...
+
+    @overload
+    async def get_skill(
+        self,
+        name: "str",
+        *,
+        request: "Request[Any, Any, Any] | None" = None,
+    ) -> "Skill | None": ...
+
+    async def get_skill(self, *args: "Any", **kwargs: "Any") -> "Skill | None":
+        """Return the skill named ``name`` visible to ``request``, or ``None``."""
+        req, name = self._resolve_request_and_target(
+            args,
+            kwargs,
+            target_name="name",
+            target_type=str,
+            method_name="get_skill",
+        )
+        resolved = await self._resolve_skill_with_source(req, name)
+        return resolved[1] if resolved is not None else None
+
+    @overload
+    async def get(
+        self,
+        request: "Request[Any, Any, Any] | None",
+        uri: "str",
+    ) -> "Skill | None": ...
+
+    @overload
+    async def get(
+        self,
+        uri: "str",
+        *,
+        request: "Request[Any, Any, Any] | None" = None,
+    ) -> "Skill | None": ...
+
+    async def get(self, *args: "Any", **kwargs: "Any") -> "Skill | None":
+        """Return the skill whose canonical ``skill://<name>/SKILL.md`` or shorthand ``skill://<name>`` URI matches."""
+        req, uri = self._resolve_request_and_target(
+            args,
+            kwargs,
+            target_name="uri",
+            target_type=str,
+            method_name="get",
+        )
+        parsed = parse_skill_uri(uri)
+        if parsed is None:
+            return None
+        name, relative_path = parsed
+        if relative_path not in {"", "SKILL.md"}:
+            return None
+        return await self.get_skill(req, name)
+
+    @overload
+    async def get_file(
+        self,
+        request: "Request[Any, Any, Any] | None",
+        uri: "str",
+    ) -> "SkillFileMatch | None": ...
+
+    @overload
+    async def get_file(
+        self,
+        uri: "str",
+        *,
+        request: "Request[Any, Any, Any] | None" = None,
+    ) -> "SkillFileMatch | None": ...
+
+    async def get_file(self, *args: "Any", **kwargs: "Any") -> "SkillFileMatch | None":
+        """Resolve ``uri`` to a `SkillFileMatch` visible to ``request``, or ``None``."""
+        req, uri = self._resolve_request_and_target(
+            args,
+            kwargs,
+            target_name="uri",
+            target_type=str,
+            method_name="get_file",
+        )
+        parsed = parse_skill_uri(uri)
+        if parsed is None:
+            return None
+        name, relative_path = parsed
+        if not relative_path:
+            return None
+        resolved = await self._resolve_skill_with_source(req, name)
+        if resolved is None:
+            return None
+        source, skill = resolved
+        skill_file = skill.get_file(relative_path)
+        if skill_file is None:
+            return None
+        return SkillFileMatch(source=source, skill=skill, file=skill_file)
+
+    @overload
+    async def list_directory(
+        self,
+        request: "Request[Any, Any, Any] | None",
+        uri: "str",
+    ) -> "list[dict[str, Any]] | None": ...
+
+    @overload
+    async def list_directory(
+        self,
+        uri: "str",
+        *,
+        request: "Request[Any, Any, Any] | None" = None,
+    ) -> "list[dict[str, Any]] | None": ...
+
+    async def list_directory(self, *args: "Any", **kwargs: "Any") -> "list[dict[str, Any]] | None":
+        """List direct file and directory children under ``uri``, or ``None`` if not a visible directory."""
+        req, uri = self._resolve_request_and_target(
+            args,
+            kwargs,
+            target_name="uri",
+            target_type=str,
+            method_name="list_directory",
+        )
+        parsed = parse_skill_uri(uri)
+        if parsed is None:
+            return None
+        name, relative_path = parsed
+        skill = await self.get_skill(req, name)
+        if skill is None:
+            return None
+        return skill.list_directory(relative_path)
+
+    async def resource_entries(
+        self,
+        request: "Request[Any, Any, Any] | None" = None,
+    ) -> "list[dict[str, Any]]":
+        """Return ``resources/list`` entries for every file in every visible skill."""
+        resolved_request = self._resolve_request(request)
+        entries: list[dict[str, Any]] = []
+        for skill in await self.list_skills(resolved_request):
+            entries.extend(skill.to_resources())
+        return entries
+
+    @overload
+    async def read_file(
+        self,
+        request: "Request[Any, Any, Any] | None",
+        match: "SkillFileMatch",
+    ) -> "bytes": ...
+
+    @overload
+    async def read_file(
+        self,
+        match: "SkillFileMatch",
+        *,
+        request: "Request[Any, Any, Any] | None" = None,
+    ) -> "bytes": ...
+
+    async def read_file(self, *args: "Any", **kwargs: "Any") -> "bytes":
+        """Read ``match.file`` (inline or via ``match.source.read_file``) and verify size and digest."""
+        req, match = self._resolve_request_and_target(
+            args,
+            kwargs,
+            target_name="match",
+            target_type=SkillFileMatch,
+            method_name="read_file",
+        )
+        if match.file.content is not None:
+            data = match.file.content
+        else:
+            data = await match.source.read_file(req, match.skill, match.file)
+        return await anyio.to_thread.run_sync(verify_skill_file, match.file, data)
 
     async def _resolve_skill_with_source(
         self,
@@ -525,63 +864,81 @@ class SkillCatalog:
             return source, skill
         return None
 
-    async def get_skill(self, request: "Request[Any, Any, Any]", name: "str") -> "Skill | None":
-        """Return the skill named ``name`` visible to ``request``, or ``None``."""
-        resolved = await self._resolve_skill_with_source(request, name)
-        return resolved[1] if resolved is not None else None
+    def _resolve_request(self, request: "Request[Any, Any, Any] | None") -> "Request[Any, Any, Any]":
+        if request is not None:
+            return request
+        return _blank_skill_request(self._app_ref)
 
-    async def get(self, request: "Request[Any, Any, Any]", uri: "str") -> "Skill | None":
-        """Return the skill whose canonical ``skill://<name>/SKILL.md`` or shorthand ``skill://<name>`` URI matches."""
-        parsed = parse_skill_uri(uri)
-        if parsed is None:
-            return None
-        name, relative_path = parsed
-        if relative_path not in {"", "SKILL.md"}:
-            return None
-        return await self.get_skill(request, name)
-
-    async def get_file(self, request: "Request[Any, Any, Any]", uri: "str") -> "SkillFileMatch | None":
-        """Resolve ``uri`` to a `SkillFileMatch` visible to ``request``, or ``None``."""
-        parsed = parse_skill_uri(uri)
-        if parsed is None:
-            return None
-        name, relative_path = parsed
-        if not relative_path:
-            return None
-        resolved = await self._resolve_skill_with_source(request, name)
-        if resolved is None:
-            return None
-        source, skill = resolved
-        skill_file = skill.get_file(relative_path)
-        if skill_file is None:
-            return None
-        return SkillFileMatch(source=source, skill=skill, file=skill_file)
-
-    async def list_directory(self, request: "Request[Any, Any, Any]", uri: "str") -> "list[dict[str, Any]] | None":
-        """List direct file and directory children under ``uri``, or ``None`` if not a visible directory."""
-        parsed = parse_skill_uri(uri)
-        if parsed is None:
-            return None
-        name, relative_path = parsed
-        skill = await self.get_skill(request, name)
-        if skill is None:
-            return None
-        return skill.list_directory(relative_path)
-
-    async def resource_entries(self, request: "Request[Any, Any, Any]") -> "list[dict[str, Any]]":
-        """Return ``resources/list`` entries for every file in every visible skill."""
-        entries: list[dict[str, Any]] = []
-        for skill in await self.list_skills(request):
-            entries.extend(skill.to_resources())
-        return entries
-
-    async def read_file(self, request: "Request[Any, Any, Any]", match: "SkillFileMatch") -> "bytes":
-        """Read ``match.file`` (inline or via ``match.source.read_file``) and verify size and digest."""
-        if match.file.content is not None:
-            data = match.file.content
+    def _resolve_request_and_target(
+        self,
+        args: "tuple[Any, ...]",
+        kwargs: "dict[str, Any]",
+        *,
+        target_name: "str",
+        target_type: "type[Any]",
+        method_name: "str",
+    ) -> "tuple[Request[Any, Any, Any], Any]":
+        remaining = dict(kwargs)
+        kw_request = remaining.pop("request", _UNSET)
+        kw_target = remaining.pop(target_name, _UNSET)
+        if remaining:
+            unexpected = next(iter(remaining))
+            msg = f"{method_name}() got an unexpected keyword argument {unexpected!r}"
+            raise TypeError(msg)
+        if len(args) > _MAX_POSITIONAL_ARGS:
+            msg = f"{method_name}() takes at most 2 positional arguments but {len(args)} were given"
+            raise TypeError(msg)
+        if len(args) == _MAX_POSITIONAL_ARGS:
+            if kw_request is not _UNSET:
+                msg = f"{method_name}() got multiple values for argument 'request'"
+                raise TypeError(msg)
+            if kw_target is not _UNSET:
+                msg = f"{method_name}() got multiple values for argument {target_name!r}"
+                raise TypeError(msg)
+            req_arg, target = args
+        elif len(args) == 1:
+            req_arg, target = self._unpack_single_positional_arg(
+                args[0],
+                kw_request=kw_request,
+                kw_target=kw_target,
+                target_name=target_name,
+                target_type=target_type,
+                method_name=method_name,
+            )
+        elif kw_target is _UNSET:
+            msg = f"{method_name}() missing required argument: {target_name!r}"
+            raise TypeError(msg)
         else:
-            data = await match.source.read_file(request, match.skill, match.file)
-        return await anyio.to_thread.run_sync(verify_skill_file, match.file, data)
+            req_arg = None if kw_request is _UNSET else kw_request
+            target = kw_target
+        if not isinstance(target, target_type):
+            msg = (
+                f"{method_name}() argument {target_name!r} must be {target_type.__name__}, got {type(target).__name__}"
+            )
+            raise TypeError(msg)
+        return self._resolve_request(req_arg), target
+
+    @staticmethod
+    def _unpack_single_positional_arg(
+        first: "Any",
+        *,
+        kw_request: "Any",
+        kw_target: "Any",
+        target_name: "str",
+        target_type: "type[Any]",
+        method_name: "str",
+    ) -> "tuple[Any, Any]":
+        if kw_target is not _UNSET:
+            if kw_request is not _UNSET:
+                msg = f"{method_name}() got multiple values for argument 'request'"
+                raise TypeError(msg)
+            return first, kw_target
+        if kw_request is not _UNSET:
+            return kw_request, first
+        if isinstance(first, target_type):
+            return None, first
+        msg = f"{method_name}() missing required argument: {target_name!r}"
+        raise TypeError(msg)
 
 
 def parse_frontmatter(text: "str") -> "dict[str, Any]":
@@ -713,6 +1070,73 @@ def load_skill(
         frontmatter=frontmatter,
         files=tuple(skill_files),
     )
+
+
+def _blank_skill_request(app_ref: "Litestar | None") -> "Request[Any, Any, Any]":
+    scope: dict[str, Any] = {
+        "type": "http",
+        "app": app_ref,
+        "litestar_app": app_ref,
+        "asgi": {"version": "3.0", "spec_version": "2.4"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": "/",
+        "raw_path": b"/",
+        "query_string": b"",
+        "root_path": "",
+        "headers": [],
+        "server": ("mcp-internal", 0),
+        "client": ("mcp-internal", 0),
+        "state": {},
+        "session": {},
+        "user": None,
+        "auth": None,
+        "extensions": {},
+    }
+    return Request(cast("Any", scope))
+
+
+def _normalize_title(title: "Any") -> "str | None":
+    if not isinstance(title, str):
+        return None
+    stripped = title.strip()
+    return stripped or None
+
+
+def _copy_icons(icons: "Any") -> "list[dict[str, Any]] | None":
+    if icons is None or isinstance(icons, (str, bytes)) or not isinstance(icons, Sequence):
+        return None
+    copied = [dict(item) for item in icons if isinstance(item, Mapping)]
+    return copied or None
+
+
+def _normalize_tags(tags: "Any") -> "tuple[str, ...]":
+    if isinstance(tags, (str, bytes)) or not isinstance(tags, Sequence):
+        msg = "tags must be a sequence of strings"
+        raise TypeError(msg)
+    normalized: list[str] = []
+    for item in tags:
+        if not isinstance(item, str):
+            msg = f"tags entries must be strings, got {type(item).__name__}"
+            raise TypeError(msg)
+        stripped = item.strip()
+        if stripped:
+            normalized.append(stripped)
+    return tuple(normalized)
+
+
+def _extract_frontmatter_tags(raw_tags: "Any") -> "tuple[str, ...]":
+    if not isinstance(raw_tags, (list, tuple)):
+        return ()
+    return tuple(item.strip() for item in raw_tags if isinstance(item, str) and item.strip())
+
+
+def _copy_meta(meta: "Any") -> "dict[str, Any] | None":
+    if not isinstance(meta, Mapping):
+        return None
+    copied = dict(meta)
+    return copied or None
 
 
 def _validate_skill_name(name: "str") -> "None":

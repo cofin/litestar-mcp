@@ -20,8 +20,9 @@ transport caveat.
 import inspect
 import logging
 import re
+from collections.abc import Mapping
 from contextlib import AsyncExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlencode
@@ -31,11 +32,19 @@ from litestar._asgi.routing_trie.traversal import parse_path_params
 from litestar.connection import ASGIConnection
 from litestar.exceptions import ImproperlyConfiguredException, PermissionDeniedException, SerializationException
 from litestar.response import Response
-from litestar.serialization import decode_json, encode_json
+from litestar.serialization import get_serializer
 from litestar.types.empty import Empty
 from litestar.utils.sync import ensure_async_callable
 
-from litestar_mcp.mcp.content import MCPBlobResource, MCPInputRequiredResult, MCPResourceLink, MCPToolResult
+from litestar_mcp.core.serialization import decode_json, encode_json
+from litestar_mcp.mcp.content import (
+    _STRUCTURED_CONTENT_UNSET,
+    MCPBlobResource,
+    MCPInputRequiredResult,
+    MCPResourceLink,
+    MCPToolResult,
+    is_content_block,
+)
 from litestar_mcp.utils.handler_signature import get_advertised_handler_parameters, resolve_tool_argument_aliases
 
 if TYPE_CHECKING:
@@ -43,7 +52,7 @@ if TYPE_CHECKING:
 
     from litestar.handlers.base import BaseRouteHandler
     from litestar.handlers.http_handlers.base import HTTPRouteHandler
-    from litestar.types import Message, Receive, Scope, Send
+    from litestar.types import Message, Receive, Scope, Send, TypeEncodersMap
     from litestar.types.internal_types import PathParameterDefinition
 
     from litestar_mcp.mcp.config import MCPConfig
@@ -102,6 +111,8 @@ class MCPHandlerResponse:
     """Raw ASGI response body bytes."""
     media_type: "str"
     """Resolved MIME media type from the `content-type` response header."""
+    explicit_response_media_type: "bool" = False
+    """Whether an explicit HTTP `Response(..., media_type=...)` supplied the media type."""
 
 
 class NotCallableInCLIContextError(ImproperlyConfiguredException):
@@ -354,6 +365,74 @@ def blank_http_scope(app: "Litestar") -> "dict[str, Any]":
     }
 
 
+def _apply_builtin_type_encoders(value: "Any", type_encoders: "TypeEncodersMap") -> "Any":
+    """Apply `type_encoders` recursively to container items whose built-in types bypass msgspec `enc_hook`."""
+    if value is None or isinstance(value, (str, bytes, bytearray)):
+        for base in type(value).__mro__[:-1]:
+            encoder = type_encoders.get(base)
+            if encoder is not None and encoder is not base:
+                return encoder(value)
+        return value
+    if isinstance(value, dict):
+        return {k: _apply_builtin_type_encoders(v, type_encoders) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_apply_builtin_type_encoders(item, type_encoders) for item in value]
+    return value
+
+
+def _encode_json_value(
+    value: "Any",
+    *,
+    serializer: "Callable[[Any], Any] | None",
+    type_encoders: "TypeEncodersMap | None" = None,
+) -> "Any":
+    """Encode a Python value to JSON-compatible primitives using `type_encoders` and `serializer`."""
+    if type_encoders:
+        value = _apply_builtin_type_encoders(value, type_encoders)
+    return decode_json(encode_json(value, serializer=serializer))
+
+
+def _encode_content_value(
+    item: "Any",
+    *,
+    serializer: "Callable[[Any], Any] | None",
+    type_encoders: "TypeEncodersMap | None" = None,
+) -> "Any":
+    """Normalize `MCPToolResult.content` entries while leaving MCP helper blocks intact."""
+    if isinstance(item, (MCPBlobResource, MCPResourceLink)):
+        return item
+    if is_content_block(item) or isinstance(item, str):
+        return item
+    if isinstance(item, (list, tuple)):
+        return [_encode_content_value(entry, serializer=serializer, type_encoders=type_encoders) for entry in item]
+    return _encode_json_value(item, serializer=serializer, type_encoders=type_encoders)
+
+
+def _serialize_tool_result(tool_result: "MCPToolResult", handler: "HTTPRouteHandler") -> "MCPToolResult":
+    """Apply route `type_encoders` and `msgspec` rules to an explicit `MCPToolResult`."""
+    resolve_fn = getattr(handler, "resolve_type_encoders", None)
+    resolved = resolve_fn() if callable(resolve_fn) else None
+    type_encoders: TypeEncodersMap | None = (
+        cast("TypeEncodersMap", resolved) if isinstance(resolved, Mapping) and resolved else None
+    )
+    serializer = get_serializer(type_encoders) if type_encoders else None
+    normalized_content = _encode_content_value(
+        tool_result.content,
+        serializer=serializer,
+        type_encoders=type_encoders,
+    )
+    encoded_structured = (
+        _STRUCTURED_CONTENT_UNSET
+        if tool_result.structured_content is _STRUCTURED_CONTENT_UNSET
+        else _encode_json_value(
+            tool_result.structured_content,
+            serializer=serializer,
+            type_encoders=type_encoders,
+        )
+    )
+    return replace(tool_result, content=normalized_content, structured_content=encoded_structured)
+
+
 async def _run_handler_pipeline(
     handler: "BaseRouteHandler",
     app: "Litestar",
@@ -396,7 +475,21 @@ async def _run_handler_pipeline(
                 handler_fn = ensure_async_callable(handler.fn)
                 raw_result = await handler_fn(**parsed_kwargs)
 
-            if isinstance(raw_result, (MCPBlobResource, MCPInputRequiredResult, MCPResourceLink, MCPToolResult)):
+            if isinstance(raw_result, MCPToolResult):
+                raw_result = _serialize_tool_result(raw_result, cast("HTTPRouteHandler", handler))
+                return MCPHandlerResponse(
+                    content=raw_result,
+                    status_code=200,
+                    body=b"",
+                    media_type="application/json",
+                )
+
+            if isinstance(raw_result, (MCPBlobResource, MCPInputRequiredResult, MCPResourceLink)) or (
+                isinstance(raw_result, (list, tuple))
+                and any(
+                    isinstance(item, (MCPBlobResource, MCPInputRequiredResult, MCPResourceLink)) for item in raw_result
+                )
+            ):
                 return MCPHandlerResponse(
                     content=raw_result,
                     status_code=200,
@@ -406,7 +499,11 @@ async def _run_handler_pipeline(
 
             http_handler = cast("HTTPRouteHandler", handler)
             asgi_app = await http_handler.to_response(app=app, data=raw_result, request=dispatch_request)
-            response = await _capture_asgi_response(asgi_app, dispatch_request)
+            response = await _capture_asgi_response(
+                asgi_app,
+                dispatch_request,
+                explicit_response_media_type=isinstance(raw_result, Response) and raw_result.media_type is not None,
+            )
         except Exception as exc:
             await _run_after_exception_hooks(app, dispatch_request, exc)
             handled = await _dispatch_via_exception_handlers(handler, dispatch_request, exc)
@@ -560,6 +657,8 @@ async def _run_after_tool_call(
 async def _capture_asgi_response(
     asgi_app: "Any",
     request: "Request[Any, Any, Any]",
+    *,
+    explicit_response_media_type: "bool" = False,
 ) -> "MCPHandlerResponse":
     """Drive an ASGIApp against a sink-send, returning (content, status_code).
 
@@ -599,11 +698,18 @@ async def _capture_asgi_response(
             status_code=_NON_JSON_STATUS,
             body=b"",
             media_type=media_type,
+            explicit_response_media_type=explicit_response_media_type,
         )
 
     body = b"".join(body_chunks)
     if not body:
-        return MCPHandlerResponse(content=None, status_code=status_code, body=b"", media_type=media_type)
+        return MCPHandlerResponse(
+            content=None,
+            status_code=status_code,
+            body=b"",
+            media_type=media_type,
+            explicit_response_media_type=explicit_response_media_type,
+        )
 
     if _is_json_media_type(media_type):
         try:
@@ -614,17 +720,36 @@ async def _capture_asgi_response(
                 status_code=_NON_JSON_STATUS,
                 body=body,
                 media_type=media_type,
+                explicit_response_media_type=explicit_response_media_type,
             )
-        return MCPHandlerResponse(content=content, status_code=status_code, body=body, media_type=media_type)
+        return MCPHandlerResponse(
+            content=content,
+            status_code=status_code,
+            body=body,
+            media_type=media_type,
+            explicit_response_media_type=explicit_response_media_type,
+        )
 
     if _is_text_media_type(media_type):
         try:
             content = body.decode("utf-8")
         except UnicodeDecodeError:
             content = body
-        return MCPHandlerResponse(content=content, status_code=status_code, body=body, media_type=media_type)
+        return MCPHandlerResponse(
+            content=content,
+            status_code=status_code,
+            body=body,
+            media_type=media_type,
+            explicit_response_media_type=explicit_response_media_type,
+        )
 
-    return MCPHandlerResponse(content=body, status_code=status_code, body=body, media_type=media_type)
+    return MCPHandlerResponse(
+        content=body,
+        status_code=status_code,
+        body=body,
+        media_type=media_type,
+        explicit_response_media_type=explicit_response_media_type,
+    )
 
 
 def _normalize_content_type(raw_value: "str") -> "str":
@@ -878,7 +1003,15 @@ def _build_dispatch_scope(
 
     http_methods = getattr(handler, "http_methods", None) or ("POST",)
     method = next(iter(http_methods))
-    headers: list[tuple[bytes, bytes]] = [(b"content-type", b"application/json")] if body else []
+    headers: list[tuple[bytes, bytes]] = []
+    if base_scope is not None:
+        headers.extend(
+            (key, value)
+            for key, value in base_scope.get("headers", ())
+            if key.lower() not in {b"content-length", b"content-type", b"host"}
+        )
+    if body:
+        headers.append((b"content-type", b"application/json"))
 
     scope.update(
         {

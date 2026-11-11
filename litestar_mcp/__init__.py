@@ -50,6 +50,7 @@ from litestar_mcp.mcp.skill_controller import SkillController
 from litestar_mcp.mcp.skills import (
     FilesystemSkillSource,
     Skill,
+    SkillCatalog,
     SkillFile,
     SkillIntegrityError,
     SkillSource,
@@ -82,6 +83,7 @@ __all__ = (
     "PromptController",
     "PromptMessage",
     "Skill",
+    "SkillCatalog",
     "SkillController",
     "SkillFile",
     "SkillIntegrityError",
