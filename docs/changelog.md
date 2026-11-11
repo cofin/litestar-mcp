@@ -8,6 +8,40 @@ All notable `litestar-mcp` changes are summarized here. Entries are grouped by r
 
 ---
 
+## v0.20.0 (2026-11-11)
+
+### Features
+
+- **Support MCP `2025-11-25` protocol negotiation, `Mcp-Session-Id` lifecycle, `GET /mcp` SSE streams, and resource subscriptions** ([#114](https://github.com/cofin/litestar-mcp/pull/114), closes [#111](https://github.com/cofin/litestar-mcp/issues/111))
+  Added `"2025-11-25"` to `SUPPORTED_PROTOCOL_VERSIONS` alongside `"2026-07-28"`, `"2025-06-18"`, and `"2025-03-26"`. `initialize` issues Store-backed `Mcp-Session-Id` headers (`MCPSession`, `MCPSessionStore`, `SESSION_STORE_NAME`, `MCPConfig.session_ttl_seconds`) with principal and tenant isolation, `GET /mcp` (`Accept: text/event-stream`, gated by `MCPConfig.enable_get_sse`) streams server-pushed JSON-RPC notifications over `SubscriptionManager.open_session_stream`, `DELETE /mcp` revokes active sessions and queues, and `resources/subscribe` / `resources/unsubscribe` deliver `notifications/resources/updated` with fail-closed `MCPConfig.subscription_authorizer` checks. Extended `MCPStreamableHTTPClient` (`initialize`, `notify`, `open_event_stream`, `subscribe_resource`, `unsubscribe_resource`, `terminate_session`) and `run_stdio_streamable_http_bridge` for `2025-11-25` sessions.
+
+- **Support SEP-1865 MCP Apps (`io.modelcontextprotocol/ui`) extension, descriptor metadata, and visibility filtering** ([#114](https://github.com/cofin/litestar-mcp/pull/114), closes [#108](https://github.com/cofin/litestar-mcp/issues/108))
+  Added `UI_EXTENSION`, `UI_MIME_TYPE`, `MCPConfig.ui_mime_types`, `MCPRequestContext.ui_capabilities`, and `title`, `icons`, and `meta` (`_meta`) descriptor support across `@mcp_tool`, `@mcp_resource`, `@mcp_prompt`, `MCPOptKeys`, standalone `MCP`, `PromptController` / `@prompt`, `SkillController`, and `Registry`. Automatically advertises `io.modelcontextprotocol/ui` in `server/discover` and `2025-11-25` `initialize` when UI tools or `text/html;profile=mcp-app` resources are registered, mirrors legacy `_meta["ui/resourceUri"]` compatibility keys, and filters `"app"`-only tools from `mcp_to_tools(..., include_app_only=False)` by default while keeping internal ASGI route dispatch active.
+
+- **Emit automatic `structuredContent` and synthesize `outputSchema` from tool return annotations** ([#114](https://github.com/cofin/litestar-mcp/pull/114), closes [#110](https://github.com/cofin/litestar-mcp/issues/110))
+  Added `MCPConfig.auto_output_schema`, `output_schema` overrides (`dict | bool | None`) across `@mcp_tool`, `@tool`, `MCPOptKeys.output_schema`, and standalone `MCP.tool`, plus `type_to_output_schema`, `typed_dict_to_json_schema`, `unwrap_root_object_schema`, and `generate_output_schema_for_handler`. Tools declaring or inferring an object `outputSchema` automatically return validated JSON objects under `structuredContent` alongside backward-compatible serialized `content[0].text` while honoring application and route `type_encoders`.
+
+- **Support RFC 5424 server-to-client structured logging and task progress streaming** ([#114](https://github.com/cofin/litestar-mcp/pull/114), closes [#113](https://github.com/cofin/litestar-mcp/issues/113))
+  Added `MCPConfig.logging`, `MCPConfig.default_log_level`, `MCPLogLevel`, `MCP_LOG_LEVELS`, `validate_log_level`, `log_level_allows`, `logging/setLevel`, `MCPRequestContext.log()`, `MCPStreamableHTTPClient.set_logging_level`, and `MCPTaskStore.update_status_message`. Handlers emit severity-gated `notifications/message` events over `2025-11-25` session SSE streams, stateless `2026-07-28` `subscriptions/listen` (`io.modelcontextprotocol/logLevel`), and in-process `stdio`, while promoted and queued `TaskRecord` runs propagate `progress_token`, `session_id`, `log_level`, and `statusMessage` updates across `QueueTaskExecutor` workers.
+
+- **Classify `@mcp_resource(uri=...)` automatically and preserve standalone text/binary MIME types** ([#114](https://github.com/cofin/litestar-mcp/pull/114), closes [#109](https://github.com/cofin/litestar-mcp/issues/109))
+  Added `classify_resource_uri` and `uri=` support on `@mcp_resource` so static URIs automatically register under `resources/list` while `{var}` templates register under `resources/templates/list` (rejecting empty, conflicting, or unbalanced-brace URIs at decoration time). Standalone `@mcp.resource` handlers now preserve raw `str` (`text/plain`), `bytes` / `bytearray` (`application/octet-stream`), explicit parameterized MIME types, and arbitrary multi-segment URI templates without double-JSON-encoding responses or colliding across URI schemes.
+
+- **Add SEP-2640 skill prompts, `list_changed` notifications, request-optional `SkillCatalog`, and `list-skills` CLI** ([#114](https://github.com/cofin/litestar-mcp/pull/114), closes [#112](https://github.com/cofin/litestar-mcp/issues/112))
+  Added `MCPSkillsConfig.expose_as_prompts` and `MCPSkillsConfig.list_changed`, `Skill.icons` / `Skill.meta` and `SkillFile.title` / `SkillFile.description` / `SkillFile.icons` / `SkillFile.meta`, top-level `litestar_mcp.SkillCatalog` export with request-optional `list_skills` / `get_skill` / `read_file` / `notify_list_changed`, `Registry.notify_resources_list_changed` / `Registry.notify_skills_list_changed`, overloaded `get_mcp_request_context(default=...)`, `filter_skills`, `MCPStreamableHTTPClient.list_skills` / `get_skill` / `read_skill_directory`, and the `litestar mcp list-skills` CLI command.
+
+### Bug Fixes
+
+- **Isolate stacked decorator metadata, enforce unsupported version headers, and preserve Python 3.14 wrapper annotations** ([#114](https://github.com/cofin/litestar-mcp/pull/114))
+  Partitioned `MetadataRegistry` entries by `(role, qualname)` so stacked `@mcp_tool` / `@mcp_resource` / `@mcp_prompt` decorators on a single route never clobber sibling descriptors, overrides explicit resource MIME types over Litestar's implicit `text/plain` default on raw `str` routes, rejects bare POST requests carrying unsupported `MCP-Protocol-Version` headers with `-32022` / HTTP `400`, fails closed on `500` when an ASGI response omits `http.response.start`, and restores manually assigned or mutated `__annotations__` on `@wraps`-synthesized handlers under Python 3.14 PEP 649 semantics.
+
+### Documentation
+
+- **Document MCP `2025-11-25` sessions, SEP-1865 MCP Apps, structured outputs, logging, and SEP-2640 skills** ([#114](https://github.com/cofin/litestar-mcp/pull/114))
+  Updated all Getting Started, MCP Core, Tasks & Queues, Agents & Bridges, Security & Observability, Architecture SVG diagrams, CLI autodocs, runnable snippets (`mcp_2025_sessions_and_logging.py`, `mcp_apps_and_structured.py`, `skills_prompts_and_catalog.py`), and `objects.inv` / API reference pages to cover the new protocol capabilities.
+
+---
+
 ## v0.19.0 (2026-11-06)
 
 ### Features

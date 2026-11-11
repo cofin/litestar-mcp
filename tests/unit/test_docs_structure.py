@@ -744,7 +744,7 @@ def test_getting_started_docs_cover_mcp_2025_and_cli_contracts(
                 "UI_EXTENSION",
                 "type_to_output_schema",
                 "list-skills",
-                "v0.19.0",
+                "v0.20.0",
             ),
         ),
         (
@@ -768,7 +768,7 @@ def test_security_reference_and_learn_index_cover_new_contracts(
     rel_path: "str",
     required_tokens: "tuple[str, ...]",
 ) -> "None":
-    """Verify security, reference, and learn index pages cover MCP 2025-11-25, exports, and v0.19.0 changelog."""
+    """Verify security, reference, and learn index pages cover MCP 2025-11-25, exports, and v0.20.0 changelog."""
     text = (DOCS_DIR / rel_path).read_text(encoding="utf-8")
     missing = [token for token in required_tokens if token not in text]
     assert missing == [], f"docs/{rel_path} missing required tokens: {missing}"

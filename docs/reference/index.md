@@ -34,7 +34,7 @@ This reference documents the public Python API, CLI subcommands, and contributor
   <div class="lm-card">
     <div>
       <h3><a href="primitives-and-skills.md">Primitives, Controllers &amp; Skills</a></h3>
-      <p><code>@mcp_tool</code> (<code>output_schema</code>), <code>@mcp_resource</code>, <code>@mcp_prompt</code>, SEP-1865 <code>title</code> / <code>icons</code> / <code>_meta</code> (<code>meta</code>), <code>PromptController</code>, <code>SkillController</code>, Agent Skills (<code>SkillSource</code>, <code>FilesystemSkillSource</code>, top-level <code>SkillCatalog</code>), <code>get_mcp_request_context(default=...)</code>, <code>MCPRequestContext.log()</code> / <code>ui_capabilities</code> / <code>session_id</code>, content blocks, <code>Registry</code>, and <code>MCPHandlerService</code>.</p>
+      <p><code>@mcp_tool</code> (<code>output_schema</code>), <code>@mcp_resource</code>, <code>@mcp_prompt</code>, SEP-1865 <code>title</code> / <code>icons</code> / <code>_meta</code> (<code>meta</code>), <code>PromptController</code>, <code>SkillController</code>, Agent Skills (<code>SkillSource</code>, <code>FilesystemSkillSource</code>, top-level <code>SkillCatalog</code>), <code>get_mcp_request_context(default=...)</code>, <code>MCPRequestContext.log()</code> / <code>ui_capabilities</code> / <code>session_id</code>, content blocks, and <code>Registry</code>.</p>
     </div>
     <a href="primitives-and-skills.md">Primitives &amp; Skills API &rarr;</a>
   </div>
@@ -90,4 +90,4 @@ This reference documents the public Python API, CLI subcommands, and contributor
 
 ## Release History
 
-See the [Changelog](../changelog.md) for release notes, new capabilities, and migration notes across versions `v0.1.0` through `v0.19.0`.
+See the [Changelog](../changelog.md) for release notes, new capabilities, and migration notes across versions `v0.1.0` through `v0.20.0`.
