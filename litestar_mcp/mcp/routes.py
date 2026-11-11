@@ -1,4 +1,4 @@
-# ruff: noqa: C901, PLR0911
+# ruff: noqa: PLR0911
 """MCP Streamable HTTP JSON-RPC and SSE transport for Litestar applications."""
 
 import asyncio
@@ -41,7 +41,7 @@ from litestar_mcp.core.schema_builder import cached_schema_for_handler, iter_mcp
 from litestar_mcp.core.serialization import from_json, to_json
 from litestar_mcp.core.sse import LOG_LEVEL_SEVERITY, StreamLimitExceeded, log_level_allows
 from litestar_mcp.mcp.config import SUPPORTED_PROTOCOL_VERSIONS, MCPConfig
-from litestar_mcp.mcp.registry import PromptRegistration, Registry  # noqa: TC001
+from litestar_mcp.mcp.registry import PromptRegistration, Registry, evaluate_subscription_authorizer
 from litestar_mcp.mcp.service import MCPHandlerService, MCPRequestContext, get_session_store
 from litestar_mcp.mcp.skills import SkillCatalog  # noqa: TC001
 from litestar_mcp.mcp.tasks import MCPTaskStore  # noqa: TC001
@@ -91,6 +91,20 @@ _CACHEABLE_METHODS = {
 }
 _BASE64_PREFIX = "=?base64?"
 _BASE64_SUFFIX = "?="
+_MIN_VISIBLE_ASCII = 0x20
+_MAX_VISIBLE_ASCII = 0x7E
+
+
+def encode_mcp_header_value(value: "str") -> "str":
+    """Encode header value with the MCP ``=?base64?...`` sentinel when non-visible-ASCII or colliding."""
+    if (
+        value
+        and all(_MIN_VISIBLE_ASCII <= ord(char) <= _MAX_VISIBLE_ASCII for char in value)
+        and not value.startswith(_BASE64_PREFIX)
+    ):
+        return value
+    encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
+    return f"{_BASE64_PREFIX}{encoded}{_BASE64_SUFFIX}"
 
 
 def decode_mcp_header_value(value: "str") -> "str":
@@ -489,6 +503,8 @@ def _request_metadata_error(
         return None
 
     header_version = _header_protocol_version(request)
+    if header_version is not None and header_version not in SUPPORTED_PROTOCOL_VERSIONS:
+        return _unsupported_version_error(rpc_request.id, header_version)
     raw_header_method = request.headers.get(MCP_METHOD_HEADER)
     raw_header_name = request.headers.get(MCP_NAME_HEADER)
     header_method = raw_header_method.strip() if raw_header_method is not None else None
@@ -563,6 +579,15 @@ def _request_metadata_error(
             )
     if rpc_request.method != "tools/call":
         return None
+    return _param_header_error(request, rpc_request, discovered_tools)
+
+
+def _param_header_error(
+    request: "Request[Any, Any, Any]",
+    rpc_request: "JSONRPCRequest",
+    discovered_tools: "dict[str, Any]",
+) -> "Response[Any] | None":
+    params = rpc_request.params if isinstance(rpc_request.params, dict) else {}
     tool_name = params.get("name")
     handler = discovered_tools.get(tool_name) if isinstance(tool_name, str) else None
     if handler is None:
@@ -694,17 +719,6 @@ async def _close_registry_session_streams(registry: "Registry", session_id: "str
             await outcome
 
 
-async def _eval_subscription_authorizer(
-    authorizer: "Callable[[Request[Any, Any, Any], str], Awaitable[bool] | bool]",
-    request: "Request[Any, Any, Any]",
-    uri: "str",
-) -> "bool":
-    outcome = authorizer(request, uri)
-    if inspect.isawaitable(outcome):
-        return bool(await outcome)
-    return bool(outcome)
-
-
 def _make_subscription_authorizer(
     request: "Request[Any, Any, Any]",
     config: "MCPConfig",
@@ -719,7 +733,7 @@ def _make_subscription_authorizer(
         uri = params.get("uri")
         if not isinstance(uri, str):
             return True
-        return await _eval_subscription_authorizer(authorizer, request, uri)
+        return await evaluate_subscription_authorizer(authorizer, request, uri)
 
     return _authorize
 
@@ -1190,7 +1204,7 @@ async def _subscription_response(
         )
     if config.subscription_authorizer is not None and isinstance(raw_resources, list):
         for uri in raw_resources:
-            if not await _eval_subscription_authorizer(config.subscription_authorizer, request, uri):
+            if not await evaluate_subscription_authorizer(config.subscription_authorizer, request, uri):
                 return _error(
                     rpc_request.id,
                     code=INVALID_PARAMS,
@@ -1237,4 +1251,5 @@ __all__ = (
     "UNSUPPORTED_PROTOCOL_VERSION",
     "MCPController",
     "decode_mcp_header_value",
+    "encode_mcp_header_value",
 )

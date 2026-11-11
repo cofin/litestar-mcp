@@ -31,7 +31,6 @@ def test_renamed_tool_and_resource_opt_keys_drive_discovery() -> "None":
         """App config."""
         return {}
 
-    # Handlers using the *default* opt keys must NOT be discovered under the renamed config.
     @get("/ignored-tool", opt={"mcp_tool": "nope_tool"}, sync_to_thread=False)
     def ignored_tool() -> "dict[str, Any]":
         """Should not be registered."""
@@ -96,7 +95,7 @@ def test_default_opt_keys_unchanged_when_config_omits_opt_keys() -> "None":
         """Docstring."""
         return []
 
-    plugin = LitestarMCP(MCPConfig())  # No opt_keys override.
+    plugin = LitestarMCP(MCPConfig())
     app = Litestar(route_handlers=[list_users], plugins=[plugin])
     assert plugin.config.opt_keys == MCPOptKeys()
 

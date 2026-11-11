@@ -213,8 +213,6 @@ async def test_queue_executor_completes_task_immediate() -> None:
         status_result = await _mcp_post(client, "tasks/get", {"taskId": task_id})
         task_record = status_result["result"]
         assert task_record["status"] == "completed"
-        import json
-
         assert json.loads(task_record["result"]["content"][0]["text"]) == {"echo": "distributed"}
 
 
@@ -242,8 +240,6 @@ async def test_queue_executor_worker_path_local() -> None:
 
         status_result = await _mcp_post(client, "tasks/get", {"taskId": task_id})
         assert status_result["result"]["status"] == "completed"
-        import json
-
         assert json.loads(status_result["result"]["result"]["content"][0]["text"]) == {"echo": "worker-path"}
 
 
@@ -262,8 +258,6 @@ async def test_worker_runs_with_loaded_principal() -> None:
         task_id = result["result"]["taskId"]
         status_result = await _mcp_post(client, "tasks/get", {"taskId": task_id})
         assert status_result["result"]["status"] == "completed"
-        import json
-
         assert json.loads(status_result["result"]["result"]["content"][0]["text"]) == {"user_id": "alice"}
 
     executor_no_loader = QueueTaskExecutor(principal_loader=None)
@@ -278,8 +272,6 @@ async def test_worker_runs_with_loaded_principal() -> None:
         status_result = await _mcp_post(client, "tasks/get", {"taskId": task_id})
         assert status_result["result"]["status"] == "completed"
         assert status_result["result"]["result"]["isError"] is True
-        import json
-
         error_payload = json.loads(status_result["result"]["result"]["content"][0]["text"])
         assert "Authentication required" in error_payload["error"]
 
@@ -558,8 +550,6 @@ async def test_input_required_resumes_on_update() -> None:
 
         status_result = await _mcp_post(client, "tasks/get", {"taskId": task_id})
         assert status_result["result"]["status"] == "completed"
-        import json
-
         content = json.loads(status_result["result"]["result"]["content"][0]["text"])
         assert content == {"answer": "42"}
 
@@ -615,8 +605,6 @@ async def test_partial_update_waits_for_all_responses() -> None:
 
         status2 = await _mcp_post(client, "tasks/get", {"taskId": task_id})
         assert status2["result"]["status"] == "completed"
-        import json
-
         content = json.loads(status2["result"]["result"]["content"][0]["text"])
         assert content == {"first": "alpha", "second": "beta"}
 
@@ -671,8 +659,6 @@ async def test_resume_on_other_replica() -> None:
 
         status_after_worker = await _mcp_post(client, "tasks/get", {"taskId": task_id})
         assert status_after_worker["result"]["status"] == "completed"
-        import json
-
         content = json.loads(status_after_worker["result"]["result"]["content"][0]["text"])
         assert content == {"proceeded": True}
 
@@ -680,24 +666,19 @@ async def test_resume_on_other_replica() -> None:
 @pytest.mark.anyio
 async def test_resume_attempt_numbers_increase() -> None:
     """Subsequent input rounds increment the attempt counter on persisted dispatch."""
-    round_count = 0
 
     @get("/two-round-input")
     @mcp_tool(name="two_round_input", task_support="optional")
     async def two_round_input() -> MCPInputRequiredResult | dict[str, Any]:
-        nonlocal round_count
         context = get_mcp_request_context()
         if context.input_responses is None:
-            round_count = 1
             return MCPInputRequiredResult(
                 input_requests={"step1": {"type": "string", "description": "Step 1"}},
             )
         if "step1" in context.input_responses and "step2" not in context.input_responses:
-            round_count = 2
             return MCPInputRequiredResult(
                 input_requests={"step2": {"type": "string", "description": "Step 2"}},
             )
-        round_count = 3
         return {"step1": context.input_responses["step1"], "step2": context.input_responses["step2"]}
 
     executor = QueueTaskExecutor()
@@ -1365,7 +1346,7 @@ async def test_queued_worker_progress_and_status_message() -> None:
 
 async def _wait_for_session_streams(plugin: LitestarMCP) -> None:
     for _ in range(400):
-        if plugin.registry.has_subscription_manager and plugin.registry.subscription_manager._streams:
+        if plugin.registry.has_subscription_manager and plugin.registry.subscription_manager.active_stream_count > 0:
             return
         await asyncio.sleep(0.005)
     raise asyncio.TimeoutError
@@ -1579,7 +1560,7 @@ async def test_bind_channels_plugin_compatibility_gate(
 
     async with AsyncTestClient(app):
         assert mcp_plugin.registry.has_subscription_manager is True
-        assert (mcp_plugin.registry.subscription_manager._channels is channels_plugin) is expected_wired
+        assert (mcp_plugin.registry.subscription_manager.channels is channels_plugin) is expected_wired
 
 
 async def _assert_resumed_session_events(session_events: asyncio.Queue[dict[str, Any]]) -> None:
@@ -1674,7 +1655,8 @@ async def test_queued_resume_preserves_progress_and_store_log_level() -> None:
                 assert first_status["status"] == "input_required"
 
                 await session_client.set_logging_level("error")
-                mcp_plugin.registry.subscription_manager._session_log_levels.clear()
+                assert session_client.session_id is not None
+                mcp_plugin.registry.subscription_manager.clear_session_log_level(session_client.session_id)
 
                 await session_client.request(
                     "tasks/update",

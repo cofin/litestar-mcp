@@ -72,12 +72,17 @@ def test_mcp_init_synchronizes_existing_plugin_metadata() -> "None":
 
 def test_mcp_lazy_app() -> "None":
     mcp = MCP(name="test-mcp")
-    is_none = mcp._app is None
-    assert is_none
+
+    @mcp.tool(name="lazy_ping")
+    def lazy_ping() -> "str":
+        return "pong"
+
     app = mcp.app
     assert isinstance(app, Litestar)
-    assert mcp._app is app
     assert mcp.app is app
+    with TestClient(app=app) as client:
+        response = _rpc(client, "tools/call", {"name": "lazy_ping", "arguments": {}})
+    assert response["result"]["content"][0]["text"] == "pong"
 
 
 def test_mcp_decorators_registration() -> "None":

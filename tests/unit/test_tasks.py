@@ -46,16 +46,12 @@ def _make_task_app(task_config: MCPTaskConfig | None = None) -> Litestar:
     @get("/optional-task")
     @mcp_tool(name="optional_task", task_support="optional")
     async def optional_task(delay: float = 0.01) -> dict[str, str]:
-        import asyncio
-
         await asyncio.sleep(delay)
         return {"status": "completed"}
 
     @get("/required-task")
     @mcp_tool(name="required_task", task_support="required")
     async def required_task(delay: float = 0.01) -> dict[str, str]:
-        import asyncio
-
         await asyncio.sleep(delay)
         return {"status": "completed"}
 
@@ -472,7 +468,10 @@ async def test_inprocess_multi_round_resume_refreshes_log_level() -> None:
         sse_task = asyncio.create_task(_read_sse())
         try:
             for _ in range(400):
-                if plugin.registry.has_subscription_manager and plugin.registry.subscription_manager._streams:
+                if (
+                    plugin.registry.has_subscription_manager
+                    and plugin.registry.subscription_manager.active_stream_count > 0
+                ):
                     break
                 await asyncio.sleep(0.005)
             else:
@@ -512,6 +511,77 @@ async def test_inprocess_multi_round_resume_refreshes_log_level() -> None:
                 entry.get("level") == "error" and entry.get("data") == "keep-on-resume" for entry in received_logs
             )
         finally:
+            sse_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await sse_task
+
+
+@pytest.mark.anyio
+async def test_inprocess_task_reflects_mid_execution_set_logging_level() -> None:
+    """Mid-execution logging/setLevel takes effect immediately for live background task ctx.log calls."""
+    started = asyncio.Event()
+    ready_to_log = asyncio.Event()
+
+    @get("/mid-task-log")
+    @mcp_tool(name="mid_task_log", task_support="optional")
+    async def mid_task_log() -> dict[str, bool]:
+        context = get_mcp_request_context()
+        started.set()
+        await asyncio.wait_for(ready_to_log.wait(), timeout=2.0)
+        await context.log("debug", "live-debug-log")
+        return {"logged": True}
+
+    plugin = LitestarMCP(MCPConfig(logging=True, tasks=MCPTaskConfig()))
+    app = Litestar(route_handlers=[mid_task_log], plugins=[plugin])
+
+    async with (
+        app.lifespan(),
+        MCPStreamableHTTPClient(
+            "http://testserver.local/mcp",
+            transport=ASGIStreamingTransport(app),
+            protocol_version="2025-11-25",
+            capabilities={"extensions": {TASKS_EXTENSION: {}}},
+        ) as session_client,
+    ):
+        await session_client.initialize()
+        await session_client.set_logging_level("warning")
+        session_events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
+        async def _read_sse() -> None:
+            async for payload in session_client.open_event_stream():
+                await session_events.put(payload)
+
+        sse_task = asyncio.create_task(_read_sse())
+        try:
+            for _ in range(400):
+                if (
+                    plugin.registry.has_subscription_manager
+                    and plugin.registry.subscription_manager.active_stream_count > 0
+                ):
+                    break
+                await asyncio.sleep(0.005)
+            else:
+                raise asyncio.TimeoutError
+
+            task_res = await session_client.request("tools/call", {"name": "mid_task_log", "arguments": {}})
+            task_id = task_res["taskId"]
+            await asyncio.wait_for(started.wait(), timeout=2.0)
+
+            await session_client.set_logging_level("debug")
+            ready_to_log.set()
+
+            for _ in range(100):
+                current = await session_client.request("tasks/get", {"taskId": task_id})
+                if current["status"] == "completed":
+                    break
+                await asyncio.sleep(0.01)
+
+            log_event = await asyncio.wait_for(session_events.get(), timeout=2.0)
+            while log_event.get("method") != "notifications/message":
+                log_event = await asyncio.wait_for(session_events.get(), timeout=2.0)
+            assert log_event["params"] == {"level": "debug", "data": "live-debug-log"}
+        finally:
+            ready_to_log.set()
             sse_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await sse_task

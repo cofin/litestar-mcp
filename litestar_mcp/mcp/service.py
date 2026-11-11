@@ -29,11 +29,7 @@ from litestar_mcp.core.jsonrpc import (
     JSONRPCError,
     JSONRPCErrorException,
 )
-from litestar_mcp.core.schema_builder import (
-    cached_output_schema_for_handler,
-    cached_schema_for_handler,
-    unwrap_root_object_schema,
-)
+from litestar_mcp.core.schema_builder import cached_schema_for_handler
 from litestar_mcp.core.serialization import decode_json, encode_json
 from litestar_mcp.core.sse import LOG_LEVEL_SEVERITY, log_level_allows, validate_log_level
 from litestar_mcp.mcp.config import SUPPORTED_PROTOCOL_VERSIONS, UI_EXTENSION, UI_MIME_TYPE
@@ -64,13 +60,14 @@ from litestar_mcp.mcp.executor import (
 from litestar_mcp.mcp.registry import (
     PromptRegistration,
     Registry,
-    _clean_icons,
-    _clean_meta,
-    _clean_title,
     _normalize_prompt_result,
     apply_prompt_instructions,
+    evaluate_subscription_authorizer,
     render_prompt_entry,
+    resolve_descriptor_fields,
     resolve_prompt_description,
+    resolve_tool_annotations,
+    resolve_tool_output_schema,
     should_include_prompt,
 )
 from litestar_mcp.mcp.skills import SKILL_URI_PREFIX, SkillIntegrityError, filter_skills, parse_skill_uri
@@ -108,7 +105,6 @@ if TYPE_CHECKING:
     from litestar_mcp.mcp.config import MCPConfig
     from litestar_mcp.mcp.registry import ResourceTemplate
     from litestar_mcp.mcp.skills import Skill, SkillCatalog
-    from litestar_mcp.utils import Kind
 
 _logger = logging.getLogger(__name__)
 
@@ -344,6 +340,8 @@ class MCPRequestContext:
     """Optional minimum RFC 5424 log severity threshold enforced by `log()` for this execution."""
     log_reporter: "Callable[[str, Any, str | None], Awaitable[None]] | None" = None
     """Optional async callback used to emit `notifications/message` entries for this execution."""
+    log_level_resolver: "Callable[[], Awaitable[str | None]] | Callable[[], str | None] | None" = None
+    """Optional resolver returning the latest live RFC 5424 severity threshold for long-running executions."""
 
     def __post_init__(self) -> "None":
         if self.ui_capabilities is None and isinstance(self.client_capabilities, Mapping):
@@ -368,7 +366,11 @@ class MCPRequestContext:
     async def log(self, level: "str", data: "Any", logger: "str | None" = None) -> "None":
         """Emit a structured RFC 5424 MCP log notification gated by the active severity threshold."""
         validate_log_level(level)
-        if self.log_level is not None and not log_level_allows(level, self.log_level):
+        effective_level = self.log_level
+        if self.log_level_resolver is not None:
+            resolved = self.log_level_resolver()
+            effective_level = await resolved if inspect.isawaitable(resolved) else resolved
+        if effective_level is not None and not log_level_allows(level, effective_level):
             return
         if self.log_reporter is None:
             return
@@ -695,7 +697,9 @@ def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: "dict[str, 
 
     Path parameters are excluded since Litestar extracts them directly from
     path variables; remaining scalars are matched against the handler's
-    non-DI signature fields.
+    non-DI signature fields. When the handler has a ``data`` parameter,
+    unrecognized scalar tool arguments are treated as members of the data
+    struct and validated by converting them to that struct type.
 
     Returns a list of ``{"path": <json-pointer>, "message": <reason>}`` dicts,
     sorted by path for deterministic output.
@@ -728,9 +732,6 @@ def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: "dict[str, 
     data_type = annotated_types.get("data") if data_field is not None else None
     recognized_scalar_names = set(advertised_by_name)
 
-    # When the handler has a ``data`` param, tool_args keys that aren't
-    # recognized scalar fields are treated as members of the data struct.
-    # Validate them by building a mapping and converting it to the struct.
     if data_type is not None:
         has_explicit_data = "data" in tool_args
         data_payload = (
@@ -1092,6 +1093,11 @@ class MCPHandlerService:
             session_id=call.session_id,
             log_level=call.log_level if self.config.logging else None,
             log_reporter=self._make_task_log_reporter(call.session_id, owner_id=call.owner_id),
+            log_level_resolver=self._make_task_log_level_resolver(
+                call.session_id,
+                call.owner_id,
+                call.log_level,
+            ),
         )
         handler = self.discovered_tools.get(call.tool_name)
         if handler is None:
@@ -1193,61 +1199,6 @@ class MCPHandlerService:
         """Acknowledge an initialized notification."""
         return {}
 
-    def _infer_http_method_annotations(self, handler: "BaseRouteHandler") -> "dict[str, Any]":
-        """Infer default MCP ToolAnnotations hints from a route handler's HTTP method."""
-        raw_methods = getattr(handler, "http_methods", None)
-        if not raw_methods:
-            single = getattr(handler, "http_method", None)
-            raw_methods = {single} if single else set()
-        methods: set[str] = set()
-        for method in raw_methods if isinstance(raw_methods, (set, frozenset, list, tuple)) else (raw_methods,):
-            val = getattr(method, "value", method)
-            if isinstance(val, str) and val:
-                methods.add(val.upper())
-        if not methods:
-            return {}
-        if methods <= {"GET", "HEAD"}:
-            return {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True}
-        if methods == {"PUT"}:
-            return {"readOnlyHint": False, "idempotentHint": True}
-        if methods == {"DELETE"}:
-            return {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True}
-        if methods <= {"POST", "PATCH"}:
-            return {"readOnlyHint": False}
-        return {}
-
-    def _resolve_tool_annotations(
-        self,
-        handler: "BaseRouteHandler",
-        metadata: "Mapping[str, Any]",
-    ) -> "dict[str, Any]":
-        """Resolve effective MCP ToolAnnotations for a route handler."""
-        handler_opt = getattr(handler, "opt", None) or {}
-        opt_keys = self.config.opt_keys
-        annotations: dict[str, Any] = {}
-        if self.config.infer_http_method_annotations and not handler_opt.get("_mcp_synthesized_tool"):
-            annotations.update(self._infer_http_method_annotations(handler))
-
-        meta_annotations = metadata.get("annotations")
-        if isinstance(meta_annotations, Mapping):
-            annotations.update(meta_annotations)
-
-        opt_annotations = handler_opt.get(opt_keys.annotations)
-        if isinstance(opt_annotations, Mapping):
-            annotations.update(opt_annotations)
-
-        if metadata.get("read_only") is not None:
-            annotations["readOnlyHint"] = bool(metadata["read_only"])
-
-        opt_read_only = handler_opt.get(opt_keys.read_only)
-        if opt_read_only is not None:
-            annotations["readOnlyHint"] = bool(opt_read_only)
-
-        if "scopes" in metadata and "scopes" not in annotations:
-            annotations["scopes"] = list(metadata["scopes"])
-
-        return annotations
-
     def _tool_display_name(self, handler: "BaseRouteHandler", metadata: "Mapping[str, Any]") -> "str":
         """Return a stable tool identifier for configuration error messages."""
         meta_name = metadata.get("name")
@@ -1270,38 +1221,23 @@ class MCPHandlerService:
         metadata: "Mapping[str, Any]",
     ) -> "dict[str, Any] | None":
         """Resolve effective MCP `outputSchema` across `handler.opt`, decorator metadata, and `MCPConfig`."""
-        handler_opt = getattr(handler, "opt", None) or {}
-        opt_key = self.config.opt_keys.output_schema
-        if opt_key in handler_opt and handler_opt[opt_key] is not None:
-            policy: Any = handler_opt[opt_key]
-        elif "output_schema" in metadata and metadata["output_schema"] is not None:
-            policy = metadata["output_schema"]
-        else:
-            policy = self.config.auto_output_schema
-
-        if policy is False or policy is None:
-            return None
-        if policy is True:
-            schema = cached_output_schema_for_handler(handler)
-            return copy.deepcopy(schema) if schema is not None else None
-        if isinstance(policy, Mapping):
-            resolved = unwrap_root_object_schema(dict(policy))
-            if resolved.get("type") != "object":
-                label = self._tool_display_name(handler, metadata)
-                raise JSONRPCErrorException(
-                    JSONRPCError(
-                        code=INTERNAL_ERROR,
-                        message=f"Tool '{label}' output_schema must resolve to root type 'object'",
-                    )
+        try:
+            return resolve_tool_output_schema(handler, metadata, self.config, require_object_root=True)
+        except ValueError as exc:
+            label = self._tool_display_name(handler, metadata)
+            raise JSONRPCErrorException(
+                JSONRPCError(
+                    code=INTERNAL_ERROR,
+                    message=f"Tool '{label}' output_schema must resolve to root type 'object'",
                 )
-            return resolved
-        label = self._tool_display_name(handler, metadata)
-        raise JSONRPCErrorException(
-            JSONRPCError(
-                code=INTERNAL_ERROR,
-                message=f"Tool '{label}' has invalid output_schema policy of type {type(policy).__name__}",
-            )
-        )
+            ) from exc
+        except TypeError as exc:
+            label = self._tool_display_name(handler, metadata)
+            detail = str(exc)
+            normalized_detail = f"{detail[:1].lower()}{detail[1:]}" if detail else detail
+            raise JSONRPCErrorException(
+                JSONRPCError(code=INTERNAL_ERROR, message=f"Tool '{label}' has {normalized_detail}")
+            ) from exc
 
     def build_tool_entries(self) -> "list[dict[str, Any]]":
         """Build the unpaginated list of advertised MCP tool specifications."""
@@ -1324,10 +1260,10 @@ class MCPHandlerService:
             output_schema = self._resolve_tool_output_schema(handler, metadata)
             if output_schema is not None:
                 tool_entry["outputSchema"] = output_schema
-            annotations = self._resolve_tool_annotations(handler, metadata)
+            annotations = resolve_tool_annotations(handler, metadata, self.config)
             if annotations:
                 tool_entry["annotations"] = annotations
-            title, icons, meta = self._resolve_descriptor_fields(handler, kind="tool")
+            title, icons, meta = resolve_descriptor_fields(handler, kind="tool", opt_keys=self.config.opt_keys)
             _apply_descriptor_fields(tool_entry, title=title, icons=icons, meta=meta)
             tools.append(tool_entry)
         return tools
@@ -1422,8 +1358,9 @@ class MCPHandlerService:
         task_support = self._resolve_tool_task_support(handler, metadata)
         extensions = (context.client_capabilities or {}).get("extensions", {})
         task_capable = isinstance(extensions, dict) and TASKS_EXTENSION in extensions
-        task_enabled = self.task_config is not None and self.task_store is not None
-        if task_support == "required" and not (task_enabled and task_capable):
+        task_store = self.task_store
+        tasks_ready = self.task_config is not None and task_store is not None and task_capable
+        if task_support == "required" and not tasks_ready:
             raise JSONRPCErrorException(
                 JSONRPCError(
                     code=MISSING_REQUIRED_CLIENT_CAPABILITY,
@@ -1431,16 +1368,17 @@ class MCPHandlerService:
                     data={"requiredCapabilities": {"extensions": {TASKS_EXTENSION: {}}}},
                 )
             )
-        if task_support not in {"optional", "required"} or not task_enabled or not task_capable:
+        if (
+            task_support not in {"optional", "required"}
+            or task_store is None
+            or self.task_config is None
+            or not task_capable
+        ):
             return await self._execute_tool_call(tool_name, handler, tool_args, context)
         task_input_before_start = metadata.get("task_input_before_start") or handler_opt.get(
             self.config.opt_keys.task_input_before_start
         )
         if task_input_before_start and context.input_responses is None:
-            return await self._execute_tool_call(tool_name, handler, tool_args, context)
-
-        task_store = self.task_store
-        if task_store is None:  # pragma: no cover - narrowed by task_enabled
             return await self._execute_tool_call(tool_name, handler, tool_args, context)
 
         route_queue = self._resolve_tool_queue(handler, metadata)
@@ -1500,6 +1438,11 @@ class MCPHandlerService:
                 else None
             ),
             log_reporter=self._make_task_log_reporter(context.session_id, owner_id=context.owner_id),
+            log_level_resolver=self._make_task_log_level_resolver(
+                context.session_id,
+                context.owner_id,
+                context.log_level,
+            ),
         )
         background_task = asyncio.create_task(self._run_task(record, tool_name, handler, tool_args, bg_context))
         await task_store.attach_runner(record.task_id, background_task)
@@ -1532,7 +1475,7 @@ class MCPHandlerService:
                 ),
                 "mimeType": _resource_mime_type(handler, self.config),
             }
-            title, icons, meta = self._resolve_descriptor_fields(handler, kind="resource")
+            title, icons, meta = resolve_descriptor_fields(handler, kind="resource", opt_keys=self.config.opt_keys)
             _apply_descriptor_fields(entry, title=title, icons=icons, meta=meta)
             resources.append(entry)
         if self.skill_catalog is not None:
@@ -1575,7 +1518,12 @@ class MCPHandlerService:
                 ),
                 "mimeType": _resource_mime_type(entry.handler, self.config),
             }
-            title, icons, meta = self._resolve_descriptor_fields(entry.handler, kind="resource", template_entry=entry)
+            title, icons, meta = resolve_descriptor_fields(
+                entry.handler,
+                kind="resource",
+                opt_keys=self.config.opt_keys,
+                override_source=entry,
+            )
             _apply_descriptor_fields(template_entry, title=title, icons=icons, meta=meta)
             templates.append(template_entry)
         try:
@@ -1656,41 +1604,7 @@ class MCPHandlerService:
             resource_name, handler = resource_match
             if not should_include_handler(resource_name, _handler_tags(handler), self.config):
                 raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
-
-            try:
-                token = _request_context.set(context)
-                try:
-                    response = await execute_handler_response(
-                        handler,
-                        self.app_ref,
-                        {},
-                        request=context.request,
-                    )
-                finally:
-                    _request_context.reset(token)
-            except MCPToolErrorResult as err:
-                raise JSONRPCErrorException(mcp_error_for_resource_read(err)) from err
-            except Exception as exc:
-                raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
-
-            if isinstance(response.content, MCPInputRequiredResult):
-                return response.content.to_result()
-            try:
-                content = _resource_content_from_response(
-                    uri,
-                    response,
-                    fallback_mime_type=_resource_mime_type(handler, self.config),
-                    explicit_mime_type=_explicit_resource_mime_type(handler, self.config),
-                    handler_media_type=_handler_media_type(handler),
-                    max_blob_bytes=self.config.max_blob_bytes,
-                )
-            except ValueError as exc:
-                raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
-
-            _, _, meta = self._resolve_descriptor_fields(handler, kind="resource")
-            if meta is not None:
-                content["_meta"] = meta
-            return {"contents": [content]}
+            return await self._read_matched_resource(handler, {}, uri, context)
 
         template_entries = self.registry.templates.values() if self.registry is not None else ()
         for entry in template_entries:
@@ -1699,42 +1613,65 @@ class MCPHandlerService:
                 continue
             if not should_include_handler(entry.name, _handler_tags(entry.handler), self.config):
                 continue
-            try:
-                token = _request_context.set(context)
-                try:
-                    response = await execute_handler_response(
-                        entry.handler,
-                        self.app_ref,
-                        dict(extracted),
-                        request=context.request,
-                    )
-                finally:
-                    _request_context.reset(token)
-            except MCPToolErrorResult as err:
-                raise JSONRPCErrorException(mcp_error_for_resource_read(err)) from err
-            except Exception as exc:
-                raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
-
-            if isinstance(response.content, MCPInputRequiredResult):
-                return response.content.to_result()
-            try:
-                content = _resource_content_from_response(
-                    uri,
-                    response,
-                    fallback_mime_type=_resource_mime_type(entry.handler, self.config),
-                    explicit_mime_type=_explicit_resource_mime_type(entry.handler, self.config),
-                    handler_media_type=_handler_media_type(entry.handler),
-                    max_blob_bytes=self.config.max_blob_bytes,
-                )
-            except ValueError as exc:
-                raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
-
-            _, _, meta = self._resolve_descriptor_fields(entry.handler, kind="resource", template_entry=entry)
-            if meta is not None:
-                content["_meta"] = meta
-            return {"contents": [content]}
+            return await self._read_matched_resource(
+                entry.handler,
+                dict(extracted),
+                uri,
+                context,
+                template_entry=entry,
+            )
 
         raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
+
+    async def _read_matched_resource(
+        self,
+        handler: "BaseRouteHandler",
+        path_params: "dict[str, Any]",
+        uri: "str",
+        context: "MCPRequestContext",
+        *,
+        template_entry: "ResourceTemplate | None" = None,
+    ) -> "dict[str, Any]":
+        """Execute one matched resource handler and normalize its MCP resource response."""
+        try:
+            token = _request_context.set(context)
+            try:
+                response = await execute_handler_response(
+                    handler,
+                    self.app_ref,
+                    path_params,
+                    request=context.request,
+                )
+            finally:
+                _request_context.reset(token)
+        except MCPToolErrorResult as err:
+            raise JSONRPCErrorException(mcp_error_for_resource_read(err)) from err
+        except Exception as exc:
+            raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
+
+        if isinstance(response.content, MCPInputRequiredResult):
+            return response.content.to_result()
+        try:
+            content = _resource_content_from_response(
+                uri,
+                response,
+                fallback_mime_type=_resource_mime_type(handler, self.config),
+                explicit_mime_type=_explicit_resource_mime_type(handler, self.config),
+                handler_media_type=_handler_media_type(handler),
+                max_blob_bytes=self.config.max_blob_bytes,
+            )
+        except ValueError as exc:
+            raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
+
+        _, _, meta = resolve_descriptor_fields(
+            handler,
+            kind="resource",
+            opt_keys=self.config.opt_keys,
+            override_source=template_entry,
+        )
+        if meta is not None:
+            content["_meta"] = meta
+        return {"contents": [content]}
 
     async def resources_subscribe(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
         """Subscribe the active `2025-*` MCP session to change notifications for `uri`."""
@@ -1754,8 +1691,7 @@ class MCPHandlerService:
                         message="Subscription authorization requires an HTTP request context",
                     )
                 )
-            outcome = self.config.subscription_authorizer(context.request, uri)
-            allowed = bool(await outcome) if inspect.isawaitable(outcome) else bool(outcome)
+            allowed = await evaluate_subscription_authorizer(self.config.subscription_authorizer, context.request, uri)
             if not allowed:
                 raise JSONRPCErrorException(
                     JSONRPCError(
@@ -2220,39 +2156,20 @@ class MCPHandlerService:
             return self.registry.subscription_manager.get_session_log_level(session_id, default=fallback)
         return current_log_level
 
-    def _resolve_descriptor_fields(
+    def _make_task_log_level_resolver(
         self,
-        handler: "BaseRouteHandler",
-        *,
-        kind: "Kind",
-        template_entry: "ResourceTemplate | None" = None,
-    ) -> "tuple[str | None, list[dict[str, Any]] | None, dict[str, Any] | None]":
-        """Resolve normalized `(title, icons, meta)` descriptors for a tool or resource handler."""
-        fn = get_handler_function(handler)
-        metadata = get_mcp_metadata(handler, kind=kind) or get_mcp_metadata(fn, kind=kind) or {}
-        raw_opt: Any = getattr(handler, "opt", None)
-        handler_opt: Mapping[str, Any] = raw_opt if isinstance(raw_opt, Mapping) else {}
-        opt_keys = self.config.opt_keys
+        session_id: "str | None",
+        owner_id: "str | None",
+        fallback: "str | None",
+    ) -> "Callable[[], Awaitable[str | None]] | None":
+        """Build a live session log-level resolver for background and queued task executions."""
+        if not self.config.logging or session_id is None:
+            return None
 
-        title = (
-            _clean_title(handler_opt.get(opt_keys.for_field("title", kind)))
-            or _clean_title(getattr(template_entry, "title", None))
-            or _clean_title(metadata.get("title"))
-        )
-        icons = (
-            _clean_icons(handler_opt.get(opt_keys.for_field("icons", kind)))
-            or _clean_icons(getattr(template_entry, "icons", None))
-            or _clean_icons(metadata.get("icons"))
-        )
-        merged_meta: dict[str, Any] = {}
-        for candidate in (
-            _clean_meta(metadata.get("meta")),
-            _clean_meta(getattr(template_entry, "meta", None)),
-            _clean_meta(handler_opt.get(opt_keys.for_field("meta", kind))),
-        ):
-            if candidate is not None:
-                merged_meta.update(candidate)
-        return title, icons, (merged_meta or None)
+        async def _resolve() -> "str | None":
+            return await self._resolve_resumed_task_log_level(session_id, owner_id, fallback)
+
+        return _resolve
 
     def _resolved_ui_mime_types(self) -> "list[str]":
         """Resolve advertised SEP-1865 MCP Apps UI MIME types in deterministic order."""
@@ -2276,7 +2193,12 @@ class MCPHandlerService:
             explicit_mime = _explicit_resource_mime_type(handler, self.config)
             handler_mt = _handler_media_type(handler)
             resolved_mime = _resource_mime_type(handler, self.config)
-            _, _, meta = self._resolve_descriptor_fields(handler, kind="resource", template_entry=template_entry)
+            _, _, meta = resolve_descriptor_fields(
+                handler,
+                kind="resource",
+                opt_keys=self.config.opt_keys,
+                override_source=template_entry,
+            )
             is_ui_resource = (
                 uri.lower().startswith("ui://")
                 or "profile=mcp-app" in resolved_mime.lower()

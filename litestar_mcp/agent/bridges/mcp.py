@@ -9,11 +9,7 @@ from litestar import Litestar, Request
 from litestar.handlers import BaseRouteHandler
 
 from litestar_mcp.agent.spec import Agent, AgentGroup
-from litestar_mcp.core.schema_builder import (
-    cached_output_schema_for_handler,
-    cached_schema_for_handler,
-    unwrap_root_object_schema,
-)
+from litestar_mcp.core.schema_builder import cached_schema_for_handler, unwrap_root_object_schema
 from litestar_mcp.core.tools import Tool, current_tool_context
 from litestar_mcp.mcp.client import MCPStreamableHTTPClient
 from litestar_mcp.mcp.config import MCPConfig
@@ -28,9 +24,16 @@ from litestar_mcp.mcp.content import (
 from litestar_mcp.mcp.executor import MCPToolErrorResult, blank_http_scope, execute_tool
 from litestar_mcp.mcp.plugin import LitestarMCP
 from litestar_mcp.mcp.prompt_controller import PromptController
-from litestar_mcp.mcp.registry import _clean_icons, _clean_meta, _clean_title
+from litestar_mcp.mcp.registry import (
+    resolve_descriptor_fields,
+    resolve_tool_annotations,
+    resolve_tool_output_schema,
+)
 from litestar_mcp.mcp.skill_controller import SkillController
 from litestar_mcp.utils import (
+    clean_icons,
+    clean_meta,
+    clean_title,
     get_handler_function,
     get_mcp_metadata,
     render_description,
@@ -232,9 +235,9 @@ def _extract_remote_tool_spec(
         schema,
         annotations,
         output_schema,
-        _clean_title(raw_title),
-        _clean_icons(raw_icons),
-        _clean_meta(raw_meta),
+        clean_title(raw_title),
+        clean_icons(raw_icons),
+        clean_meta(raw_meta),
     )
 
 
@@ -357,118 +360,6 @@ def _resolve_handler_tags(handler: Any) -> set[str]:
     return set(cast("Iterable[str]", getattr(handler, "tags", None) or ()))
 
 
-def _infer_http_method_annotations(handler: BaseRouteHandler) -> dict[str, Any]:
-    """Infer default MCP `ToolAnnotations` hints from a route handler's HTTP methods."""
-    raw_methods: Any = getattr(handler, "http_methods", None)
-    if not raw_methods:
-        single: Any = getattr(handler, "http_method", None)
-        raw_methods = {single} if single else set()
-    iterable = raw_methods if isinstance(raw_methods, (set, frozenset, list, tuple)) else (raw_methods,)
-    methods = {val.upper() for method in iterable if isinstance((val := getattr(method, "value", method)), str) and val}
-    inferred: dict[str, Any] = {}
-    if not methods:
-        return inferred
-    if methods <= {"GET", "HEAD"}:
-        inferred = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True}
-    elif methods == {"PUT"}:
-        inferred = {"readOnlyHint": False, "idempotentHint": True}
-    elif methods == {"DELETE"}:
-        inferred = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True}
-    elif methods <= {"POST", "PATCH"}:
-        inferred = {"readOnlyHint": False}
-    return inferred
-
-
-def _resolve_local_annotations(
-    handler: BaseRouteHandler,
-    metadata: Mapping[str, Any],
-    config: MCPConfig,
-) -> dict[str, Any]:
-    """Resolve effective MCP `ToolAnnotations` matching `MCPHandlerService._resolve_tool_annotations`."""
-    raw_opt: Any = getattr(handler, "opt", None)
-    handler_opt: Mapping[str, Any] = raw_opt if isinstance(raw_opt, Mapping) else {}
-    opt_keys = config.opt_keys
-    annotations: dict[str, Any] = {}
-    if config.infer_http_method_annotations and not handler_opt.get("_mcp_synthesized_tool"):
-        annotations.update(_infer_http_method_annotations(handler))
-
-    meta_annotations: Any = metadata.get("annotations")
-    if isinstance(meta_annotations, Mapping):
-        annotations.update(meta_annotations)
-
-    opt_annotations: Any = handler_opt.get(opt_keys.annotations)
-    if isinstance(opt_annotations, Mapping):
-        annotations.update(opt_annotations)
-
-    if metadata.get("read_only") is not None:
-        annotations["readOnlyHint"] = bool(metadata["read_only"])
-
-    opt_read_only: Any = handler_opt.get(opt_keys.read_only)
-    if opt_read_only is not None:
-        annotations["readOnlyHint"] = bool(opt_read_only)
-
-    if "scopes" in metadata and "scopes" not in annotations:
-        annotations["scopes"] = list(metadata["scopes"])
-    return annotations
-
-
-def _resolve_local_output_schema(
-    handler: BaseRouteHandler,
-    metadata: Mapping[str, Any],
-    config: MCPConfig,
-) -> dict[str, Any] | None:
-    """Resolve effective MCP `outputSchema` matching `MCPHandlerService._resolve_tool_output_schema`."""
-    raw_opt: Any = getattr(handler, "opt", None)
-    handler_opt: Mapping[str, Any] = raw_opt if isinstance(raw_opt, Mapping) else {}
-    opt_key = config.opt_keys.output_schema
-    if opt_key in handler_opt and handler_opt[opt_key] is not None:
-        policy: Any = handler_opt[opt_key]
-    elif "output_schema" in metadata and metadata["output_schema"] is not None:
-        policy = metadata["output_schema"]
-    else:
-        policy = config.auto_output_schema
-
-    if policy is False or policy is None:
-        return None
-    if policy is True:
-        schema = cached_output_schema_for_handler(handler)
-        return copy.deepcopy(schema) if schema is not None else None
-    if isinstance(policy, Mapping):
-        return unwrap_root_object_schema(copy.deepcopy(dict(policy)))
-    msg = f"Invalid output_schema policy of type {type(policy).__name__}"
-    raise TypeError(msg)
-
-
-def _resolve_local_descriptors(
-    handler: BaseRouteHandler,
-    metadata: Mapping[str, Any],
-    opt_keys: "MCPOptKeys",
-    fallback_tool: Tool | None,
-) -> tuple[str | None, list[dict[str, Any]] | None, dict[str, Any] | None]:
-    """Resolve normalized `(title, icons, meta)` descriptors for a local `LitestarMCP` tool handler."""
-    raw_opt: Any = getattr(handler, "opt", None)
-    handler_opt: Mapping[str, Any] = raw_opt if isinstance(raw_opt, Mapping) else {}
-    title = (
-        _clean_title(handler_opt.get(opt_keys.for_field("title", "tool")))
-        or _clean_title(metadata.get("title"))
-        or (_clean_title(fallback_tool.title) if fallback_tool is not None else None)
-    )
-    icons = (
-        _clean_icons(handler_opt.get(opt_keys.for_field("icons", "tool")))
-        or _clean_icons(metadata.get("icons"))
-        or (_clean_icons(fallback_tool.icons) if fallback_tool is not None else None)
-    )
-    merged_meta: dict[str, Any] = {}
-    for candidate in (
-        _clean_meta(fallback_tool.meta) if fallback_tool is not None else None,
-        _clean_meta(metadata.get("meta")),
-        _clean_meta(handler_opt.get(opt_keys.for_field("meta", "tool"))),
-    ):
-        if candidate is not None:
-            merged_meta.update(candidate)
-    return title, icons, (merged_meta or None)
-
-
 def _build_execution_request(app: Litestar, ctx: "ToolContext | None") -> Request[Any, Any, Any] | None:
     """Build a synthetic Litestar `Request` carrying `ToolContext` identity and request-scoped DI."""
     if ctx is None:
@@ -564,12 +455,18 @@ def _convert_local_handler(
     opt_keys = client.config.opt_keys
     metadata = get_mcp_metadata(handler, kind="tool") or get_mcp_metadata(handler_fn, kind="tool") or {}
     fallback_tool = skill_tools_by_name.get(tool_name)
-    title, icons, meta = _resolve_local_descriptors(handler, metadata, opt_keys, fallback_tool)
+    title, icons, meta = resolve_descriptor_fields(
+        handler,
+        kind="tool",
+        opt_keys=opt_keys,
+        metadata=metadata,
+        fallback_source=fallback_tool,
+    )
     if not _is_model_visible(meta, include_app_only=include_app_only):
         return None
 
-    annotations = _resolve_local_annotations(handler, metadata, client.config)
-    output_schema = _resolve_local_output_schema(handler, metadata, client.config)
+    annotations = resolve_tool_annotations(handler, metadata, client.config)
+    output_schema = resolve_tool_output_schema(handler, metadata, client.config)
     description = render_description(handler, handler_fn, kind="tool", fallback_name=tool_name, opt_keys=opt_keys)
 
     if app is not None:

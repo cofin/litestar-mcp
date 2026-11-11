@@ -182,19 +182,22 @@ async def test_registry_publish_notification_owner_and_session(
         event = await asyncio.wait_for(s1_alice_stream.__anext__(), timeout=0.5)
         assert event["params"] == {"level": "error", "data": "ok"}
     else:
-        assert manager._streams[s1_alice_id].queue.empty()
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(s1_alice_stream.__anext__(), timeout=0.02)
 
     if expect_s2_alice:
         event = await asyncio.wait_for(s2_alice_stream.__anext__(), timeout=0.5)
         assert event["params"] == {"level": "error", "data": "ok"}
     else:
-        assert manager._streams[s2_alice_id].queue.empty()
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(s2_alice_stream.__anext__(), timeout=0.02)
 
     if expect_s1_bob:
         event = await asyncio.wait_for(s1_bob_stream.__anext__(), timeout=0.5)
         assert event["params"] == {"level": "error", "data": "ok"}
     else:
-        assert manager._streams[s1_bob_id].queue.empty()
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(s1_bob_stream.__anext__(), timeout=0.02)
 
     await manager.disconnect(s1_alice_id)
     await manager.disconnect(s2_alice_id)

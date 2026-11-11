@@ -282,7 +282,7 @@ async def test_progress_token_without_reports_still_emits_one_final_result() -> 
 
 async def _wait_for_streams(plugin: LitestarMCP) -> None:
     for _ in range(400):
-        if plugin.registry.has_subscription_manager and plugin.registry.subscription_manager._streams:
+        if plugin.registry.has_subscription_manager and plugin.registry.subscription_manager.active_stream_count > 0:
             return
         await asyncio.sleep(0.005)
     raise asyncio.TimeoutError

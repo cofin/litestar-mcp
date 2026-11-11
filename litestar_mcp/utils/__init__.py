@@ -595,7 +595,7 @@ def extract_description_sources(
     opt_keys: "MCPOptKeys | None" = None,
 ) -> "DescriptionSources":
     """Resolve every description field for a handler."""
-    keys = opt_keys if opt_keys is not None else _default_opt_keys()
+    keys = opt_keys if opt_keys is not None else MCPOptKeys()
     description = _read_field(handler, fn, "description", kind, keys)
     if description is None:
         handler_desc = _clean(getattr(handler, "description", None)) or _clean(getattr(handler, "summary", None))
@@ -995,6 +995,27 @@ def _validate_tool_queue(queue: "object") -> "str | bool":
     return queue
 
 
+def clean_title(value: "Any") -> "str | None":
+    """Return stripped string title when non-empty, otherwise ``None``."""
+    return _clean(value)
+
+
+def clean_icons(value: "Any") -> "list[dict[str, Any]] | None":
+    """Return deep-copied mapping entries from an icon sequence, or ``None``."""
+    if not value or isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        return None
+    copied = [copy.deepcopy(dict(item)) for item in value if isinstance(item, Mapping)]
+    return copied or None
+
+
+def clean_meta(value: "Any") -> "dict[str, Any] | None":
+    """Return a deep-copied descriptor ``_meta`` mapping when non-empty, or ``None``."""
+    if not value or not isinstance(value, Mapping):
+        return None
+    copied = copy.deepcopy(dict(value))
+    return copied or None
+
+
 def _apply_descriptor_metadata(
     metadata: "dict[str, Any]",
     *,
@@ -1002,13 +1023,13 @@ def _apply_descriptor_metadata(
     icons: "Sequence[dict[str, Any]] | None" = None,
     meta: "Mapping[str, Any] | None" = None,
 ) -> "None":
-    cleaned_title = _clean(title)
+    cleaned_title = clean_title(title)
     if cleaned_title is not None:
         metadata["title"] = cleaned_title
-    cleaned_icons = _clean_icons(icons)
+    cleaned_icons = clean_icons(icons)
     if cleaned_icons is not None:
         metadata["icons"] = cleaned_icons
-    cleaned_meta = _clean_meta(meta)
+    cleaned_meta = clean_meta(meta)
     if cleaned_meta is not None:
         metadata["meta"] = cleaned_meta
 
@@ -1017,20 +1038,6 @@ def _apply_non_none_fields(metadata: "dict[str, Any]", fields: "Mapping[str, Any
     for key, val in fields.items():
         if val is not None:
             metadata[key] = val
-
-
-def _clean_icons(value: "Any") -> "list[dict[str, Any]] | None":
-    if not value or isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
-        return None
-    copied = [copy.deepcopy(dict(item)) for item in value if isinstance(item, Mapping)]
-    return copied or None
-
-
-def _clean_meta(value: "Any") -> "dict[str, Any] | None":
-    if not value or not isinstance(value, Mapping):
-        return None
-    copied = copy.deepcopy(dict(value))
-    return copied or None
 
 
 def _external_tool_metadata(obj: "Any") -> "dict[str, Any] | None":
@@ -1049,11 +1056,6 @@ def _external_tool_metadata(obj: "Any") -> "dict[str, Any] | None":
             normalized["task_support"] = normalize_task_support(raw_task)
         return normalized
     return None
-
-
-def _default_opt_keys() -> "MCPOptKeys":
-    """Return a default `MCPOptKeys` without creating an import cycle."""
-    return MCPOptKeys()
 
 
 def _read_field(
@@ -1088,6 +1090,9 @@ __all__ = (
     "DescriptionSources",
     "MetadataRegistry",
     "classify_resource_uri",
+    "clean_icons",
+    "clean_meta",
+    "clean_title",
     "expand_template",
     "extract_description_sources",
     "get_all_mcp_metadata",

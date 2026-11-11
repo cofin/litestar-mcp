@@ -82,12 +82,10 @@ class TestLitestarMCP:
         assert "io.modelcontextprotocol/serverInfo" in result["result"]["_meta"]
         assert "capabilities" in result["result"]
 
-        # tools/list
         result = _rpc(client, "tools/list")
         assert len(result["result"]["tools"]) == 1
         assert result["result"]["tools"][0]["name"] == "list_users"
 
-        # resources/list (openapi is always present)
         result = _rpc(client, "resources/list")
         assert len(result["result"]["resources"]) == 1
         assert result["result"]["resources"][0]["name"] == "openapi"
@@ -213,18 +211,22 @@ class TestLitestarMCP:
         assert parsed["timestamp"] == "2024-01-01"
         assert parsed["version"] == "1.0"
 
-    def test_plugin_coverage_gaps(self) -> "None":
-        plugin = LitestarMCP()
+    def test_nested_router_tool_discovery(self) -> "None":
+        from litestar import Router
 
         @get("/nested-tool", opt={"mcp_tool": "nested_tool"})
         async def nested_tool() -> "dict[str, Any]":
             return {"result": "nested"}
 
-        class MockContainer:
-            route_handlers = [nested_tool]
-
-        plugin._discover_mcp_routes([MockContainer()])
+        router = Router(path="/nested", route_handlers=[nested_tool])
+        plugin = LitestarMCP()
+        app = Litestar(plugins=[plugin], route_handlers=[router])
         assert "nested_tool" in plugin.discovered_tools
+        with TestClient(app=app) as client:
+            listed = _rpc(client, "tools/list")
+            assert any(tool["name"] == "nested_tool" for tool in listed["result"]["tools"])
+            called = _rpc(client, "tools/call", {"name": "nested_tool", "arguments": {}})
+            assert json.loads(called["result"]["content"][0]["text"]) == {"result": "nested"}
 
     def test_automatic_schema_generation(self) -> "None":
         @get("/users", opt={"mcp_tool": "list_users"})
@@ -267,12 +269,10 @@ class TestLitestarMCP:
 
         client = TestClient(app=app)
 
-        # Tool execution via JSON-RPC
         result = _rpc(client, "tools/call", {"name": "decorator_tool", "arguments": {"message": "test"}})
         parsed = json.loads(result["result"]["content"][0]["text"])
         assert parsed["message"] == "Processed: test"
 
-        # Resource read via JSON-RPC
         result = _rpc(client, "resources/read", {"uri": "litestar://decorator_resource"})
         contents = result["result"]["contents"]
         parsed = json.loads(contents[0]["text"])
@@ -458,9 +458,13 @@ def test_receive_route_plugin_captures_app_and_ownership_layers_before_startup()
     plugin = LitestarMCP(MCPConfig(skill_controllers=[BootSkills]))
     app = Litestar(route_handlers=[hello], plugins=[plugin])
 
-    assert plugin._app is app
     assert "hello" in plugin.discovered_tools
     assert "ping_skill" in plugin.discovered_tools
     assert "boot/guide" in plugin.discovered_prompts
     assert app in plugin.discovered_tools["hello"].ownership_layers
     assert app in plugin.discovered_tools["ping_skill"].ownership_layers
+    with TestClient(app=app) as client:
+        tools = _rpc(client, "tools/list")["result"]["tools"]
+        prompts = _rpc(client, "prompts/list")["result"]["prompts"]
+    assert {"hello", "ping_skill"} <= {tool["name"] for tool in tools}
+    assert any(prompt["name"] == "boot/guide" for prompt in prompts)

@@ -1,6 +1,5 @@
 """Class-based controller for grouping MCP prompts with shared instructions and guards."""
 
-import copy
 import inspect
 from typing import TYPE_CHECKING, Any, cast
 
@@ -10,7 +9,7 @@ from litestar.handlers import HTTPRouteHandler, post
 from litestar_mcp.core._typing import DISHKA_INSTALLED, dishka_inject
 from litestar_mcp.core.tools import has_dishka_parameters
 from litestar_mcp.mcp.executor import require_internal_dispatch
-from litestar_mcp.utils import set_mcp_metadata
+from litestar_mcp.utils import clean_icons, clean_meta, clean_title, set_mcp_metadata
 from litestar_mcp.utils.handler_signature import normalize_synthesized_handler_signature
 
 if TYPE_CHECKING:
@@ -41,9 +40,9 @@ def prompt(
 
     def decorator(fn: "Callable[..., Any]") -> HTTPRouteHandler:
         prompt_name = name or fn.__name__
-        cleaned_title = title.strip() if isinstance(title, str) and title.strip() else None
-        cleaned_icons = [copy.deepcopy(dict(item)) for item in icons] if icons else None
-        cleaned_meta = copy.deepcopy(dict(meta)) if meta else None
+        cleaned_title = clean_title(title)
+        cleaned_icons = clean_icons(icons)
+        cleaned_meta = clean_meta(meta)
         metadata: dict[str, Any] = {
             "type": "prompt",
             "name": prompt_name,

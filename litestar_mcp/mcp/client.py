@@ -1,6 +1,5 @@
 """Async Streamable HTTP client and request-header helpers for Litestar MCP endpoints."""
 
-import base64
 import contextlib
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -20,6 +19,7 @@ from litestar_mcp.mcp.routes import (
     MCP_PROTOCOL_VERSION_HEADER,
     MCP_SESSION_ID_HEADER,
     SUPPORTED_PROTOCOL_VERSIONS,
+    encode_mcp_header_value,
 )
 
 if TYPE_CHECKING:
@@ -33,20 +33,6 @@ __all__ = (
 )
 
 _DEFAULT_CLIENT_INFO = {"name": "litestar-mcp-client", "version": __version__}
-_MIN_VISIBLE_ASCII = 0x20
-_MAX_VISIBLE_ASCII = 0x7E
-
-
-def _encode_header_value(value: str) -> str:
-    """Encode header value with the MCP `=?base64?...` sentinel when non-visible-ASCII or colliding."""
-    if (
-        value
-        and all(_MIN_VISIBLE_ASCII <= ord(char) <= _MAX_VISIBLE_ASCII for char in value)
-        and not value.startswith("=?base64?")
-    ):
-        return value
-    encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
-    return f"=?base64?{encoded}?="
 
 
 def prepare_mcp_request(
@@ -97,7 +83,7 @@ def mcp_request_headers(
     if isinstance(params, dict):
         name_field = MCP_NAME_FIELDS.get(method)
         if name_field is not None and isinstance(params.get(name_field), str):
-            headers[MCP_NAME_HEADER] = _encode_header_value(params[name_field])
+            headers[MCP_NAME_HEADER] = encode_mcp_header_value(params[name_field])
     return headers
 
 

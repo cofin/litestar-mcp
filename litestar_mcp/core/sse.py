@@ -110,6 +110,11 @@ class SubscriptionManager:
         """Return the configured `ChannelsPlugin` broker instance, if any."""
         return self._channels
 
+    @property
+    def active_stream_count(self) -> "int":
+        """Return the number of currently registered subscription streams."""
+        return len(self._streams)
+
     def set_channels(self, channels: "Any | None") -> "None":
         """Configure or clear the `ChannelsPlugin` broker used for cross-worker fan-out."""
         self._channels = channels
@@ -163,7 +168,6 @@ class SubscriptionManager:
                 raise StreamLimitExceeded(msg)
             stream_id = str(uuid4())
             accepted = self._normalize_filter(notifications)
-            send_acknowledgement = True
             state = _Subscription(
                 stream_id=stream_id,
                 subscription_id=subscription_id,
@@ -171,8 +175,8 @@ class SubscriptionManager:
                 queue=asyncio.Queue(maxsize=self._queue_capacity),
                 owner_id=owner_id,
                 include_subscription_meta=True,
-                send_acknowledgement=send_acknowledgement,
-                is_session_stream=not send_acknowledgement,
+                send_acknowledgement=True,
+                is_session_stream=False,
                 authorize=authorize,
             )
             self._streams[stream_id] = state
@@ -197,7 +201,6 @@ class SubscriptionManager:
             base: dict[str, Any] = dict.fromkeys(_METHOD_FILTERS.values(), True)
             merged = {**base, **notifications} if notifications is not None else base
             accepted = self._normalize_filter(merged)
-            send_acknowledgement = False
             state = _Subscription(
                 stream_id=stream_id,
                 subscription_id=None,
@@ -206,8 +209,8 @@ class SubscriptionManager:
                 session_id=session_id,
                 owner_id=owner_id,
                 include_subscription_meta=False,
-                send_acknowledgement=send_acknowledgement,
-                is_session_stream=not send_acknowledgement,
+                send_acknowledgement=False,
+                is_session_stream=True,
                 authorize=authorize,
             )
             self._streams[stream_id] = state

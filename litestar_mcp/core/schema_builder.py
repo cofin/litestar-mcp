@@ -241,11 +241,7 @@ def type_to_json_schema(annotation: "Any") -> "dict[str, Any]":
     inner, metas = _unwrap_outer_annotated(annotation)
     if inner is not annotation:
         schema = type_to_json_schema(inner)
-        for meta in metas:
-            if isinstance(meta, msgspec.Meta):
-                _merge_msgspec_meta(schema, meta)
-            elif isinstance(meta, ParameterKwarg):
-                _merge_parameter_meta(schema, meta)
+        _apply_annotation_metas(schema, metas)
         return schema
 
     if isinstance(annotation, str):
@@ -602,7 +598,7 @@ _META_FIELD_MAP: "tuple[tuple[str, str], ...]" = (
 )
 
 
-def _merge_parameter_meta(schema: "dict[str, Any]", meta: "Any") -> "None":
+def _merge_meta_fields(schema: "dict[str, Any]", meta: "Any", extra_attr: "str") -> "None":
     """Copy non-None fields from `meta` into `schema` using JSON Schema names."""
     for attr, key in _META_FIELD_MAP:
         value = getattr(meta, attr, None)
@@ -612,33 +608,18 @@ def _merge_parameter_meta(schema: "dict[str, Any]", meta: "Any") -> "None":
             schema[key] = [value]
         else:
             schema[key] = value
-    schema_extra = getattr(meta, "schema_extra", None)
-    if isinstance(schema_extra, dict):
-        schema.update(schema_extra)
-
-
-def _merge_msgspec_meta(schema: "dict[str, Any]", meta: "msgspec.Meta") -> "None":
-    """Copy non-None fields from `msgspec.Meta` into `schema` using JSON Schema names."""
-    for attr, key in _META_FIELD_MAP:
-        value = getattr(meta, attr, None)
-        if value is None:
-            continue
-        if key == "examples" and not isinstance(value, list):
-            schema[key] = [value]
-        else:
-            schema[key] = value
-    extra_json_schema = meta.extra_json_schema
-    if isinstance(extra_json_schema, dict):
-        schema.update(extra_json_schema)
+    extra_schema = getattr(meta, extra_attr, None)
+    if isinstance(extra_schema, dict):
+        schema.update(extra_schema)
 
 
 def _apply_annotation_metas(schema: "dict[str, Any]", metas: "list[Any]") -> "None":
     """Apply `ParameterKwarg` and `msgspec.Meta` metadata objects to `schema`."""
     for meta in metas:
         if isinstance(meta, ParameterKwarg):
-            _merge_parameter_meta(schema, meta)
+            _merge_meta_fields(schema, meta, "schema_extra")
         elif isinstance(meta, msgspec.Meta):
-            _merge_msgspec_meta(schema, meta)
+            _merge_meta_fields(schema, meta, "extra_json_schema")
 
 
 def _unwrap_outer_annotated(annotation: "Any") -> "tuple[Any, list[Any]]":

@@ -15,13 +15,7 @@ from litestar_mcp.core.sse import SubscriptionManager
 from litestar_mcp.mcp.cli import mcp_group
 from litestar_mcp.mcp.config import MCPConfig, MCPSkillsConfig, MCPTaskConfig
 from litestar_mcp.mcp.prompt_controller import PromptController
-from litestar_mcp.mcp.registry import (
-    PromptRegistration,
-    Registry,
-    _clean_icons,
-    _clean_meta,
-    _clean_title,
-)
+from litestar_mcp.mcp.registry import PromptRegistration, Registry
 from litestar_mcp.mcp.routes import MCPController
 from litestar_mcp.mcp.service import MCPHandlerService
 from litestar_mcp.mcp.skill_controller import SkillController
@@ -30,6 +24,9 @@ from litestar_mcp.mcp.tasks import MCPTaskRuntime, MCPTaskStore, TaskRecord
 from litestar_mcp.mcp.tool_handlers import build_tool_route_handler
 from litestar_mcp.utils import (
     classify_resource_uri,
+    clean_icons,
+    clean_meta,
+    clean_title,
     get_all_mcp_metadata,
     get_handler_function,
     get_mcp_metadata,
@@ -437,10 +434,10 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin, ReceiveRoutePlugin):
                 }
         elif isinstance(fn, BaseRouteHandler) and isinstance(fn.opt, dict) and opt_keys.prompt_meta in fn.opt:
             merged_meta: dict[str, Any] = {}
-            dec_meta = _clean_meta(metadata.get("meta"))
+            dec_meta = clean_meta(metadata.get("meta"))
             if dec_meta is not None:
                 merged_meta.update(dec_meta)
-            opt_meta = _clean_meta(fn.opt.get(opt_keys.prompt_meta))
+            opt_meta = clean_meta(fn.opt.get(opt_keys.prompt_meta))
             if opt_meta is not None:
                 merged_meta.update(opt_meta)
             if merged_meta:
@@ -530,17 +527,17 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin, ReceiveRoutePlugin):
         handler_opt = handler.opt or {}
         opt_keys = self._config.opt_keys
 
-        title = _clean_title(handler_opt.get(opt_keys.for_field("title", kind))) or _clean_title(
+        title = clean_title(handler_opt.get(opt_keys.for_field("title", kind))) or clean_title(
             effective_meta.get("title")
         )
-        icons = _clean_icons(handler_opt.get(opt_keys.for_field("icons", kind))) or _clean_icons(
+        icons = clean_icons(handler_opt.get(opt_keys.for_field("icons", kind))) or clean_icons(
             effective_meta.get("icons")
         )
         merged_meta: dict[str, Any] = {}
-        dec_meta = _clean_meta(effective_meta.get("meta"))
+        dec_meta = clean_meta(effective_meta.get("meta"))
         if dec_meta is not None:
             merged_meta.update(dec_meta)
-        opt_meta = _clean_meta(handler_opt.get(opt_keys.for_field("meta", kind)))
+        opt_meta = clean_meta(handler_opt.get(opt_keys.for_field("meta", kind)))
         if opt_meta is not None:
             merged_meta.update(opt_meta)
         return title, icons, (merged_meta or None)

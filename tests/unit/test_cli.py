@@ -126,7 +126,6 @@ def test_mcp_stdio_passes_app_and_options(
 def test_mcp_stdio_has_no_remote_options(
     cli_runner: CliRunner,
     make_env: Callable[..., LitestarEnv],
-    captured_stdio: dict[str, Any],
     option: str,
 ) -> None:
     result = cli_runner.invoke(mcp_group, ["stdio", option, "x"], obj=make_env())

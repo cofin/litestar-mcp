@@ -19,6 +19,12 @@ from litestar_mcp import SUPPORTED_PROTOCOL_VERSIONS, LitestarMCP, MCPConfig, MC
 from litestar_mcp.core.jsonrpc import INVALID_PARAMS, JSONRPCErrorException
 from litestar_mcp.core.serialization import from_json
 from litestar_mcp.mcp.client import MCPStreamableHTTPClient
+from litestar_mcp.mcp.routes import (
+    MCP_METHOD_HEADER,
+    MCP_PROTOCOL_VERSION,
+    MCP_PROTOCOL_VERSION_HEADER,
+    UNSUPPORTED_PROTOCOL_VERSION,
+)
 from litestar_mcp.mcp.service import (
     SESSION_STORE_NAME,
     MCPHandlerService,
@@ -76,7 +82,7 @@ async def _drain_remaining_sse_payloads(lines: "AsyncIterator[str]") -> list[dic
 
 async def _wait_for_active_stream(plugin: LitestarMCP) -> None:
     for _ in range(400):
-        if plugin.registry.subscription_manager._streams:
+        if plugin.registry.subscription_manager.active_stream_count > 0:
             return
         await asyncio.sleep(0.005)
     raise asyncio.TimeoutError
@@ -1283,3 +1289,88 @@ async def test_session_set_level_store_sync_and_get_sse() -> None:
         "params": {"level": "critical", "data": {"alert": True}, "logger": "audit"},
     }
     assert after_log["method"] == "notifications/tools/list_changed"
+
+
+def test_bare_request_with_unsupported_protocol_version_returns_32022() -> None:
+    """POST /mcp with an unsupported MCP-Protocol-Version header rejects with -32022 even without 2026 _meta."""
+    app = _app()
+    with TestClient(app=app) as client:
+        response = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+            headers={"MCP-Protocol-Version": "2024-11-05"},
+        )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == UNSUPPORTED_PROTOCOL_VERSION
+
+
+@pytest.mark.anyio
+async def test_raising_subscription_authorizer_fails_closed() -> None:
+    """Raising subscription_authorizer fails closed with INVALID_PARAMS on subscriptions/listen and resources/subscribe."""
+
+    def _exploding_authorizer(_request: Any, _uri: str) -> bool:
+        msg = "authorizer exploded"
+        raise RuntimeError(msg)
+
+    @get("/items", mcp_resource="items_res", sync_to_thread=False)
+    def items_res() -> dict[str, str]:
+        return {"ok": "yes"}
+
+    config = MCPConfig(subscription_authorizer=_exploding_authorizer)
+    app = Litestar(route_handlers=[items_res], plugins=[LitestarMCP(config)])
+
+    async with AsyncTestClient(app=app) as client:
+        modern_payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "subscriptions/listen",
+            "params": {
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION,
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                    "io.modelcontextprotocol/clientInfo": {"name": "client", "version": "1.0"},
+                },
+                "notifications": {"resourceSubscriptions": ["litestar://items_res"]},
+            },
+        }
+        listen_resp = await client.post(
+            "/mcp",
+            json=modern_payload,
+            headers={
+                "Accept": "application/json, text/event-stream",
+                MCP_PROTOCOL_VERSION_HEADER: MCP_PROTOCOL_VERSION,
+                MCP_METHOD_HEADER: "subscriptions/listen",
+            },
+        )
+        assert listen_resp.status_code == 400
+        assert listen_resp.json()["error"]["code"] == -32602
+
+        init_resp = await client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": {"name": "c", "version": "1"},
+                },
+            },
+            headers={"MCP-Protocol-Version": "2025-11-25"},
+        )
+        assert init_resp.status_code == 200
+        session_id = init_resp.headers["Mcp-Session-Id"]
+
+        sub_resp = await client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "resources/subscribe",
+                "params": {"uri": "litestar://items_res"},
+            },
+            headers={"MCP-Protocol-Version": "2025-11-25", "Mcp-Session-Id": session_id},
+        )
+        assert sub_resp.status_code == 400
+        assert sub_resp.json()["error"]["code"] == -32602

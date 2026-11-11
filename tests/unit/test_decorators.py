@@ -31,9 +31,6 @@ def test_mcp_tool_decorator_storage() -> "None":
     assert metadata is not None
     assert metadata["type"] == "tool"
     assert metadata["name"] == "test_tool"
-    # Ensure no attribute mutation on the function itself if possible,
-    # or at least that it's correctly retrieved.
-    # Note: Litestar handlers might be tricky, but we want a central way to get this.
 
 
 def test_mcp_resource_decorator_storage() -> "None":

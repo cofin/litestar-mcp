@@ -1,9 +1,4 @@
-"""End-to-end JSON-RPC roundtrip verifying rename fidelity through the pipeline.
-
-Red-phase: until the executor delegates to :meth:`HTTPRouteHandler.to_response`,
-the tool output for a ``Struct(rename="camel")`` return value will still emit
-snake_case keys (the current ``schema_dump`` path).
-"""
+"""End-to-end JSON-RPC roundtrip verifying rename fidelity and conformance features."""
 
 import asyncio
 import json
@@ -84,7 +79,7 @@ async def _verify_interop_session_features(
     events: list[dict[str, Any]],
 ) -> None:
     """Exercise resource subscriptions, log filtering, background tasks, UI widgets, and structured output."""
-    await _wait_until(lambda: bool(conformance_server.plugin._subscription_manager._streams))
+    await _wait_until(lambda: conformance_server.plugin.registry.subscription_manager.active_stream_count > 0)
 
     await client.subscribe_resource("ui://conformance/widget.html")
     await conformance_server.plugin._registry.notify_resource_updated("ui://conformance/widget.html")
@@ -288,7 +283,7 @@ async def test_interop_skills_prompts_client(tmp_path: Path, protocol_version: s
                 events: list[dict[str, Any]] = []
                 stream_task = asyncio.create_task(_collect_sse_events(client, events))
                 try:
-                    await _wait_until(lambda: bool(plugin._subscription_manager._streams))
+                    await _wait_until(lambda: plugin.registry.subscription_manager.active_stream_count > 0)
                     assert plugin.skill_catalog is not None
                     await plugin.skill_catalog.notify_list_changed()
                     await _wait_until(

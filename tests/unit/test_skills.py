@@ -153,9 +153,6 @@ def test_directory_read_lists_direct_children(tmp_path: "Path") -> "None":
     notes_entries = {entry["uri"]: entry for entry in notes_listing["resources"]}
     assert "skill://alpha/notes/todo.md" in notes_entries
 
-    # resources/directory/read is deliberately absent from _CACHEABLE_METHODS: the spec
-    # only requires cache fields on list and get, so a directory listing must not carry
-    # them even though a sibling list method (skills/list) does.
     assert "ttlMs" not in root_listing
     assert "cacheScope" not in root_listing
     assert skills_list_result["ttlMs"] == 0

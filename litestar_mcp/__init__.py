@@ -58,6 +58,10 @@ from litestar_mcp.mcp.skills import (
 from litestar_mcp.mcp.stdio import MCPStdioContext
 from litestar_mcp.utils import mcp_prompt, mcp_resource, mcp_tool, validate_tool_descriptions
 
+if TYPE_CHECKING:
+    from litestar_mcp.a2a import A2AConfig as A2AConfig
+    from litestar_mcp.a2a import LitestarA2A as LitestarA2A
+
 __all__ = (
     "MCP",
     "SUPPORTED_PROTOCOL_VERSIONS",
@@ -98,10 +102,6 @@ __all__ = (
     "tool",
     "validate_tool_descriptions",
 )
-
-if TYPE_CHECKING:
-    from litestar_mcp.a2a import A2AConfig as A2AConfig
-    from litestar_mcp.a2a import LitestarA2A as LitestarA2A
 
 _A2A_EXPORTS = frozenset({"A2AConfig", "LitestarA2A"})
 

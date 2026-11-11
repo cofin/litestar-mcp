@@ -3,14 +3,18 @@
 import copy
 import inspect
 import logging
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from litestar.handlers import BaseRouteHandler  # noqa: TC002
 
+from litestar_mcp.core.schema_builder import cached_output_schema_for_handler, unwrap_root_object_schema
 from litestar_mcp.mcp.content import PromptMessage
 from litestar_mcp.utils import (
+    clean_icons,
+    clean_meta,
+    clean_title,
     get_handler_function,
     get_mcp_metadata,
     parse_template,
@@ -23,8 +27,13 @@ from litestar_mcp.utils.handler_signature import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable
+
+    from litestar import Request
+
     from litestar_mcp.core.sse import SubscriptionManager
-    from litestar_mcp.mcp.config import MCPConfig
+    from litestar_mcp.mcp.config import MCPConfig, MCPOptKeys
+    from litestar_mcp.utils import Kind
 
 _logger = logging.getLogger(__name__)
 
@@ -35,28 +44,6 @@ _PROMPT_CONTENT_REQUIRED_KEYS: "dict[str, frozenset[str]]" = {
     "resource_link": frozenset({"uri", "name"}),
     "resource": frozenset({"resource"}),
 }
-
-
-def _clean_title(value: "Any") -> "str | None":
-    if isinstance(value, str):
-        stripped = value.strip()
-        if stripped:
-            return stripped
-    return None
-
-
-def _clean_icons(value: "Any") -> "list[dict[str, Any]] | None":
-    if not value or isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
-        return None
-    copied = [copy.deepcopy(dict(item)) for item in value if isinstance(item, Mapping)]
-    return copied or None
-
-
-def _clean_meta(value: "Any") -> "dict[str, Any] | None":
-    if not value or not isinstance(value, Mapping):
-        return None
-    copied = copy.deepcopy(dict(value))
-    return copied or None
 
 
 def _same_handler(left: "BaseRouteHandler", right: "BaseRouteHandler") -> "bool":
@@ -90,9 +77,9 @@ class ResourceTemplate:
     """Optional MCP `_meta` descriptor mapping emitted in list and read responses."""
 
     def __post_init__(self) -> "None":
-        object.__setattr__(self, "title", _clean_title(self.title))
-        object.__setattr__(self, "icons", _clean_icons(self.icons))
-        object.__setattr__(self, "meta", _clean_meta(self.meta))
+        object.__setattr__(self, "title", clean_title(self.title))
+        object.__setattr__(self, "icons", clean_icons(self.icons))
+        object.__setattr__(self, "meta", clean_meta(self.meta))
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,9 +119,9 @@ class PromptRegistration:
         if self.fn is None and self.handler is None:
             msg = "PromptRegistration must have either fn or handler set"
             raise ValueError(msg)
-        object.__setattr__(self, "title", _clean_title(self.title))
-        object.__setattr__(self, "icons", _clean_icons(self.icons))
-        object.__setattr__(self, "meta", _clean_meta(self.meta))
+        object.__setattr__(self, "title", clean_title(self.title))
+        object.__setattr__(self, "icons", clean_icons(self.icons))
+        object.__setattr__(self, "meta", clean_meta(self.meta))
 
     def get_arguments(self) -> "list[dict[str, Any]]":
         """Return prompt arguments, introspecting from signature if needed.
@@ -156,7 +143,7 @@ class PromptRegistration:
         if self.arguments is not None:
             return self.arguments
         if self.handler is not None:
-            return _introspect_handler_arguments(self.handler)
+            return extract_advertised_handler_arguments(self.handler)
         if self.fn is None:
             return []
         sig = inspect.signature(self.fn)
@@ -175,16 +162,152 @@ class PromptRegistration:
         return args
 
 
-def _introspect_handler_arguments(handler: "BaseRouteHandler") -> "list[dict[str, Any]]":
-    """Derive prompt arguments from a route handler's parsed signature.
+def evaluate_subscription_authorizer(
+    authorizer: "Callable[[Request[Any, Any, Any], str], Awaitable[bool] | bool]",
+    request: "Request[Any, Any, Any]",
+    uri: "str",
+) -> "Awaitable[bool]":
+    """Evaluate a subscription authorizer fail-closed, returning ``False`` on any exception."""
 
-    DI dependencies and framework-injected names (``request``, ``headers``,
-    ``state``, ...) are excluded so the advertised arguments match what
-    callers actually supply via ``prompts/get``.
-    Descriptions are pulled from a Google-style docstring on the underlying
-    function when available.
-    """
-    return extract_advertised_handler_arguments(handler)
+    async def _run() -> "bool":
+        try:
+            outcome = authorizer(request, uri)
+            return bool(await outcome) if inspect.isawaitable(outcome) else bool(outcome)
+        except Exception:
+            _logger.warning("Subscription authorizer failed for %s; denying subscription", uri, exc_info=True)
+            return False
+
+    return _run()
+
+
+def infer_http_method_annotations(handler: "BaseRouteHandler") -> "dict[str, Any]":
+    """Infer default MCP ``ToolAnnotations`` hints from a route handler's HTTP methods."""
+    raw_methods = getattr(handler, "http_methods", None)
+    if not raw_methods:
+        single = getattr(handler, "http_method", None)
+        raw_methods = {single} if single else set()
+    iterable = raw_methods if isinstance(raw_methods, (set, frozenset, list, tuple)) else (raw_methods,)
+    methods = {val.upper() for method in iterable if isinstance((val := getattr(method, "value", method)), str) and val}
+    if not methods:
+        return {}
+    if methods <= {"GET", "HEAD"}:
+        return {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True}
+    if methods == {"PUT"}:
+        return {"readOnlyHint": False, "idempotentHint": True}
+    if methods == {"DELETE"}:
+        return {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True}
+    if methods <= {"POST", "PATCH"}:
+        return {"readOnlyHint": False}
+    return {}
+
+
+def resolve_tool_annotations(
+    handler: "BaseRouteHandler",
+    metadata: "Mapping[str, Any]",
+    config: "MCPConfig",
+) -> "dict[str, Any]":
+    """Resolve effective MCP ``ToolAnnotations`` for a route handler."""
+    raw_opt = getattr(handler, "opt", None)
+    handler_opt: Mapping[str, Any] = raw_opt if isinstance(raw_opt, Mapping) else {}
+    opt_keys = config.opt_keys
+    annotations: dict[str, Any] = {}
+    if config.infer_http_method_annotations and not handler_opt.get("_mcp_synthesized_tool"):
+        annotations.update(infer_http_method_annotations(handler))
+
+    meta_annotations = metadata.get("annotations")
+    if isinstance(meta_annotations, Mapping):
+        annotations.update(meta_annotations)
+
+    opt_annotations = handler_opt.get(opt_keys.annotations)
+    if isinstance(opt_annotations, Mapping):
+        annotations.update(opt_annotations)
+
+    if metadata.get("read_only") is not None:
+        annotations["readOnlyHint"] = bool(metadata["read_only"])
+
+    opt_read_only = handler_opt.get(opt_keys.read_only)
+    if opt_read_only is not None:
+        annotations["readOnlyHint"] = bool(opt_read_only)
+
+    if "scopes" in metadata and "scopes" not in annotations:
+        annotations["scopes"] = list(metadata["scopes"])
+    return annotations
+
+
+def resolve_tool_output_schema(
+    handler: "BaseRouteHandler",
+    metadata: "Mapping[str, Any]",
+    config: "MCPConfig",
+    *,
+    require_object_root: "bool" = False,
+) -> "dict[str, Any] | None":
+    """Resolve effective MCP ``outputSchema`` across ``handler.opt``, metadata, and ``MCPConfig``."""
+    raw_opt = getattr(handler, "opt", None)
+    handler_opt: Mapping[str, Any] = raw_opt if isinstance(raw_opt, Mapping) else {}
+    opt_key = config.opt_keys.output_schema
+    if opt_key in handler_opt and handler_opt[opt_key] is not None:
+        policy: Any = handler_opt[opt_key]
+    elif "output_schema" in metadata and metadata["output_schema"] is not None:
+        policy = metadata["output_schema"]
+    else:
+        policy = config.auto_output_schema
+
+    if policy is False or policy is None:
+        return None
+    if policy is True:
+        schema = cached_output_schema_for_handler(handler)
+        return copy.deepcopy(schema) if schema is not None else None
+    if isinstance(policy, Mapping):
+        resolved = unwrap_root_object_schema(copy.deepcopy(dict(policy)))
+        if require_object_root and resolved.get("type") != "object":
+            msg = "output_schema must resolve to root type 'object'"
+            raise ValueError(msg)
+        return resolved
+    msg = f"Invalid output_schema policy of type {type(policy).__name__}"
+    raise TypeError(msg)
+
+
+def resolve_descriptor_fields(
+    handler: "BaseRouteHandler",
+    *,
+    kind: "Kind",
+    opt_keys: "MCPOptKeys",
+    metadata: "Mapping[str, Any] | None" = None,
+    override_source: "Any" = None,
+    fallback_source: "Any" = None,
+) -> "tuple[str | None, list[dict[str, Any]] | None, dict[str, Any] | None]":
+    """Resolve normalized ``(title, icons, meta)`` descriptors with precedence across opt, overrides, and metadata."""
+    fn = get_handler_function(handler)
+    effective_meta = (
+        metadata
+        if metadata is not None
+        else (get_mcp_metadata(handler, kind=kind) or get_mcp_metadata(fn, kind=kind) or {})
+    )
+    raw_opt = getattr(handler, "opt", None)
+    handler_opt: Mapping[str, Any] = raw_opt if isinstance(raw_opt, Mapping) else {}
+
+    title = (
+        clean_title(handler_opt.get(opt_keys.for_field("title", kind)))
+        or clean_title(getattr(override_source, "title", None))
+        or clean_title(effective_meta.get("title"))
+        or clean_title(getattr(fallback_source, "title", None))
+    )
+    icons = (
+        clean_icons(handler_opt.get(opt_keys.for_field("icons", kind)))
+        or clean_icons(getattr(override_source, "icons", None))
+        or clean_icons(effective_meta.get("icons"))
+        or clean_icons(getattr(fallback_source, "icons", None))
+    )
+    merged_meta: dict[str, Any] = {}
+    for candidate in (
+        clean_meta(getattr(fallback_source, "meta", None)),
+        clean_meta(effective_meta.get("meta")),
+        clean_meta(getattr(override_source, "meta", None)),
+        clean_meta(handler_opt.get(opt_keys.for_field("meta", kind))),
+    ):
+        if candidate is not None:
+            merged_meta.update(candidate)
+    return title, icons, (merged_meta or None)
 
 
 def _normalize_prompt_result(result: "Any") -> "list[dict[str, Any]]":
@@ -313,7 +436,7 @@ def render_prompt_entry(registration: "PromptRegistration", config: "MCPConfig")
     opt_keys = config.opt_keys
 
     entry: dict[str, Any] = {"name": registration.name}
-    title = _clean_title(handler_opt.get(opt_keys.prompt_title)) or _clean_title(registration.title)
+    title = clean_title(handler_opt.get(opt_keys.prompt_title)) or clean_title(registration.title)
     if title is not None:
         entry["title"] = title
     description = resolve_prompt_description(registration, config)
@@ -322,14 +445,14 @@ def render_prompt_entry(registration: "PromptRegistration", config: "MCPConfig")
     arguments = registration.get_arguments()
     if arguments:
         entry["arguments"] = arguments
-    icons = _clean_icons(handler_opt.get(opt_keys.prompt_icons)) or _clean_icons(registration.icons)
+    icons = clean_icons(handler_opt.get(opt_keys.prompt_icons)) or clean_icons(registration.icons)
     if icons is not None:
         entry["icons"] = icons
     merged_meta: dict[str, Any] = {}
-    reg_meta = _clean_meta(registration.meta)
+    reg_meta = clean_meta(registration.meta)
     if reg_meta is not None:
         merged_meta.update(reg_meta)
-    opt_meta = _clean_meta(handler_opt.get(opt_keys.prompt_meta))
+    opt_meta = clean_meta(handler_opt.get(opt_keys.prompt_meta))
     if opt_meta is not None:
         merged_meta.update(opt_meta)
     if merged_meta:
@@ -491,9 +614,9 @@ class Registry:
             meta: Optional MCP `_meta` descriptor mapping.
         """
         parse_template(template)
-        cleaned_title = _clean_title(title)
-        cleaned_icons = _clean_icons(icons)
-        cleaned_meta = _clean_meta(meta)
+        cleaned_title = clean_title(title)
+        cleaned_icons = clean_icons(icons)
+        cleaned_meta = clean_meta(meta)
         existing = self._templates.get(name)
         if existing is not None and _same_handler(existing.handler, handler) and existing.template == template:
             merged_meta: dict[str, Any] = {}
@@ -560,11 +683,11 @@ class Registry:
         self._prompts[name] = PromptRegistration(
             name=name,
             fn=fn,
-            title=_clean_title(title),
+            title=clean_title(title),
             description=desc,
             arguments=arguments,
-            icons=_clean_icons(icons),
-            meta=_clean_meta(meta),
+            icons=clean_icons(icons),
+            meta=clean_meta(meta),
         )
         self._trigger_change()
 
@@ -605,13 +728,13 @@ class Registry:
         fn = get_handler_function(handler)
         metadata = get_mcp_metadata(handler, kind="prompt") or get_mcp_metadata(fn, kind="prompt") or {}
         desc = description if description is not None else metadata.get("description")
-        resolved_title = _clean_title(title) or _clean_title(metadata.get("title"))
-        resolved_icons = _clean_icons(icons) or _clean_icons(metadata.get("icons"))
+        resolved_title = clean_title(title) or clean_title(metadata.get("title"))
+        resolved_icons = clean_icons(icons) or clean_icons(metadata.get("icons"))
         merged_meta: dict[str, Any] = {}
-        dec_meta = _clean_meta(metadata.get("meta"))
+        dec_meta = clean_meta(metadata.get("meta"))
         if dec_meta is not None:
             merged_meta.update(dec_meta)
-        explicit_meta = _clean_meta(meta)
+        explicit_meta = clean_meta(meta)
         if explicit_meta is not None:
             merged_meta.update(explicit_meta)
         final_meta = merged_meta or None
@@ -704,4 +827,9 @@ __all__ = (
     "Registry",
     "ResourceTemplate",
     "apply_prompt_instructions",
+    "evaluate_subscription_authorizer",
+    "infer_http_method_annotations",
+    "resolve_descriptor_fields",
+    "resolve_tool_annotations",
+    "resolve_tool_output_schema",
 )

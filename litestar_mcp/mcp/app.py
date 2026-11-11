@@ -25,9 +25,8 @@ from litestar_mcp.core.serialization import encode_json
 from litestar_mcp.mcp.config import MCPConfig
 from litestar_mcp.mcp.content import MCPBlobResource, MCPInputRequiredResult, MCPResourceLink, MCPToolResult
 from litestar_mcp.mcp.plugin import LitestarMCP
-from litestar_mcp.mcp.registry import _clean_icons, _clean_meta, _clean_title
 from litestar_mcp.mcp.stdio import MCPStdioContext, run_stdio
-from litestar_mcp.utils import classify_resource_uri
+from litestar_mcp.utils import classify_resource_uri, clean_icons, clean_meta, clean_title
 from litestar_mcp.utils.handler_signature import normalize_synthesized_handler_signature
 
 if TYPE_CHECKING:
@@ -176,7 +175,7 @@ def _resolve_resource_return_annotation(fn: "Callable[..., Any]") -> "Any":
         hints = get_type_hints(fn, include_extras=True)
         ret = hints.get("return")
     except (AttributeError, NameError, TypeError, ValueError):
-        ret = (getattr(fn, "__annotations__", None) or {}).get("return")
+        ret = None
     if ret is None:
         ret = (getattr(fn, "__annotations__", None) or {}).get("return")
     while get_origin(ret) is Annotated:
@@ -563,9 +562,9 @@ class MCP:
         """
         route_kwargs = _collect_route_handler_kwargs(locals())
         validated_output = _validate_standalone_output_schema(output_schema)
-        cleaned_title = _clean_title(title)
-        cleaned_icons = _clean_icons(icons)
-        cleaned_meta = _clean_meta(meta)
+        cleaned_title = clean_title(title)
+        cleaned_icons = clean_icons(icons)
+        cleaned_meta = clean_meta(meta)
 
         def decorator(fn: "Callable[..., Any]") -> "Callable[..., Any]":
             tool_name = name or fn.__name__
@@ -682,9 +681,9 @@ class MCP:
         """
         route_kwargs = _collect_route_handler_kwargs(locals())
         static_uri, template_uri = classify_resource_uri(uri=uri)
-        cleaned_title = _clean_title(title)
-        cleaned_icons = _clean_icons(icons)
-        cleaned_meta = _clean_meta(meta)
+        cleaned_title = clean_title(title)
+        cleaned_icons = clean_icons(icons)
+        cleaned_meta = clean_meta(meta)
 
         def decorator(fn: "Callable[..., Any]") -> "Callable[..., Any]":
             resource_name = name or fn.__name__
@@ -794,14 +793,14 @@ class MCP:
         passed through to Litestar's `get()` route decorator.
         """
         route_kwargs = _collect_route_handler_kwargs(locals())
-        cleaned_title = _clean_title(title)
+        cleaned_title = clean_title(title)
         cleaned_arguments = (
             [copy.deepcopy(dict(item)) for item in arguments if isinstance(item, Mapping)]
             if arguments is not None
             else None
         )
-        cleaned_icons = _clean_icons(icons)
-        cleaned_meta = _clean_meta(meta)
+        cleaned_icons = clean_icons(icons)
+        cleaned_meta = clean_meta(meta)
 
         def decorator(fn: "Callable[..., Any]") -> "Callable[..., Any]":
             prompt_name = name or fn.__name__

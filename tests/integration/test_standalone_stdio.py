@@ -209,9 +209,7 @@ async def test_standalone_stdio_context_isolates_auth_mutations_between_calls() 
     first = json.loads(responses[1]["result"]["content"][0]["text"])
     second = json.loads(responses[2]["result"]["content"][0]["text"])
     assert first["seen_mutation"] is None
-    # A per-call copy means the first call's write must not leak into the second.
     assert second["seen_mutation"] is None
-    # The caller's original auth dict is likewise untouched.
     assert auth == {"sub": "auth-subject"}
 
 

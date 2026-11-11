@@ -4,7 +4,7 @@ import math
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 from litestar import Request  # noqa: TC002
 from litestar.stores.base import Store  # noqa: TC002
@@ -232,15 +232,16 @@ class MCPSkillsConfig:
 
     def __post_init__(self) -> "None":
         """Validate and normalize skill directory paths, sources, and size bounds."""
-        if _is_bare_string_or_bytes(self.paths):
+        bare_paths = isinstance(self.paths, (str, bytes))
+        if bare_paths:
             msg = "paths must be a sequence of paths, not a single string; pass [path] instead"
             raise ValueError(msg)
         self.paths = tuple(Path(path) for path in self.paths)
-        if _is_bare_string_or_bytes(self.sources):
+        raw_sources: object = self.sources
+        if isinstance(raw_sources, (str, bytes)):
             msg = "sources must be a sequence of SkillSource instances"
             raise TypeError(msg)
-        raw_sources: Sequence[object] = self.sources
-        for source in raw_sources:
+        for source in cast("Sequence[object]", raw_sources):
             if not isinstance(source, SkillSource):
                 msg = f"Every entry in sources must satisfy the SkillSource protocol, got {source!r}"
                 raise TypeError(msg)
@@ -396,17 +397,14 @@ class MCPConfig:
 def _normalize_ui_mime_types(value: "object") -> "tuple[str, ...] | None":
     if value is None:
         return None
-    if _is_bare_string_or_bytes(value) or not isinstance(value, Sequence):
+    invalid_mime_sequence = isinstance(value, (str, bytes)) or not isinstance(value, Sequence)
+    if invalid_mime_sequence:
         msg = "ui_mime_types must be a sequence of non-empty MIME type strings, not a single string or bytes"
         raise ValueError(msg)
     normalized: list[str] = []
-    for item in value:
+    for item in cast("Sequence[object]", value):
         if not isinstance(item, str) or not item.strip():
             msg = f"ui_mime_types entries must be non-empty strings, got {item!r}"
             raise ValueError(msg)
         normalized.append(item.strip())
     return tuple(dict.fromkeys(normalized))
-
-
-def _is_bare_string_or_bytes(value: "object") -> "bool":
-    return isinstance(value, (str, bytes))

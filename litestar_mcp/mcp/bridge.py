@@ -1,11 +1,10 @@
 """Stdio to Streamable HTTP bridge for Litestar MCP endpoints."""
 
 import asyncio
-import base64
 import contextlib
 import inspect
 import sys
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
 from types import TracebackType
 from typing import Any
 
@@ -21,6 +20,7 @@ from typing_extensions import Self
 from litestar_mcp.__metadata__ import __version__
 from litestar_mcp.core.exceptions import BridgeConnectionError, BridgeMessageTooLargeError
 from litestar_mcp.core.jsonrpc import JSONRPCError, error_response
+from litestar_mcp.core.schema_builder import iter_mcp_header_fields
 from litestar_mcp.core.serialization import from_json, to_json
 from litestar_mcp.mcp.client import mcp_request_headers, prepare_mcp_request
 from litestar_mcp.mcp.routes import (
@@ -29,14 +29,12 @@ from litestar_mcp.mcp.routes import (
     MCP_PROTOCOL_VERSION,
     MCP_PROTOCOL_VERSION_HEADER,
     MCP_SESSION_ID_HEADER,
+    encode_mcp_header_value,
 )
 
 TokenProvider = Callable[[], str] | Callable[[], Awaitable[str]]
 BRIDGE_ERROR = -32001
 DEFAULT_MAX_STDIN_MESSAGE_SIZE = 16 * 1024 * 1024
-_MIN_VISIBLE_ASCII = 0x20
-_MAX_VISIBLE_ASCII = 0x7E
-_DEFS_REF_PREFIX = "#/$defs/"
 _DEFAULT_CLIENT_INFO = {"name": "litestar-mcp-stdio-bridge", "version": __version__}
 _SEQUENTIAL_BRIDGE_METHODS = frozenset({"initialize", "resources/subscribe", "resources/unsubscribe"})
 BEARER_TOKEN_PREFIX = "Bearer "  # noqa: S105
@@ -505,7 +503,7 @@ class _StreamableHTTPBridgeClient:
             else:
                 if value is not None:
                     rendered = ("true" if value else "false") if isinstance(value, bool) else str(value)
-                    headers[f"Mcp-Param-{header_name}"] = _encode_header_value(rendered)
+                    headers[f"Mcp-Param-{header_name}"] = encode_mcp_header_value(rendered)
         return headers
 
     async def _load_tool_headers(self) -> None:
@@ -540,7 +538,12 @@ class _StreamableHTTPBridgeClient:
                 result = payload.get("result") if isinstance(payload, dict) else None
                 for tool in result.get("tools", ()) if isinstance(result, dict) else ():
                     if isinstance(tool, dict) and isinstance(tool.get("name"), str):
-                        cache[tool["name"]] = list(_iter_header_schema(tool.get("inputSchema")))
+                        raw_schema = tool.get("inputSchema")
+                        cache[tool["name"]] = (
+                            [(path, header) for path, header, _ in iter_mcp_header_fields(raw_schema)]
+                            if isinstance(raw_schema, dict)
+                            else []
+                        )
                 cursor = result.get("nextCursor") if isinstance(result, dict) else None
                 if not isinstance(cursor, str):
                     break
@@ -659,60 +662,3 @@ def _unwrap_exception_group(exc: BaseException) -> BaseException:
     while exceptions := getattr(exc, "exceptions", None):
         exc = exceptions[0]
     return exc
-
-
-def _encode_header_value(value: str) -> str:
-    if (
-        value
-        and all(_MIN_VISIBLE_ASCII <= ord(char) <= _MAX_VISIBLE_ASCII for char in value)
-        and not value.startswith("=?base64?")
-    ):
-        return value
-    encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
-    return f"=?base64?{encoded}?="
-
-
-def _iter_header_schema(
-    schema: Any,
-    path: tuple[str, ...] = (),
-    defs: dict[str, Any] | None = None,
-    visited_refs: frozenset[str] = frozenset(),
-) -> Iterator[tuple[tuple[str, ...], str]]:
-    """Yield ``(property_path, header_name)`` pairs from an input schema."""
-    if not isinstance(schema, dict):
-        return
-    schema_defs = schema.get("$defs")
-    root_defs: dict[str, Any] = defs if defs is not None else (schema_defs if isinstance(schema_defs, dict) else {})
-    header_name = schema.get("x-mcp-header")
-    if isinstance(header_name, str):
-        yield path, header_name
-    ref = schema.get("$ref")
-    if isinstance(ref, str) and ref.startswith(_DEFS_REF_PREFIX) and ref not in visited_refs:
-        target = root_defs.get(ref[len(_DEFS_REF_PREFIX) :])
-        if isinstance(target, dict):
-            yield from _iter_header_schema(
-                target,
-                path=path,
-                defs=root_defs,
-                visited_refs=visited_refs | {ref},
-            )
-    properties = schema.get("properties")
-    if isinstance(properties, dict):
-        for name, child in properties.items():
-            if isinstance(name, str):
-                yield from _iter_header_schema(
-                    child,
-                    path=(*path, name),
-                    defs=root_defs,
-                    visited_refs=visited_refs,
-                )
-    for combinator in ("anyOf", "oneOf", "allOf"):
-        branches = schema.get(combinator)
-        if isinstance(branches, list):
-            for branch in branches:
-                yield from _iter_header_schema(
-                    branch,
-                    path=path,
-                    defs=root_defs,
-                    visited_refs=visited_refs,
-                )

@@ -1,14 +1,13 @@
 """Tests for MCP Prompts support (prompts/list and prompts/get)."""
 
 from collections.abc import Callable  # noqa: TC003
-from typing import Any, cast
+from typing import Any
 
 import pytest
 from litestar import Litestar, Request, Response, get
 from litestar.exceptions import ImproperlyConfiguredException
 from litestar.status_codes import HTTP_400_BAD_REQUEST, HTTP_500_INTERNAL_SERVER_ERROR
 from litestar.testing import TestClient
-from litestar.types import HTTPRequestEvent, HTTPScope, Receive
 
 from litestar_mcp import LitestarMCP, MCPConfig, PromptController, SkillController, mcp_prompt, prompt
 from litestar_mcp.mcp.registry import (
@@ -19,12 +18,8 @@ from litestar_mcp.mcp.registry import (
     render_prompt_entry,
 )
 from litestar_mcp.utils import get_mcp_metadata
-from litestar_mcp.utils.handler_signature import _parse_docstring_args
+from litestar_mcp.utils.handler_signature import _parse_docstring_args, extract_advertised_handler_arguments
 from tests.unit.conftest import mcp_post
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 
 def _rpc(client: "TestClient[Any]", method: "str", params: "dict[str, Any] | None" = None) -> "dict[str, Any]":
@@ -36,11 +31,6 @@ def _make_app_with_prompts(*prompt_fns: "Callable[..., Any]") -> "Litestar":
     """Create a Litestar app with MCP prompts registered."""
     plugin = LitestarMCP(config=MCPConfig(), prompts=list(prompt_fns))
     return Litestar(route_handlers=[], plugins=[plugin])
-
-
-# ---------------------------------------------------------------------------
-# Decorator tests
-# ---------------------------------------------------------------------------
 
 
 class TestMcpPromptDecorator:
@@ -240,21 +230,23 @@ class TestPromptRegistration:
         assert "text" in names
         assert "secret" not in names, "DI dependency leaked into advertised arguments"
 
-    def test_introspect_handler_resolve_dependencies_failure_is_silent(self) -> "None":
-        """resolve_dependencies() raising AttributeError/TypeError must not
-        propagate — empty di_params is the safe fallback.
-        """
-        from types import SimpleNamespace
+    def test_introspect_handler_resolve_dependencies_failure_is_silent(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> "None":
+        """resolve_dependencies raising AttributeError omits only DI params without propagating."""
 
-        from litestar_mcp.mcp.registry import _introspect_handler_arguments
+        @get("/broken-di", mcp_prompt="broken_di")
+        def broken_di(topic: "str") -> "str":
+            return topic
 
-        # Stub handler whose resolve_dependencies blows up. We still want
-        # introspection to succeed against a None signature_model.
-        stub = SimpleNamespace(
-            signature_model=None,
-            resolve_dependencies=lambda: (_ for _ in ()).throw(AttributeError("nope")),
+        Litestar(route_handlers=[broken_di], plugins=[LitestarMCP(config=MCPConfig())])
+        monkeypatch.setattr(
+            broken_di,
+            "resolve_dependencies",
+            lambda: (_ for _ in ()).throw(AttributeError("nope")),
         )
-        assert _introspect_handler_arguments(stub) == []  # type: ignore[arg-type]
+        assert extract_advertised_handler_arguments(broken_di) == [{"name": "topic", "required": True}]
 
 
 # ---------------------------------------------------------------------------
@@ -701,7 +693,7 @@ class TestPromptsGetRPC:
         with TestClient(app) as client:
             data = _rpc(client, "prompts/get", params={"name": "nonexistent"})
             assert "error" in data
-            assert data["error"]["code"] == -32602  # INVALID_PARAMS
+            assert data["error"]["code"] == -32602
 
     def test_get_prompt_missing_name_error(self) -> "None":
         app = _make_app_with_prompts()
@@ -978,9 +970,7 @@ class TestPromptErrorMapping:
         with TestClient(app) as client:
             data = _rpc(client, "prompts/get", params={"name": "boom"})
             assert "error" in data
-            assert data["error"]["code"] == -32603  # INTERNAL_ERROR
-            # Per JSON-RPC 2.0 §5.1, structured exception context lives in
-            # the ``data`` member; the ``message`` is a stable label.
+            assert data["error"]["code"] == -32603
             assert data["error"]["message"] == "Prompt execution failed"
             assert "kaboom" in data["error"]["data"]["detail"]
             assert data["error"]["data"]["error"] == "RuntimeError"
@@ -997,7 +987,7 @@ class TestPromptErrorMapping:
         with TestClient(app) as client:
             data = _rpc(client, "prompts/get", params={"name": "bad_4xx"})
             assert "error" in data
-            assert data["error"]["code"] == -32603  # INTERNAL_ERROR
+            assert data["error"]["code"] == -32603
             assert data["error"]["data"] == {"statusCode": 400, "content": {"error": "bad input"}}
 
     def test_handler_5xx_maps_to_internal_error(self) -> "None":
@@ -1114,66 +1104,40 @@ class TestPromptsManifest:
             assert client.get("/.well-known/mcp-server.json").status_code == 404
 
 
-# ---------------------------------------------------------------------------
-# C1 regression: ASGI handler exits without http.response.start
-# ---------------------------------------------------------------------------
-
-
 class TestCaptureAsgiResponseStatusZero:
-    """Cover the path where _capture_asgi_response observes no response start.
-
-    Without the C1 fix the function returned (None, 0), which slipped past
-    the >= 400 error gate in execute_handler, leaving callers to surface the
-    literal string "None" as a successful prompt body.
-    """
+    """Ensure a response ASGI app exiting without http.response.start fails as a 500 MCPToolErrorResult."""
 
     @pytest.mark.asyncio
     async def test_asgi_app_without_response_start_classified_as_500(self) -> "None":
-        from litestar_mcp.mcp.executor import _NON_JSON_STATUS, _capture_asgi_response
+        from litestar_mcp.mcp.executor import MCPToolErrorResult, execute_handler
 
-        async def silent_asgi_app(scope: "Any", receive: "Any", send: "Any") -> "None":
-            return  # never calls send → no http.response.start
+        class SilentResponse(Response[None]):
+            def to_asgi_response(self, app: "Any", request: "Any", **kwargs: "Any") -> "Any":
+                async def _silent_asgi(scope: "Any", receive: "Any", send: "Any") -> "None":
+                    return
 
-        async def receive() -> HTTPRequestEvent:
-            return {"type": "http.request", "body": b"", "more_body": False}
+                return _silent_asgi
 
-        scope = cast(
-            "HTTPScope",
-            {
-                "type": "http",
-                "asgi": {"version": "3.0", "spec_version": "2.3"},
-                "http_version": "1.1",
-                "method": "GET",
-                "scheme": "http",
-                "path": "/",
-                "raw_path": b"/",
-                "query_string": b"",
-                "headers": [],
-                "path_params": {},
-                "state": {},
-                "litestar_app": Litestar(route_handlers=[]),
-            },
-        )
-        request: Request[Any, Any, Any] = Request(scope, receive=cast("Receive", receive))
+        @get("/silent-prompt")
+        async def silent_handler() -> "Response[None]":
+            return SilentResponse(content=None)
 
-        response = await _capture_asgi_response(silent_asgi_app, request)
-        content = response.content
-        assert response.status_code == _NON_JSON_STATUS
-        assert isinstance(content, dict)
-        assert "error" in content
-        assert "without sending" in content["error"].lower()
-
-
-# ---------------------------------------------------------------------------
-# Error contract (GH #48): prompt handler execution errors map to the
-# primitive-level code (-32603 INTERNAL_ERROR) regardless of the handler's
-# HTTP status — the status is preserved only in ``data.statusCode``. The same
-# contract is enforced for resources in test_mcp_error_mapping.py.
-# ---------------------------------------------------------------------------
+        app = Litestar(route_handlers=[silent_handler])
+        with pytest.raises(MCPToolErrorResult) as exc_info:
+            await execute_handler(silent_handler, app, {})
+        assert exc_info.value.status_code == 500
+        assert isinstance(exc_info.value.content, dict)
+        assert "without sending" in exc_info.value.content["error"].lower()
 
 
 class TestPromptHandlerErrorCodeMapping:
-    """Prompt handler execution errors map by primitive, not raw HTTP status."""
+    """Prompt handler execution errors map by primitive, not raw HTTP status.
+
+    Error contract (GH #48): prompt handler execution errors map to the
+    primitive-level code (-32603 INTERNAL_ERROR) regardless of the handler's
+    HTTP status; the status is preserved only in ``data.statusCode``. The same
+    contract is enforced for resources in ``test_mcp_error_mapping.py``.
+    """
 
     @pytest.mark.parametrize("status_code", [401, 403, 404, 409])
     def test_non_validation_4xx_maps_to_internal_error(self, status_code: "int") -> "None":

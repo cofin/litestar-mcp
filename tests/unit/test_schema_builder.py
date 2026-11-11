@@ -16,7 +16,7 @@ from litestar.params import FromQuery, Parameter, ParameterKwarg, QueryParameter
 from pydantic import BaseModel
 
 from litestar_mcp.core.schema_builder import (
-    _merge_parameter_meta,
+    _merge_meta_fields,
     basic_type_to_json_schema,
     cached_output_schema_for_handler,
     collection_type_to_json_schema,
@@ -32,7 +32,6 @@ from litestar_mcp.core.schema_builder import (
     union_type_to_json_schema,
     unwrap_root_object_schema,
 )
-from litestar_mcp.mcp.bridge import _iter_header_schema
 from litestar_mcp.mcp.content import MCPBlobResource, MCPInputRequiredResult, MCPResourceLink, MCPToolResult
 from litestar_mcp.utils.handler_signature import _unwrap_annotated
 from tests.unit.conftest import create_app_with_handler
@@ -834,12 +833,12 @@ class TestUnwrapAnnotated:
 class TestMergeParameterMeta:
     def test_description_merges(self) -> "None":
         schema: dict[str, Any] = {"type": "boolean"}
-        _merge_parameter_meta(schema, Parameter(description="paid"))
+        _merge_meta_fields(schema, Parameter(description="paid"), "schema_extra")
         assert schema == {"type": "boolean", "description": "paid"}
 
     def test_numeric_constraints_map_to_json_schema_keywords(self) -> "None":
         schema: dict[str, Any] = {"type": "integer"}
-        _merge_parameter_meta(schema, Parameter(ge=1, le=100, gt=0, lt=200, multiple_of=5))
+        _merge_meta_fields(schema, Parameter(ge=1, le=100, gt=0, lt=200, multiple_of=5), "schema_extra")
         assert schema == {
             "type": "integer",
             "minimum": 1,
@@ -851,7 +850,7 @@ class TestMergeParameterMeta:
 
     def test_string_constraints_map_to_json_schema_keywords(self) -> "None":
         schema: dict[str, Any] = {"type": "string"}
-        _merge_parameter_meta(schema, Parameter(min_length=3, max_length=50, pattern="^[a-z]+$"))
+        _merge_meta_fields(schema, Parameter(min_length=3, max_length=50, pattern="^[a-z]+$"), "schema_extra")
         assert schema == {
             "type": "string",
             "minLength": 3,
@@ -861,18 +860,18 @@ class TestMergeParameterMeta:
 
     def test_title_and_examples_merge(self) -> "None":
         schema: dict[str, Any] = {"type": "string"}
-        _merge_parameter_meta(schema, Parameter(title="Email", examples=["a@b.com"]))  # type: ignore[list-item]
+        _merge_meta_fields(schema, Parameter(title="Email", examples=["a@b.com"]), "schema_extra")  # type: ignore[list-item]
         assert schema["title"] == "Email"
         assert schema["examples"] == ["a@b.com"]
 
     def test_none_fields_skipped(self) -> "None":
         schema: dict[str, Any] = {"type": "string"}
-        _merge_parameter_meta(schema, Parameter())
+        _merge_meta_fields(schema, Parameter(), "schema_extra")
         assert schema == {"type": "string"}
 
     def test_examples_scalar_value_is_wrapped_in_list(self) -> "None":
         schema: dict[str, Any] = {"type": "string"}
-        _merge_parameter_meta(schema, Parameter(examples="one@example.com"))  # type: ignore[arg-type]
+        _merge_meta_fields(schema, Parameter(examples="one@example.com"), "schema_extra")  # type: ignore[arg-type]
         assert schema["examples"] == ["one@example.com"]
 
 
@@ -1428,7 +1427,7 @@ def test_attrs_class_parameter_is_described_with_required_fields() -> "None":
 
 
 def test_iter_mcp_header_fields_resolves_hoisted_defs_and_optional_refs() -> "None":
-    """iter_mcp_header_fields and _iter_header_schema resolve $ref into $defs and anyOf branches."""
+    """iter_mcp_header_fields resolves $ref into $defs and anyOf branches."""
     schema: dict[str, Any] = {
         "type": "object",
         "properties": {
@@ -1462,9 +1461,9 @@ def test_iter_mcp_header_fields_resolves_hoisted_defs_and_optional_refs() -> "No
         (("body", "workspace_id"), "X-Workspace-Id"),
         (("optional_filter", "region"), "X-Region"),
     ]
-    assert list(_iter_header_schema(schema)) == [
-        (("body", "workspace_id"), "X-Workspace-Id"),
-        (("optional_filter", "region"), "X-Region"),
+    assert list(iter_mcp_header_fields(schema)) == [
+        (("body", "workspace_id"), "X-Workspace-Id", {"type": "string", "x-mcp-header": "X-Workspace-Id"}),
+        (("optional_filter", "region"), "X-Region", {"type": "string", "x-mcp-header": "X-Region"}),
     ]
 
 

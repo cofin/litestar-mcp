@@ -13,7 +13,6 @@ from litestar_mcp.core.tools import tool
 from litestar_mcp.mcp.client import (
     MCPClientError,
     MCPStreamableHTTPClient,
-    _encode_header_value,
     mcp_request_headers,
     prepare_mcp_request,
 )
@@ -26,6 +25,7 @@ from litestar_mcp.mcp.routes import (
     MCP_PROTOCOL_VERSION_HEADER,
     MCP_SESSION_ID_HEADER,
     decode_mcp_header_value,
+    encode_mcp_header_value,
 )
 from litestar_mcp.mcp.service import get_session_store
 from litestar_mcp.mcp.skills import Skill
@@ -118,8 +118,8 @@ def test_encode_header_value_round_trips_with_decode_mcp_header_value(
     raw_value: str,
     expected_encoded: str,
 ) -> None:
-    """_encode_header_value uses the =?base64?...?= sentinel and round-trips through decode_mcp_header_value."""
-    encoded = _encode_header_value(raw_value)
+    """encode_mcp_header_value uses the =?base64?...?= sentinel and round-trips through decode_mcp_header_value."""
+    encoded = encode_mcp_header_value(raw_value)
     assert encoded == expected_encoded
     assert decode_mcp_header_value(encoded) == raw_value
 
