@@ -141,6 +141,9 @@ def build_controller_tool_handler(tool: Tool) -> HTTPRouteHandler:
     metadata: dict[str, Any] = {"type": "tool", "name": tool.name, "description": tool.description}
     if tool.annotations:
         metadata["annotations"] = dict(tool.annotations)
+    output_policy = tool.output_schema_policy
+    if output_policy is not None:
+        metadata["output_schema"] = output_policy
     set_mcp_metadata(_controller_tool_endpoint, metadata)
 
     route_opt: dict[str, Any] = {"_mcp_synthesized_tool": True}
@@ -186,6 +189,9 @@ def build_tool_route_handler(
     metadata: dict[str, Any] = {"type": "tool", "name": tool.name, "description": tool.description}
     if tool.annotations:
         metadata["annotations"] = dict(tool.annotations)
+    output_policy = tool.output_schema_policy
+    if output_policy is not None:
+        metadata["output_schema"] = output_policy
     set_mcp_metadata(_standalone_tool_endpoint, metadata)
 
     clean_base = base_path.rstrip("/")

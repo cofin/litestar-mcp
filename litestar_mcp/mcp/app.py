@@ -1,26 +1,37 @@
 """High-level FastMCP-style `MCP` application wrapper around Litestar and `LitestarMCP`."""
 
+import contextlib
+import copy
+import hashlib
 import inspect
 import os
+import re
 import sys
 import urllib.parse
+from collections.abc import Mapping
+from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal, cast, get_args, get_origin, get_type_hints
 
 from litestar import Litestar, Response
 from litestar.exceptions import PermissionDeniedException
 from litestar.handlers import get, post
 from litestar.openapi.spec import Operation
-from litestar.serialization import encode_json
+from litestar.serialization import get_serializer
 from litestar.types import Empty, TypeDecodersSequence
 
+from litestar_mcp.core.schema_builder import unwrap_root_object_schema
+from litestar_mcp.core.serialization import encode_json
 from litestar_mcp.mcp.config import MCPConfig
+from litestar_mcp.mcp.content import MCPBlobResource, MCPInputRequiredResult, MCPResourceLink, MCPToolResult
 from litestar_mcp.mcp.plugin import LitestarMCP
+from litestar_mcp.mcp.registry import _clean_icons, _clean_meta, _clean_title
 from litestar_mcp.mcp.stdio import MCPStdioContext, run_stdio
+from litestar_mcp.utils import classify_resource_uri
 from litestar_mcp.utils.handler_signature import normalize_synthesized_handler_signature
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Sequence
 
     from litestar.background_tasks import BackgroundTask, BackgroundTasks
     from litestar.config.response_cache import CACHE_FOREVER
@@ -49,6 +60,8 @@ if TYPE_CHECKING:
     from litestar.types.callable_types import OperationIDCreator
 
 _INTERNAL_DISPATCH_SCOPE_KEY = "litestar_mcp.internal_dispatch"
+_FULL_TEMPLATE_SEGMENT_RE = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}")
+_SAFE_SEGMENT_CHARS_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _ROUTE_HANDLER_KWARG_NAMES = (
     "after_request",
     "after_response",
@@ -134,8 +147,76 @@ def _build_standalone_route_kwargs(
     return route_kwargs
 
 
+def _populate_forced_descriptors(
+    forced_opt: "dict[str, Any]",
+    *,
+    title_key: "str",
+    icons_key: "str",
+    meta_key: "str",
+    title: "str | None",
+    icons: "list[dict[str, Any]] | None",
+    meta: "dict[str, Any] | None",
+) -> "None":
+    """Store normalized non-empty descriptor fields in `forced_opt` without clobbering omitted keys."""
+    if title is not None:
+        forced_opt[title_key] = title
+    if icons is not None:
+        forced_opt[icons_key] = copy.deepcopy(icons)
+    if meta is not None:
+        forced_opt[meta_key] = copy.deepcopy(meta)
+
+
 def _standalone_internal_path(base_path: "str", *parts: "str") -> "str":
     return "/".join((base_path.rstrip("/"), "internal", *parts))
+
+
+def _resolve_resource_return_annotation(fn: "Callable[..., Any]") -> "Any":
+    """Resolve the return annotation of a standalone resource callable, unwrapping `Annotated`."""
+    try:
+        hints = get_type_hints(fn, include_extras=True)
+        ret = hints.get("return")
+    except (AttributeError, NameError, TypeError, ValueError):
+        ret = (getattr(fn, "__annotations__", None) or {}).get("return")
+    if ret is None:
+        ret = (getattr(fn, "__annotations__", None) or {}).get("return")
+    while get_origin(ret) is Annotated:
+        args = get_args(ret)
+        if not args:
+            break
+        ret = args[0]
+    return ret
+
+
+def _default_resource_mime_type_for_callable(fn: "Callable[..., Any]") -> "str | None":
+    """Return `"application/octet-stream"` when `fn` declares a `bytes` or `bytearray` return annotation."""
+    ret = _resolve_resource_return_annotation(fn)
+    if ret in (bytes, bytearray):
+        return "application/octet-stream"
+    if isinstance(ret, str) and ret.strip() in {"bytes", "bytearray"}:
+        return "application/octet-stream"
+    return None
+
+
+def _normalize_resource_path_segment(seg: "str", uri: "str") -> "str":
+    """Keep whole `{var}` path segments typed for Litestar and sanitize partial-brace segments."""
+    if _FULL_TEMPLATE_SEGMENT_RE.fullmatch(seg):
+        return f"{{{seg[1:-1]}:str}}"
+    if "{" in seg or "}" in seg:
+        cleaned = _SAFE_SEGMENT_CHARS_RE.sub("-", seg.replace("{", "").replace("}", "")).strip("-") or "segment"
+        digest = hashlib.sha256(uri.encode("utf-8")).hexdigest()[:8]
+        return f"{cleaned}-{digest}"
+    return seg
+
+
+def _standalone_resource_internal_path(base_path: "str", uri: "str", resource_name: "str") -> "str":
+    """Build a normalized internal Litestar route path for a standalone MCP resource."""
+    parsed = urllib.parse.urlparse(uri)
+    raw_parts = [parsed.scheme] if parsed.scheme else []
+    raw_parts.extend((parsed.netloc, parsed.path))
+    segments = [_normalize_resource_path_segment(seg, uri) for part in raw_parts for seg in part.split("/") if seg]
+    if not segments:
+        segments = [resource_name]
+    return _standalone_internal_path(base_path, "resources", *segments)
 
 
 def _collect_route_handler_kwargs(values: "dict[str, Any]") -> "dict[str, Any]":
@@ -238,47 +319,127 @@ def _resolve_litestar_app_env(app: "Litestar") -> "str | None":
     return f"{module_name}:{app_var_name}"
 
 
+def _validate_standalone_output_schema(output_schema: "Any") -> "dict[str, Any] | bool | None":
+    """Validate and normalize an `output_schema` policy passed to `MCP.tool`."""
+    if output_schema is None:
+        return None
+    if isinstance(output_schema, bool):
+        return output_schema
+    if not isinstance(output_schema, Mapping):
+        msg = "output_schema must be a mapping, bool, or None"
+        raise TypeError(msg)
+    resolved_schema = unwrap_root_object_schema(dict(output_schema))
+    if resolved_schema.get("type") != "object":
+        msg = "output_schema mapping must resolve to root type 'object'"
+        raise ValueError(msg)
+    return resolved_schema
+
+
+def _merge_type_encoders(app_encoders: "Any", route_encoders: "Any") -> "TypeEncodersMap | None":
+    """Merge standalone application and route `type_encoders` with route precedence."""
+    merged: dict[Any, Callable[[Any], Any]] = {}
+    if isinstance(app_encoders, Mapping):
+        merged.update(app_encoders)
+    if isinstance(route_encoders, Mapping):
+        merged.update(route_encoders)
+    return merged or None
+
+
 def _json_response_wrapper(
     fn: "Callable[..., Any]",
     *,
     path: "str" = "",
     dependencies: "Mapping[str, Any] | None" = None,
+    type_encoders: "TypeEncodersMap | None" = None,
+    type_encoders_resolver: "Callable[[], TypeEncodersMap | None] | None" = None,
 ) -> "Callable[..., Any]":
-    """Wrap a handler function to always return a JSON Response.
+    """Wrap a handler function to return a JSON `Response` or MCP content helper."""
 
-    This ensures that primitive return types like strings are serialized
-    as JSON (e.g., '"hello"') instead of plain text ('hello'), allowing
-    the MCP execution layer to parse them correctly.
-    """
-    from functools import wraps
+    def _active_encoders() -> "TypeEncodersMap | None":
+        resolved = type_encoders_resolver() if type_encoders_resolver is not None else None
+        return resolved or type_encoders
 
     if inspect.iscoroutinefunction(fn):
 
         @wraps(fn)
         async def async_wrapped(*args: "Any", **kwargs: "Any") -> "Any":
-            return _to_json_response(await fn(*args, **kwargs))
+            return _to_json_response(await fn(*args, **kwargs), type_encoders=_active_encoders())
 
         return normalize_synthesized_handler_signature(async_wrapped, fn, path=path, dependencies=dependencies)
 
     @wraps(fn)
     def sync_wrapped(*args: "Any", **kwargs: "Any") -> "Any":
-        return _to_json_response(fn(*args, **kwargs))
+        return _to_json_response(fn(*args, **kwargs), type_encoders=_active_encoders())
 
     return normalize_synthesized_handler_signature(sync_wrapped, fn, path=path, dependencies=dependencies)
 
 
-def _to_json_response(res: "Any") -> "Response[Any]":
-    """Return ``res`` as a JSON response that still honours the handler's ``type_encoders``.
+def _to_json_response(res: "Any", *, type_encoders: "TypeEncodersMap | None" = None) -> "Any":
+    """Return `res` as a JSON response or untouched MCP helper while honoring `type_encoders`.
 
-    Strings, bytes and ``None`` are pre-encoded because Litestar would otherwise send
-    them verbatim; every other value is left for Litestar to serialize with the
-    resolved ``type_encoders`` of the route.
+    MCP content helpers pass through untouched so the internal executor pipeline
+    can inspect them directly. Native primitives (`str`, `bytes`, `bytearray`,
+    `None`) consult `type_encoders` by MRO before pre-encoding because `msgspec`
+    serializes native primitives without invoking `enc_hook`.
     """
-    if isinstance(res, Response):
+    if isinstance(res, (Response, MCPToolResult, MCPBlobResource, MCPResourceLink, MCPInputRequiredResult)):
         return res
     if res is None or isinstance(res, (str, bytes, bytearray)):
-        return Response(content=encode_json(res), media_type="application/json")
-    return Response(content=res, media_type="application/json")
+        if type_encoders:
+            for base in type(res).__mro__[:-1]:
+                encoder = type_encoders.get(base)
+                if encoder is not None and encoder is not base:
+                    res = encoder(res)
+                    break
+        if res is None or isinstance(res, (str, bytes, bytearray)):
+            serializer = get_serializer(type_encoders) if type_encoders else None
+            return Response(content=encode_json(res, serializer=serializer), media_type="application/json")
+    return Response(content=res, media_type="application/json", type_encoders=type_encoders)
+
+
+def _is_json_compatible_media_type(media_type: "str | None") -> "bool":
+    """Return whether `media_type` represents JSON content safe for Litestar JSON serialization."""
+    if not media_type:
+        return False
+    base = media_type.split(";", 1)[0].strip().lower()
+    return base == "application/json" or base.endswith("+json")
+
+
+def _to_resource_response(res: "Any", *, media_type: "str | None" = None) -> "Response[Any]":
+    """Convert a standalone resource return value into a Litestar Response without JSON-quoting raw text or bytes."""
+    if isinstance(res, Response):
+        return res
+    if isinstance(res, (bytes, bytearray)):
+        return Response(content=bytes(res), media_type=media_type or "application/octet-stream")
+    if isinstance(res, str):
+        return Response(content=res, media_type=media_type or "text/plain")
+    if res is None:
+        return Response(content=b"", media_type=media_type or "text/plain")
+    target_media_type = media_type if _is_json_compatible_media_type(media_type) else "application/json"
+    return Response(content=res, media_type=target_media_type)
+
+
+def _resource_response_wrapper(
+    fn: "Callable[..., Any]",
+    *,
+    path: "str" = "",
+    dependencies: "Mapping[str, Any] | None" = None,
+    media_type: "str | None" = None,
+) -> "Callable[..., Any]":
+    """Wrap a standalone resource handler preserving raw `str`/`bytes` media types and Litestar signature hints."""
+    if inspect.iscoroutinefunction(fn):
+
+        @wraps(fn)
+        async def async_wrapped(*args: "Any", **kwargs: "Any") -> "Any":
+            return _to_resource_response(await fn(*args, **kwargs), media_type=media_type)
+
+        return normalize_synthesized_handler_signature(async_wrapped, fn, path=path, dependencies=dependencies)
+
+    @wraps(fn)
+    def sync_wrapped(*args: "Any", **kwargs: "Any") -> "Any":
+        return _to_resource_response(fn(*args, **kwargs), media_type=media_type)
+
+    return normalize_synthesized_handler_signature(sync_wrapped, fn, path=path, dependencies=dependencies)
 
 
 class MCP:
@@ -388,29 +549,75 @@ class MCP:
         tags: "Sequence[str] | None" = None,
         type_decoders: "TypeDecodersSequence | None" = None,
         type_encoders: "TypeEncodersMap | None" = None,
+        output_schema: "dict[str, Any] | bool | None" = None,
+        title: "str | None" = None,
+        icons: "Sequence[dict[str, Any]] | None" = None,
+        meta: "Mapping[str, Any] | None" = None,
         **kwargs: "Any",
     ) -> "Callable[[Callable[..., Any]], Callable[..., Any]]":
         """Decorator to register a function as an MCP tool.
 
         This dynamically wraps the function inside a Litestar route handler
         and registers it to the plugin. Additional keyword arguments are
-        passed through to Litestar's ``post()`` route decorator.
+        passed through to Litestar's `post()` route decorator.
         """
         route_kwargs = _collect_route_handler_kwargs(locals())
+        validated_output = _validate_standalone_output_schema(output_schema)
+        cleaned_title = _clean_title(title)
+        cleaned_icons = _clean_icons(icons)
+        cleaned_meta = _clean_meta(meta)
 
         def decorator(fn: "Callable[..., Any]") -> "Callable[..., Any]":
             tool_name = name or fn.__name__
             path = _standalone_internal_path(self.config.base_path, "tools", tool_name)
             opt_keys = self.config.opt_keys
+            forced_opt: dict[str, Any] = {opt_keys.tool: tool_name, "_mcp_synthesized_tool": True}
+            if validated_output is not None:
+                forced_opt[opt_keys.output_schema] = (
+                    validated_output if isinstance(validated_output, bool) else copy.deepcopy(validated_output)
+                )
+            _populate_forced_descriptors(
+                forced_opt,
+                title_key=opt_keys.tool_title,
+                icons_key=opt_keys.tool_icons,
+                meta_key=opt_keys.tool_meta,
+                title=cleaned_title,
+                icons=cleaned_icons,
+                meta=cleaned_meta,
+            )
+
+            fallback_encoders = _merge_type_encoders(
+                self._kwargs.get("type_encoders"),
+                route_kwargs.get("type_encoders"),
+            )
+            handler_ref: list[Any] = []
+
+            def _resolve_encoders() -> "TypeEncodersMap | None":
+                if handler_ref and getattr(handler_ref[0], "ownership_layers", None):
+                    with contextlib.suppress(Exception):
+                        resolved = handler_ref[0].resolve_type_encoders()
+                        if resolved:
+                            return cast("TypeEncodersMap", resolved)
+                return fallback_encoders
+
             handler = post(
                 path=path,
                 **_build_standalone_route_kwargs(
                     route_kwargs,
                     fn=fn,
-                    forced_opt={opt_keys.tool: tool_name, "_mcp_synthesized_tool": True},
+                    forced_opt=forced_opt,
                     default_opt={opt_keys.description: description or fn.__doc__ or ""},
                 ),
-            )(_json_response_wrapper(fn, path=path, dependencies=route_kwargs.get("dependencies")))
+            )(
+                _json_response_wrapper(
+                    fn,
+                    path=path,
+                    dependencies=route_kwargs.get("dependencies"),
+                    type_encoders=fallback_encoders,
+                    type_encoders_resolver=_resolve_encoders,
+                )
+            )
+            handler_ref.append(handler)
 
             self.plugin.register_dynamic_handler(handler)
             return fn
@@ -462,38 +669,70 @@ class MCP:
         tags: "Sequence[str] | None" = None,
         type_decoders: "TypeDecodersSequence | None" = None,
         type_encoders: "TypeEncodersMap | None" = None,
+        title: "str | None" = None,
+        icons: "Sequence[dict[str, Any]] | None" = None,
+        meta: "Mapping[str, Any] | None" = None,
         **kwargs: "Any",
     ) -> "Callable[[Callable[..., Any]], Callable[..., Any]]":
         """Decorator to register a function as an MCP resource.
 
         This dynamically wraps the function inside a Litestar route handler
         and registers it to the plugin. Additional keyword arguments are
-        passed through to Litestar's ``get()`` route decorator.
+        passed through to Litestar's `get()` route decorator.
         """
         route_kwargs = _collect_route_handler_kwargs(locals())
+        static_uri, template_uri = classify_resource_uri(uri=uri)
+        cleaned_title = _clean_title(title)
+        cleaned_icons = _clean_icons(icons)
+        cleaned_meta = _clean_meta(meta)
 
         def decorator(fn: "Callable[..., Any]") -> "Callable[..., Any]":
             resource_name = name or fn.__name__
-            parsed = urllib.parse.urlparse(uri)
-            clean_path = parsed.netloc + parsed.path if parsed.scheme else uri.lstrip("/")
-
-            path = _standalone_internal_path(self.config.base_path, "resources", clean_path)
+            path = _standalone_resource_internal_path(self.config.base_path, uri, resource_name)
             opt_keys = self.config.opt_keys
+            forced_opt: dict[str, Any] = {opt_keys.resource: resource_name}
+            if static_uri is not None:
+                forced_opt[opt_keys.resource_uri] = static_uri
+            elif template_uri is not None:
+                forced_opt[opt_keys.resource_template] = template_uri
+            _populate_forced_descriptors(
+                forced_opt,
+                title_key=opt_keys.resource_title,
+                icons_key=opt_keys.resource_icons,
+                meta_key=opt_keys.resource_meta,
+                title=cleaned_title,
+                icons=cleaned_icons,
+                meta=cleaned_meta,
+            )
+
+            route_media_type = route_kwargs.get("media_type")
+            raw_route_mime = getattr(route_media_type, "value", route_media_type)
+            if isinstance(mime_type, str) and mime_type:
+                configured_mime: str | None = mime_type
+            elif isinstance(raw_route_mime, str) and raw_route_mime:
+                configured_mime = raw_route_mime
+            else:
+                configured_mime = _default_resource_mime_type_for_callable(fn)
+
             handler = get(
                 path=path,
                 **_build_standalone_route_kwargs(
                     route_kwargs,
                     fn=fn,
-                    forced_opt={
-                        opt_keys.resource: resource_name,
-                        opt_keys.resource_template: uri,
-                    },
+                    forced_opt=forced_opt,
                     default_opt={
                         opt_keys.resource_description: description or fn.__doc__ or "",
-                        opt_keys.resource_mime_type: mime_type,
+                        opt_keys.resource_mime_type: configured_mime,
                     },
                 ),
-            )(_json_response_wrapper(fn, path=path, dependencies=route_kwargs.get("dependencies")))
+            )(
+                _resource_response_wrapper(
+                    fn,
+                    path=path,
+                    dependencies=route_kwargs.get("dependencies"),
+                    media_type=configured_mime,
+                )
+            )
             self.plugin.register_dynamic_handler(handler)
             return fn
 
@@ -542,26 +781,50 @@ class MCP:
         tags: "Sequence[str] | None" = None,
         type_decoders: "TypeDecodersSequence | None" = None,
         type_encoders: "TypeEncodersMap | None" = None,
+        title: "str | None" = None,
+        arguments: "Sequence[dict[str, Any]] | None" = None,
+        icons: "Sequence[dict[str, Any]] | None" = None,
+        meta: "Mapping[str, Any] | None" = None,
         **kwargs: "Any",
     ) -> "Callable[[Callable[..., Any]], Callable[..., Any]]":
         """Decorator to register a function as an MCP prompt.
 
         This dynamically wraps the function inside a Litestar route handler
         and registers it to the plugin. Additional keyword arguments are
-        passed through to Litestar's ``get()`` route decorator.
+        passed through to Litestar's `get()` route decorator.
         """
         route_kwargs = _collect_route_handler_kwargs(locals())
+        cleaned_title = _clean_title(title)
+        cleaned_arguments = (
+            [copy.deepcopy(dict(item)) for item in arguments if isinstance(item, Mapping)]
+            if arguments is not None
+            else None
+        )
+        cleaned_icons = _clean_icons(icons)
+        cleaned_meta = _clean_meta(meta)
 
         def decorator(fn: "Callable[..., Any]") -> "Callable[..., Any]":
             prompt_name = name or fn.__name__
             path = _standalone_internal_path(self.config.base_path, "prompts", prompt_name)
             opt_keys = self.config.opt_keys
+            forced_opt: dict[str, Any] = {opt_keys.prompt: prompt_name}
+            if cleaned_arguments is not None:
+                forced_opt[opt_keys.prompt_arguments] = copy.deepcopy(cleaned_arguments)
+            _populate_forced_descriptors(
+                forced_opt,
+                title_key=opt_keys.prompt_title,
+                icons_key=opt_keys.prompt_icons,
+                meta_key=opt_keys.prompt_meta,
+                title=cleaned_title,
+                icons=cleaned_icons,
+                meta=cleaned_meta,
+            )
             handler = get(
                 path=path,
                 **_build_standalone_route_kwargs(
                     route_kwargs,
                     fn=fn,
-                    forced_opt={opt_keys.prompt: prompt_name},
+                    forced_opt=forced_opt,
                     default_opt={opt_keys.prompt_description: description or fn.__doc__ or ""},
                 ),
             )(_json_response_wrapper(fn, path=path, dependencies=route_kwargs.get("dependencies")))

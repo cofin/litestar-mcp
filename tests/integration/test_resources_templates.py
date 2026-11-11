@@ -11,7 +11,7 @@ import pytest
 from litestar import Litestar, get
 from litestar.testing import AsyncTestClient
 
-from litestar_mcp import LitestarMCP, MCPConfig
+from litestar_mcp import LitestarMCP, MCPConfig, mcp_resource
 
 pytestmark = pytest.mark.integration
 
@@ -142,3 +142,85 @@ async def test_ambiguous_templates_resolve_first_registered() -> "None":
     async with AsyncTestClient(app=_app(first, second)) as client:
         resp = await _rpc(client, "resources/read", {"uri": "app://x/42"})
         assert '"which":"first"' in resp["result"]["contents"][0]["text"].replace(" ", "")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("mode", "res_name", "expected_template", "read_uri", "expected_id"),
+    [
+        ("opt_template", "wf", "app://w/{wid}", "app://w/7", "7"),
+        ("opt_uri_with_var", "x_res", "app://x/{wid}", "app://x/7", "7"),
+        ("decorator_uri_outer", "dec_tpl", "app://dec/{wid}", "app://dec/42", "42"),
+        ("decorator_uri_template_inner", "exp_tpl", "app://exp/{wid}", "app://exp/42", "42"),
+    ],
+)
+async def test_templated_routes_excluded_from_resources_list_across_registration_forms(
+    mode: "str",
+    res_name: "str",
+    expected_template: "str",
+    read_uri: "str",
+    expected_id: "str",
+) -> "None":
+    if mode == "opt_template":
+
+        @get(
+            "/r/{wid:str}",
+            mcp_resource=res_name,
+            mcp_resource_template=expected_template,
+            sync_to_thread=False,
+        )
+        def opt_tpl_handler(wid: "str") -> "dict[str, str]":
+            return {"wid": wid}
+
+        target_handler: Any = opt_tpl_handler
+    elif mode == "opt_uri_with_var":
+
+        @get(
+            "/r/{wid:str}",
+            mcp_resource=res_name,
+            mcp_resource_uri=expected_template,
+            sync_to_thread=False,
+        )
+        def opt_uri_handler(wid: "str") -> "dict[str, str]":
+            return {"wid": wid}
+
+        target_handler = opt_uri_handler
+    elif mode == "decorator_uri_outer":
+
+        @mcp_resource(res_name, uri=expected_template)
+        @get("/r/{wid:str}", sync_to_thread=False)
+        def dec_outer_handler(wid: "str") -> "dict[str, str]":
+            return {"wid": wid}
+
+        target_handler = dec_outer_handler
+    else:
+
+        @get("/r/{wid:str}", sync_to_thread=False)
+        @mcp_resource(res_name, uri_template=expected_template)
+        def dec_inner_handler(wid: "str") -> "dict[str, str]":
+            return {"wid": wid}
+
+        target_handler = dec_inner_handler
+
+    async with AsyncTestClient(app=_app(target_handler)) as client:
+        listed = await _rpc(client, "resources/list")
+        templates_resp = await _rpc(client, "resources/templates/list")
+        read_ok = await _rpc(client, "resources/read", {"uri": read_uri})
+        read_litestar = await _rpc(client, "resources/read", {"uri": f"litestar://{res_name}"})
+        complete_resp = await _rpc(
+            client,
+            "completion/complete",
+            {"ref": {"type": "ref/resource", "uri": expected_template}, "argument": {"name": "wid", "value": ""}},
+        )
+
+    resources = listed["result"]["resources"]
+    assert all(r["name"] != res_name for r in resources)
+    assert all(r["uri"] not in {f"litestar://{res_name}", expected_template} for r in resources)
+
+    templates = templates_resp["result"]["resourceTemplates"]
+    assert any(t["name"] == res_name and t["uriTemplate"] == expected_template for t in templates)
+
+    text = read_ok["result"]["contents"][0]["text"].replace(" ", "")
+    assert f'"wid":"{expected_id}"' in text
+    assert "error" in read_litestar
+    assert complete_resp["result"]["completion"] == {"values": [], "total": 0, "hasMore": False}

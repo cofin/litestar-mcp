@@ -7,7 +7,7 @@ import pytest
 from litestar import Litestar, Response, get
 from litestar.testing import AsyncTestClient
 
-from litestar_mcp import LitestarMCP, MCPBlobResource, MCPConfig, MCPResourceLink, MCPToolResult
+from litestar_mcp import LitestarMCP, MCPBlobResource, MCPConfig, MCPResourceLink, MCPToolResult, mcp_resource
 
 pytestmark = pytest.mark.integration
 
@@ -159,3 +159,130 @@ async def test_resource_mime_type_defaults_to_route_media_type() -> "None":
 
     resource = next(item for item in listed["result"]["resources"] if item["name"] == "latest_report")
     assert resource["mimeType"] == "application/pdf"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("mode", "expected_uri"),
+    [
+        ("opt", "litestar://bin"),
+        ("decorator", "file:///dec.bin"),
+    ],
+)
+async def test_raw_bytes_resource_handlers_honor_explicit_octet_stream_mime(
+    mode: "str",
+    expected_uri: "str",
+) -> "None":
+    if mode == "opt":
+
+        @get("/bin", mcp_resource="bin", mcp_resource_mime_type="application/octet-stream", sync_to_thread=False)
+        def bin_res() -> "bytes":
+            return b"\x00\x01"
+
+        target: Any = bin_res
+    else:
+
+        @mcp_resource("dec_bin", uri=expected_uri, mime_type="application/octet-stream")
+        @get("/dec-bin", sync_to_thread=False)
+        def dec_bin() -> "bytes":
+            return b"\x00\x01"
+
+        target = dec_bin
+
+    async with AsyncTestClient(app=_app(target)) as client:
+        listed = await _rpc(client, "resources/list")
+        read_resp = await _rpc(client, "resources/read", {"uri": expected_uri})
+
+    entry = next(item for item in listed["result"]["resources"] if item["uri"] == expected_uri)
+    assert entry["mimeType"] == "application/octet-stream"
+    assert read_resp["result"]["contents"] == [
+        {
+            "uri": expected_uri,
+            "mimeType": "application/octet-stream",
+            "blob": "AAE=",
+        }
+    ]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("mode", "expected_uri", "expected_mime", "expected_snippet"),
+    [
+        ("decorator_html", "ui://app/dashboard.html", "text/html;profile=mcp-app", "<h1>App</h1>"),
+        ("brace_free_opt_template", "ui://app/cfg.json", "application/json", '"ok":true'),
+    ],
+)
+async def test_static_decorator_uri_and_brace_free_opt_template_list_and_read(
+    mode: "str",
+    expected_uri: "str",
+    expected_mime: "str",
+    expected_snippet: "str",
+) -> "None":
+    if mode == "decorator_html":
+
+        @get("/dash", sync_to_thread=False)
+        @mcp_resource("dash", uri=expected_uri, mime_type=expected_mime)
+        def dash() -> "str":
+            return "<h1>App</h1>"
+
+        target: Any = dash
+    else:
+
+        @get("/cfg", mcp_resource="cfg", mcp_resource_template=expected_uri, sync_to_thread=False)
+        def cfg() -> "dict[str, bool]":
+            return {"ok": True}
+
+        target = cfg
+
+    async with AsyncTestClient(app=_app(target)) as client:
+        listed = await _rpc(client, "resources/list")
+        templates = await _rpc(client, "resources/templates/list")
+        read_resp = await _rpc(client, "resources/read", {"uri": expected_uri})
+
+    entry = next(item for item in listed["result"]["resources"] if item["uri"] == expected_uri)
+    assert entry["mimeType"] == expected_mime
+    assert templates["result"]["resourceTemplates"] == []
+    content = read_resp["result"]["contents"][0]
+    assert content["uri"] == expected_uri
+    assert content["mimeType"] == expected_mime
+    assert expected_snippet in content["text"].replace(" ", "")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("mode", "expected_read_mime", "expected_key", "expected_val"),
+    [
+        ("binary_override", "image/png", "blob", base64.b64encode(b"PNG").decode("ascii")),
+        ("text_plain_override", "text/plain", "text", "plain"),
+    ],
+)
+async def test_dynamic_response_media_types_preserved_over_declared_resource_mime(
+    mode: "str",
+    expected_read_mime: "str",
+    expected_key: "str",
+    expected_val: "str",
+) -> "None":
+    if mode == "binary_override":
+
+        @get("/img", mcp_resource="dyn", mcp_resource_mime_type="text/html", sync_to_thread=False)
+        def img() -> "Response[bytes]":
+            return Response(b"PNG", media_type="image/png")
+
+        target: Any = img
+    else:
+
+        @get("/txt", mcp_resource="dyn", mcp_resource_mime_type="text/html", sync_to_thread=False)
+        def txt() -> "Response[str]":
+            return Response("plain", media_type="text/plain")
+
+        target = txt
+
+    async with AsyncTestClient(app=_app(target)) as client:
+        listed = await _rpc(client, "resources/list")
+        read_resp = await _rpc(client, "resources/read", {"uri": "litestar://dyn"})
+
+    entry = next(item for item in listed["result"]["resources"] if item["name"] == "dyn")
+    assert entry["mimeType"] == "text/html"
+    content = read_resp["result"]["contents"][0]
+    assert content["mimeType"] == expected_read_mime
+    assert content[expected_key] == expected_val

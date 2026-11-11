@@ -1,5 +1,6 @@
 """Core tool abstraction with type-based context injection, universal DI, and msgspec argument validation."""
 
+import copy
 import functools
 import inspect
 from collections.abc import Callable, Mapping, Sequence
@@ -15,11 +16,17 @@ from litestar import Request
 from litestar.connection import ASGIConnection
 from litestar.di import Provide
 from litestar.exceptions import ImproperlyConfiguredException
-from litestar.serialization import decode_json, encode_json, get_serializer
+from litestar.serialization import get_serializer
 
 from litestar_mcp.core.context import ToolContext
 from litestar_mcp.core.exceptions import LitestarMCPError
-from litestar_mcp.core.schema_builder import hoist_definitions, type_to_json_schema
+from litestar_mcp.core.schema_builder import (
+    hoist_definitions,
+    type_to_json_schema,
+    type_to_output_schema,
+    unwrap_root_object_schema,
+)
+from litestar_mcp.core.serialization import decode_json, encode_json
 from litestar_mcp.utils import strip_docstring_sections
 from litestar_mcp.utils.handler_signature import (
     DIParameterSpec,
@@ -88,6 +95,16 @@ class ToolArgumentError(LitestarMCPError, ValueError):
     """Raised when model-supplied arguments fail validation against the tool's argument model."""
 
 
+_MCP_CONTENT_RESULT_NAMES: "frozenset[str]" = frozenset(
+    {
+        "MCPBlobResource",
+        "MCPInputRequiredResult",
+        "MCPResourceLink",
+        "MCPToolResult",
+    }
+)
+
+
 class Tool:
     """Executable tool with a JSON Schema, msgspec argument model, and universal DI resolution."""
 
@@ -95,32 +112,46 @@ class Tool:
         "_args_model",
         "_di_injected",
         "_injected",
+        "_output_schema_policy",
         "annotations",
         "bound_instance",
         "dependencies",
         "description",
         "fn",
+        "icons",
+        "meta",
         "name",
+        "output_schema",
         "parameters",
+        "title",
     )
 
     name: str
+    title: str | None
     description: str
     parameters: dict[str, Any]
+    output_schema: dict[str, Any] | None
     annotations: dict[str, Any]
+    icons: list[dict[str, Any]] | None
+    meta: dict[str, Any] | None
     bound_instance: Any | None
     fn: Callable[..., Any]
     dependencies: dict[str, Any]
     _di_injected: dict[str, DIParameterSpec]
+    _output_schema_policy: dict[str, Any] | bool | None
 
     def __init__(
         self,
         fn: "Callable[..., Any]",
         *,
         name: "str | None" = None,
+        title: "str | None" = None,
         description: "str | None" = None,
         dependencies: "Mapping[str, Any] | None" = None,
+        output_schema: "dict[str, Any] | bool | None" = None,
         annotations: "Mapping[str, Any] | None" = None,
+        icons: "Sequence[dict[str, Any]] | None" = None,
+        meta: "Mapping[str, Any] | None" = None,
         read_only: "bool | None" = None,
         bound_instance: "Any | None" = None,
         _args_model: "type[Any] | None" = None,
@@ -132,6 +163,8 @@ class Tool:
         self.fn = fn
         self.bound_instance = bound_instance
         self.name = str(name or getattr(fn, "__name__", "tool"))
+        cleaned_title = title.strip() if isinstance(title, str) else None
+        self.title = cleaned_title or None
         if description is not None:
             self.description = description.strip()
         else:
@@ -142,6 +175,11 @@ class Tool:
         if read_only is not None:
             merged_annotations["readOnlyHint"] = bool(read_only)
         self.annotations = merged_annotations
+        self.icons = [copy.deepcopy(dict(item)) for item in icons] if icons else None
+        self.meta = copy.deepcopy(dict(meta)) if meta else None
+        resolved_output, resolved_policy = self._resolve_output_schema(fn, output_schema)
+        self.output_schema = resolved_output
+        self._output_schema_policy = resolved_policy
 
         if parameters is not None and _injected is not None:
             self._args_model = _args_model
@@ -173,9 +211,13 @@ class Tool:
         return Tool(
             self.fn,
             name=self.name,
+            title=self.title,
             description=self.description,
             dependencies=self.dependencies,
+            output_schema=self._output_schema_policy,
             annotations=self.annotations,
+            icons=self.icons,
+            meta=self.meta,
             bound_instance=instance,
             _args_model=self._args_model,
             _injected=self._injected,
@@ -204,6 +246,13 @@ class Tool:
         """JSON Schema representing tool inputs."""
         return self.parameters
 
+    @property
+    def output_schema_policy(self) -> "dict[str, Any] | bool | None":
+        """Return the configured output schema policy (`dict`, `True`, `False`, or `None`)."""
+        if isinstance(self._output_schema_policy, dict):
+            return copy.deepcopy(self._output_schema_policy)
+        return self._output_schema_policy
+
     def register_dependencies(self, controller_dependencies: "Mapping[str, Any]") -> "None":
         """Merge controller-level dependencies and rebuild the tool schema."""
         merged = dict(controller_dependencies)
@@ -227,7 +276,11 @@ class Tool:
         parameters: "dict[str, Any] | None" = None,
         call: "Callable[..., Any] | None" = None,
         *,
+        title: "str | None" = None,
+        output_schema: "dict[str, Any] | bool | None" = None,
         annotations: "Mapping[str, Any] | None" = None,
+        icons: "Sequence[dict[str, Any]] | None" = None,
+        meta: "Mapping[str, Any] | None" = None,
         read_only: "bool | None" = None,
     ) -> "Tool":
         """Construct a tool instance from an explicit JSON schema and callable."""
@@ -235,7 +288,7 @@ class Tool:
         if call is None:
 
             async def _noop(**_: Any) -> None:
-                return None
+                pass
 
             target_call = _noop
         else:
@@ -243,8 +296,12 @@ class Tool:
         return cls(
             target_call,
             name=name,
+            title=title,
             description=description,
+            output_schema=output_schema,
             annotations=annotations,
+            icons=icons,
+            meta=meta,
             read_only=read_only,
             parameters=param_schema,
             _args_model=None,
@@ -254,11 +311,14 @@ class Tool:
 
     def to_json_schema(self) -> "dict[str, Any]":
         """Return the JSON schema representation exposed to LLMs."""
-        return {
+        schema: dict[str, Any] = {
             "name": self.name,
             "description": self.description,
             "parameters": self.parameters,
         }
+        if self.output_schema is not None:
+            schema["output_schema"] = copy.deepcopy(self.output_schema)
+        return schema
 
     async def execute(
         self,
@@ -312,8 +372,41 @@ class Tool:
             finally:
                 _current_tool_context.reset(token)
 
+        result_cls = type(result)
+        if (
+            getattr(result_cls, "__module__", None) == "litestar_mcp.mcp.content"
+            and getattr(result_cls, "__name__", None) in _MCP_CONTENT_RESULT_NAMES
+        ):
+            return result
         serializer = get_serializer(effective_ctx.type_encoders) if effective_ctx.type_encoders else None
         return decode_json(encode_json(result, serializer=serializer))
+
+    @staticmethod
+    def _resolve_output_schema(
+        fn: "Callable[..., Any]",
+        output_schema: "Any",
+    ) -> "tuple[dict[str, Any] | None, dict[str, Any] | bool | None]":
+        """Validate and resolve `output_schema` into `(resolved_schema, stored_policy)`."""
+        if output_schema is None:
+            return None, None
+        if isinstance(output_schema, bool):
+            if output_schema is False:
+                return None, False
+            try:
+                hints = get_type_hints(fn, include_extras=True)
+            except (NameError, TypeError, ValueError):
+                raw_annotations = getattr(fn, "__annotations__", None)
+                hints = raw_annotations if isinstance(raw_annotations, dict) else {}
+            ret_hint = hints.get("return", inspect.Signature.empty)
+            return type_to_output_schema(ret_hint), True
+        if isinstance(output_schema, Mapping):
+            resolved = unwrap_root_object_schema(dict(output_schema))
+            if resolved.get("type") != "object":
+                msg = "output_schema mapping must resolve to root type 'object'"
+                raise ValueError(msg)
+            return resolved, copy.deepcopy(resolved)
+        msg = "output_schema must be a mapping, bool, or None"
+        raise TypeError(msg)
 
     @classmethod
     def _build_tool_schema(
@@ -414,13 +507,31 @@ class Tool:
         return args_model
 
 
+def _validate_tool_output_schema_arg(output_schema: "Any") -> "None":
+    """Validate decorator `output_schema` argument eagerly before wrapping the callable."""
+    if output_schema is None or isinstance(output_schema, bool):
+        return
+    if isinstance(output_schema, Mapping):
+        resolved = unwrap_root_object_schema(dict(output_schema))
+        if resolved.get("type") != "object":
+            msg = "output_schema mapping must resolve to root type 'object'"
+            raise ValueError(msg)
+        return
+    msg = "output_schema must be a mapping, bool, or None"
+    raise TypeError(msg)
+
+
 def tool(
     name_or_fn: "Callable[..., Any] | str | None" = None,
     *,
     name: "str | None" = None,
+    title: "str | None" = None,
     description: "str | None" = None,
     dependencies: "Mapping[str, Any] | None" = None,
+    output_schema: "dict[str, Any] | bool | None" = None,
     annotations: "Mapping[str, Any] | None" = None,
+    icons: "Sequence[dict[str, Any]] | None" = None,
+    meta: "Mapping[str, Any] | None" = None,
     read_only: "bool | None" = None,
 ) -> "Any":
     """Decorate a callable as an executable tool."""
@@ -429,12 +540,18 @@ def tool(
         return Tool(
             name_or_fn,
             name=name,
+            title=title,
             description=description,
             dependencies=dependencies,
+            output_schema=output_schema,
             annotations=annotations,
+            icons=icons,
+            meta=meta,
             read_only=read_only,
             _enclosing_dependencies=enclosing_deps,
         )
+
+    _validate_tool_output_schema_arg(output_schema)
 
     resolved_name = name or (name_or_fn if isinstance(name_or_fn, str) else None)
 
@@ -443,9 +560,13 @@ def tool(
         return Tool(
             fn,
             name=resolved_name,
+            title=title,
             description=description,
             dependencies=dependencies,
+            output_schema=output_schema,
             annotations=annotations,
+            icons=icons,
+            meta=meta,
             read_only=read_only,
             _enclosing_dependencies=captured,
         )
