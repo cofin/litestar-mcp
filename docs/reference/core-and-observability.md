@@ -79,3 +79,7 @@ For guides, see [Core Architectural Concepts](../getting-started/concepts.md) an
 ::: litestar_mcp.mcp.executor.execute_handler_response
 
 ::: litestar_mcp.mcp.executor.blank_http_scope
+
+::: litestar_mcp.mcp.executor.MCPToolErrorResult
+
+::: litestar_mcp.mcp.executor.MCPPathParamCoercionError

@@ -89,11 +89,6 @@ class TestMcpPromptDecorator:
         assert "icons" not in metadata
 
 
-# ---------------------------------------------------------------------------
-# PromptRegistration tests
-# ---------------------------------------------------------------------------
-
-
 class TestPromptRegistration:
     def test_get_arguments_from_signature(self) -> "None":
         def fn(code: "str", style: "str" = "brief") -> "str":
@@ -247,11 +242,6 @@ class TestPromptRegistration:
             lambda: (_ for _ in ()).throw(AttributeError("nope")),
         )
         assert extract_advertised_handler_arguments(broken_di) == [{"name": "topic", "required": True}]
-
-
-# ---------------------------------------------------------------------------
-# Docstring argument parsing tests
-# ---------------------------------------------------------------------------
 
 
 class TestParseDocstringArgs:
@@ -1003,11 +993,6 @@ class TestPromptErrorMapping:
             data = _rpc(client, "prompts/get", params={"name": "bad_5xx"})
             assert "error" in data
             assert data["error"]["code"] == -32603
-
-
-# ---------------------------------------------------------------------------
-# Filter coverage: prompts respect include/exclude_operations + tags
-# ---------------------------------------------------------------------------
 
 
 class TestPromptFiltering:

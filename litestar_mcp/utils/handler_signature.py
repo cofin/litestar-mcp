@@ -754,16 +754,16 @@ def normalize_synthesized_handler_signature(
     path: "str" = "",
     dependencies: "Mapping[str, Any] | None" = None,
 ) -> "Callable[..., Any]":
-    """Annotate plain parameters on a synthesized internal route handler for Litestar 2.25+."""
+    """Annotate plain parameters and preserve source annotations on synthesized route handlers."""
     target = source_fn or wrapper_fn
     try:
         hints = get_type_hints(target, include_extras=True)
-    except Exception:  # noqa: BLE001
-        hints = dict(getattr(target, "__annotations__", {}) or {})
+    except (AttributeError, NameError, TypeError, ValueError):
+        hints = _read_raw_annotations(target)
 
     try:
         raw_sig = inspect.signature(wrapper_fn)
-    except (TypeError, ValueError):
+    except (AttributeError, NameError, TypeError, ValueError):
         return wrapper_fn
 
     path_param_names = set(_PATH_PARAM_RE.findall(path)) if path else set()
@@ -772,8 +772,13 @@ def normalize_synthesized_handler_signature(
         explicit_deps = _capture_class_dependencies()
 
     new_params: list[inspect.Parameter] = []
-    new_annotations: dict[str, Any] = dict(getattr(wrapper_fn, "__annotations__", {}) or {})
+    new_annotations = _read_raw_annotations(wrapper_fn)
     changed = False
+    if source_fn is not None and source_fn is not wrapper_fn:
+        for key, value in _read_raw_annotations(source_fn).items():
+            if key not in new_annotations or new_annotations[key] != value:
+                new_annotations[key] = value
+                changed = True
 
     for pname, param in raw_sig.parameters.items():
         ann = hints.get(pname, param.annotation)
@@ -787,7 +792,8 @@ def normalize_synthesized_handler_signature(
 
     if changed:
         wrapper_fn.__annotations__ = new_annotations
-        setattr(wrapper_fn, "__signature__", raw_sig.replace(parameters=new_params))
+        return_ann = new_annotations.get("return", raw_sig.return_annotation)
+        setattr(wrapper_fn, "__signature__", raw_sig.replace(parameters=new_params, return_annotation=return_ann))
     return wrapper_fn
 
 
@@ -801,6 +807,14 @@ def _is_context_or_connection_type(annotation: "Any") -> "bool":
     if not isinstance(inner, type):
         return False
     return issubclass(inner, ASGIConnection) or inner.__name__ == "ToolContext"
+
+
+def _read_raw_annotations(fn: "Callable[..., Any]") -> "dict[str, Any]":
+    try:
+        raw = getattr(fn, "__annotations__", None)
+    except (AttributeError, NameError, TypeError, ValueError):
+        return {}
+    return dict(raw) if isinstance(raw, Mapping) else {}
 
 
 def _capture_class_dependencies() -> "dict[str, Any]":

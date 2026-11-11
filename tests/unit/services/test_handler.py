@@ -18,7 +18,6 @@ from litestar_mcp.utils import mcp_resource, mcp_tool
 if TYPE_CHECKING:
     from pathlib import Path
 
-# Using unit marker for these tests
 pytestmark = pytest.mark.unit
 
 
@@ -39,7 +38,7 @@ def request_context() -> "MCPRequestContext":
     return MCPRequestContext(
         client_id="test-client-id",
         owner_id="test-owner-id",
-        request=None,  # Or a Mock request if needed
+        request=None,
     )
 
 
@@ -149,12 +148,6 @@ async def test_tools_list_pagination(dummy_app: "Litestar", request_context: "MC
         return ""
 
     app = Litestar(route_handlers=[t1, t2])
-    # The routes will be separate
-    {
-        route.route_handlers[0].opt.get("mcp_tool", f"tool_{i}"): route.route_handlers[0]  # type: ignore[union-attr]
-        for i, route in enumerate(app.routes)
-    }
-
     config = MCPConfig(list_page_size=1)
     service = MCPHandlerService(
         config=config,
@@ -168,13 +161,11 @@ async def test_tools_list_pagination(dummy_app: "Litestar", request_context: "MC
         registry=None,
     )
 
-    # First page
     result = await service.tools_list({}, request_context)
     assert len(result["tools"]) == 1
     assert "nextCursor" in result
     cursor = result["nextCursor"]
 
-    # Second page
     result2 = await service.tools_list({"cursor": cursor}, request_context)
     assert len(result2["tools"]) == 1
     assert "nextCursor" not in result2

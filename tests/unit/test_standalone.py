@@ -14,6 +14,7 @@ from litestar_mcp import MCP, MCPStdioContext
 from litestar_mcp.mcp.config import UI_EXTENSION, UI_MIME_TYPE, MCPConfig
 from litestar_mcp.mcp.content import MCPBlobResource, MCPInputRequiredResult, MCPResourceLink, MCPToolResult
 from litestar_mcp.mcp.plugin import LitestarMCP
+from litestar_mcp.utils.handler_signature import normalize_synthesized_handler_signature
 from tests.unit.conftest import mcp_post
 
 if TYPE_CHECKING:
@@ -567,6 +568,24 @@ def test_standalone_binary_return_annotation_defaults_to_octet_stream(
             "blob": "//4=",
         }
     ]
+
+
+def test_normalize_synthesized_handler_signature_restores_stripped_wrapper_annotations() -> "None":
+    def source_fn(item_id: "str") -> "bytes":
+        return item_id.encode("utf-8")
+
+    source_fn.__annotations__ = {"item_id": str, "return": bytes}
+
+    def wrapper_fn(*args: "Any", **kwargs: "Any") -> "Any":
+        return source_fn(*args, **kwargs)
+
+    wrapper_fn.__wrapped__ = source_fn  # type: ignore[attr-defined]
+    wrapper_fn.__annotations__ = {}
+
+    normalized = normalize_synthesized_handler_signature(wrapper_fn, source_fn, path="/items/{item_id:str}")
+    assert normalized.__annotations__["return"] is bytes
+    assert "item_id" in normalized.__annotations__
+    assert inspect.signature(normalized, follow_wrapped=False).return_annotation is bytes
 
 
 def test_standalone_cross_scheme_shared_paths_do_not_collide() -> "None":
