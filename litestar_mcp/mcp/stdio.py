@@ -271,6 +271,7 @@ class ASGIStreamingTransport(httpx2.AsyncBaseTransport):
                     raise
             if not message.get("more_body", False):
                 state.sender.close()
+                state.disconnected.set()
 
 
 def _seed_stdio_identity(app: "ASGIApp", context: "MCPStdioContext") -> "ASGIApp":
@@ -314,6 +315,9 @@ async def _app_lifespan(app: "Litestar", *, shutdown_timeout: "float" = 5.0) -> 
     Startup unwind retains Litestar's native exception and cancellation
     semantics. Application hooks must bound and shield their own rollback
     where needed; the cleanup deadline is armed only after lifespan entry.
+    A body failure is re-raised outside the ``try/except`` block so the
+    exception keeps its own cause and context instead of gaining the
+    lifespan's wrapping group as implicit context.
     """
     if not math.isfinite(shutdown_timeout) or shutdown_timeout <= 0:
         msg = "shutdown_timeout must be positive and finite"
@@ -331,9 +335,6 @@ async def _app_lifespan(app: "Litestar", *, shutdown_timeout: "float" = 5.0) -> 
                     cleanup_scope.shield = True
                     cleanup_scope.deadline = anyio.current_time() + shutdown_timeout
         except BaseException as exc:
-            # A body failure is re-raised below, outside this handler, so the
-            # exception keeps its own cause and context instead of gaining the
-            # lifespan's wrapping group as implicit context.
             if body_error is None:
                 raise
             if not _wraps_only(exc, body_error) and not _only_cancellations(exc):
@@ -346,6 +347,7 @@ async def _app_lifespan(app: "Litestar", *, shutdown_timeout: "float" = 5.0) -> 
 
 
 def _resolve_plugin(app: "Litestar") -> "Any":
+    """Resolve `LitestarMCP` lazily to break the `plugin -> cli -> stdio -> plugin` import cycle."""
     from litestar_mcp.mcp.plugin import LitestarMCP
 
     try:

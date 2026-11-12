@@ -6,14 +6,17 @@ MCP metadata decorators (``@mcp_tool``, ``@mcp_resource``, ``@mcp_prompt``,
 ``get_mcp_metadata``, ``MetadataRegistry``), LLM-facing description
 rendering (``render_description``, ``extract_description_sources``,
 ``DescriptionSources``), and the RFC 6570 Level 1 URI template helpers
-(``parse_template``, ``match_uri``, ``expand_template``). Before v0.5.0
+(``classify_resource_uri``, ``parse_template``, ``match_uri``,
+``expand_template``). Before v0.5.0
 these lived in separate modules (``filters.py``, ``decorators.py``,
 ``_descriptions.py``, ``_uri_template.py``); they are now flattened into
 this single module.
 """
 
+import copy
 import inspect
 import re
+import weakref
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
@@ -29,6 +32,32 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
     from litestar_mcp.mcp.config import MCPConfig
+
+__all__ = (
+    "DescriptionSources",
+    "MetadataRegistry",
+    "classify_resource_uri",
+    "clean_icons",
+    "clean_meta",
+    "clean_title",
+    "expand_template",
+    "extract_description_sources",
+    "get_all_mcp_metadata",
+    "get_handler_function",
+    "get_mcp_metadata",
+    "match_uri",
+    "mcp_prompt",
+    "mcp_resource",
+    "mcp_tool",
+    "normalize_task_support",
+    "parse_template",
+    "render_description",
+    "resolve_app_store",
+    "set_mcp_metadata",
+    "should_include_handler",
+    "strip_docstring_sections",
+    "validate_tool_descriptions",
+)
 
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -111,44 +140,85 @@ def strip_docstring_sections(docstring: "str | None") -> "str":
 
 
 class MetadataRegistry:
-    """Singleton registry for MCP metadata using qualnames as keys."""
+    """Singleton registry for MCP metadata keyed weakly by callable identity and role."""
 
     _instance: "MetadataRegistry | None" = None
-    _data: "dict[str, dict[str, Any]]"
+    _data: "weakref.WeakKeyDictionary[Any, dict[str, dict[str, Any]]]"
+    _fallback: "dict[int, tuple[Any, dict[str, dict[str, Any]]]]"
 
     def __new__(cls) -> "Self":
         if cls._instance is None:
             inst = super().__new__(cls)
-            inst._data = {}
+            inst._data = weakref.WeakKeyDictionary()
+            inst._fallback = {}
             cls._instance = inst
         return cast("Self", cls._instance)
 
-    def set(self, obj: "Any", value: "dict[str, Any]") -> "None":
-        """Store MCP metadata dictionary for `obj` keyed by its resolved module and qualname."""
-        key = self._get_key(obj)
-        self._data[key] = value
+    def set(self, obj: "Any", value: "dict[str, Any]", *, kind: "Kind | str | None" = None) -> "None":
+        """Store MCP metadata dictionary for `obj` under `kind`."""
+        role = str(kind or value.get("type") or "tool")
+        bucket = self._bucket(self._unwrap_target(obj), create=True)
+        if bucket is not None:
+            bucket[role] = value
 
-    def get(self, obj: "Any") -> "dict[str, Any] | None":
-        """Retrieve the stored MCP metadata dictionary for `obj`, or `None` if not registered."""
-        key = self._get_key(obj)
-        return self._data.get(key)
+    def get(self, obj: "Any", *, kind: "Kind | str | None" = None) -> "dict[str, Any] | None":
+        """Retrieve the stored MCP metadata dictionary for `obj`, optionally filtered by `kind`."""
+        bucket = self._bucket(self._unwrap_target(obj), create=False)
+        if not bucket:
+            return None
+        if kind is not None:
+            return bucket.get(str(kind))
+        for role in ("tool", "resource", "prompt"):
+            entry = bucket.get(role)
+            if entry is not None:
+                return entry
+        return next(iter(bucket.values()), None)
 
-    def _get_key(self, obj: "Any") -> "str":
+    def get_all(self, obj: "Any") -> "list[dict[str, Any]]":
+        """Return all stored role metadata dictionaries associated with `obj`."""
+        bucket = self._bucket(self._unwrap_target(obj), create=False)
+        if not bucket:
+            return []
+        return list(bucket.values())
+
+    def _bucket(self, target: "Any", *, create: "bool") -> "dict[str, dict[str, Any]] | None":
+        try:
+            existing = self._data.get(target)
+            if existing is None and create:
+                existing = {}
+                self._data[target] = existing
+        except TypeError:
+            entry = self._fallback.get(id(target))
+            if entry is not None and entry[0] is target:
+                return entry[1]
+            if not create:
+                return None
+            created: dict[str, dict[str, Any]] = {}
+            self._fallback[id(target)] = (target, created)
+            return created
+        else:
+            return existing
+
+    @staticmethod
+    def _unwrap_target(obj: "Any") -> "Any":
         target = obj
-        if hasattr(obj, "fn"):
+        if hasattr(obj, "fn") and not isinstance(obj, type):
             target = obj.fn
-            if hasattr(target, "value"):
+            if not isinstance(target, type) and hasattr(target, "value") and callable(target.value):
                 target = target.value
 
-        if hasattr(target, "__func__"):
-            target = target.__func__
-
-        if hasattr(target, "__wrapped__"):
-            target = target.__wrapped__
-
-        module = getattr(target, "__module__", "unknown")
-        qualname = getattr(target, "__qualname__", "unknown")
-        return f"{module}.{qualname}"
+        seen: set[int] = set()
+        sentinel = object()
+        while id(target) not in seen:
+            seen.add(id(target))
+            for attr in ("__dishka_orig_func__", "__func__", "__wrapped__"):
+                unwrapped = getattr(target, attr, sentinel)
+                if unwrapped is not sentinel:
+                    target = unwrapped
+                    break
+            else:
+                break
+        return target
 
 
 _REGISTRY = MetadataRegistry()
@@ -242,13 +312,16 @@ def normalize_task_support(value: "str | bool | None") -> "str | None":
 def mcp_tool(
     name: "str | None" = None,
     *,
+    title: "str | None" = None,
     description: "str | None" = None,
     agent_instructions: "str | None" = None,
     when_to_use: "str | None" = None,
     returns: "str | None" = None,
     input_schema: "dict[str, Any] | None" = None,
-    output_schema: "dict[str, Any] | None" = None,
+    output_schema: "dict[str, Any] | bool | None" = None,
     annotations: "dict[str, Any] | None" = None,
+    icons: "Sequence[dict[str, Any]] | None" = None,
+    meta: "Mapping[str, Any] | None" = None,
     read_only: "bool | None" = None,
     scopes: "list[str] | None" = None,
     task: "str | bool | None" = None,
@@ -260,6 +333,7 @@ def mcp_tool(
 
     Args:
         name: The name of the MCP tool. Defaults to the function name.
+        title: Optional human-readable display title for UI clients.
         description: LLM-facing description. Overrides ``fn.__doc__``.
             Ignored when ``handler.opt["mcp_description"]`` is set (opt wins).
             Empty string is treated as absent so the docstring fallback still
@@ -271,8 +345,13 @@ def mcp_tool(
         returns: Optional return-shape hint — rendered as the ``## Returns``
             section.
         input_schema: Optional explicit JSON Schema for the tool input.
-        output_schema: Optional JSON Schema for the tool's structured output.
+        output_schema: Optional explicit object JSON Schema mapping for the
+            tool's structured output, `True` to synthesize from the handler's
+            return annotation, or `False` to opt out of synthesis.
         annotations: Optional metadata annotations (audience, priority, etc.).
+        icons: Optional sequence of MCP icon descriptor dicts for UI display.
+        meta: Optional MCP `_meta` descriptor mapping (including SEP-1865
+            `ui` linkage and visibility fields).
         read_only: Optional shorthand setting ``annotations["readOnlyHint"]``.
         scopes: Optional list of OAuth scopes advertised as discovery
             metadata (surfaced under ``tools[].annotations.scopes`` in
@@ -310,28 +389,34 @@ def mcp_tool(
         ``scopes``, or task/MRTR policy without mixing more keys into
         ``handler.opt``.
     """
+    validated_output_schema = _validate_output_schema_value(output_schema)
 
     def decorator(fn: "F") -> "F":
         metadata: dict[str, Any] = {"type": "tool", "name": name or _callable_name(fn)}
-        if description is not None:
-            metadata["description"] = description
-        if agent_instructions is not None:
-            metadata["agent_instructions"] = agent_instructions
-        if when_to_use is not None:
-            metadata["when_to_use"] = when_to_use
-        if returns is not None:
-            metadata["returns"] = returns
-        if input_schema is not None:
-            metadata["input_schema"] = input_schema
-        if output_schema is not None:
-            metadata["output_schema"] = output_schema
+        _apply_descriptor_metadata(metadata, title=title, icons=icons, meta=meta)
+        _apply_non_none_fields(
+            metadata,
+            {
+                "description": description,
+                "agent_instructions": agent_instructions,
+                "when_to_use": when_to_use,
+                "returns": returns,
+                "input_schema": copy.deepcopy(dict(input_schema)) if input_schema is not None else None,
+            },
+        )
+        if validated_output_schema is not None:
+            metadata["output_schema"] = (
+                copy.deepcopy(validated_output_schema)
+                if isinstance(validated_output_schema, dict)
+                else validated_output_schema
+            )
         if annotations is not None or read_only is not None:
-            merged_annotations = dict(annotations or {})
+            merged_annotations: dict[str, Any] = copy.deepcopy(dict(annotations)) if annotations else {}
             if read_only is not None:
                 merged_annotations["readOnlyHint"] = bool(read_only)
             metadata["annotations"] = merged_annotations
-        if read_only is not None:
-            metadata["read_only"] = bool(read_only)
+            if read_only is not None:
+                metadata["read_only"] = bool(read_only)
         if scopes is not None:
             metadata["scopes"] = scopes
         raw_task = task if task is not None else task_support
@@ -340,11 +425,8 @@ def mcp_tool(
         if task_input_before_start:
             metadata["task_input_before_start"] = True
         if queue is not None:
-            if queue is True or not isinstance(queue, (str, bool)) or (isinstance(queue, str) and not queue.strip()):
-                msg = "queue must be a non-empty queue name string, 'in_process', or False"
-                raise ValueError(msg)
-            metadata["queue"] = queue
-        _REGISTRY.set(fn, metadata)
+            metadata["queue"] = _validate_tool_queue(queue)
+        _REGISTRY.set(fn, metadata, kind="tool")
         return fn
 
     return decorator
@@ -353,9 +435,13 @@ def mcp_tool(
 def mcp_resource(
     name: "str | None" = None,
     *,
+    uri: "str | None" = None,
     uri_template: "str | None" = None,
     mime_type: "str | None" = None,
+    title: "str | None" = None,
     description: "str | None" = None,
+    icons: "Sequence[dict[str, Any]] | None" = None,
+    meta: "Mapping[str, Any] | None" = None,
     agent_instructions: "str | None" = None,
     when_to_use: "str | None" = None,
     returns: "str | None" = None,
@@ -364,18 +450,29 @@ def mcp_resource(
 
     Args:
         name: The name of the MCP resource. Defaults to the function name.
+        uri: Optional concrete resource URI (for example
+            `"ui://app/dashboard.html"`) or RFC 6570 Level 1 URI template
+            (for example `"app://items/{item_id}"`). Classified via
+            `classify_resource_uri` into static `resource_uri` metadata or
+            templated `resource_template` metadata. Cannot be combined with
+            `uri_template`.
         uri_template: Optional RFC 6570 Level 1 URI template
-            (e.g. ``"app://workspaces/{workspace_id}/files/{file_id}"``).
+            (for example `"app://workspaces/{workspace_id}/files/{file_id}"`).
             Concrete URIs matching the template dispatch to this handler
-            with extracted variables passed as kwargs.
+            with extracted variables passed as kwargs. Brace-free values are
+            classified as static resource URIs. Cannot be combined with `uri`.
         mime_type: Optional resource MIME type advertised in list responses
-            and used as a fallback for resource reads.
-        description: LLM-facing description. Overrides ``fn.__doc__``.
+            and used for resource reads.
+        title: Optional human-readable display title for UI clients.
+        description: LLM-facing description. Overrides `fn.__doc__`.
+        icons: Optional sequence of MCP icon descriptor dicts for UI display.
+        meta: Optional MCP `_meta` descriptor mapping emitted in list and read
+            responses.
         agent_instructions: Mandatory-context block rendered in the
-            ``## Instructions`` section.
+            `## Instructions` section.
         when_to_use: Optional structured hint rendered as the
-            ``## When to use`` section.
-        returns: Optional return-shape hint rendered as the ``## Returns``
+            `## When to use` section.
+        returns: Optional return-shape hint rendered as the `## Returns`
             section.
 
     Returns:
@@ -383,7 +480,7 @@ def mcp_resource(
 
     Example:
         Pass MCP metadata straight through to the route decorator —
-        Litestar funnels unknown kwargs into ``handler.opt``:
+        Litestar funnels unknown kwargs into `handler.opt`:
 
         ```python
         @get("/config", mcp_resource="app_config")
@@ -402,24 +499,24 @@ def mcp_resource(
         The decorator form is retained for parity; it carries the same
         metadata to the registry.
     """
-    if uri_template is not None:
-        parse_template(uri_template)
+    static_uri, template_uri = classify_resource_uri(uri=uri, uri_template=uri_template)
 
     def decorator(fn: "F") -> "F":
         metadata: dict[str, Any] = {"type": "resource", "name": name or _callable_name(fn)}
-        if uri_template is not None:
-            metadata["resource_template"] = uri_template
-        if mime_type is not None:
-            metadata["mime_type"] = mime_type
-        if description is not None:
-            metadata["description"] = description
-        if agent_instructions is not None:
-            metadata["agent_instructions"] = agent_instructions
-        if when_to_use is not None:
-            metadata["when_to_use"] = when_to_use
-        if returns is not None:
-            metadata["returns"] = returns
-        _REGISTRY.set(fn, metadata)
+        _apply_non_none_fields(
+            metadata,
+            {
+                "resource_uri": static_uri,
+                "resource_template": template_uri,
+                "mime_type": mime_type,
+                "description": description,
+                "agent_instructions": agent_instructions,
+                "when_to_use": when_to_use,
+                "returns": returns,
+            },
+        )
+        _apply_descriptor_metadata(metadata, title=title, icons=icons, meta=meta)
+        _REGISTRY.set(fn, metadata, kind="resource")
         return fn
 
     return decorator
@@ -431,7 +528,8 @@ def mcp_prompt(
     title: "str | None" = None,
     description: "str | None" = None,
     arguments: "list[dict[str, Any]] | None" = None,
-    icons: "list[dict[str, Any]] | None" = None,
+    icons: "Sequence[dict[str, Any]] | None" = None,
+    meta: "Mapping[str, Any] | None" = None,
 ) -> "Callable[[F], F]":
     r"""Decorator to mark a callable as an MCP prompt template.
 
@@ -460,9 +558,10 @@ def mcp_prompt(
             function's signature and Google-style docstring — note that
             signature introspection cannot infer ``title``, so set it
             explicitly when needed.
-        icons: Optional list of icon objects for UI display. Each entry is a
-            dict with ``src`` (URL), ``mimeType``, and optionally ``sizes``
+        icons: Optional sequence of icon objects for UI display. Each entry is
+            a dict with ``src`` (URL), ``mimeType``, and optionally ``sizes``
             per the MCP spec.
+        meta: Optional MCP `_meta` descriptor mapping emitted in `prompts/list`.
 
     Returns:
         Decorator function that adds MCP metadata to the callable.
@@ -480,57 +579,64 @@ def mcp_prompt(
 
     def decorator(fn: "F") -> "F":
         metadata: dict[str, Any] = {"type": "prompt", "name": name or _callable_name(fn)}
-        if title is not None:
-            metadata["title"] = title
-        if description is not None:
-            metadata["description"] = description
-        if arguments is not None:
-            metadata["arguments"] = arguments
-        if icons is not None:
-            metadata["icons"] = icons
-        _REGISTRY.set(fn, metadata)
+        _apply_descriptor_metadata(metadata, title=title, icons=icons, meta=meta)
+        _apply_non_none_fields(metadata, {"description": description, "arguments": arguments})
+        _REGISTRY.set(fn, metadata, kind="prompt")
         return fn
 
     return decorator
 
 
-def get_mcp_metadata(obj: "Any") -> "dict[str, Any] | None":
+def get_mcp_metadata(obj: "Any", *, kind: "Kind | str | None" = None) -> "dict[str, Any] | None":
     """Get MCP metadata for an object if it exists.
 
     Args:
         obj: Object to check for MCP metadata.
+        kind: Optional MCP primitive role (`"tool"`, `"resource"`, or `"prompt"`)
+            used to isolate stacked role metadata.
 
     Returns:
-        MCP metadata dictionary or None if not present.
+        MCP metadata dictionary or `None` if not present for the requested role.
     """
-    registered = _REGISTRY.get(obj)
+    registered = _REGISTRY.get(obj, kind=kind)
     if registered is not None:
         return registered
-    target = get_handler_function(obj) if hasattr(obj, "fn") else obj
-    ext_meta = getattr(target, "_mcp_tool_meta", None)
-    if isinstance(ext_meta, Mapping):
-        normalized: dict[str, Any] = {
-            "type": "tool",
-            **ext_meta,
-            "name": str(ext_meta.get("name") or _callable_name(target)),
-        }
-        raw_task = normalized.pop("task", None)
-        if raw_task is None:
-            raw_task = normalized.get("task_support")
-        if raw_task is not None:
-            normalized["task_support"] = normalize_task_support(raw_task)
-        return normalized
+    if kind in (None, "tool"):
+        return _external_tool_metadata(obj)
     return None
 
 
-def set_mcp_metadata(obj: "Any", metadata: "dict[str, Any]") -> "None":
+def get_all_mcp_metadata(obj: "Any") -> "list[dict[str, Any]]":
+    """Return all MCP role metadata dictionaries registered on an object.
+
+    Args:
+        obj: Callable or route handler to inspect.
+
+    Returns:
+        Ordered list of role metadata dictionaries associated with `obj`.
+    """
+    entries = list(_REGISTRY.get_all(obj))
+    if _REGISTRY.get(obj, kind="tool") is None:
+        ext_meta = _external_tool_metadata(obj)
+        if ext_meta is not None:
+            entries.append(ext_meta)
+    return entries
+
+
+def set_mcp_metadata(
+    obj: "Any",
+    metadata: "dict[str, Any]",
+    *,
+    kind: "Kind | str | None" = None,
+) -> "None":
     """Set MCP metadata for an object in the registry.
 
     Args:
         obj: Object to register MCP metadata for.
         metadata: MCP metadata dictionary.
+        kind: Optional explicit MCP primitive role override.
     """
-    _REGISTRY.set(obj, metadata)
+    _REGISTRY.set(obj, metadata, kind=kind)
 
 
 def extract_description_sources(
@@ -542,7 +648,7 @@ def extract_description_sources(
     opt_keys: "MCPOptKeys | None" = None,
 ) -> "DescriptionSources":
     """Resolve every description field for a handler."""
-    keys = opt_keys if opt_keys is not None else _default_opt_keys()
+    keys = opt_keys if opt_keys is not None else MCPOptKeys()
     description = _read_field(handler, fn, "description", kind, keys)
     if description is None:
         handler_desc = _clean(getattr(handler, "description", None)) or _clean(getattr(handler, "summary", None))
@@ -631,6 +737,41 @@ def render_description(
     if sources.agent_instructions:
         sections.append(f"## Instructions\n{sources.agent_instructions}")
     return "\n\n".join(sections)
+
+
+def classify_resource_uri(
+    *,
+    uri: "str | None" = None,
+    uri_template: "str | None" = None,
+) -> "tuple[str | None, str | None]":
+    """Validate and classify a resource URI or template into `(static_uri, template_uri)`.
+
+    Args:
+        uri: Optional concrete resource URI or RFC 6570 Level 1 URI template.
+        uri_template: Optional RFC 6570 Level 1 URI template or brace-free URI.
+
+    Returns:
+        A `(static_uri, template_uri)` pair where at most one element is a
+        non-empty string and both are `None` when neither input is provided.
+
+    Raises:
+        ValueError: If both `uri` and `uri_template` are provided, or if the
+            supplied string is empty, whitespace-only, or contains malformed
+            template braces.
+    """
+    if uri is not None and uri_template is not None:
+        msg = "Cannot specify both 'uri' and 'uri_template'"
+        raise ValueError(msg)
+    raw = uri if uri is not None else uri_template
+    if raw is None:
+        return None, None
+    if not isinstance(raw, str) or not raw.strip():
+        msg = f"Invalid resource URI: {raw!r}"
+        raise ValueError(msg)
+    segments = parse_template(raw)
+    if any(isinstance(seg, _Variable) for seg in segments):
+        return None, raw
+    return raw, None
 
 
 def parse_template(template: "str") -> "list[Segment]":
@@ -730,6 +871,35 @@ def resolve_app_store(app_config: "AppConfig", name: "str") -> "Store":
     registry = stores if isinstance(stores, StoreRegistry) else StoreRegistry(stores)
     app_config.stores = registry
     return registry.get(name)
+
+
+def _validate_output_schema_value(output_schema: "Any") -> "dict[str, Any] | bool | None":
+    """Validate an explicit `output_schema` policy passed to `@mcp_tool`."""
+    if output_schema is None:
+        return None
+    if isinstance(output_schema, bool):
+        return output_schema
+    if not isinstance(output_schema, Mapping):
+        msg = "output_schema must be a mapping, bool, or None"
+        raise TypeError(msg)
+
+    normalized: dict[str, Any] = copy.deepcopy(dict(output_schema))
+    raw_defs = normalized.get("$defs")
+    defs: Mapping[str, Any] = raw_defs if isinstance(raw_defs, Mapping) else {}
+    current: Mapping[str, Any] = normalized
+    visited_refs: frozenset[str] = frozenset()
+    while "$ref" in current and "type" not in current:
+        resolved = _resolve_local_schema_ref(current, defs, visited_refs)
+        if resolved is None:
+            break
+        ref, _, target = resolved
+        visited_refs = visited_refs | {ref}
+        current = target
+
+    if current.get("type") != "object":
+        msg = "output_schema mapping must resolve to root type 'object'"
+        raise ValueError(msg)
+    return normalized
 
 
 def _resolve_local_schema_ref(
@@ -871,9 +1041,74 @@ def _clean(value: "Any") -> "str | None":
     return None
 
 
-def _default_opt_keys() -> "MCPOptKeys":
-    """Return a default `MCPOptKeys` without creating an import cycle."""
-    return MCPOptKeys()
+def _validate_tool_queue(queue: "object") -> "str | bool":
+    if queue is True or not isinstance(queue, (str, bool)) or (isinstance(queue, str) and not queue.strip()):
+        msg = "queue must be a non-empty queue name string, 'in_process', or False"
+        raise ValueError(msg)
+    return queue
+
+
+def clean_title(value: "Any") -> "str | None":
+    """Return stripped string title when non-empty, otherwise ``None``."""
+    return _clean(value)
+
+
+def clean_icons(value: "Any") -> "list[dict[str, Any]] | None":
+    """Return deep-copied mapping entries from an icon sequence, or ``None``."""
+    if not value or isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        return None
+    copied = [copy.deepcopy(dict(item)) for item in value if isinstance(item, Mapping)]
+    return copied or None
+
+
+def clean_meta(value: "Any") -> "dict[str, Any] | None":
+    """Return a deep-copied descriptor ``_meta`` mapping when non-empty, or ``None``."""
+    if not value or not isinstance(value, Mapping):
+        return None
+    copied = copy.deepcopy(dict(value))
+    return copied or None
+
+
+def _apply_descriptor_metadata(
+    metadata: "dict[str, Any]",
+    *,
+    title: "str | None" = None,
+    icons: "Sequence[dict[str, Any]] | None" = None,
+    meta: "Mapping[str, Any] | None" = None,
+) -> "None":
+    cleaned_title = clean_title(title)
+    if cleaned_title is not None:
+        metadata["title"] = cleaned_title
+    cleaned_icons = clean_icons(icons)
+    if cleaned_icons is not None:
+        metadata["icons"] = cleaned_icons
+    cleaned_meta = clean_meta(meta)
+    if cleaned_meta is not None:
+        metadata["meta"] = cleaned_meta
+
+
+def _apply_non_none_fields(metadata: "dict[str, Any]", fields: "Mapping[str, Any]") -> "None":
+    for key, val in fields.items():
+        if val is not None:
+            metadata[key] = val
+
+
+def _external_tool_metadata(obj: "Any") -> "dict[str, Any] | None":
+    target = get_handler_function(obj) if hasattr(obj, "fn") else obj
+    ext_meta = getattr(target, "_mcp_tool_meta", None)
+    if isinstance(ext_meta, Mapping):
+        normalized: dict[str, Any] = {
+            "type": "tool",
+            **ext_meta,
+            "name": str(ext_meta.get("name") or _callable_name(target)),
+        }
+        raw_task = normalized.pop("task", None)
+        if raw_task is None:
+            raw_task = normalized.get("task_support")
+        if raw_task is not None:
+            normalized["task_support"] = normalize_task_support(raw_task)
+        return normalized
+    return None
 
 
 def _read_field(
@@ -887,7 +1122,7 @@ def _read_field(
     opt_value = _clean(opt.get(opt_keys.for_field(field_name, kind)))
     if opt_value is not None:
         return opt_value
-    metadata = get_mcp_metadata(handler) or get_mcp_metadata(fn) or {}
+    metadata = get_mcp_metadata(handler, kind=kind) or get_mcp_metadata(fn, kind=kind) or {}
     return _clean(metadata.get(field_name))
 
 
@@ -902,25 +1137,3 @@ class _Literal:
 
 
 Segment = _Variable | _Literal
-
-
-__all__ = (
-    "DescriptionSources",
-    "MetadataRegistry",
-    "expand_template",
-    "extract_description_sources",
-    "get_handler_function",
-    "get_mcp_metadata",
-    "match_uri",
-    "mcp_prompt",
-    "mcp_resource",
-    "mcp_tool",
-    "normalize_task_support",
-    "parse_template",
-    "render_description",
-    "resolve_app_store",
-    "set_mcp_metadata",
-    "should_include_handler",
-    "strip_docstring_sections",
-    "validate_tool_descriptions",
-)

@@ -1,15 +1,19 @@
 """Tests for LitestarMCP integration."""
 
 import json
+import logging
 from typing import Any
 
-from litestar import Litestar, get, post
+import pytest
+from litestar import Litestar, Router, get, post
+from litestar.exceptions import ImproperlyConfiguredException
 from litestar.openapi.config import OpenAPIConfig
 from litestar.routes import HTTPRoute
 from litestar.testing import TestClient
 
-from litestar_mcp import LitestarMCP
+from litestar_mcp import LitestarMCP, SkillController, Tool, mcp_resource, mcp_tool, prompt, tool
 from litestar_mcp.mcp.config import MCPConfig
+from litestar_mcp.utils import get_handler_function, get_mcp_metadata
 from tests.unit.conftest import mcp_post
 
 
@@ -79,12 +83,10 @@ class TestLitestarMCP:
         assert "io.modelcontextprotocol/serverInfo" in result["result"]["_meta"]
         assert "capabilities" in result["result"]
 
-        # tools/list
         result = _rpc(client, "tools/list")
         assert len(result["result"]["tools"]) == 1
         assert result["result"]["tools"][0]["name"] == "list_users"
 
-        # resources/list (openapi is always present)
         result = _rpc(client, "resources/list")
         assert len(result["result"]["resources"]) == 1
         assert result["result"]["resources"][0]["name"] == "openapi"
@@ -210,18 +212,20 @@ class TestLitestarMCP:
         assert parsed["timestamp"] == "2024-01-01"
         assert parsed["version"] == "1.0"
 
-    def test_plugin_coverage_gaps(self) -> "None":
-        plugin = LitestarMCP()
-
+    def test_nested_router_tool_discovery(self) -> "None":
         @get("/nested-tool", opt={"mcp_tool": "nested_tool"})
         async def nested_tool() -> "dict[str, Any]":
             return {"result": "nested"}
 
-        class MockContainer:
-            route_handlers = [nested_tool]
-
-        plugin._discover_mcp_routes([MockContainer()])
+        router = Router(path="/nested", route_handlers=[nested_tool])
+        plugin = LitestarMCP()
+        app = Litestar(plugins=[plugin], route_handlers=[router])
         assert "nested_tool" in plugin.discovered_tools
+        with TestClient(app=app) as client:
+            listed = _rpc(client, "tools/list")
+            assert any(tool["name"] == "nested_tool" for tool in listed["result"]["tools"])
+            called = _rpc(client, "tools/call", {"name": "nested_tool", "arguments": {}})
+            assert json.loads(called["result"]["content"][0]["text"]) == {"result": "nested"}
 
     def test_automatic_schema_generation(self) -> "None":
         @get("/users", opt={"mcp_tool": "list_users"})
@@ -244,8 +248,6 @@ class TestLitestarMCP:
         assert "active" not in required
 
     def test_decorator_based_discovery(self) -> "None":
-        from litestar_mcp import mcp_resource, mcp_tool
-
         @get("/decorator-tool")
         @mcp_tool(name="decorator_tool")
         async def decorator_tool(message: "str") -> "dict[str, str]":
@@ -266,14 +268,239 @@ class TestLitestarMCP:
 
         client = TestClient(app=app)
 
-        # Tool execution via JSON-RPC
         result = _rpc(client, "tools/call", {"name": "decorator_tool", "arguments": {"message": "test"}})
         parsed = json.loads(result["result"]["content"][0]["text"])
         assert parsed["message"] == "Processed: test"
 
-        # Resource read via JSON-RPC
         result = _rpc(client, "resources/read", {"uri": "litestar://decorator_resource"})
         contents = result["result"]["contents"]
         parsed = json.loads(contents[0]["text"])
         assert parsed["config"] == "value"
         assert parsed["enabled"] is True
+
+
+@pytest.mark.parametrize("tool_outer", [True, False], ids=["tool_outer", "resource_outer"])
+def test_stacked_tool_and_resource_route_discovers_both_roles(tool_outer: bool) -> None:
+    tool_icons = [{"src": "https://example.com/tool.svg"}]
+    res_icons = [{"src": "https://example.com/res.svg"}]
+    tool_dec = mcp_tool(
+        "calc",
+        title="Calc Tool",
+        icons=tool_icons,
+        meta={"ui": {"resourceUri": "ui://calc/view.html"}},
+    )
+    res_dec = mcp_resource(
+        "calc_ui",
+        uri="ui://calc/view.html",
+        mime_type="text/html;profile=mcp-app",
+        title="Calc Resource",
+        icons=res_icons,
+        meta={"ui": {"prefersBorder": True}},
+    )
+
+    def raw_calc() -> str:
+        return "<main>Calc</main>"
+
+    decorated = tool_dec(res_dec(raw_calc)) if tool_outer else res_dec(tool_dec(raw_calc))
+    route_handler = get("/calc", sync_to_thread=False)(decorated)
+
+    plugin = LitestarMCP()
+    app = Litestar(route_handlers=[route_handler], plugins=[plugin])
+
+    assert "calc" in plugin.discovered_tools
+    assert "calc_ui" in plugin.discovered_resources
+    handler = plugin.discovered_tools["calc"]
+    assert plugin.discovered_resources["calc_ui"] is handler
+    assert get_mcp_metadata(handler, kind="tool") == {
+        "type": "tool",
+        "name": "calc",
+        "title": "Calc Tool",
+        "icons": tool_icons,
+        "meta": {"ui": {"resourceUri": "ui://calc/view.html"}},
+    }
+    assert get_mcp_metadata(handler, kind="resource") == {
+        "type": "resource",
+        "name": "calc_ui",
+        "resource_uri": "ui://calc/view.html",
+        "mime_type": "text/html;profile=mcp-app",
+        "title": "Calc Resource",
+        "icons": res_icons,
+        "meta": {"ui": {"prefersBorder": True}},
+    }
+
+    with TestClient(app=app) as client:
+        tools = _rpc(client, "tools/list")["result"]["tools"]
+        resources = _rpc(client, "resources/list")["result"]["resources"]
+
+    calc_tool = next(item for item in tools if item["name"] == "calc")
+    calc_res = next(item for item in resources if item["name"] == "calc_ui")
+    assert calc_tool["title"] == "Calc Tool"
+    assert calc_tool["icons"] == tool_icons
+    assert calc_tool["_meta"] == {"ui": {"resourceUri": "ui://calc/view.html"}}
+    assert calc_res["title"] == "Calc Resource"
+    assert calc_res["icons"] == res_icons
+    assert calc_res["_meta"] == {"ui": {"prefersBorder": True}}
+
+
+def test_register_tool_preserves_metadata_and_populates_descriptor_opts() -> None:
+    def compute() -> dict[str, bool]:
+        return {"ok": True}
+
+    schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}}
+    icons = [{"src": "https://example.com/compute.svg"}]
+    meta = {"ui": {"resourceUri": "ui://compute/app.html"}}
+    custom_tool = Tool(
+        compute,
+        name="tt",
+        description="Keep description",
+        annotations={"readOnlyHint": True},
+        output_schema=schema,
+        title="TT",
+        icons=icons,
+        meta=meta,
+    )
+
+    plugin = LitestarMCP()
+    plugin.register_tool(custom_tool)
+    Litestar(plugins=[plugin])
+
+    handler = plugin.discovered_tools["tt"]
+    assert handler.opt["mcp_tool_title"] == "TT"
+    assert handler.opt["mcp_tool_icons"] == icons
+    assert handler.opt["mcp_tool_meta"] == meta
+
+    fn_meta = get_mcp_metadata(get_handler_function(handler), kind="tool")
+    assert fn_meta == {
+        "type": "tool",
+        "name": "tt",
+        "description": "Keep description",
+        "annotations": {"readOnlyHint": True},
+        "output_schema": schema,
+        "title": "TT",
+        "icons": icons,
+        "meta": meta,
+    }
+
+
+def test_skill_controller_descriptor_propagation_and_idempotent_rediscovery(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    icons = [{"src": "https://example.com/status.svg"}]
+
+    class StatusSkills(SkillController):
+        path = "/status-skills"
+
+        @tool(name="status", title="Status Tool", icons=icons, meta={"role": "tool"})
+        def status_tool(self) -> dict[str, str]:
+            return {"state": "green"}
+
+        @tool(name="override", title="Fallback Title", meta={"from": "tool"})
+        def override_tool(self) -> dict[str, str]:
+            return {"state": "custom"}
+
+        @prompt(name="status", title="Status Prompt", meta={"role": "prompt"})
+        async def status_prompt(self) -> str:
+            return "Check service status"
+
+    vars(StatusSkills)["_mcp_tool_override"].opt["mcp_tool_title"] = "Explicit Route Title"
+
+    with caplog.at_level(logging.WARNING, logger="litestar_mcp.mcp.registry"):
+        plugin = LitestarMCP(MCPConfig(skill_controllers=[StatusSkills]))
+        app = Litestar(plugins=[plugin])
+        with TestClient(app=app) as client:
+            tools_out = _rpc(client, "tools/list")["result"]["tools"]
+            prompts_out = _rpc(client, "prompts/list")["result"]["prompts"]
+
+    assert "Overwriting existing" not in caplog.text
+
+    status_handler = plugin.discovered_tools["status"]
+    assert status_handler.opt["mcp_tool_title"] == "Status Tool"
+    assert status_handler.opt["mcp_tool_icons"] == icons
+    assert status_handler.opt["mcp_tool_meta"] == {"role": "tool"}
+
+    override_handler = plugin.discovered_tools["override"]
+    assert override_handler.opt["mcp_tool_title"] == "Explicit Route Title"
+    assert override_handler.opt["mcp_tool_meta"] == {"from": "tool"}
+
+    prompt_reg = plugin.discovered_prompts["status"]
+    assert prompt_reg.meta == {"role": "prompt"}
+    assert prompt_reg.handler is not None
+    assert "mcp_tool_title" not in prompt_reg.handler.opt
+    assert "mcp_tool_icons" not in prompt_reg.handler.opt
+    assert "mcp_tool_meta" not in prompt_reg.handler.opt
+
+    tool_entry = next(item for item in tools_out if item["name"] == "status")
+    prompt_entry = next(item for item in prompts_out if item["name"] == "status")
+    assert tool_entry["title"] == "Status Tool"
+    assert tool_entry["_meta"] == {"role": "tool"}
+    assert prompt_entry["title"] == "Status Prompt"
+    assert prompt_entry["_meta"] == {"role": "prompt"}
+
+
+def test_receive_route_plugin_captures_app_and_ownership_layers_before_startup() -> None:
+    class BootSkills(SkillController):
+        path = "/boot-skills"
+        prefix = "boot"
+
+        @tool(name="ping_skill", title="Ping Skill")
+        def ping_skill(self) -> str:
+            return "pong"
+
+        @prompt(name="guide", meta={"k": "v"})
+        async def guide(self) -> str:
+            return "Follow guide"
+
+    @get("/hello", mcp_tool="hello", mcp_tool_title="Hello Tool", sync_to_thread=False)
+    def hello() -> dict[str, str]:
+        return {"hello": "world"}
+
+    plugin = LitestarMCP(MCPConfig(skill_controllers=[BootSkills]))
+    app = Litestar(route_handlers=[hello], plugins=[plugin])
+
+    assert "hello" in plugin.discovered_tools
+    assert "ping_skill" in plugin.discovered_tools
+    assert "boot/guide" in plugin.discovered_prompts
+    assert app in plugin.discovered_tools["hello"].ownership_layers
+    assert app in plugin.discovered_tools["ping_skill"].ownership_layers
+    with TestClient(app=app) as client:
+        tools = _rpc(client, "tools/list")["result"]["tools"]
+        prompts = _rpc(client, "prompts/list")["result"]["prompts"]
+    assert {"hello", "ping_skill"} <= {tool["name"] for tool in tools}
+    assert any(prompt["name"] == "boot/guide" for prompt in prompts)
+
+
+def test_post_startup_register_tool_mounts_live_and_rejects_conflicting_routes() -> None:
+    """Verify plugin.register_tool works after Litestar startup and rejects duplicate (path, method) routes."""
+    plugin = LitestarMCP()
+    app = Litestar(plugins=[plugin])
+
+    @tool(name="late_adder", description="Add numbers after startup.")
+    def late_adder(a: int, b: int = 2) -> dict[str, int]:
+        return {"sum": a + b}
+
+    with TestClient(app=app) as client:
+        plugin.register_tool(late_adder)
+        tools = _rpc(client, "tools/list")["result"]["tools"]
+        assert any(item["name"] == "late_adder" for item in tools)
+        call_res = _rpc(client, "tools/call", {"name": "late_adder", "arguments": {"a": 5}})["result"]
+        assert call_res["isError"] is False
+        assert json.loads(call_res["content"][0]["text"]) == {"sum": 7}
+
+        @post("/mcp/internal/tools/late_adder", mcp_tool="late_adder_dup", sync_to_thread=False)
+        def conflicting_route() -> dict[str, str]:
+            return {"bad": "dup"}
+
+        with pytest.raises(ImproperlyConfiguredException, match="late_adder"):
+            plugin.register_dynamic_handler(conflicting_route)
+
+
+def test_plugin_rejects_mixed_decorator_uri_and_route_opt_template() -> None:
+    """Verify mixing @mcp_resource(uri=...) and @get(mcp_resource_template=...) raises ValueError."""
+
+    @mcp_resource("mixed_panel", uri="ui://panel/a")
+    @get("/mixed/{slug:str}", mcp_resource_template="ui://panel/{slug}", sync_to_thread=False)
+    def mixed_panel(slug: str) -> str:
+        return slug
+
+    with pytest.raises(ValueError, match="Cannot specify both 'uri' and 'uri_template'"):
+        Litestar(route_handlers=[mixed_panel], plugins=[LitestarMCP()])

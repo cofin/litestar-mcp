@@ -110,7 +110,6 @@ def main() -> int:
     port = _free_port()
     url = f"http://127.0.0.1:{port}/mcp"
     environment = dict(os.environ)
-    environment["PYTHONPATH"] = str(PROJECT_ROOT)
     environment["MCP_CONFORMANCE_PORT"] = str(port)
     server = subprocess.Popen(
         [
@@ -118,6 +117,8 @@ def main() -> int:
             "-m",
             "uvicorn",
             "tests.conformance.server:app",
+            "--app-dir",
+            str(PROJECT_ROOT),
             "--host",
             "127.0.0.1",
             "--port",

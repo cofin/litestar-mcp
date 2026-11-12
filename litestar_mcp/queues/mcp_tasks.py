@@ -6,10 +6,12 @@ from uuid import UUID
 
 import anyio
 import msgspec
+from litestar.channels import ChannelsPlugin
 from litestar.exceptions import ImproperlyConfiguredException
 from litestar_queues.events.context import get_current_task_context
 from litestar_queues.task import task
 
+from litestar_mcp.core.sse import _BROKER_CHANNEL, validate_log_level
 from litestar_mcp.mcp.tasks import ToolTaskCall
 from litestar_mcp.queues.dependencies import TaskDependencyChain
 
@@ -76,8 +78,26 @@ class QueueTaskExecutor:
         )
 
     def bind(self, runtime: "MCPTaskRuntime") -> None:
-        """Bind runtime collaborators to the executor."""
+        """Bind runtime collaborators to the executor and attach compatible subscription channels."""
         self._runtime = runtime
+        channels_plugin = next(
+            (
+                plugin
+                for plugin in runtime.app.plugins
+                if isinstance(plugin, ChannelsPlugin) and self._is_compatible_channels_plugin(plugin)
+            ),
+            None,
+        )
+        if channels_plugin is None:
+            return
+        for plugin in runtime.app.plugins:
+            registry = getattr(plugin, "registry", None)
+            if registry is None or not getattr(registry, "has_subscription_manager", False):
+                continue
+            subscription_manager = registry.subscription_manager
+            if subscription_manager.channels is None:
+                subscription_manager.set_channels(channels_plugin)
+                subscription_manager.start()
 
     async def resolve_task_dependencies(
         self,
@@ -114,6 +134,8 @@ class QueueTaskExecutor:
             won = await service.cancel_task(UUID(job_id), include_running=True)
         if won or job_id is None or record.status == "input_required":
             await store.mark_cancelled(record.task_id)
+            if job_id is not None:
+                await store.delete_job_id(record.task_id)
 
     async def load_principal(self, owner_id: str | None) -> Any:
         """Rehydrate user principal from owner_id."""
@@ -123,14 +145,22 @@ class QueueTaskExecutor:
 
     async def _enqueue_attempt(self, call: ToolTaskCall) -> None:
         """Enqueue one attempt keyed by task id and attempt number, then record its job id."""
-        result = await self._queue_service().enqueue(
+        if call.log_level is not None:
+            validate_log_level(call.log_level)
+        service = self._queue_service()
+        store = self.runtime.task_store
+        result = await service.enqueue(
             run_mcp_tool_task,
             call=msgspec.to_builtins(call),
             key=f"mcp-task:{call.task_id}:{call.attempt}",
             queue=call.queue or self._queue,
             timeout=self._timeout,
         )
-        await self.runtime.task_store.set_job_id(call.task_id, str(result.id))
+        await store.set_job_id(call.task_id, str(result.id))
+        latest = await store.peek(call.task_id)
+        if latest is not None and latest.status == "cancelled":
+            await service.cancel_task(result.id, include_running=True)
+            await store.delete_job_id(call.task_id)
 
     def _queue_service(self) -> "QueueService":
         """Return the queue service bound to the started application's state.
@@ -146,11 +176,26 @@ class QueueTaskExecutor:
             raise ImproperlyConfiguredException(msg)
         return self._queue_plugin.config.get_service(self.runtime.app.state)
 
+    @staticmethod
+    def _is_compatible_channels_plugin(channels_plugin: ChannelsPlugin) -> bool:
+        """Return whether `channels_plugin` accepts the MCP subscription broker channel."""
+        configured_channels = getattr(channels_plugin, "_channels", None) or ()
+        return bool(
+            getattr(channels_plugin, "_arbitrary_channels_allowed", False)
+            or getattr(channels_plugin, "arbitrary_channels_allowed", False)
+            or _BROKER_CHANNEL in configured_channels
+        )
+
 
 @task(RUN_TOOL_TASK, queue="mcp", retries=0)
 async def run_mcp_tool_task(call: dict[str, Any], mcp_task_executor: QueueTaskExecutor) -> dict[str, Any]:
     """Run one MCP Tasks attempt in the worker and return the record status."""
     tool_call = msgspec.convert(call, ToolTaskCall)
+    task_id = tool_call.task_id
+    store = mcp_task_executor.runtime.task_store
+    initial = await store.get(task_id, tool_call.owner_id)
+    if initial.is_terminal():
+        return {"task_id": task_id, "status": initial.status}
     user = await mcp_task_executor.load_principal(tool_call.owner_id)
     context = get_current_task_context()
     async with anyio.create_task_group() as group:
@@ -158,8 +203,7 @@ async def run_mcp_tool_task(call: dict[str, Any], mcp_task_executor: QueueTaskEx
             group.start_soon(_cancel_on_signal, context, group.cancel_scope)
         await mcp_task_executor.runtime.run_attempt(tool_call, user)
         group.cancel_scope.cancel()
-    task_id = tool_call.task_id
-    record = await mcp_task_executor.runtime.task_store.get(task_id, None)
+    record = await store.get(task_id, tool_call.owner_id)
     return {"task_id": task_id, "status": record.status}
 
 

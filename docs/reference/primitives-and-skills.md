@@ -4,7 +4,7 @@ title: Primitives, Controllers & Skills API
 
 # Primitives, Controllers & Skills API
 
-API reference for MCP decorators (`@mcp_tool`, `@mcp_resource`, `@mcp_prompt`), description validation (`validate_tool_descriptions`), class-based `PromptController` and `SkillController` routers, Agent Skills (`SkillSource`, `FilesystemSkillSource`, `Skill`, `SkillFile`, `SkillCatalog`, `SkillIntegrityError`), structured content return types, the `Registry`, and `MCPHandlerService` request context helpers.
+API reference for MCP decorators (`@mcp_tool`, `@mcp_resource`, `@mcp_prompt`, including `output_schema`, `title`, `icons`, `meta`, and `classify_resource_uri` URI classification), class-based `PromptController` and `SkillController` routers, Agent Skills (`SkillSource`, `FilesystemSkillSource`, `Skill`, `SkillFile` metadata, `filter_skills`, request-optional `SkillCatalog` with `notify_list_changed`, `SkillIntegrityError`), structured content return types, the `Registry` (`notify_resources_list_changed`, `notify_skills_list_changed`), and request context helpers (`MCPRequestContext.log`, `ui_capabilities`, `session_id`, and overloaded `get_mcp_request_context(default=...)`). For `MCPHandlerService`, see [Plugin & Configuration API](plugin-and-config.md); for `validate_tool_descriptions` and internal ASGI execution exceptions, see [Core Primitives & Observability API](core-and-observability.md).
 
 For usage guides, see [Marking Routes & Decorators](../learn/marking-routes.md), [Tools & Annotations](../learn/tools.md), [Resources & URI Templates](../learn/resources.md), [Prompts & PromptController](../learn/prompts.md), and [Agent Skills (SEP-2640)](../learn/skills.md).
 
@@ -16,7 +16,7 @@ For usage guides, see [Marking Routes & Decorators](../learn/marking-routes.md),
 
 ::: litestar_mcp.utils.mcp_prompt
 
-::: litestar_mcp.utils.validate_tool_descriptions
+::: litestar_mcp.utils.classify_resource_uri
 
 ## Class-Based Controllers
 
@@ -40,15 +40,13 @@ For usage guides, see [Marking Routes & Decorators](../learn/marking-routes.md),
 
 ::: litestar_mcp.mcp.skills.SkillCatalog
 
+::: litestar_mcp.mcp.skills.filter_skills
+
 ::: litestar_mcp.mcp.skills.SkillIntegrityError
 
 ## Content Blocks & Return Helpers
 
 ::: litestar_mcp.mcp.content.MCPToolResult
-
-::: litestar_mcp.mcp.executor.MCPToolErrorResult
-
-::: litestar_mcp.mcp.executor.MCPPathParamCoercionError
 
 ::: litestar_mcp.mcp.content.MCPResourceLink
 
@@ -64,9 +62,7 @@ For usage guides, see [Marking Routes & Decorators](../learn/marking-routes.md),
 
 ::: litestar_mcp.mcp.registry.PromptRegistration
 
-## Handler Service & Request Context
-
-::: litestar_mcp.mcp.service.MCPHandlerService
+## Request Context
 
 ::: litestar_mcp.mcp.service.MCPRequestContext
 

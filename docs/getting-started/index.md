@@ -12,9 +12,9 @@ title: Getting Started
 
 | Entry Point | Primary Class | Best For | Key Capabilities |
 | :--- | :--- | :--- | :--- |
-| **Litestar Plugin** | `LitestarMCP(MCPConfig(...))` | Existing Litestar applications and REST APIs | Exposes marked routes (`mcp_tool`, `mcp_resource`, `mcp_prompt`), `PromptController`, `SkillController`, and `MCPSkillsConfig` over `/mcp` and `litestar mcp stdio` while sharing middleware, guards, and DI |
-| **Standalone Wrapper** | `MCP("server-name")` | Dedicated MCP servers and local stdio utilities | Declarative `@mcp.tool()`, `@mcp.resource()`, and `@mcp.prompt()` decorators with `.run(transport="streamable-http")` or `.run(transport="stdio")` and full access to `.app` |
-| **Agent & A2A Runtime** | `AgentRuntime` & `LitestarA2A` | Multi-agent orchestration, durable DAGs, and A2A 1.0 endpoints | `Agent`, `AgentGroup`, `TurnBudget`, `GoogleGenAIClient` (`gemini-3.8-flash`), `DurableWorkflowEngine`, and A2A 1.0 JSON-RPC + `HTTP+JSON` REST routes |
+| **Litestar Plugin** | `LitestarMCP(MCPConfig(...))` | Existing Litestar applications and REST APIs | Exposes marked routes (`mcp_tool`, `mcp_resource`, `mcp_prompt`), opt-in `outputSchema` and automatic `structuredContent`, `SEP-1865` MCP Apps (`io.modelcontextprotocol/ui`), `PromptController`, `SkillController`, and `SkillCatalog` (`MCPSkillsConfig`) over dual-mode `/mcp` (`2026-07-28` and `2025-11-25` with `Mcp-Session-Id` and `GET /mcp` SSE) and `litestar mcp stdio` while sharing middleware, guards, and DI |
+| **Standalone Wrapper** | `MCP("server-name")` | Dedicated MCP servers and local stdio utilities | Declarative `@mcp.tool(output_schema=...)`, `@mcp.resource("ui://...")` (`io.modelcontextprotocol/ui`), and `@mcp.prompt()` decorators serving `2026-07-28` and `2025-11-25` via `.run(transport="streamable-http")` or `.run(transport="stdio")` with full access to `.app` |
+| **Agent & A2A Runtime** | `AgentRuntime` & `LitestarA2A` | Multi-agent orchestration, durable DAGs, and A2A 1.0 endpoints | `Agent`, `AgentGroup`, `TurnBudget`, `GoogleGenAIClient` (`gemini-3.8-flash`), `DurableWorkflowEngine`, visibility-aware `mcp_to_tools`, and A2A 1.0 JSON-RPC + `HTTP+JSON` REST routes |
 
 ---
 
@@ -48,7 +48,7 @@ title: Getting Started
   <div class="lm-card">
     <div>
       <h3>5-Minute Quickstart</h3>
-      <p>Attach <code>LitestarMCP</code> to a Litestar app, mark a tool, resource, and prompt, inspect <code>litestar://openapi</code>, and test with <code>2026-07-28</code> and <code>2025-06-18</code> JSON-RPC requests.</p>
+      <p>Attach <code>LitestarMCP</code> to a Litestar app, expose typed tools (<code>outputSchema</code> and <code>structuredContent</code>), <code>ui://</code> MCP Apps, prompts, and <code>litestar://openapi</code>, inspect skills from the CLI, and test with <code>2026-07-28</code> and <code>2025-11-25</code> (<code>Mcp-Session-Id</code>, <code>GET /mcp</code> SSE, <code>resources/subscribe</code>, <code>logging/setLevel</code>) requests.</p>
     </div>
     <a href="quickstart/">5-Minute Quickstart &rarr;</a>
   </div>

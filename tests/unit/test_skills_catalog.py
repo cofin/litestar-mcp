@@ -3,19 +3,25 @@
 import hashlib
 import mimetypes
 import os
-from collections.abc import Iterator  # noqa: TC003
+from collections.abc import Iterator, Sequence  # noqa: TC003
 from pathlib import Path  # noqa: TC003
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
-from litestar import Request
+from litestar import Litestar, Request, get
+from litestar.datastructures import State
+from litestar.di import Provide
 from litestar.exceptions import ImproperlyConfiguredException
+from litestar.testing import TestClient
 
 from litestar_mcp import FilesystemSkillSource, LitestarMCP
 from litestar_mcp.mcp.config import MCPConfig, MCPSkillsConfig
 from litestar_mcp.mcp.skills import (
+    Skill,
     SkillCatalog,
+    SkillFile,
     SkillIntegrityError,
     compute_digest,
     parse_frontmatter,
@@ -476,3 +482,205 @@ async def test_plugin_builds_catalog_only_when_configured(tmp_path: "Path") -> "
     )
     with pytest.raises(ImproperlyConfiguredException):
         LitestarMCP(MCPConfig(skills=MCPSkillsConfig(paths=[invalid_root])))
+
+
+class _RecordingSkillSource:
+    """In-memory SkillSource that records requests passed from SkillCatalog."""
+
+    def __init__(
+        self, skills: "Sequence[Skill]", *, lazy_bytes: "dict[tuple[str, str], bytes] | None" = None
+    ) -> "None":
+        self._skills = tuple(skills)
+        self._lazy_bytes = dict(lazy_bytes or {})
+        self.received_requests: list[Any] = []
+
+    async def list_skills(self, request: "Request[Any, Any, Any]", /) -> "Sequence[Skill]":
+        self.received_requests.append(request)
+        marker = request.app.state.get("marker") if request.app is not None else None
+        if marker is not None:
+            return [
+                Skill.build(
+                    f"{skill.name}-{marker}",
+                    skill.description,
+                    tags=list(skill.tags),
+                    title=skill.title,
+                )
+                for skill in self._skills
+            ]
+        _ = (
+            request.headers,
+            request.query_params,
+            request.method,
+            request.url.path,
+            request.user,
+            request.auth,
+            request.state,
+            request.scope,
+        )
+        return self._skills
+
+    async def get_skill(self, request: "Request[Any, Any, Any]", name: "str", /) -> "Skill | None":
+        self.received_requests.append(request)
+        _ = (
+            request.headers,
+            request.query_params,
+            request.method,
+            request.url.path,
+            request.user,
+            request.auth,
+            request.state,
+            request.scope,
+            request.app,
+        )
+        return next((skill for skill in self._skills if skill.name == name), None)
+
+    async def read_file(self, request: "Request[Any, Any, Any]", skill: "Skill", file: "SkillFile", /) -> "bytes":
+        self.received_requests.append(request)
+        key = (skill.name, file.relative_path)
+        if key in self._lazy_bytes:
+            return self._lazy_bytes[key]
+        return file.content or b""
+
+
+@pytest.mark.anyio
+async def test_catalog_request_optional_all_methods() -> "None":
+    """All seven SkillCatalog async methods support omitted, None, keyword, and duck-typed requests."""
+    ref_bytes = b"reference payload"
+    lazy_ref = SkillFile(
+        relative_path="reference.md",
+        path=None,
+        uri="skill://demo/reference.md",
+        mime_type="text/markdown",
+        size=len(ref_bytes),
+        digest=compute_digest(ref_bytes),
+        content=None,
+    )
+    demo = Skill.build("demo", "Demo skill", files={"reference.md": lazy_ref})
+    source = _RecordingSkillSource([demo], lazy_bytes={("demo", "reference.md"): ref_bytes})
+    catalog = SkillCatalog([source])
+
+    assert [s.name for s in await catalog.list_skills()] == ["demo"]
+    assert isinstance(source.received_requests[-1], Request)
+
+    assert (await catalog.get_skill("demo")) is demo
+    assert (await catalog.get_skill(None, "demo")) is demo
+    assert (await catalog.get_skill("demo", request=None)) is demo
+    assert (await catalog.get_skill(name="demo")) is demo
+    assert (await catalog.get("skill://demo")) is demo
+
+    duck_req = SimpleNamespace(
+        headers={},
+        query_params={},
+        method="GET",
+        url=SimpleNamespace(path="/"),
+        user=None,
+        auth=None,
+        state={},
+        scope={},
+        app=None,
+    )
+    duck_req_typed = cast("Request[Any, Any, Any]", duck_req)
+    assert (await catalog.get(duck_req_typed, "skill://demo")) is demo
+    assert source.received_requests[-1] is duck_req_typed
+
+    match = await catalog.get_file("skill://demo/reference.md")
+    assert match is not None
+    assert await catalog.read_file(match) == ref_bytes
+
+    entries = await catalog.list_directory("skill://demo")
+    assert entries is not None
+    assert [entry["name"] for entry in entries] == ["SKILL.md", "reference.md"]
+
+    resources = await catalog.resource_entries()
+    assert len(resources) == 2
+
+
+@pytest.mark.anyio
+async def test_catalog_list_skills_tags_and_query_without_request() -> "None":
+    """SkillCatalog.list_skills supports tags and query filters with no request argument."""
+    alpha = Skill.build("alpha", "Database index guide", tags=["ops", "sql"], title="SQL Tuning")
+    beta = Skill.build("beta", "Documentation style guide", tags=["docs"])
+    catalog = SkillCatalog([_RecordingSkillSource([alpha, beta])])
+
+    filtered = await catalog.list_skills(tags=["ops"], query="tuning")
+    assert filtered == [alpha]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "invoker",
+    [
+        lambda catalog, req: catalog.get_skill(req),
+        lambda catalog, _req: catalog.get_skill(None),
+        lambda catalog, _req: catalog.get_skill(),
+        lambda catalog, req: catalog.get(request=req),
+        lambda catalog, req: catalog.read_file(req),
+    ],
+)
+async def test_catalog_missing_target_raises_type_error(invoker: "Any") -> "None":
+    """Omitting the target argument on SkillCatalog lookup/read methods raises TypeError."""
+    catalog = SkillCatalog([])
+    req = _dummy_request()
+    with pytest.raises(TypeError):
+        await invoker(catalog, req)
+
+
+def test_app_di_injects_skill_catalog_with_app_state() -> "None":
+    """Litestar DI injects SkillCatalog and bind_app exposes request.app.state to sources."""
+    source = _RecordingSkillSource([Skill.build("alpha", "Alpha")])
+
+    @get("/skills")
+    async def list_app_skills(skill_catalog: SkillCatalog) -> "dict[str, list[str]]":
+        skills = await skill_catalog.list_skills()
+        return {"names": [skill.name for skill in skills]}
+
+    app = Litestar(
+        route_handlers=[list_app_skills],
+        state=State({"marker": "live"}),
+        plugins=[LitestarMCP(MCPConfig(skills=MCPSkillsConfig(sources=[source])))],
+    )
+    with TestClient(app=app) as client:
+        response = client.get("/skills")
+        assert response.status_code == 200
+        assert response.json() == {"names": ["alpha-live"]}
+
+
+def test_app_di_skills_none_injects_none() -> "None":
+    """When MCPConfig(skills=None), Litestar DI supplies None for SkillCatalog | None."""
+
+    @get("/maybe-skills")
+    async def check_catalog(skill_catalog: "SkillCatalog | None") -> "dict[str, bool]":
+        return {"is_none": skill_catalog is None}
+
+    app = Litestar(
+        route_handlers=[check_catalog],
+        plugins=[LitestarMCP(MCPConfig(skills=None))],
+    )
+    with TestClient(app=app) as client:
+        response = client.get("/maybe-skills")
+        assert response.status_code == 200
+        assert response.json() == {"is_none": True}
+
+
+def test_app_di_setdefault_preserves_user_override() -> "None":
+    """User-supplied skill_catalog dependency takes precedence over LitestarMCP default."""
+    plugin_source = _RecordingSkillSource([Skill.build("plugin-skill", "Plugin")])
+    custom_catalog = SkillCatalog([_RecordingSkillSource([Skill.build("custom-skill", "Custom")])])
+
+    def provide_custom_catalog() -> "SkillCatalog":
+        return custom_catalog
+
+    @get("/skills")
+    async def list_app_skills(skill_catalog: SkillCatalog) -> "dict[str, list[str]]":
+        skills = await skill_catalog.list_skills()
+        return {"names": [skill.name for skill in skills]}
+
+    app = Litestar(
+        route_handlers=[list_app_skills],
+        dependencies={"skill_catalog": Provide(provide_custom_catalog, sync_to_thread=False)},
+        plugins=[LitestarMCP(MCPConfig(skills=MCPSkillsConfig(sources=[plugin_source])))],
+    )
+    with TestClient(app=app) as client:
+        response = client.get("/skills")
+        assert response.status_code == 200
+        assert response.json() == {"names": ["custom-skill"]}

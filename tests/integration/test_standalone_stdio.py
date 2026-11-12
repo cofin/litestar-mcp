@@ -209,9 +209,7 @@ async def test_standalone_stdio_context_isolates_auth_mutations_between_calls() 
     first = json.loads(responses[1]["result"]["content"][0]["text"])
     second = json.loads(responses[2]["result"]["content"][0]["text"])
     assert first["seen_mutation"] is None
-    # A per-call copy means the first call's write must not leak into the second.
     assert second["seen_mutation"] is None
-    # The caller's original auth dict is likewise untouched.
     assert auth == {"sub": "auth-subject"}
 
 
@@ -450,7 +448,9 @@ async def test_standalone_stdio_serves_skills_end_to_end(tmp_path: "Path") -> "N
     by_id = {response["id"]: response for response in responses}
 
     discover_result = by_id[1]["result"]
-    assert discover_result["capabilities"]["extensions"] == {"io.modelcontextprotocol/skills": {"directoryRead": True}}
+    assert discover_result["capabilities"]["extensions"] == {
+        "io.modelcontextprotocol/skills": {"directoryRead": True, "listChanged": True},
+    }
     assert "resources" in discover_result["capabilities"]
 
     list_result = by_id[2]["result"]

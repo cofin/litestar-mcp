@@ -110,15 +110,48 @@ Some tools need to complete an initial elicitation or approval round *before* al
 
 ## Task JSON-RPC Methods & Ownership Isolation
 
-All task methods require the caller to advertise `extensions["io.modelcontextprotocol/tasks"]` (otherwise the server returns JSON-RPC error `-32021`). Every `TaskRecord` is bound to `context.owner_id` (derived from the authenticated principal when authentication middleware is active). A caller with a different `owner_id` cannot inspect, update, or cancel another principal's task.
+All task methods require the caller to advertise `extensions["io.modelcontextprotocol/tasks"]` (otherwise the server returns JSON-RPC error `-32021`). Every `TaskRecord` is strictly bound to `context.owner_id` (`None` for anonymous callers, or the principal identifier derived when authentication middleware is active): an anonymous caller cannot inspect, update, or cancel an authenticated principal's task, and an authenticated principal cannot inspect, update, or cancel an anonymous or foreign principal's task.
 
 | Method | Parameters | Response & Behavior |
 | :--- | :--- | :--- |
 | `tools/call` *(task-promoted)* | `{"name": "<tool>", "arguments": {...}}` | Creates a `TaskRecord` in `MCPTaskStore`, dispatches execution to the active `MCPTaskExecutor`, and returns `{"resultType": "task", "taskId": "...", "status": "working", "createdAt": "...", "lastUpdatedAt": "...", "ttlMs": 300000, "pollIntervalMs": 1000}`. |
 | `tasks/get` | `{"taskId": "<id>"}` | Returns the serialized `TaskRecord` (`taskId`, `status`, `createdAt`, `lastUpdatedAt`, `ttlMs`, `pollIntervalMs`, and optional `statusMessage` or `inputRequests`). When `status == "completed"`, `tasks/get` includes `"result": {"resultType": "complete", "content": [...], "isError": false}` (or `"isError": true`); when `status == "failed"`, `tasks/get` includes `"error": {"code": ..., "message": ...}`. Raises `INVALID_PARAMS` (`-32602`) if the task does not exist or belongs to a different `owner_id`. |
-| `notifications/tasks` *(server notification)* | `subscriptions/listen` stream / `status_callback` | Task state transitions invoke `MCPTaskConfig.status_callback(record)` and publish `"notifications/tasks"` with `record.to_dict()` to active `subscriptions/listen` streams. |
+| `notifications/tasks` *(server notification)* | `subscriptions/listen` or `GET /mcp` SSE / `status_callback` | Task state and `statusMessage` transitions invoke `MCPTaskConfig.status_callback(record)` and publish `"notifications/tasks"` with `record.to_dict()` to active `2026-07-28` `subscriptions/listen` (`taskIds`) streams and owner-matched `2025-*` `GET /mcp` SSE streams. |
 | `tasks/update` | `{"taskId": "<id>", "inputResponses": {...}}` | Supplies answers to pending `inputRequests` while `status == "input_required"`. When all outstanding keys are answered, transitions the task to `working`, wakes the local runner or calls `executor.resume(call)`, and returns `{}`. |
 | `tasks/cancel` | `{"taskId": "<id>"}` | Requests cooperative cancellation of a non-terminal task (`working` or `input_required`) and returns `{}`. The task transitions to `status="cancelled"` once the in-process runner or distributed queue worker acknowledges cancellation. |
+
+---
+
+## Background Task Progress and Server Logging
+
+When a `tools/call` invocation promotes into a background task, `MCPHandlerService` captures the caller's progress token, session identifier, and active logging threshold inside `ToolTaskCall` (persisted privately under `dispatchInternal` and omitted from public `tasks/get` responses):
+
+| `ToolTaskCall` Field | Type | Default | Role Across In-Process & Queue Workers |
+| :--- | :--- | :--- | :--- |
+| `progress_token` | `str or int or None` | `None` | Stores `params._meta.progressToken` from the initial `tools/call` so promoted tasks forward `notifications/progress` across worker processes and `tasks/update` resumptions. |
+| `session_id` | `str or None` | `None` | Stores the caller's `2025-11-25` (`2025-06-18` / `2025-03-26`) `Mcp-Session-Id` so background progress and log notifications route strictly to the originating session stream. |
+| `log_level` | `str or None` | `None` | Stores the caller's RFC 5424 server log threshold at promotion time, refreshed from `MCPSession.log_level` whenever `tasks/update` resumes an `input_required` task. |
+
+- **`TaskRecord.status_message` (`statusMessage`)**: Calling `await MCPTaskStore.update_status_message(task_id, status_message)` updates `record.status_message` (serialized as `"statusMessage"` in `tasks/get` and `notifications/tasks`) while the task is in `working` or `input_required`. Terminal task records (`completed`, `failed`, `cancelled`) remain immutable no-ops.
+- **Post-Promotion `report_progress` & `ctx.log` Forwarding**: Inside both in-process task runners and distributed `QueueTaskExecutor` workers (`run_mcp_tool_task` / `run_task_attempt`), calling `await ctx.report_progress(progress, total=..., message=...)` updates `TaskRecord.status_message` (`statusMessage`) when `message` is supplied and emits `notifications/progress` carrying `progressToken` when `progress_token` and `session_id` are set. Calling `await ctx.log(level, data, logger=...)` emits threshold-filtered `notifications/message` events. When `MCPConfig.subscription_channels` was omitted, `QueueTaskExecutor.bind()` automatically discovers and attaches the application's `ChannelsPlugin` onto `SubscriptionManager` for cross-worker delivery.
+- **Session SSE vs `subscriptions/listen` Stream Isolation**: `notifications/progress` and session-scoped `notifications/message` events deliver strictly to the originating `2025-*` session `GET /mcp` SSE stream matching both `owner_id` and `session_id`. Stateless `2026-07-28` `POST /mcp` `subscriptions/listen` streams receive owner-matched `notifications/tasks` (`taskIds`: `status` and `statusMessage`) and opted-in `"logLevel"` `notifications/message` events, while strictly excluding `notifications/progress` frames.
+
+```python
+from litestar import post
+
+from litestar_mcp import get_mcp_request_context, mcp_tool
+
+
+@post("/datasets/reindex")
+@mcp_tool("reindex_dataset", task=True)
+async def reindex_dataset(dataset: str) -> dict[str, str]:
+    """Run a background reindex while streaming progress and server logs."""
+    ctx = get_mcp_request_context()
+    await ctx.log("info", {"phase": "scan", "dataset": dataset}, logger="indexer")
+    await ctx.report_progress(1, total=2, message=f"Scanning {dataset}")
+    await ctx.report_progress(2, total=2, message=f"Indexed {dataset}")
+    return {"dataset": dataset, "status": "reindexed"}
+```
 
 ---
 

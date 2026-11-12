@@ -1,15 +1,24 @@
 """Automatic JSON Schema generation for MCP tools."""
 
+import contextlib
+import copy
 import enum
 import inspect
 import logging
 import re
-from dataclasses import MISSING, fields
+import typing
+from collections.abc import Mapping
+from contextvars import ContextVar
+from dataclasses import MISSING, dataclass, fields
 from functools import lru_cache
 from types import UnionType
-from typing import TYPE_CHECKING, Any, Literal, Union, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Union, cast, get_args, get_origin
 
 import msgspec
+from litestar.params import ParameterKwarg
+from litestar.response import Response
+from litestar.types import Empty
+from typing_extensions import NotRequired, ReadOnly, Required, get_type_hints, is_typeddict
 
 from litestar_mcp.core._typing import attrs_nothing
 from litestar_mcp.core.typing import (
@@ -27,9 +36,138 @@ from litestar_mcp.utils.handler_signature import (
 
 if TYPE_CHECKING:
     from litestar.handlers import BaseRouteHandler
-    from litestar.params import ParameterKwarg
+
+__all__ = (
+    "attrs_to_json_schema",
+    "basic_type_to_json_schema",
+    "cached_output_schema_for_handler",
+    "cached_schema_for_handler",
+    "collection_type_to_json_schema",
+    "dataclass_to_json_schema",
+    "generate_output_schema_for_handler",
+    "generate_schema_for_handler",
+    "hoist_definitions",
+    "iter_mcp_header_fields",
+    "literal_type_to_json_schema",
+    "model_to_json_schema",
+    "msgspec_to_json_schema",
+    "pydantic_to_json_schema",
+    "type_to_json_schema",
+    "type_to_output_schema",
+    "typed_dict_to_json_schema",
+    "union_type_to_json_schema",
+    "unwrap_root_object_schema",
+    "validate_mcp_header_schema",
+)
 
 _logger = logging.getLogger(__name__)
+
+_REQUIRED_ORIGINS: "tuple[Any, ...]" = tuple(
+    marker for marker in (Required, getattr(typing, "Required", None)) if marker is not None
+)
+_NOT_REQUIRED_ORIGINS: "tuple[Any, ...]" = tuple(
+    marker for marker in (NotRequired, getattr(typing, "NotRequired", None)) if marker is not None
+)
+_READONLY_ORIGINS: "tuple[Any, ...]" = tuple(
+    marker for marker in (ReadOnly, getattr(typing, "ReadOnly", None)) if marker is not None
+)
+_MCP_CONTENT_MODULES: "frozenset[str]" = frozenset({"litestar_mcp.mcp.content"})
+_MCP_CONTENT_TYPE_NAMES: "frozenset[str]" = frozenset(
+    {
+        "MCPBlobResource",
+        "MCPInputRequiredResult",
+        "MCPResourceLink",
+        "MCPToolResult",
+    }
+)
+_MCP_INPUT_REQUIRED_NAMES: "frozenset[str]" = frozenset({"MCPInputRequiredResult"})
+_EMPTY_RETURN_MARKERS: "tuple[Any, ...]" = (
+    None,
+    type(None),
+    inspect.Parameter.empty,
+    inspect.Signature.empty,
+    Empty,
+    Any,
+    object,
+)
+
+
+@dataclass
+class _SchemaBuildState:
+    active: "dict[Any, str]"
+    referenced: "set[Any]"
+    defs: "dict[str, dict[str, Any]]"
+    names: "dict[str, Any]"
+
+
+_schema_build_state: "ContextVar[_SchemaBuildState | None]" = ContextVar(
+    "litestar_mcp_schema_build_state",
+    default=None,
+)
+
+
+def _allocate_schema_def_name(state: "_SchemaBuildState", tp: "Any") -> "str":
+    for name, owner in state.names.items():
+        if owner == tp:
+            return name
+    raw_name = getattr(tp, "__name__", None) or "Model"
+    cleaned = re.sub(r"[^0-9A-Za-z_]", "_", str(raw_name)).strip("_") or "Model"
+    candidate = cleaned
+    suffix = 2
+    while candidate in state.names and state.names[candidate] != tp:
+        candidate = f"{cleaned}{suffix}"
+        suffix += 1
+    state.names[candidate] = tp
+    return candidate
+
+
+def _resolve_structured_field_types(tp: "Any", state: "_SchemaBuildState") -> "dict[str, Any]":
+    localns: dict[str, Any] = {}
+    tp_name = getattr(tp, "__name__", None)
+    if isinstance(tp_name, str) and tp_name:
+        localns[tp_name] = tp
+    for active_tp in state.active:
+        active_name = getattr(active_tp, "__name__", None)
+        if isinstance(active_name, str) and active_name:
+            localns.setdefault(active_name, active_tp)
+    for named_tp in state.names.values():
+        named = getattr(named_tp, "__name__", None)
+        if isinstance(named, str) and named:
+            localns.setdefault(named, named_tp)
+    try:
+        return get_type_hints(tp, localns=localns or None, include_extras=True)
+    except (NameError, TypeError, ValueError):
+        raw_annotations = getattr(tp, "__annotations__", None)
+        resolved = dict(raw_annotations) if isinstance(raw_annotations, Mapping) else {}
+        for key, value in list(resolved.items()):
+            if isinstance(value, str) and value in localns:
+                resolved[key] = localns[value]
+        return resolved
+
+
+def _finalize_root_schema(schema: "dict[str, Any]", state: "_SchemaBuildState") -> "dict[str, Any]":
+    if not state.defs or not schema:
+        return schema
+    result: dict[str, Any] = copy.deepcopy(schema)
+    ref = result.get("$ref")
+    if isinstance(ref, str) and ref.startswith(_DEFS_REF_PREFIX) and "type" not in result:
+        def_name = ref[len(_DEFS_REF_PREFIX) :]
+        target = state.defs.get(def_name)
+        if isinstance(target, Mapping):
+            result.pop("$ref", None)
+            expanded = copy.deepcopy(dict(target))
+            expanded.update(result)
+            result = expanded
+    existing_defs = result.get("$defs")
+    merged_defs: dict[str, Any] = copy.deepcopy(dict(existing_defs)) if isinstance(existing_defs, Mapping) else {}
+    for name, definition in state.defs.items():
+        merged_defs.setdefault(name, copy.deepcopy(definition))
+    reachable = _collect_reachable_defs(result, merged_defs)
+    if reachable:
+        result["$defs"] = {name: copy.deepcopy(merged_defs[name]) for name in merged_defs if name in reachable}
+    elif "$defs" in result and not existing_defs:
+        result.pop("$defs", None)
+    return result
 
 
 def basic_type_to_json_schema(annotation: "Any") -> "dict[str, Any] | None":
@@ -83,38 +221,107 @@ def msgspec_to_json_schema(struct_type: "Any") -> "dict[str, Any]":
     return msgspec.json.schema(struct_type)
 
 
+def _convert_cycle_safe_object(
+    structured_type: "Any",
+    builder: "typing.Callable[[_SchemaBuildState], dict[str, Any]]",
+) -> "dict[str, Any]":
+    existing_state = _schema_build_state.get()
+    is_root = existing_state is None
+    state = (
+        existing_state
+        if existing_state is not None
+        else _SchemaBuildState(active={}, referenced=set(), defs={}, names={})
+    )
+    token = _schema_build_state.set(state) if is_root else None
+    try:
+        active_name = state.active.get(structured_type)
+        if active_name is not None:
+            state.referenced.add(structured_type)
+            return {"$ref": f"{_DEFS_REF_PREFIX}{active_name}"}
+        def_name = _allocate_schema_def_name(state, structured_type)
+        if def_name in state.defs and structured_type in state.referenced:
+            built: dict[str, Any] = {"$ref": f"{_DEFS_REF_PREFIX}{def_name}"}
+            return _finalize_root_schema(built, state) if is_root else built
+        state.active[structured_type] = def_name
+        try:
+            schema = builder(state)
+        finally:
+            state.active.pop(structured_type, None)
+        if structured_type in state.referenced:
+            state.defs[def_name] = copy.deepcopy(schema)
+            if not is_root:
+                return {"$ref": f"{_DEFS_REF_PREFIX}{def_name}"}
+        return _finalize_root_schema(schema, state) if is_root else schema
+    finally:
+        if token is not None:
+            _schema_build_state.reset(token)
+
+
 def dataclass_to_json_schema(dataclass_type: "Any") -> "dict[str, Any]":
     """Convert dataclass to JSON Schema format."""
-    properties = {}
-    required = []
 
-    for field in fields(dataclass_type):
-        field_schema = type_to_json_schema(field.type)
-        properties[field.name] = field_schema
-        if field.default is MISSING and field.default_factory is MISSING:
-            required.append(field.name)
+    def _build(state: "_SchemaBuildState") -> "dict[str, Any]":
+        hints = _resolve_structured_field_types(dataclass_type, state)
+        properties: dict[str, Any] = {}
+        required: list[str] = []
+        for field in fields(dataclass_type):
+            field_type = hints.get(field.name, field.type)
+            properties[field.name] = type_to_json_schema(field_type)
+            if field.default is MISSING and field.default_factory is MISSING:
+                required.append(field.name)
+        schema: dict[str, Any] = {"type": "object", "properties": properties}
+        if required:
+            schema["required"] = required
+        return schema
 
-    schema = {"type": "object", "properties": properties}
-    if required:
-        schema["required"] = required
-    return schema
+    return _convert_cycle_safe_object(dataclass_type, _build)
 
 
 def attrs_to_json_schema(attrs_type: "Any") -> "dict[str, Any]":
     """Convert attrs class to JSON Schema format."""
-    properties = {}
-    required = []
 
-    for field in attrs_fields(attrs_type):
-        field_schema = type_to_json_schema(field.type)
-        properties[field.name] = field_schema
-        if field.default is attrs_nothing:
-            required.append(field.name)
+    def _build(state: "_SchemaBuildState") -> "dict[str, Any]":
+        hints = _resolve_structured_field_types(attrs_type, state)
+        properties: dict[str, Any] = {}
+        required: list[str] = []
+        for field in attrs_fields(attrs_type):
+            field_type = hints.get(field.name, field.type)
+            properties[field.name] = type_to_json_schema(field_type)
+            if field.default is attrs_nothing:
+                required.append(field.name)
+        schema: dict[str, Any] = {"type": "object", "properties": properties}
+        if required:
+            schema["required"] = required
+        return schema
 
-    schema = {"type": "object", "properties": properties}
-    if required:
-        schema["required"] = required
-    return schema
+    return _convert_cycle_safe_object(attrs_type, _build)
+
+
+def typed_dict_to_json_schema(typed_dict_type: "Any") -> "dict[str, Any]":
+    """Convert a `typing.TypedDict` or `typing_extensions.TypedDict` to JSON Schema format."""
+    if not is_typeddict(typed_dict_type):
+        return {}
+
+    def _build(state: "_SchemaBuildState") -> "dict[str, Any]":
+        hints = _resolve_structured_field_types(typed_dict_type, state)
+        raw_required = getattr(typed_dict_type, "__required_keys__", None)
+        default_total = bool(getattr(typed_dict_type, "__total__", True))
+        properties: dict[str, Any] = {}
+        required: list[str] = []
+        for field_name, field_annotation in hints.items():
+            base_required = field_name in raw_required if isinstance(raw_required, (set, frozenset)) else default_total
+            inner_type, is_required, metas = _unwrap_typed_dict_field(field_annotation, default_required=base_required)
+            field_schema = copy.deepcopy(type_to_json_schema(inner_type))
+            _apply_annotation_metas(field_schema, metas)
+            properties[field_name] = field_schema
+            if is_required:
+                required.append(field_name)
+        schema: dict[str, Any] = {"type": "object", "properties": properties}
+        if required:
+            schema["required"] = required
+        return schema
+
+    return _convert_cycle_safe_object(typed_dict_type, _build)
 
 
 def model_to_json_schema(annotation: "Any") -> "dict[str, Any] | None":
@@ -138,10 +345,10 @@ def model_to_json_schema(annotation: "Any") -> "dict[str, Any] | None":
 
 
 def union_type_to_json_schema(annotation: "Any") -> "dict[str, Any] | None":
-    """Convert Union types (including Optional) to JSON Schema format."""
+    """Convert Union types (including Optional and `NoneType`) to JSON Schema format."""
     origin = get_origin(annotation)
 
-    if origin is type(None):
+    if annotation is type(None) or origin is type(None):
         return {"type": "null"}
 
     if origin in {Union, UnionType}:
@@ -168,25 +375,52 @@ def type_to_json_schema(annotation: "Any") -> "dict[str, Any]":
     Returns:
         JSON Schema dictionary for the type.
     """
+    existing_state = _schema_build_state.get()
+    is_root = existing_state is None
+    state = (
+        existing_state
+        if existing_state is not None
+        else _SchemaBuildState(active={}, referenced=set(), defs={}, names={})
+    )
+    token = _schema_build_state.set(state) if is_root else None
+    try:
+        schema = _type_to_json_schema_inner(annotation, state)
+        return _finalize_root_schema(schema, state) if is_root else schema
+    finally:
+        if token is not None:
+            _schema_build_state.reset(token)
+
+
+def _type_to_json_schema_inner(annotation: "Any", state: "_SchemaBuildState") -> "dict[str, Any]":
     if annotation is None or annotation == inspect.Parameter.empty:
         return {"type": "object", "description": "No type annotation provided"}
 
-    inner, metas = _unwrap_annotated(annotation)
+    inner, metas = _unwrap_outer_annotated(annotation)
     if inner is not annotation:
         schema = type_to_json_schema(inner)
-        for meta in metas:
-            _merge_parameter_meta(schema, meta)
+        _apply_annotation_metas(schema, metas)
         return schema
 
     if isinstance(annotation, str):
-        annotation = _resolve_string_annotation(annotation)
-        if isinstance(annotation, dict):
-            return annotation
+        for active_tp in state.active:
+            if getattr(active_tp, "__name__", None) == annotation:
+                annotation = active_tp
+                break
+        else:
+            for named_tp in state.names.values():
+                if getattr(named_tp, "__name__", None) == annotation:
+                    annotation = named_tp
+                    break
+            else:
+                annotation = _resolve_string_annotation(annotation)
+                if isinstance(annotation, dict):
+                    return annotation
 
     for converter in (
         basic_type_to_json_schema,
         collection_type_to_json_schema,
         literal_type_to_json_schema,
+        typed_dict_to_json_schema,
         model_to_json_schema,
     ):
         if result := converter(annotation):
@@ -286,6 +520,101 @@ def cached_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]":
     The returned schema is shared between callers and must not be mutated.
     """
     return generate_schema_for_handler(handler)
+
+
+def unwrap_root_object_schema(schema: "dict[str, Any]") -> "dict[str, Any]":
+    """Unwrap root `#/$defs/<Name>` envelopes into a root schema while retaining reachable `$defs`.
+
+    Input schemas and nested `$defs` are deep-copied so cached model definitions
+    are never mutated in place. Top-level metadata keys (`title`, `description`,
+    `examples`, `$schema`) already present on `schema` take precedence over keys
+    defined inside the referenced `$defs` target.
+    """
+    result: dict[str, Any] = copy.deepcopy(dict(schema))
+    raw_defs = result.pop("$defs", None)
+    defs: dict[str, Any] = copy.deepcopy(dict(raw_defs)) if isinstance(raw_defs, Mapping) else {}
+    for def_value in list(defs.values()):
+        hoist_definitions(def_value, defs)
+    hoist_definitions(result, defs)
+
+    visited_refs: set[str] = set()
+    while "$ref" in result and "type" not in result:
+        ref = result.get("$ref")
+        if not isinstance(ref, str) or not ref.startswith(_DEFS_REF_PREFIX) or ref in visited_refs:
+            break
+        def_name = ref[len(_DEFS_REF_PREFIX) :]
+        target = defs.get(def_name)
+        if not isinstance(target, Mapping):
+            break
+        visited_refs.add(ref)
+        result.pop("$ref", None)
+        merged: dict[str, Any] = copy.deepcopy(dict(target))
+        merged.update(result)
+        result = merged
+        hoist_definitions(result, defs)
+
+    reachable = _collect_reachable_defs(result, defs)
+    if reachable:
+        result["$defs"] = {name: copy.deepcopy(defs[name]) for name in defs if name in reachable}
+    return result
+
+
+def type_to_output_schema(annotation: "Any") -> "dict[str, Any] | None":
+    """Synthesize an MCP-compliant root `"type": "object"` JSON Schema for a return annotation.
+
+    Returns `None` for missing, scalar, array, nullable, `Response`, or MCP
+    content-helper annotations that do not map to a single root JSON object.
+    """
+    inner, metas = _unwrap_outer_annotated(annotation)
+    if _is_non_schema_return(inner):
+        return None
+
+    origin = get_origin(inner)
+    if origin in {Union, UnionType}:
+        remaining = [arg for arg in get_args(inner) if not _is_input_required_member(arg)]
+        sub = type_to_output_schema(remaining[0]) if len(remaining) == 1 else None
+        if sub is None:
+            return None
+        merged = copy.deepcopy(sub)
+        _apply_annotation_metas(merged, metas)
+        return merged if merged.get("type") == "object" else None
+
+    try:
+        if is_typeddict(inner):
+            raw_schema: dict[str, Any] | None = typed_dict_to_json_schema(inner)
+        elif inner is dict or origin is dict:
+            raw_schema = {"type": "object"}
+        else:
+            raw_schema = model_to_json_schema(inner)
+    except Exception as exc:  # noqa: BLE001
+        _logger.debug("Skipping automatic outputSchema synthesis for %r: %s", inner, exc)
+        raw_schema = None
+
+    if not raw_schema:
+        return None
+    schema = unwrap_root_object_schema(raw_schema)
+    if is_dataclass(inner) and "description" not in schema:
+        raw_doc = inspect.getdoc(inner)
+        inner_name = getattr(inner, "__name__", None)
+        if raw_doc and (inner_name is None or not raw_doc.startswith(f"{inner_name}(")):
+            schema["description"] = raw_doc
+    _apply_annotation_metas(schema, metas)
+    return schema if schema.get("type") == "object" else None
+
+
+def generate_output_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any] | None":
+    """Generate an MCP `outputSchema` for a route handler's return annotation, or `None`."""
+    return type_to_output_schema(_extract_handler_return_annotation(handler))
+
+
+@lru_cache(maxsize=1024)
+def cached_output_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any] | None":
+    """Return `generate_output_schema_for_handler` output, computed once per handler.
+
+    Callers must `copy.deepcopy` the returned dictionary before mutating
+    `properties` or `$defs`.
+    """
+    return generate_output_schema_for_handler(handler)
 
 
 _DEFS_REF_PREFIX = "#/$defs/"
@@ -438,8 +767,8 @@ _META_FIELD_MAP: "tuple[tuple[str, str], ...]" = (
 )
 
 
-def _merge_parameter_meta(schema: "dict[str, Any]", meta: "ParameterKwarg") -> "None":
-    """Copy non-None fields from ``meta`` into ``schema`` using JSON Schema names."""
+def _merge_meta_fields(schema: "dict[str, Any]", meta: "Any", extra_attr: "str") -> "None":
+    """Copy non-None fields from `meta` into `schema` using JSON Schema names."""
     for attr, key in _META_FIELD_MAP:
         value = getattr(meta, attr, None)
         if value is None:
@@ -448,9 +777,159 @@ def _merge_parameter_meta(schema: "dict[str, Any]", meta: "ParameterKwarg") -> "
             schema[key] = [value]
         else:
             schema[key] = value
-    schema_extra = getattr(meta, "schema_extra", None)
-    if isinstance(schema_extra, dict):
-        schema.update(schema_extra)
+    extra_schema = getattr(meta, extra_attr, None)
+    if isinstance(extra_schema, dict):
+        schema.update(extra_schema)
+
+
+def _apply_annotation_metas(schema: "dict[str, Any]", metas: "list[Any]") -> "None":
+    """Apply `ParameterKwarg` and `msgspec.Meta` metadata objects to `schema`."""
+    for meta in metas:
+        if isinstance(meta, ParameterKwarg):
+            _merge_meta_fields(schema, meta, "schema_extra")
+        elif isinstance(meta, msgspec.Meta):
+            _merge_meta_fields(schema, meta, "extra_json_schema")
+
+
+def _unwrap_outer_annotated(annotation: "Any") -> "tuple[Any, list[Any]]":
+    """Unwrap nested outer `Annotated[T, ...]` wrappers without altering unions."""
+    if get_origin(annotation) is Annotated:
+        args = get_args(annotation)
+        if not args:
+            return annotation, []
+        inner, nested_metas = _unwrap_outer_annotated(args[0])
+        return inner, [*nested_metas, *args[1:]]
+    return annotation, []
+
+
+def _unwrap_typed_dict_field(
+    annotation: "Any",
+    *,
+    default_required: "bool",
+) -> "tuple[Any, bool, list[Any]]":
+    """Unwrap `Annotated`, `Required`, `NotRequired`, and `ReadOnly` markers on a `TypedDict` field."""
+    current = annotation
+    required_override: bool | None = None
+    outer_to_inner_groups: list[tuple[Any, ...]] = []
+    while True:
+        origin = get_origin(current)
+        args = get_args(current)
+        if origin is Annotated and args:
+            outer_to_inner_groups.append(args[1:])
+            current = args[0]
+            continue
+        if origin in _REQUIRED_ORIGINS and args:
+            if required_override is None:
+                required_override = True
+            current = args[0]
+            continue
+        if origin in _NOT_REQUIRED_ORIGINS and args:
+            if required_override is None:
+                required_override = False
+            current = args[0]
+            continue
+        if origin in _READONLY_ORIGINS and args:
+            current = args[0]
+            continue
+        break
+    metas: list[Any] = [meta for group in reversed(outer_to_inner_groups) for meta in group]
+    is_required = default_required if required_override is None else required_override
+    return current, is_required, metas
+
+
+def _collect_reachable_defs(root: "Any", defs: "Mapping[str, Any]") -> "set[str]":
+    """Return names in `defs` transitively referenced by `#/$defs/<Name>` pointers in `root`."""
+    reachable: set[str] = set()
+
+    def _walk(node: "Any") -> "None":
+        if isinstance(node, list):
+            for item in node:
+                _walk(item)
+            return
+        if not isinstance(node, Mapping):
+            return
+        ref = node.get("$ref")
+        if isinstance(ref, str) and ref.startswith(_DEFS_REF_PREFIX):
+            def_name = ref[len(_DEFS_REF_PREFIX) :]
+            if def_name in defs and def_name not in reachable:
+                reachable.add(def_name)
+                _walk(defs[def_name])
+        for key, value in node.items():
+            if key == "$defs":
+                continue
+            _walk(value)
+
+    _walk(root)
+    return reachable
+
+
+def _is_mcp_content_type(tp: "Any", *, names: "frozenset[str]" = _MCP_CONTENT_TYPE_NAMES) -> "bool":
+    """Return whether `tp` is a class from `litestar_mcp.mcp.content` matching `names`."""
+    return getattr(tp, "__module__", None) in _MCP_CONTENT_MODULES and getattr(tp, "__name__", None) in names
+
+
+def _is_non_schema_return(tp: "Any") -> "bool":
+    """Return whether `tp` represents an empty, unstructured, HTTP `Response`, or MCP helper return."""
+    if any(tp is marker for marker in _EMPTY_RETURN_MARKERS):
+        return True
+    if isinstance(tp, str):
+        return True
+    if tp is Response or get_origin(tp) is Response:
+        return True
+    return _is_mcp_content_type(tp)
+
+
+def _is_input_required_member(tp: "Any") -> "bool":
+    """Return whether union member `tp` is `MCPInputRequiredResult`."""
+    inner, _ = _unwrap_outer_annotated(tp)
+    return _is_mcp_content_type(inner, names=_MCP_INPUT_REQUIRED_NAMES)
+
+
+def _extract_handler_return_annotation(handler: "BaseRouteHandler") -> "Any":
+    """Extract a route handler's return annotation while preserving `Annotated` metadata."""
+    ret_annotation: Any = inspect.Signature.empty
+    parsed_sig: Any = None
+    with contextlib.suppress(Exception):
+        parsed_sig = handler.parsed_fn_signature
+    if parsed_sig is not None:
+        return_type = getattr(parsed_sig, "return_type", None)
+        if return_type is not None:
+            raw = getattr(return_type, "raw", inspect.Signature.empty)
+            ann = getattr(return_type, "annotation", inspect.Signature.empty)
+            ret_annotation = ann if isinstance(raw, str) and not isinstance(ann, str) else raw
+    if ret_annotation is not inspect.Signature.empty and not isinstance(ret_annotation, str):
+        return ret_annotation
+
+    try:
+        fn: Any = inspect.unwrap(get_handler_function(handler))
+    except (AttributeError, ValueError):
+        fn = handler
+
+    localns: dict[str, Any] = {}
+    resolve_ns = getattr(handler, "resolve_signature_namespace", None)
+    if callable(resolve_ns):
+        with contextlib.suppress(Exception):
+            resolved_ns = resolve_ns()
+            if isinstance(resolved_ns, Mapping):
+                localns.update(resolved_ns)
+    raw_ns = getattr(handler, "signature_namespace", None)
+    if isinstance(raw_ns, Mapping):
+        for key, value in raw_ns.items():
+            localns.setdefault(key, value)
+
+    try:
+        hints = get_type_hints(fn, localns=localns or None, include_extras=True)
+    except (NameError, TypeError, ValueError):
+        raw_annotations = getattr(fn, "__annotations__", None)
+        raw_ret = (
+            raw_annotations.get("return", inspect.Signature.empty)
+            if isinstance(raw_annotations, dict)
+            else inspect.Signature.empty
+        )
+        if isinstance(raw_ret, str) and raw_ret in localns:
+            return localns[raw_ret]
+        return raw_ret
+    return hints.get("return", inspect.Signature.empty)
 
 
 def _resolve_string_annotation(annotation: "str") -> "Any":

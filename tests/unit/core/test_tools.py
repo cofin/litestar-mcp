@@ -1,11 +1,16 @@
 """Unit tests for Tool, tool decorator, ToolContext, and execute_tool_calls."""
 
 import asyncio
-from typing import Literal
+from typing import Any, Literal
 
+import msgspec
 import pytest
+from litestar import Litestar
+from litestar.testing import TestClient
 
+from litestar_mcp import LitestarMCP, MCPConfig
 from litestar_mcp.core.context import ToolContext
+from litestar_mcp.core.serialization import decode_json
 from litestar_mcp.core.tools import (
     Tool,
     ToolArgumentError,
@@ -14,6 +19,15 @@ from litestar_mcp.core.tools import (
     execute_tool_calls,
     tool,
 )
+from litestar_mcp.mcp.content import MCPBlobResource, MCPResourceLink, MCPToolResult
+from litestar_mcp.mcp.tool_handlers import build_controller_tool_handler, build_tool_route_handler
+from litestar_mcp.utils import get_mcp_metadata
+from tests.unit.conftest import mcp_envelope, mcp_post
+
+
+class ItemOutput(msgspec.Struct, rename="camel"):
+    item_id: str
+    total_count: int = 1
 
 
 class ToolFailureError(RuntimeError):
@@ -143,3 +157,467 @@ async def test_execute_tool_calls_success_and_error() -> None:
     assert results[3].call_id == "c4"
     assert results[3].is_error
     assert "Unknown tool" in (results[3].error or "")
+
+
+@pytest.mark.parametrize(
+    ("output_schema_arg", "returns_object", "expected_props", "expected_policy_kind"),
+    [
+        (
+            True,
+            True,
+            {"itemId": {"type": "string"}, "totalCount": {"type": "integer", "default": 1}},
+            "true",
+        ),
+        (True, False, None, "true"),
+        (
+            {"type": "object", "properties": {"slug": {"type": "string"}}},
+            False,
+            {"slug": {"type": "string"}},
+            "dict",
+        ),
+        (
+            {
+                "$ref": "#/$defs/Wrapper",
+                "$defs": {"Wrapper": {"type": "object", "properties": {"ok": {"type": "boolean"}}}},
+            },
+            False,
+            {"ok": {"type": "boolean"}},
+            "dict",
+        ),
+        (False, True, None, "false"),
+        (None, True, None, "none"),
+    ],
+    ids=["auto_struct", "auto_scalar_skipped", "explicit_dict", "explicit_ref_dict", "opt_out_false", "default_none"],
+)
+def test_tool_decorator_output_schema_modes(
+    output_schema_arg: Any,
+    returns_object: bool,
+    expected_props: dict[str, Any] | None,
+    expected_policy_kind: str,
+) -> None:
+    if returns_object:
+
+        @tool(name="sample", output_schema=output_schema_arg)
+        def obj_tool(item_id: str) -> ItemOutput:
+            return ItemOutput(item_id=item_id)
+
+        registered: Tool = obj_tool
+    else:
+
+        @tool(name="sample", output_schema=output_schema_arg)
+        def str_tool(item_id: str) -> str:
+            return item_id
+
+        registered = str_tool
+
+    exported = registered.to_json_schema()
+    if expected_props is None:
+        assert registered.output_schema is None
+        assert "output_schema" not in exported
+    else:
+        assert registered.output_schema is not None
+        assert registered.output_schema["type"] == "object"
+        assert "$ref" not in registered.output_schema
+        assert registered.output_schema["properties"] == expected_props
+        assert exported["output_schema"] == registered.output_schema
+        exported["output_schema"]["properties"]["mutated"] = {"type": "null"}
+        assert "mutated" not in registered.output_schema["properties"]
+
+    if expected_policy_kind == "true":
+        assert registered.output_schema_policy is True
+    elif expected_policy_kind == "false":
+        assert registered.output_schema_policy is False
+    elif expected_policy_kind == "none":
+        assert registered.output_schema_policy is None
+    else:
+        policy = registered.output_schema_policy
+        assert isinstance(policy, dict)
+        assert policy["properties"] == expected_props
+        policy["properties"]["tampered"] = {"type": "string"}
+        assert registered.output_schema is not None
+        assert "tampered" not in registered.output_schema["properties"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("output_schema_arg", "expect_schema", "expected_policy"),
+    [
+        ({"type": "object", "properties": {"id": {"type": "string"}}}, True, "dict"),
+        (
+            {"$ref": "#/$defs/S", "$defs": {"S": {"type": "object", "properties": {"id": {"type": "string"}}}}},
+            True,
+            "dict",
+        ),
+        (True, True, True),
+        (False, False, False),
+        (None, False, None),
+    ],
+    ids=["dict", "ref_dict", "bool_true", "bool_false", "none"],
+)
+async def test_tool_from_schema_and_bound_descriptor_preserve_output_schema(
+    output_schema_arg: Any,
+    expect_schema: bool,
+    expected_policy: Any,
+) -> None:
+    def typed_call(item_id: str) -> ItemOutput:
+        return ItemOutput(item_id=item_id)
+
+    from_schema_tool = Tool.from_schema(
+        "lookup_item",
+        description="Lookup",
+        parameters={"type": "object", "properties": {"item_id": {"type": "string"}}, "required": ["item_id"]},
+        call=typed_call,
+        output_schema=output_schema_arg,
+    )
+
+    class ItemController:
+        @tool(name="bound_lookup", output_schema=output_schema_arg)
+        def lookup(self, item_id: str) -> ItemOutput:
+            return ItemOutput(item_id=item_id)
+
+    bound_tool = ItemController().lookup
+
+    if expect_schema:
+        assert from_schema_tool.output_schema is not None
+        assert from_schema_tool.output_schema["type"] == "object"
+        assert bound_tool.output_schema is not None
+        assert bound_tool.output_schema["type"] == "object"
+    else:
+        assert from_schema_tool.output_schema is None
+        assert bound_tool.output_schema is None
+
+    if expected_policy == "dict":
+        assert isinstance(from_schema_tool.output_schema_policy, dict)
+        assert isinstance(bound_tool.output_schema_policy, dict)
+    else:
+        assert from_schema_tool.output_schema_policy is expected_policy
+        assert bound_tool.output_schema_policy is expected_policy
+
+    bound_res = await bound_tool.execute({"item_id": "abc"})
+    assert bound_res == {"itemId": "abc", "totalCount": 1}
+
+    noop_auto = Tool.from_schema("noop_tool", output_schema=True)
+    assert noop_auto.output_schema is None
+    assert noop_auto.output_schema_policy is True
+
+
+@pytest.mark.parametrize("factory_kind", ["decorator", "from_schema"])
+@pytest.mark.parametrize(
+    ("bad_schema", "exc_type", "expected_match"),
+    [
+        ("bad", TypeError, "output_schema must be a mapping, bool, or None"),
+        (123, TypeError, "output_schema must be a mapping, bool, or None"),
+        (["x"], TypeError, "output_schema must be a mapping, bool, or None"),
+        ({"type": "string"}, ValueError, "output_schema mapping must resolve to root type 'object'"),
+        ({}, ValueError, "root type 'object'"),
+        ({"$ref": "#/$defs/Missing"}, ValueError, "root type 'object'"),
+    ],
+    ids=["str", "int", "list", "string_schema", "empty_dict", "dangling_ref"],
+)
+def test_tool_and_from_schema_reject_invalid_output_schema(
+    factory_kind: str,
+    bad_schema: Any,
+    exc_type: type[Exception],
+    expected_match: str,
+) -> None:
+    with pytest.raises(exc_type, match=expected_match):
+        if factory_kind == "decorator":
+            tool(name="bad", output_schema=bad_schema)
+        else:
+            Tool.from_schema("bad", output_schema=bad_schema)
+
+
+@pytest.mark.parametrize("builder_kind", ["controller", "standalone"])
+@pytest.mark.parametrize(
+    ("policy", "expected_meta"),
+    [
+        (True, True),
+        (False, False),
+        (
+            {"type": "object", "properties": {"ok": {"type": "boolean"}}},
+            {"type": "object", "properties": {"ok": {"type": "boolean"}}},
+        ),
+        (None, None),
+    ],
+    ids=["true", "false", "explicit_dict", "none"],
+)
+def test_tool_handlers_forward_output_schema_policy(
+    builder_kind: str,
+    policy: Any,
+    expected_meta: Any,
+) -> None:
+    if builder_kind == "controller":
+
+        class ToolHolder:
+            @tool(name="policy_tool", output_schema=policy)
+            def run(self, query: str) -> ItemOutput:
+                return ItemOutput(item_id=query)
+
+        handler = build_controller_tool_handler(ToolHolder.__dict__["run"])
+    else:
+
+        @tool(name="policy_tool", output_schema=policy)
+        def run_standalone(query: str) -> ItemOutput:
+            return ItemOutput(item_id=query)
+
+        handler = build_tool_route_handler(run_standalone, base_path="/mcp")
+
+    metadata = get_mcp_metadata(handler) or get_mcp_metadata(handler.fn)
+    assert metadata is not None
+    if expected_meta is None:
+        assert "output_schema" not in metadata
+    elif isinstance(expected_meta, bool):
+        assert metadata["output_schema"] is expected_meta
+    else:
+        assert metadata["output_schema"] == expected_meta
+
+
+@pytest.mark.anyio
+async def test_tool_execute_passes_through_mcp_tool_result() -> None:
+    @tool(name="rich_result")
+    async def rich_result() -> MCPToolResult:
+        return MCPToolResult(content="custom note")
+
+    result = await rich_result.execute({})
+    assert isinstance(result, MCPToolResult)
+    assert result.to_result() == {"content": [{"type": "text", "text": "custom note"}], "isError": False}
+
+
+def test_tool_descriptor_fields_preserved_across_decorator_bound_and_from_schema() -> None:
+    raw_icons = [{"src": "https://example.com/app.svg", "mimeType": "image/svg+xml"}]
+    raw_meta: dict[str, Any] = {"ui": {"resourceUri": "ui://app/panel.html", "visibility": ["app"]}}
+
+    @tool(
+        name="panel_tool",
+        title="  Panel Tool  ",
+        icons=raw_icons,
+        meta=raw_meta,
+        output_schema=True,
+    )
+    def open_panel(item_id: str) -> ItemOutput:
+        return ItemOutput(item_id=item_id)
+
+    class PanelSkill:
+        @tool(
+            name="bound_panel",
+            title="Bound Panel",
+            icons=raw_icons,
+            meta=raw_meta,
+            output_schema=True,
+        )
+        def show(self, item_id: str) -> ItemOutput:
+            return ItemOutput(item_id=item_id)
+
+    schema_tool = Tool.from_schema(
+        "schema_panel",
+        description="Schema tool",
+        parameters={"type": "object", "properties": {"item_id": {"type": "string"}}},
+        title="  Schema Panel  ",
+        icons=raw_icons,
+        meta=raw_meta,
+        output_schema={"type": "object", "properties": {"ok": {"type": "boolean"}}},
+    )
+
+    raw_icons[0]["src"] = "tampered"
+    raw_meta["ui"]["visibility"].append("model")
+
+    bound_panel = PanelSkill().show
+    assert open_panel.title == "Panel Tool"
+    assert bound_panel.title == "Bound Panel"
+    assert schema_tool.title == "Schema Panel"
+
+    expected_icons = [{"src": "https://example.com/app.svg", "mimeType": "image/svg+xml"}]
+    expected_meta = {"ui": {"resourceUri": "ui://app/panel.html", "visibility": ["app"]}}
+    assert open_panel.icons == expected_icons
+    assert bound_panel.icons == expected_icons
+    assert schema_tool.icons == expected_icons
+    assert open_panel.meta == expected_meta
+    assert bound_panel.meta == expected_meta
+    assert schema_tool.meta == expected_meta
+    assert open_panel.output_schema is not None
+    assert bound_panel.output_schema is not None
+    assert schema_tool.output_schema == {"type": "object", "properties": {"ok": {"type": "boolean"}}}
+
+    exported = open_panel.to_json_schema()
+    assert "title" not in exported
+    assert "icons" not in exported
+    assert "meta" not in exported
+    assert "_meta" not in exported
+    assert "output_schema" in exported
+
+
+@pytest.mark.parametrize("constructor_kind", ["direct", "decorator", "bare_decorator", "from_schema", "bound"])
+@pytest.mark.parametrize(
+    ("title", "icons", "meta"),
+    [
+        (None, None, None),
+        ("", [], {}),
+        ("   ", [], {}),
+    ],
+    ids=["none", "empty", "whitespace"],
+)
+def test_tool_normalizes_empty_and_whitespace_descriptors_to_none(
+    constructor_kind: str,
+    title: str | None,
+    icons: list[dict[str, Any]] | None,
+    meta: dict[str, Any] | None,
+) -> None:
+    def plain_fn(x: int) -> int:
+        return x
+
+    if constructor_kind == "direct":
+        instance = Tool(plain_fn, title=title, icons=icons, meta=meta)
+    elif constructor_kind == "decorator":
+        instance = tool(name="dec", title=title, icons=icons, meta=meta)(plain_fn)
+    elif constructor_kind == "bare_decorator":
+        instance = tool(plain_fn, title=title, icons=icons, meta=meta)
+    elif constructor_kind == "from_schema":
+        instance = Tool.from_schema("sch", title=title, icons=icons, meta=meta)
+    else:
+
+        class Holder:
+            m = Tool(lambda _self, x: x, name="m", title=title, icons=icons, meta=meta)
+
+        instance = Holder().m
+
+    assert instance.title is None
+    assert instance.icons is None
+    assert instance.meta is None
+    exported = instance.to_json_schema()
+    assert "title" not in exported
+    assert "icons" not in exported
+    assert "meta" not in exported
+
+
+def test_tool_from_schema_wire_roundtrip_validation_and_docstring_descriptions() -> None:
+    """Verify Tool.from_schema preserves nested JSON types/validation, SEP-2575 headers, and @tool Args descriptions."""
+    raw_schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "count": {"type": "integer", "minimum": 1},
+            "enabled": {"type": "boolean"},
+            "tags": {"type": "array", "items": {"type": "string"}},
+            "meta_map": {"type": "object", "properties": {"tier": {"type": "string"}}, "required": ["tier"]},
+            "tenant": {"type": "string", "x-mcp-header": "Tenant"},
+        },
+        "required": ["count", "enabled", "tenant"],
+        "additionalProperties": False,
+    }
+    captured: list[dict[str, Any]] = []
+
+    def handle_raw(**kwargs: Any) -> dict[str, Any]:
+        captured.append(dict(kwargs))
+        return {"received": kwargs, "count_type": type(kwargs["count"]).__name__}
+
+    schema_tool = Tool.from_schema(
+        "raw_ingest",
+        description="Raw JSON schema tool.",
+        parameters=raw_schema,
+        call=handle_raw,
+    )
+    raw_schema["properties"]["mutated"] = {"type": "string"}
+    assert "mutated" not in schema_tool.parameters["properties"]
+
+    @tool(description="Search catalog.")
+    def catalog_search(query: str, limit: int = 5) -> list[MCPResourceLink]:
+        """Search catalog.
+
+        Args:
+            query: Search phrase for matching items.
+            limit: Maximum hits returned.
+        """
+        return [MCPResourceLink(name=f"{query}:{limit}", uri="app://hit")]
+
+    @tool(description="Emit binary tuple.")
+    def binary_blobs() -> tuple[MCPBlobResource, ...]:
+        return (MCPBlobResource(uri="app://blob", data=b"xyz"),)
+
+    plugin = LitestarMCP(MCPConfig())
+    plugin.register_tool(schema_tool)
+    plugin.register_tool(catalog_search)
+    plugin.register_tool(binary_blobs)
+    app = Litestar(plugins=[plugin])
+
+    with TestClient(app=app) as client:
+        tools_by_name = {item["name"]: item for item in mcp_post(client, "tools/list", {}).json()["result"]["tools"]}
+        assert tools_by_name["raw_ingest"]["inputSchema"] == schema_tool.parameters
+        assert (
+            tools_by_name["catalog_search"]["inputSchema"]["properties"]["query"]["description"]
+            == "Search phrase for matching items."
+        )
+
+        valid_args = {
+            "count": 3,
+            "enabled": True,
+            "tags": ["a", "b"],
+            "meta_map": {"tier": "gold"},
+            "tenant": "acme",
+        }
+        body, headers = mcp_envelope("tools/call", {"name": "raw_ingest", "arguments": valid_args})
+        headers["Mcp-Param-Tenant"] = "acme"
+        ok_resp = client.post("/mcp", json=body, headers=headers).json()
+        assert ok_resp["result"]["isError"] is False
+        decoded = decode_json(ok_resp["result"]["content"][0]["text"])
+        assert decoded == {"received": valid_args, "count_type": "int"}
+        assert isinstance(captured[0]["enabled"], bool)
+        assert captured[0]["tags"] == ["a", "b"]
+
+        missing_hdr_body, missing_hdr_headers = mcp_envelope(
+            "tools/call",
+            {"name": "raw_ingest", "arguments": valid_args},
+        )
+        hdr_err = client.post("/mcp", json=missing_hdr_body, headers=missing_hdr_headers).json()
+        assert hdr_err["error"]["code"] == -32020
+
+        links_resp = mcp_post(client, "tools/call", {"name": "catalog_search", "arguments": {"query": "mcp"}}).json()
+        assert links_resp["result"]["content"][0]["type"] == "resource_link"
+        blobs_resp = mcp_post(client, "tools/call", {"name": "binary_blobs", "arguments": {}}).json()
+        assert blobs_resp["result"]["content"][0]["type"] == "resource"
+
+
+@pytest.mark.parametrize(
+    "bad_args",
+    [
+        {"enabled": True, "tenant": "acme"},
+        {"count": True, "enabled": True, "tenant": "acme"},
+        {"count": 0, "enabled": True, "tenant": "acme"},
+        {"count": 2, "enabled": True, "tenant": "acme", "extra": "nope"},
+        {"count": 2, "enabled": True, "tenant": "acme", "meta_map": {}},
+    ],
+    ids=["missing_required", "bool_for_integer", "below_minimum", "unexpected_prop", "nested_missing_required"],
+)
+def test_tool_from_schema_rejects_invalid_wire_arguments(bad_args: dict[str, Any]) -> None:
+    """Verify Tool.from_schema enforces JSON Schema keywords and rejects bool-for-int with SEP-2663 isError."""
+    called = False
+
+    def _never_called(**kw: Any) -> dict[str, Any]:
+        nonlocal called
+        called = True
+        return kw
+
+    schema_tool = Tool.from_schema(
+        "strict_raw",
+        parameters={
+            "type": "object",
+            "properties": {
+                "count": {"type": "integer", "minimum": 1},
+                "enabled": {"type": "boolean"},
+                "tenant": {"type": "string"},
+                "meta_map": {"type": "object", "properties": {"tier": {"type": "string"}}, "required": ["tier"]},
+            },
+            "required": ["count", "enabled", "tenant"],
+            "additionalProperties": False,
+        },
+        call=_never_called,
+    )
+    plugin = LitestarMCP()
+    plugin.register_tool(schema_tool)
+    app = Litestar(plugins=[plugin])
+
+    with TestClient(app=app) as client:
+        resp = mcp_post(client, "tools/call", {"name": "strict_raw", "arguments": bad_args}).json()
+    assert called is False
+    assert resp["result"]["isError"] is True
+    payload = decode_json(resp["result"]["content"][0]["text"])
+    assert payload["error"] == "Invalid tool arguments"
+    assert payload["errors"]

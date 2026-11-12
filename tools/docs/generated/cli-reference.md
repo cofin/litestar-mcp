@@ -11,6 +11,7 @@ litestar --app app:app mcp <command> [OPTIONS]
 | [`litestar mcp export-tool-spec`](#litestar-mcp-export-tool-spec) | Specification & Schema Export | Export the MCP tools/list specification as formatted JSON. |
 | [`litestar mcp list-tools`](#litestar-mcp-list-tools) | Discovery & Interactive Execution | List all available MCP tools. |
 | [`litestar mcp list-resources`](#litestar-mcp-list-resources) | Discovery & Interactive Execution | List all available MCP resources. |
+| [`litestar mcp list-skills`](#litestar-mcp-list-skills) | Discovery & Interactive Execution | List all available MCP skills. |
 | [`litestar mcp run`](#litestar-mcp-run) | Discovery & Interactive Execution | Run a discovered MCP tool by name. |
 
 ## Transports & Proxies
@@ -82,7 +83,7 @@ litestar mcp export-tool-spec [OPTIONS]
 
 ## Discovery & Interactive Execution
 
-Commands for inspecting discovered MCP tools and resources or invoking a tool directly from the terminal.
+Commands for inspecting discovered MCP tools, resources, and skills or invoking a tool directly from the terminal.
 
 ### litestar mcp list-tools
 
@@ -99,6 +100,21 @@ List all available MCP resources.
 ```bash
 litestar mcp list-resources
 ```
+
+### litestar mcp list-skills
+
+List all available MCP skills.
+
+```bash
+litestar mcp list-skills [OPTIONS]
+```
+
+**Options**
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--tag` | `text` | `None` | Filter skills by tag. |
+| `--query` | `text` | `None` | Filter skills by substring query. |
 
 ### litestar mcp run
 

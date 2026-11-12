@@ -1,13 +1,13 @@
 # Stdio Transport, HTTP Bridge & Tool Spec Export
 
-In addition to serving Streamable HTTP directly from your Litestar application, `litestar-mcp` registers a `litestar mcp` CLI command group with subcommands for **in-process stdio execution** (`stdio`), **remote Streamable HTTP bridging** (`bridge`), **static tool manifest export** (`export-tool-spec`), and **interactive CLI inspection** (`list-tools`, `list-resources`, `run`).
+In addition to serving Streamable HTTP directly from your Litestar application, `litestar-mcp` registers a `litestar mcp` CLI command group with subcommands for **in-process stdio execution** (`stdio`), **remote Streamable HTTP bridging** (`bridge`), **static tool manifest export** (`export-tool-spec`), and **interactive CLI inspection** (`list-tools`, `list-resources`, `list-skills`, `run`).
 
 ## Choosing Between stdio and bridge
 
 | Transport Mode | Command / Python API | How It Executes | Best For |
 | :--- | :--- | :--- | :--- |
 | **In-Process Stdio** | `litestar --app my_app:app mcp stdio` / `run_stdio(app)` / `run_stdio_async(app)` | Boots the Litestar ASGI lifespan in-process (without binding a TCP port) and routes newline-delimited JSON-RPC over `stdin`/`stdout` via `ASGIStreamingTransport`. | Single-file PEP 723 scripts (`uv run`), local desktop MCP hosts spawning the app directly, and test harnesses. |
-| **HTTP-to-Stdio Bridge** | `litestar --app my_app:app mcp bridge` / `run_bridge(endpoint)` / `run_stdio_streamable_http_bridge(endpoint)` | Reads JSON-RPC from local `stdin`, attaches MCP `2026-07-28` `_meta`, SEP-2575 routing headers (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`, `Mcp-Param-*`), and bearer tokens, and forwards requests over HTTP/SSE to a running server. | Connecting stdio-only MCP desktop clients to a remote, containerized, or multi-replica Litestar deployment. |
+| **HTTP-to-Stdio Bridge** | `litestar --app my_app:app mcp bridge` / `run_bridge(endpoint)` / `run_stdio_streamable_http_bridge(endpoint)` | Reads JSON-RPC from local `stdin` and forwards both stateless `2026-07-28` (`server/discover` + SEP-2575 headers) and session-aware `2025-11-25`, `2025-06-18`, and `2025-03-26` (`initialize` + `Mcp-Session-Id` + `GET` SSE + `DELETE` teardown) traffic over HTTP/SSE. | Connecting stdio-only MCP desktop clients to a remote, containerized, or multi-replica Litestar deployment. |
 
 ## In-Process Stdio (litestar mcp stdio)
 
@@ -21,7 +21,7 @@ During `litestar mcp stdio`, standard output is reserved exclusively for newline
 
 ### Programmatic Stdio & MCPStdioContext
 
-You can also drive the in-process stdio loop directly from Python using `run_stdio`, `run_stdio_async`, or `MCP.run(transport="stdio")`. Pass an `MCPStdioContext` to pre-populate caller identity, task ownership, and request state on every synthesized ASGI scope:
+You can also drive the in-process stdio loop directly from Python using `run_stdio`, `run_stdio_async`, or `MCP.run(transport="stdio")`. Pass an `MCPStdioContext` to pre-populate caller identity, task ownership, and request state on every synthesized ASGI scope, or pass `headers`, `token_provider`, `header_name`, and `token_prefix` to attach authentication headers verified by your Litestar middleware:
 
 ```python
 from litestar import Litestar
@@ -67,6 +67,13 @@ The bridge inspects the loaded application's `LitestarMCP` plugin configuration 
 ```
 
 For the application above (`MCPConfig(base_path="/api/mcp")`), running `litestar --app my_app:app mcp bridge` targets `http://127.0.0.1:8000/api/mcp` automatically.
+
+### Dual-Version Session and Event Forwarding
+
+`run_stdio_streamable_http_bridge` (`run_bridge` / `_StreamableHTTPBridgeClient`) adapts automatically to the protocol version requested by the local stdio host:
+
+- **Session-Aware `2025-11-25`, `2025-06-18`, and `2025-03-26` Hosts**: When the stdio host sends `initialize`, the bridge records the negotiated protocol version and captures the `Mcp-Session-Id` response header. Subsequent `POST` calls forward `Mcp-Session-Id` and `MCP-Protocol-Version` cleanly without injecting `2026-07-28` `_meta` fields or SEP-2575 `Mcp-Method`, `Mcp-Name`, or `Mcp-Param-*` headers. After initialization, the bridge opens a background `GET` SSE listener (`Accept: text/event-stream` with `Mcp-Session-Id`) to relay server-initiated notifications (`notifications/resources/updated`, `notifications/message`, `notifications/progress`, `notifications/tasks`, and catalog `list_changed` events) onto `stdout`—cleanly ignoring `405 Method Not Allowed` when the upstream server sets `MCPConfig.enable_get_sse=False`—and sends a `DELETE` request with `Mcp-Session-Id` on shutdown.
+- **Stateless `2026-07-28` Hosts**: When the stdio host uses `server/discover`, the bridge attaches `params._meta` and SEP-2575 headers (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`, `Mcp-Param-*`), streams `POST` `subscriptions/listen` responses directly, and remains completely stateless with zero background `GET` or `DELETE` calls.
 
 ### litestar mcp bridge & litestar mcp stdio CLI Options
 

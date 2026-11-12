@@ -9,17 +9,15 @@ import pytest
 from litestar import Litestar, get
 from litestar.testing import TestClient
 
-from litestar_mcp import LitestarMCP, MCPConfig, MCPSkillsConfig
+from litestar_mcp import LitestarMCP, MCPConfig, MCPSkillsConfig, mcp_prompt
 from litestar_mcp.mcp.service import SKILLS_EXTENSION, TASKS_EXTENSION
-from litestar_mcp.mcp.skills import Skill, SkillCatalog
+from litestar_mcp.mcp.skills import Skill, SkillCatalog, SkillFile, load_skill
 from tests.unit.conftest import mcp_envelope, mcp_post
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from litestar import Request
-
-    from litestar_mcp.mcp.skills import SkillFile
 
 
 def _write_skill(root: "Path", name: "str", description: "str", extra_files: "dict[str, str] | None" = None) -> "None":
@@ -66,7 +64,9 @@ def test_discovery_advertises_skills_only_when_enabled(tmp_path: "Path") -> "Non
     with TestClient(app=Litestar(plugins=[LitestarMCP()])) as client:
         disabled = _rpc(client, "server/discover")["result"]
 
-    assert enabled["capabilities"]["extensions"] == {SKILLS_EXTENSION: {"directoryRead": True}}
+    assert enabled["capabilities"]["extensions"] == {
+        SKILLS_EXTENSION: {"directoryRead": True, "listChanged": True},
+    }
     assert "resources" in enabled["capabilities"]
     assert "extensions" not in disabled["capabilities"]
 
@@ -81,7 +81,9 @@ def test_discovery_reports_directory_read_false(tmp_path: "Path") -> "None":
     with TestClient(app=_make_skills_app(tmp_path, directory_read=False)) as client:
         result = _rpc(client, "server/discover")["result"]
 
-    assert result["capabilities"]["extensions"] == {SKILLS_EXTENSION: {"directoryRead": False}}
+    assert result["capabilities"]["extensions"] == {
+        SKILLS_EXTENSION: {"directoryRead": False, "listChanged": True},
+    }
 
 
 def test_skills_list_returns_entries_with_cache_fields(tmp_path: "Path") -> "None":
@@ -151,9 +153,6 @@ def test_directory_read_lists_direct_children(tmp_path: "Path") -> "None":
     notes_entries = {entry["uri"]: entry for entry in notes_listing["resources"]}
     assert "skill://alpha/notes/todo.md" in notes_entries
 
-    # resources/directory/read is deliberately absent from _CACHEABLE_METHODS: the spec
-    # only requires cache fields on list and get, so a directory listing must not carry
-    # them even though a sibling list method (skills/list) does.
     assert "ttlMs" not in root_listing
     assert "cacheScope" not in root_listing
     assert skills_list_result["ttlMs"] == 0
@@ -179,15 +178,18 @@ def test_directory_read_disabled_is_method_not_found(tmp_path: "Path") -> "None"
     assert response.json()["error"]["code"] == -32601
 
 
-def test_skill_methods_unavailable_when_skills_disabled() -> "None":
+@pytest.mark.parametrize(
+    ("method", "params"),
+    [
+        ("skills/list", {}),
+        ("skills/get", {"uri": "skill://alpha/SKILL.md"}),
+        ("resources/directory/read", {"uri": "skill://alpha"}),
+    ],
+)
+def test_skill_methods_unavailable_when_skills_disabled(method: str, params: dict[str, Any]) -> "None":
     with TestClient(app=Litestar(plugins=[LitestarMCP()])) as client:
-        for method, params in (
-            ("skills/list", {}),
-            ("skills/get", {"uri": "skill://alpha/SKILL.md"}),
-            ("resources/directory/read", {"uri": "skill://alpha"}),
-        ):
-            response = _rpc(client, method, params)
-            assert response["error"]["code"] == -32601
+        response = _rpc(client, method, params)
+    assert response["error"]["code"] == -32601
 
 
 def test_skills_get_requires_matching_name_header(tmp_path: "Path") -> "None":
@@ -436,3 +438,404 @@ def test_skills_get_accepts_shorthand_skill_uri(tmp_path: "Path") -> "None":
 
     assert result["skill"]["frontmatter"]["name"] == "alpha"
     assert result["skill"]["uri"] == "skill://alpha/SKILL.md"
+
+
+def test_skill_metadata_roundtrip() -> "None":
+    """Skill.build preserves metadata on entries and resources while keeping SKILL.md manifests lean."""
+    ref_file = SkillFile.from_content(
+        "ops",
+        "references/guide.md",
+        "Guide body",
+        title="Guide Ref",
+        icons=[{"src": "https://x/ref.svg"}],
+        tags=["guide"],
+        meta={"section": "ref"},
+    )
+    skill = Skill.build(
+        "ops",
+        "Ops guide",
+        body="Use runbook.",
+        title="Ops",
+        icons=[{"src": "https://x/i.svg"}],
+        tags=["ops", "sql"],
+        meta={"v": 2},
+        files={"references/guide.md": ref_file},
+    )
+
+    entry = skill.to_entry()
+    assert entry["title"] == "Ops"
+    assert entry["icons"] == [{"src": "https://x/i.svg"}]
+    assert entry["tags"] == ["ops", "sql"]
+    assert entry["_meta"] == {"v": 2}
+
+    skill_md_manifest = next(item for item in entry["resources"] if item["name"] == "SKILL.md")
+    assert set(skill_md_manifest) == {"uri", "name", "mimeType", "size", "digest"}
+    ref_manifest = next(item for item in entry["resources"] if item["name"] == "references/guide.md")
+    assert ref_manifest["title"] == "Guide Ref"
+    assert ref_manifest["icons"] == [{"src": "https://x/ref.svg"}]
+    assert ref_manifest["tags"] == ["guide"]
+    assert ref_manifest["_meta"] == {"section": "ref"}
+
+    skill_md_resource = skill.get_file("SKILL.md")
+    assert skill_md_resource is not None
+    rendered_resource = skill_md_resource.to_resource(skill)
+    assert rendered_resource["title"] == "Ops"
+    assert rendered_resource["icons"] == [{"src": "https://x/i.svg"}]
+    assert rendered_resource["_meta"] == {"v": 2}
+    assert "tags" not in rendered_resource
+
+    directory_entries = skill.list_directory("")
+    assert directory_entries is not None
+    listed_skill_md = next(item for item in directory_entries if item["name"] == "SKILL.md")
+    assert listed_skill_md["title"] == "Ops"
+    assert listed_skill_md["icons"] == [{"src": "https://x/i.svg"}]
+    assert listed_skill_md["_meta"] == {"v": 2}
+    assert "tags" not in listed_skill_md
+
+
+def test_skill_frontmatter_metadata_across_wire_endpoints(tmp_path: "Path") -> "None":
+    """Frontmatter title, tags, and _meta propagate across load_skill, skills/get, and resources endpoints."""
+    skill_dir = tmp_path / "db-ops"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: db-ops\n"
+        "description: Database operations\n"
+        "title: DB Ops\n"
+        "tags:\n"
+        "  - db\n"
+        "_meta:\n"
+        "  tier: 1\n"
+        "---\n\n"
+        "# DB Ops\n",
+        encoding="utf-8",
+    )
+    loaded = load_skill(skill_dir, max_files=32, max_bytes=65_536)
+    assert loaded.title == "DB Ops"
+    assert loaded.tags == ("db",)
+    assert loaded.meta == {"tier": 1}
+
+    from_content = Skill.from_content((skill_dir / "SKILL.md").read_text(encoding="utf-8"))
+    assert from_content.title == "DB Ops"
+    assert from_content.tags == ("db",)
+    assert from_content.meta == {"tier": 1}
+
+    app = Litestar(plugins=[LitestarMCP(MCPConfig(skills=MCPSkillsConfig(paths=[tmp_path])))])
+    with TestClient(app=app) as client:
+        skill_resp = _rpc(client, "skills/get", {"uri": "skill://db-ops"})["result"]["skill"]
+        assert skill_resp["title"] == "DB Ops"
+        assert skill_resp["tags"] == ["db"]
+        assert skill_resp["_meta"] == {"tier": 1}
+        assert "title" not in skill_resp["resources"][0]
+        assert "_meta" not in skill_resp["resources"][0]
+        assert "tags" not in skill_resp["resources"][0]
+
+        resources_resp = _rpc(client, "resources/list")["result"]["resources"]
+        res_entry = next(item for item in resources_resp if item["uri"] == "skill://db-ops/SKILL.md")
+        assert res_entry["title"] == "DB Ops"
+        assert res_entry["_meta"] == {"tier": 1}
+        assert "tags" not in res_entry
+
+        dir_resp = _rpc(client, "resources/directory/read", {"uri": "skill://db-ops"})["result"]["resources"]
+        dir_entry = next(item for item in dir_resp if item["uri"] == "skill://db-ops/SKILL.md")
+        assert dir_entry["title"] == "DB Ops"
+        assert dir_entry["_meta"] == {"tier": 1}
+        assert "tags" not in dir_entry
+
+        read_resp = _rpc(client, "resources/read", {"uri": "skill://db-ops/SKILL.md"})["result"]["contents"]
+        assert read_resp[0]["_meta"] == {"tier": 1}
+
+
+@pytest.mark.parametrize(
+    "builder",
+    [
+        lambda: Skill.build("ops", "Ops", tags="ops"),
+        lambda: SkillFile.from_content("ops", "a.md", "x", tags="ops"),
+    ],
+)
+def test_skill_and_skill_file_reject_bare_string_tags(builder: "Any") -> "None":
+    """Bare string tags raise TypeError rather than splitting into characters."""
+    with pytest.raises(TypeError, match="tags"):
+        builder()
+
+
+@pytest.mark.parametrize(
+    ("list_params", "expected_names"),
+    [
+        ({}, ["alpha", "beta"]),
+        ({"tags": ["db"], "query": "alp"}, ["alpha"]),
+        ({"tags": ["api"]}, ["beta"]),
+        ({"tags": [], "query": "  "}, ["alpha", "beta"]),
+        ({"tags": ["internal"]}, []),
+    ],
+)
+def test_skills_list_and_secondary_methods_respect_tag_and_query_filters(
+    list_params: "dict[str, Any]",
+    expected_names: "list[str]",
+) -> "None":
+    """skills/list filters by tags/query while excluded tags are hidden across all skill endpoints."""
+    source = _StaticSkillSource(
+        [
+            Skill.build("alpha", "Alpha database skill", tags=["db"]),
+            Skill.build("beta", "Beta API skill", tags=["api"]),
+            Skill.build("secret", "Secret internal skill", tags=["internal"]),
+        ]
+    )
+    config = MCPConfig(exclude_tags=["internal"], skills=MCPSkillsConfig(sources=[source]))
+    app = Litestar(plugins=[LitestarMCP(config)])
+
+    with TestClient(app=app) as client:
+        listed = _rpc(client, "skills/list", list_params)["result"]["skills"]
+        assert [item["frontmatter"]["name"] for item in listed] == expected_names
+
+        resources = _rpc(client, "resources/list")["result"]["resources"]
+        assert all(not item["uri"].startswith("skill://secret/") for item in resources)
+
+        assert _rpc(client, "skills/get", {"uri": "skill://secret"})["error"]["code"] == -32602
+        assert _rpc(client, "resources/read", {"uri": "skill://secret/SKILL.md"})["error"]["code"] == -32602
+        assert _rpc(client, "resources/directory/read", {"uri": "skill://secret"})["error"]["code"] == -32602
+
+
+@pytest.mark.parametrize(
+    "bad_params",
+    [
+        {"tags": "db"},
+        {"tags": [1]},
+        {"query": 99},
+    ],
+)
+def test_skills_list_rejects_invalid_filter_params(tmp_path: "Path", bad_params: "dict[str, Any]") -> "None":
+    """Invalid tags or query parameter types on skills/list return -32602."""
+    with TestClient(app=_make_skills_app(tmp_path)) as client:
+        err = _rpc(client, "skills/list", bad_params)["error"]
+    assert err["code"] == -32602
+
+
+@pytest.mark.parametrize(
+    ("directory_read", "list_changed"),
+    [
+        (True, True),
+        (True, False),
+        (False, True),
+        (False, False),
+    ],
+)
+def test_skills_capability_list_changed_flag(tmp_path: "Path", directory_read: "bool", list_changed: "bool") -> "None":
+    """server/discover advertises exact directoryRead and listChanged booleans on skills extension."""
+    with TestClient(app=_make_skills_app(tmp_path, directory_read=directory_read, list_changed=list_changed)) as client:
+        result = _rpc(client, "server/discover")["result"]
+    assert result["capabilities"]["extensions"][SKILLS_EXTENSION] == {
+        "directoryRead": directory_read,
+        "listChanged": list_changed,
+    }
+
+
+@pytest.mark.parametrize("expose_as_prompts", [True, False])
+def test_expose_as_prompts_discovery(tmp_path: "Path", expose_as_prompts: "bool") -> "None":
+    """expose_as_prompts controls prompts capability advertisement and prompts/list projection."""
+    with TestClient(app=_make_skills_app(tmp_path, expose_as_prompts=expose_as_prompts)) as client:
+        discover = _rpc(client, "server/discover")["result"]
+        listed = _rpc(client, "prompts/list")
+        if expose_as_prompts:
+            assert discover["capabilities"]["prompts"] == {"listChanged": True}
+            assert [item["name"] for item in listed["result"]["prompts"]] == ["alpha", "beta"]
+        else:
+            assert "prompts" not in discover["capabilities"]
+            assert listed["result"]["prompts"] == []
+
+
+def test_expose_as_prompts_get_collision_excluded_and_tampered(tmp_path: "Path") -> "None":
+    """Projected skill prompts respect registered prompt precedence, tag exclusions, and integrity checks."""
+    _write_skill(tmp_path, "alpha", "Alpha skill.")
+    beta_dir = tmp_path / "beta"
+    beta_dir.mkdir()
+    (beta_dir / "SKILL.md").write_text(
+        "---\nname: beta\ndescription: Beta skill.\ntitle: Beta Title\n_meta:\n  tier: 2\n---\n\n# Beta\n",
+        encoding="utf-8",
+    )
+    secret_dir = tmp_path / "secret"
+    secret_dir.mkdir()
+    (secret_dir / "SKILL.md").write_text(
+        "---\nname: secret\ndescription: Secret skill.\ntags:\n  - internal\n---\n\n# Secret\n",
+        encoding="utf-8",
+    )
+    shadowed_dir = tmp_path / "shadowed"
+    shadowed_dir.mkdir()
+    (shadowed_dir / "SKILL.md").write_text(
+        "---\nname: shadowed\ndescription: Shadowed skill.\n---\n\n# Shadowed\n",
+        encoding="utf-8",
+    )
+
+    @mcp_prompt(name="alpha", description="Registered alpha")
+    @get("/prompts/alpha")
+    async def alpha_prompt() -> "str":
+        return "custom"
+
+    @mcp_prompt(name="shadowed", description="Excluded registered prompt")
+    @get("/prompts/shadowed")
+    async def shadowed_prompt() -> "str":
+        return "hidden-registered"
+
+    config = MCPConfig(
+        exclude_tags=["internal"],
+        exclude_operations=["shadowed"],
+        skills=MCPSkillsConfig(paths=[tmp_path], expose_as_prompts=True),
+    )
+    app = Litestar(route_handlers=[alpha_prompt, shadowed_prompt], plugins=[LitestarMCP(config)])
+
+    with TestClient(app=app) as client:
+        listed = _rpc(client, "prompts/list")["result"]["prompts"]
+        assert [item["name"] for item in listed] == ["alpha", "beta"]
+
+        alpha_res = _rpc(client, "prompts/get", {"name": "alpha"})["result"]
+        assert alpha_res["messages"][0]["content"]["text"] == "custom"
+
+        beta_res = _rpc(client, "prompts/get", {"name": "beta"})["result"]
+        assert beta_res["description"] == "Beta skill."
+        assert beta_res["_meta"]["tier"] == 2
+        assert beta_res["messages"][0]["content"]["text"] == (beta_dir / "SKILL.md").read_text(encoding="utf-8")
+
+        assert _rpc(client, "prompts/get", {"name": "beta", "arguments": {"x": "1"}})["error"]["code"] == -32602
+        assert _rpc(client, "prompts/get", {"name": "secret"})["error"]["code"] == -32602
+        secret_args_err = _rpc(client, "prompts/get", {"name": "secret", "arguments": {"x": "1"}})["error"]
+        assert secret_args_err["code"] == -32602
+        assert "Prompt not found" in secret_args_err["message"]
+
+        shadowed_err = _rpc(client, "prompts/get", {"name": "shadowed"})["error"]
+        assert shadowed_err["code"] == -32602
+        assert "Prompt not found" in shadowed_err["message"]
+
+        (beta_dir / "SKILL.md").write_text(
+            "---\nname: beta\ndescription: Tampered.\n---\n\n# Tampered\n",
+            encoding="utf-8",
+        )
+        tampered_err = _rpc(client, "prompts/get", {"name": "beta"})["error"]
+        assert tampered_err["code"] == -32603
+
+
+def test_skill_and_skill_file_deep_copy_isolation_and_build_descriptor_clearing() -> None:
+    """Verify Skill/SkillFile nested dicts/lists cannot leak mutations and Skill.build clears empty descriptors."""
+    src_icons = [{"src": "https://example.com/icon.svg", "sizes": ["16x16"]}]
+    src_meta: dict[str, Any] = {"nested": {"flag": True}}
+    file_item = SkillFile.from_content(
+        "ops",
+        "notes.md",
+        "hello",
+        icons=src_icons,
+        meta=src_meta,
+    )
+    skill = Skill.build(
+        "ops",
+        "Ops skill",
+        files={"notes.md": file_item},
+        metadata={"extra": {"items": [1, 2]}},
+        icons=src_icons,
+        meta=src_meta,
+    )
+    src_icons[0]["sizes"].append("32x32")  # type: ignore[attr-defined]
+    src_meta["nested"]["flag"] = False
+
+    assert skill.icons == [{"src": "https://example.com/icon.svg", "sizes": ["16x16"]}]
+    assert skill.meta == {"nested": {"flag": True}}
+
+    entry = skill.to_entry()
+    entry["frontmatter"]["extra"]["items"].append(99)
+    entry["icons"][0]["sizes"].append("64x64")
+    entry["_meta"]["nested"]["flag"] = False
+    res = file_item.to_resource(skill)
+    res["icons"][0]["sizes"].append("128x128")
+    res["_meta"]["nested"]["flag"] = False
+    manifest_entry = file_item.to_manifest_entry()
+    manifest_entry["uri"] = "skill://tampered"
+
+    assert skill.frontmatter["extra"] == {"items": [1, 2]}
+    assert skill.to_entry()["icons"] == [{"src": "https://example.com/icon.svg", "sizes": ["16x16"]}]
+    assert skill.to_entry()["_meta"] == {"nested": {"flag": True}}
+    assert file_item.to_resource(skill)["icons"] == [{"src": "https://example.com/icon.svg", "sizes": ["16x16"]}]
+    assert file_item.to_resource(skill)["_meta"] == {"nested": {"flag": True}}
+
+    cleared = Skill.build(
+        "clean",
+        "Clean skill",
+        metadata={
+            "tags": ["legacy"],
+            "title": "Legacy Title",
+            "icons": [{"src": "https://example.com/legacy.svg"}],
+            "_meta": {"legacy": True},
+            "keep": "yes",
+        },
+        tags=(),
+        title="",
+        icons=(),
+        meta={},
+    )
+    assert cleared.tags == ()
+    assert cleared.title is None
+    assert cleared.icons is None
+    assert cleared.meta is None
+    assert "tags" not in cleared.frontmatter
+    assert "title" not in cleared.frontmatter
+    assert "icons" not in cleared.frontmatter
+    assert "_meta" not in cleared.frontmatter
+    assert cleared.frontmatter["keep"] == "yes"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("list_changed", "expose_as_prompts", "expected_methods"),
+    [
+        (
+            False,
+            False,
+            ["notifications/resources/list_changed"],
+        ),
+        (
+            False,
+            True,
+            ["notifications/resources/list_changed", "notifications/prompts/list_changed"],
+        ),
+        (
+            True,
+            True,
+            [
+                "notifications/skills/list_changed",
+                "notifications/resources/list_changed",
+                "notifications/prompts/list_changed",
+            ],
+        ),
+    ],
+)
+async def test_skills_list_changed_config_gates_skill_notifications_only(
+    list_changed: bool,
+    expose_as_prompts: bool,
+    expected_methods: list[str],
+) -> None:
+    """Verify MCPSkillsConfig.list_changed suppresses notifications/skills/list_changed while retaining resource/prompt notifications."""
+    plugin = LitestarMCP(
+        MCPConfig(
+            skills=MCPSkillsConfig(
+                sources=[_StaticSkillSource([Skill.build("alpha", "Alpha skill")])],
+                list_changed=list_changed,
+                expose_as_prompts=expose_as_prompts,
+            )
+        )
+    )
+    Litestar(plugins=[plugin])
+    manager = plugin.registry.subscription_manager
+    assert manager is not None
+    assert plugin.skill_catalog is not None
+
+    published: list[str] = []
+    orig_publish = manager.publish
+
+    async def _capture(method: str, params: dict[str, Any], **kwargs: Any) -> None:
+        published.append(method)
+        await orig_publish(method, params, **kwargs)
+
+    monkeypatch_orig = manager.publish
+    object.__setattr__(manager, "publish", _capture)
+    try:
+        await plugin.skill_catalog.notify_list_changed()
+    finally:
+        object.__setattr__(manager, "publish", monkeypatch_orig)
+    assert published == expected_methods

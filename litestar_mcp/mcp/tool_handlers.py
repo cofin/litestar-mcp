@@ -1,6 +1,8 @@
 """Litestar route handler builders for MCP Tool instances."""
 
+import copy
 import inspect
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Annotated, Any, get_type_hints
 
 from litestar import Request
@@ -11,6 +13,7 @@ from litestar.handlers import HTTPRouteHandler, post
 from litestar.params import QueryParameter
 
 from litestar_mcp.core.context import ToolContext
+from litestar_mcp.core.serialization import decode_json
 from litestar_mcp.core.tools import Tool
 from litestar_mcp.mcp.executor import require_internal_dispatch
 from litestar_mcp.utils import set_mcp_metadata
@@ -76,20 +79,24 @@ def _build_tool_endpoint_signature(
                 annotations[pname] = litestar_ann
             continue
 
-        if pname in tool.stripped_parameters:
+        if tool.has_raw_schema or pname in tool.stripped_parameters:
             continue
 
         ann = hints.get(pname, param.annotation)
         if ann is inspect.Parameter.empty:
             ann = Any
 
+        raw_props = tool.parameters.get("properties")
+        prop_meta = raw_props.get(pname) if isinstance(raw_props, Mapping) else None
+        raw_desc = prop_meta.get("description") if isinstance(prop_meta, Mapping) else None
+        param_desc = raw_desc if isinstance(raw_desc, str) and raw_desc else None
+        query_spec = QueryParameter(name=pname, description=param_desc)
+
         endpoint_name = pname
         if pname in RESERVED_KWARGS:
             endpoint_name = f"_mcp_param_{pname}"
-            endpoint_ann: Any = Annotated[ann, QueryParameter(name=pname)]
             renamed_params[endpoint_name] = pname
-        else:
-            endpoint_ann = Annotated[ann, QueryParameter(name=pname)]
+        endpoint_ann: Any = Annotated[ann, query_spec]
 
         params.append(
             inspect.Parameter(
@@ -119,6 +126,51 @@ def _build_tool_endpoint_signature(
     return sig, annotations, renamed_params
 
 
+async def _merge_raw_body_args(tool: Tool, req: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Decode raw JSON body arguments for `Tool.from_schema` endpoints and merge endpoint kwargs."""
+    merged: dict[str, Any] = {}
+    if tool.has_raw_schema and req is not None:
+        raw_body = await req.body()
+        if raw_body:
+            decoded = decode_json(raw_body)
+            if isinstance(decoded, Mapping):
+                merged.update(decoded)
+    merged.update(kwargs)
+    return merged
+
+
+def _build_tool_metadata_and_opt(tool: Tool) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Build `(metadata, route_opt)` dictionaries preserving explicit tool schemas and descriptors."""
+    metadata: dict[str, Any] = {
+        "type": "tool",
+        "name": tool.name,
+        "description": tool.description,
+    }
+    if tool.has_raw_schema:
+        metadata["input_schema"] = copy.deepcopy(tool.parameters)
+    if tool.annotations:
+        metadata["annotations"] = copy.deepcopy(dict(tool.annotations))
+    if tool.title:
+        metadata["title"] = tool.title
+    if tool.icons:
+        metadata["icons"] = [copy.deepcopy(dict(item)) for item in tool.icons]
+    if tool.meta:
+        metadata["meta"] = copy.deepcopy(dict(tool.meta))
+    output_policy = tool.output_schema_policy
+    if output_policy is not None:
+        metadata["output_schema"] = output_policy
+
+    route_opt: dict[str, Any] = {
+        "_mcp_synthesized_tool": True,
+        "_mcp_tool_instance": tool,
+    }
+    if tool.has_raw_schema:
+        route_opt["_mcp_raw_tool_args"] = True
+    if tool.annotations:
+        route_opt["mcp_annotations"] = copy.deepcopy(dict(tool.annotations))
+    return metadata, route_opt
+
+
 def build_controller_tool_handler(tool: Tool) -> HTTPRouteHandler:
     """Return a POST /tools/<name> handler that dispatches a bound controller tool."""
     sig, annotations, renamed_params = _build_tool_endpoint_signature(tool, is_controller=True)
@@ -128,9 +180,10 @@ def build_controller_tool_handler(tool: Tool) -> HTTPRouteHandler:
         for endpoint_name, original_name in renamed_params.items():
             if endpoint_name in kwargs:
                 kwargs[original_name] = kwargs.pop(endpoint_name)
+        call_args = await _merge_raw_body_args(tool, req, kwargs)
         ctx = ToolContext.from_connection(req) if req is not None else None
         bound = tool.__get__(self, type(self))
-        return await bound.execute(kwargs, context=ctx)
+        return await bound.execute(call_args, context=ctx)
 
     _controller_tool_endpoint.__name__ = f"_tool_endpoint_{tool.name}"
     _controller_tool_endpoint.__qualname__ = f"_tool_endpoint_{tool.name}"
@@ -138,14 +191,8 @@ def build_controller_tool_handler(tool: Tool) -> HTTPRouteHandler:
     _controller_tool_endpoint.__annotations__ = annotations
     setattr(_controller_tool_endpoint, "__signature__", sig)
 
-    metadata: dict[str, Any] = {"type": "tool", "name": tool.name, "description": tool.description}
-    if tool.annotations:
-        metadata["annotations"] = dict(tool.annotations)
+    metadata, route_opt = _build_tool_metadata_and_opt(tool)
     set_mcp_metadata(_controller_tool_endpoint, metadata)
-
-    route_opt: dict[str, Any] = {"_mcp_synthesized_tool": True}
-    if tool.annotations:
-        route_opt["mcp_annotations"] = dict(tool.annotations)
 
     handler_deps = {k: v for k, v in tool.dependencies.items() if k in tool.di_parameters}
     return post(
@@ -174,8 +221,9 @@ def build_tool_route_handler(
         for endpoint_name, original_name in renamed_params.items():
             if endpoint_name in kwargs:
                 kwargs[original_name] = kwargs.pop(endpoint_name)
+        call_args = await _merge_raw_body_args(tool, req, kwargs)
         ctx = ToolContext.from_connection(req) if req is not None else None
-        return await tool.execute(kwargs, context=ctx)
+        return await tool.execute(call_args, context=ctx)
 
     _standalone_tool_endpoint.__name__ = f"_tool_endpoint_{tool.name}"
     _standalone_tool_endpoint.__qualname__ = f"_tool_endpoint_{tool.name}"
@@ -183,9 +231,7 @@ def build_tool_route_handler(
     _standalone_tool_endpoint.__annotations__ = annotations
     setattr(_standalone_tool_endpoint, "__signature__", sig)
 
-    metadata: dict[str, Any] = {"type": "tool", "name": tool.name, "description": tool.description}
-    if tool.annotations:
-        metadata["annotations"] = dict(tool.annotations)
+    metadata, route_opt = _build_tool_metadata_and_opt(tool)
     set_mcp_metadata(_standalone_tool_endpoint, metadata)
 
     clean_base = base_path.rstrip("/")
@@ -194,10 +240,6 @@ def build_tool_route_handler(
     merged_deps: dict[str, Any] = dict(tool.dependencies)
     if dependencies:
         merged_deps.update(dependencies)
-
-    route_opt: dict[str, Any] = {"_mcp_synthesized_tool": True}
-    if tool.annotations:
-        route_opt["mcp_annotations"] = dict(tool.annotations)
 
     route_guards = [require_internal_dispatch, *(guards or ())]
     return post(

@@ -1,21 +1,44 @@
 """Configuration for Litestar MCP Plugin."""
 
-from collections.abc import Awaitable, Callable, Sequence  # noqa: TC003
+import math
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
+from litestar import Request  # noqa: TC002
 from litestar.stores.base import Store  # noqa: TC002
 
 from litestar_mcp.core._streaming import DEFAULT_STREAM_CLEANUP_TIMEOUT, validate_stream_cleanup_timeout
+from litestar_mcp.core.sse import LOG_LEVEL_SEVERITY, MCP_LOG_LEVELS, MCPLogLevel, validate_log_level
 from litestar_mcp.mcp.skills import SkillSource
 from litestar_mcp.mcp.tasks import MCPTaskExecutor  # noqa: TC001
 
-SUPPORTED_PROTOCOL_VERSIONS: tuple[str, ...] = ("2026-07-28", "2025-06-18", "2025-03-26")
+__all__ = (
+    "LOG_LEVEL_SEVERITY",
+    "MCP_LOG_LEVELS",
+    "SUPPORTED_PROTOCOL_VERSIONS",
+    "UI_EXTENSION",
+    "UI_MIME_TYPE",
+    "AfterToolCallHook",
+    "BeforeToolCallHook",
+    "MCPConfig",
+    "MCPLogLevel",
+    "MCPOptKeys",
+    "MCPSkillsConfig",
+    "MCPTaskConfig",
+    "normalize_task_config",
+    "validate_log_level",
+)
 
+SUPPORTED_PROTOCOL_VERSIONS: tuple[str, ...] = ("2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26")
+"""Supported MCP wire protocol revisions ordered from newest to oldest."""
 
-if TYPE_CHECKING:
-    from litestar import Request
+UI_EXTENSION: str = "io.modelcontextprotocol/ui"
+"""SEP-1865 MCP Apps extension capability identifier."""
+
+UI_MIME_TYPE: str = "text/html;profile=mcp-app"
+"""Default MIME type advertised for SEP-1865 MCP Apps HTML resources."""
 
 
 class BeforeToolCallHook(Protocol):
@@ -101,20 +124,48 @@ class MCPOptKeys:
     """Short alias opt key for `task_support`."""
     queue: "str" = "mcp_queue"
     """Opt key overriding the target `litestar-queues` queue name for task-augmented tool execution (or `False` / `"in_process"` to force in-process execution)."""
+    output_schema: "str" = "mcp_output_schema"
+    """Opt key carrying an explicit tool output schema mapping or boolean synthesis toggle."""
+    tool_title: "str" = "mcp_tool_title"
+    """Opt key overriding the human-readable tool title."""
+    tool_icons: "str" = "mcp_tool_icons"
+    """Opt key overriding the tool icons list (`list[dict]`)."""
+    tool_meta: "str" = "mcp_tool_meta"
+    """Opt key carrying MCP `_meta` descriptor metadata for a tool."""
+    resource_title: "str" = "mcp_resource_title"
+    """Opt key overriding the human-readable resource or resource template title."""
+    resource_icons: "str" = "mcp_resource_icons"
+    """Opt key overriding the resource or resource template icons list (`list[dict]`)."""
+    resource_meta: "str" = "mcp_resource_meta"
+    """Opt key carrying MCP `_meta` descriptor metadata for a resource or resource template."""
+    prompt_meta: "str" = "mcp_prompt_meta"
+    """Opt key carrying MCP `_meta` descriptor metadata for a prompt."""
 
     def for_field(self, field_name: "str", kind: "Literal['tool', 'resource', 'prompt']") -> "str":
-        """Return the opt key for ``(field_name, kind)``.
+        """Return the opt key for `(field_name, kind)`.
 
-        The ``description`` field has kind-specific keys (``description`` for
-        tools, ``resource_description`` for resources, ``prompt_description``
-        for prompts) so a handler exposing multiple MCP roles on the same
-        route can carry distinct override prose. All other fields are
-        kind-agnostic.
+        Role-scoped fields (`description`, `title`, `icons`, and `meta`) resolve
+        to dedicated tool, resource, or prompt keys so a single route handler
+        exposing multiple MCP primitives keeps each role's overrides isolated.
+        All other fields resolve directly via attribute lookup.
         """
-        if field_name == "description" and kind == "resource":
-            return self.resource_description
-        if field_name == "description" and kind == "prompt":
-            return self.prompt_description
+        lookup: dict[tuple[str, str], str] = {
+            ("description", "tool"): self.description,
+            ("description", "resource"): self.resource_description,
+            ("description", "prompt"): self.prompt_description,
+            ("title", "tool"): self.tool_title,
+            ("title", "resource"): self.resource_title,
+            ("title", "prompt"): self.prompt_title,
+            ("icons", "tool"): self.tool_icons,
+            ("icons", "resource"): self.resource_icons,
+            ("icons", "prompt"): self.prompt_icons,
+            ("meta", "tool"): self.tool_meta,
+            ("meta", "resource"): self.resource_meta,
+            ("meta", "prompt"): self.prompt_meta,
+        }
+        mapped = lookup.get((field_name, kind))
+        if mapped is not None:
+            return mapped
         value: str = getattr(self, field_name)
         return value
 
@@ -179,18 +230,23 @@ class MCPSkillsConfig:
     """Maximum total byte size of one filesystem skill's files before it is rejected at startup."""
     sources: "Sequence[SkillSource]" = ()
     """Async, request-aware `SkillSource` instances composed after any `paths` source."""
+    expose_as_prompts: "bool" = False
+    """Whether skills are projected as read-only MCP prompts when no `@mcp.prompt` collides."""
+    list_changed: "bool" = True
+    """Whether to advertise `listChanged` on the skills capability extension."""
 
     def __post_init__(self) -> "None":
         """Validate and normalize skill directory paths, sources, and size bounds."""
-        if _is_bare_string_or_bytes(self.paths):
+        bare_paths = isinstance(self.paths, (str, bytes))
+        if bare_paths:
             msg = "paths must be a sequence of paths, not a single string; pass [path] instead"
             raise ValueError(msg)
         self.paths = tuple(Path(path) for path in self.paths)
-        if _is_bare_string_or_bytes(self.sources):
+        raw_sources: object = self.sources
+        if isinstance(raw_sources, (str, bytes)):
             msg = "sources must be a sequence of SkillSource instances"
             raise TypeError(msg)
-        raw_sources: Sequence[object] = self.sources
-        for source in raw_sources:
+        for source in cast("Sequence[object]", raw_sources):
             if not isinstance(source, SkillSource):
                 msg = f"Every entry in sources must satisfy the SkillSource protocol, got {source!r}"
                 raise TypeError(msg)
@@ -278,9 +334,33 @@ class MCPConfig:
     """Optional maximum character length for output schema property descriptions enforced during tool-spec validation."""
     auth: "Any | None" = None
     """Optional route authentication policy merged into the mounted MCP router's `opt["auth"]` (for example `litestar_security.required(...)`)."""
+    auto_output_schema: "bool" = False
+    """Automatically synthesize `outputSchema` from tool return annotations when no explicit override is set."""
+    ui_mime_types: "Sequence[str] | None" = None
+    """Optional explicit sequence of MIME types advertised under `capabilities.extensions["io.modelcontextprotocol/ui"].mimeTypes`; `None` auto-detects from registered UI resources, and `()` disables advertisement."""
+    enable_get_sse: "bool" = True
+    """Whether to serve server-initiated `GET` SSE notification streams on `base_path` for pre-`2026-07-28` MCP clients."""
+    session_ttl_seconds: "float" = 3600.0
+    """Positive finite TTL in seconds applied to persisted `Mcp-Session-Id` session records."""
+    subscription_authorizer: "Callable[[Request[Any, Any, Any], str], Awaitable[bool] | bool] | None" = None
+    """Optional sync or async predicate `(request, uri) -> bool` gating resource subscriptions and update delivery."""
+    logging: "bool" = True
+    """Whether to advertise `capabilities.logging`, handle `logging/setLevel`, and emit `notifications/message` events."""
+    default_log_level: "str" = "info"
+    """Initial RFC 5424 severity threshold applied to new sessions and log subscriptions before `logging/setLevel` overrides it."""
+    filter_app_only_tools: "bool" = False
+    """Whether `tools/list` omits SEP-1865 app-only tools (`_meta.ui.visibility` without `"model"`) when an initialized caller omits `io.modelcontextprotocol/ui` capabilities (`tools/call` stays callable)."""
 
     def __post_init__(self) -> "None":
         validate_stream_cleanup_timeout(self.stream_cleanup_timeout)
+        validate_log_level(self.default_log_level)
+        if (
+            isinstance(self.session_ttl_seconds, bool)
+            or not math.isfinite(self.session_ttl_seconds)
+            or self.session_ttl_seconds <= 0
+        ):
+            msg = f"session_ttl_seconds must be positive and finite, got {self.session_ttl_seconds}"
+            raise ValueError(msg)
         if self.list_page_size <= 0:
             msg = f"list_page_size must be a positive integer, got {self.list_page_size}"
             raise ValueError(msg)
@@ -313,6 +393,7 @@ class MCPConfig:
             raise ValueError(msg)
         if self.tasks is True:
             self.tasks = MCPTaskConfig()
+        self.ui_mime_types = _normalize_ui_mime_types(self.ui_mime_types)
 
     @property
     def task_config(self) -> "MCPTaskConfig | None":
@@ -320,5 +401,17 @@ class MCPConfig:
         return normalize_task_config(self.tasks)
 
 
-def _is_bare_string_or_bytes(value: "object") -> "bool":
-    return isinstance(value, (str, bytes))
+def _normalize_ui_mime_types(value: "object") -> "tuple[str, ...] | None":
+    if value is None:
+        return None
+    invalid_mime_sequence = isinstance(value, (str, bytes)) or not isinstance(value, Sequence)
+    if invalid_mime_sequence:
+        msg = "ui_mime_types must be a sequence of non-empty MIME type strings, not a single string or bytes"
+        raise ValueError(msg)
+    normalized: list[str] = []
+    for item in cast("Sequence[object]", value):
+        if not isinstance(item, str) or not item.strip():
+            msg = f"ui_mime_types entries must be non-empty strings, got {item!r}"
+            raise ValueError(msg)
+        normalized.append(item.strip())
+    return tuple(dict.fromkeys(normalized))

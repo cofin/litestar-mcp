@@ -1,30 +1,38 @@
 """Tests for the schema builder module."""
 
+import copy
 import enum
+import typing
 from dataclasses import dataclass
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 
 import msgspec
 import pytest
-from litestar import get
+import typing_extensions
+from litestar import Response, get, post
 from litestar.datastructures import State  # noqa: TC002
 from litestar.di import NamedDependency  # noqa: TC002
 from litestar.params import FromQuery, Parameter, ParameterKwarg, QueryParameter, SkipValidation
 from pydantic import BaseModel
 
 from litestar_mcp.core.schema_builder import (
-    _merge_parameter_meta,
+    _merge_meta_fields,
     basic_type_to_json_schema,
+    cached_output_schema_for_handler,
     collection_type_to_json_schema,
     dataclass_to_json_schema,
+    generate_output_schema_for_handler,
     generate_schema_for_handler,
     iter_mcp_header_fields,
     msgspec_to_json_schema,
     pydantic_to_json_schema,
     type_to_json_schema,
+    type_to_output_schema,
+    typed_dict_to_json_schema,
     union_type_to_json_schema,
+    unwrap_root_object_schema,
 )
-from litestar_mcp.mcp.bridge import _iter_header_schema
+from litestar_mcp.mcp.content import MCPBlobResource, MCPInputRequiredResult, MCPResourceLink, MCPToolResult
 from litestar_mcp.utils.handler_signature import _unwrap_annotated
 from tests.unit.conftest import create_app_with_handler
 
@@ -86,6 +94,66 @@ class Filter:
 class SchemaFilterModel:
     limit: "int"
     offset: "int"
+
+
+def _make_std_typed_dict(name: str, field_types: dict[str, Any], *, total: bool = True) -> Any:
+    ctor: Any = typing.TypedDict
+    return ctor(name, field_types, total=total)
+
+
+class ClassicStdTypedDict(typing.TypedDict):
+    id: str
+    note: Annotated[str, Parameter(description="field note")]
+
+
+class InheritedStdTypedDict(ClassicStdTypedDict, total=False):
+    count: int
+
+
+StdOutputTypedDict: Any = _make_std_typed_dict(
+    "StdOutputTypedDict",
+    {
+        "id": str,
+        "count": typing_extensions.NotRequired[int],
+        "version": typing_extensions.ReadOnly[int],
+        "note": Annotated[str, Parameter(description="field note")],
+    },
+)
+PartialStdTypedDict: Any = _make_std_typed_dict(
+    "PartialStdTypedDict",
+    {
+        "id": typing_extensions.Required[str],
+        "tag": str,
+        "revision": typing_extensions.ReadOnly[int],
+    },
+    total=False,
+)
+
+
+class ExtOutputTypedDict(typing_extensions.TypedDict):
+    id: str
+    count: typing_extensions.NotRequired[Annotated[int, Parameter(description="optional count")]]
+    version: typing_extensions.ReadOnly[int]
+    note: Annotated[str, msgspec.Meta(description="meta note")]
+
+
+class PartialExtTypedDict(typing_extensions.TypedDict, total=False):
+    id: typing_extensions.Required[Annotated[str, Parameter(description="required id")]]
+    tag: str
+
+
+class CamelOutput(msgspec.Struct, rename="camel"):
+    first_name: str
+    item_count: int = 0
+
+
+class RecursiveNode(msgspec.Struct):
+    value: int
+    next: "RecursiveNode | None" = None
+
+
+class UnknownReturnObject:
+    pass
 
 
 class _SchemaDriver:
@@ -765,12 +833,12 @@ class TestUnwrapAnnotated:
 class TestMergeParameterMeta:
     def test_description_merges(self) -> "None":
         schema: dict[str, Any] = {"type": "boolean"}
-        _merge_parameter_meta(schema, Parameter(description="paid"))
+        _merge_meta_fields(schema, Parameter(description="paid"), "schema_extra")
         assert schema == {"type": "boolean", "description": "paid"}
 
     def test_numeric_constraints_map_to_json_schema_keywords(self) -> "None":
         schema: dict[str, Any] = {"type": "integer"}
-        _merge_parameter_meta(schema, Parameter(ge=1, le=100, gt=0, lt=200, multiple_of=5))
+        _merge_meta_fields(schema, Parameter(ge=1, le=100, gt=0, lt=200, multiple_of=5), "schema_extra")
         assert schema == {
             "type": "integer",
             "minimum": 1,
@@ -782,7 +850,7 @@ class TestMergeParameterMeta:
 
     def test_string_constraints_map_to_json_schema_keywords(self) -> "None":
         schema: dict[str, Any] = {"type": "string"}
-        _merge_parameter_meta(schema, Parameter(min_length=3, max_length=50, pattern="^[a-z]+$"))
+        _merge_meta_fields(schema, Parameter(min_length=3, max_length=50, pattern="^[a-z]+$"), "schema_extra")
         assert schema == {
             "type": "string",
             "minLength": 3,
@@ -792,18 +860,18 @@ class TestMergeParameterMeta:
 
     def test_title_and_examples_merge(self) -> "None":
         schema: dict[str, Any] = {"type": "string"}
-        _merge_parameter_meta(schema, Parameter(title="Email", examples=["a@b.com"]))  # type: ignore[list-item]
+        _merge_meta_fields(schema, Parameter(title="Email", examples=["a@b.com"]), "schema_extra")  # type: ignore[list-item]
         assert schema["title"] == "Email"
         assert schema["examples"] == ["a@b.com"]
 
     def test_none_fields_skipped(self) -> "None":
         schema: dict[str, Any] = {"type": "string"}
-        _merge_parameter_meta(schema, Parameter())
+        _merge_meta_fields(schema, Parameter(), "schema_extra")
         assert schema == {"type": "string"}
 
     def test_examples_scalar_value_is_wrapped_in_list(self) -> "None":
         schema: dict[str, Any] = {"type": "string"}
-        _merge_parameter_meta(schema, Parameter(examples="one@example.com"))  # type: ignore[arg-type]
+        _merge_meta_fields(schema, Parameter(examples="one@example.com"), "schema_extra")  # type: ignore[arg-type]
         assert schema["examples"] == ["one@example.com"]
 
 
@@ -1359,7 +1427,7 @@ def test_attrs_class_parameter_is_described_with_required_fields() -> "None":
 
 
 def test_iter_mcp_header_fields_resolves_hoisted_defs_and_optional_refs() -> "None":
-    """iter_mcp_header_fields and _iter_header_schema resolve $ref into $defs and anyOf branches."""
+    """iter_mcp_header_fields resolves $ref into $defs and anyOf branches."""
     schema: dict[str, Any] = {
         "type": "object",
         "properties": {
@@ -1393,7 +1461,390 @@ def test_iter_mcp_header_fields_resolves_hoisted_defs_and_optional_refs() -> "No
         (("body", "workspace_id"), "X-Workspace-Id"),
         (("optional_filter", "region"), "X-Region"),
     ]
-    assert list(_iter_header_schema(schema)) == [
-        (("body", "workspace_id"), "X-Workspace-Id"),
-        (("optional_filter", "region"), "X-Region"),
+    assert list(iter_mcp_header_fields(schema)) == [
+        (("body", "workspace_id"), "X-Workspace-Id", {"type": "string", "x-mcp-header": "X-Workspace-Id"}),
+        (("optional_filter", "region"), "X-Region", {"type": "string", "x-mcp-header": "X-Region"}),
     ]
+
+
+@pytest.mark.parametrize(
+    "converter",
+    [typed_dict_to_json_schema, type_to_json_schema, type_to_output_schema],
+    ids=["typed_dict_converter", "type_to_json_schema", "type_to_output_schema"],
+)
+@pytest.mark.parametrize(
+    ("td_type", "expected_props", "expected_required"),
+    [
+        (
+            InheritedStdTypedDict,
+            {
+                "id": {"type": "string"},
+                "note": {"type": "string", "description": "field note"},
+                "count": {"type": "integer"},
+            },
+            {"id", "note"},
+        ),
+        (
+            StdOutputTypedDict,
+            {
+                "id": {"type": "string"},
+                "count": {"type": "integer"},
+                "version": {"type": "integer"},
+                "note": {"type": "string", "description": "field note"},
+            },
+            {"id", "version", "note"},
+        ),
+        (
+            ExtOutputTypedDict,
+            {
+                "id": {"type": "string"},
+                "count": {"type": "integer", "description": "optional count"},
+                "version": {"type": "integer"},
+                "note": {"type": "string", "description": "meta note"},
+            },
+            {"id", "version", "note"},
+        ),
+        (
+            PartialStdTypedDict,
+            {
+                "id": {"type": "string"},
+                "tag": {"type": "string"},
+                "revision": {"type": "integer"},
+            },
+            {"id"},
+        ),
+        (
+            PartialExtTypedDict,
+            {
+                "id": {"type": "string", "description": "required id"},
+                "tag": {"type": "string"},
+            },
+            {"id"},
+        ),
+    ],
+    ids=[
+        "typing_class_inheritance",
+        "typing_total",
+        "typing_ext_total",
+        "typing_partial",
+        "typing_ext_partial",
+    ],
+)
+def test_typed_dict_required_and_optional_schema_generation(
+    converter: Any,
+    td_type: Any,
+    expected_props: dict[str, Any],
+    expected_required: set[str],
+) -> None:
+    schema = converter(td_type)
+    assert schema is not None
+    assert schema["type"] == "object"
+    assert schema["properties"] == expected_props
+    assert set(schema.get("required", [])) == expected_required
+
+
+def test_typed_dict_converter_returns_empty_for_non_typed_dict() -> None:
+    assert typed_dict_to_json_schema(dict) == {}
+    assert typed_dict_to_json_schema(Outer) == {}
+    assert typed_dict_to_json_schema(int) == {}
+
+
+def test_none_and_none_type_schema_handling() -> None:
+    assert union_type_to_json_schema(type(None)) == {"type": "null"}
+    assert type_to_json_schema(type(None)) == {"type": "null"}
+    legacy_none_schema = type_to_json_schema(None)
+    assert legacy_none_schema["type"] == "object"
+    assert type_to_output_schema(None) is None
+    assert type_to_output_schema(type(None)) is None
+
+
+@pytest.mark.parametrize(
+    ("model_type", "expected_props", "expected_required", "expected_defs"),
+    [
+        (
+            CamelOutput,
+            {"firstName": {"type": "string"}, "itemCount": {"type": "integer", "default": 0}},
+            ["firstName"],
+            set(),
+        ),
+        (
+            Outer,
+            {"inner": {"$ref": "#/$defs/Inner"}},
+            ["inner"],
+            {"Inner"},
+        ),
+        (
+            RecursiveNode,
+            {
+                "value": {"type": "integer"},
+                "next": {"anyOf": [{"$ref": "#/$defs/RecursiveNode"}, {"type": "null"}], "default": None},
+            },
+            ["value"],
+            {"RecursiveNode"},
+        ),
+    ],
+    ids=["camel_rename", "nested_struct_prunes_root", "self_recursive_keeps_root"],
+)
+def test_msgspec_struct_root_ref_unwrapping(
+    model_type: Any,
+    expected_props: dict[str, Any],
+    expected_required: list[str],
+    expected_defs: set[str],
+) -> None:
+    schema = type_to_output_schema(model_type)
+    assert schema is not None
+    assert schema["type"] == "object"
+    assert "$ref" not in schema
+    assert schema["properties"] == expected_props
+    assert schema["required"] == expected_required
+    if expected_defs:
+        assert set(schema["$defs"]) == expected_defs
+    else:
+        assert "$defs" not in schema
+
+
+@pytest.mark.parametrize(
+    ("raw_schema", "expected_type_present"),
+    [
+        ({"$ref": "#/$defs/Missing", "$defs": {}}, False),
+        ({"$ref": "#/$defs/A", "$defs": {"A": {"$ref": "#/$defs/B"}, "B": {"$ref": "#/$defs/A"}}}, False),
+        ({"$ref": "#/$defs/NotMap", "$defs": {"NotMap": "invalid"}}, False),
+        (
+            {
+                "$ref": "#/$defs/Root",
+                "title": "ExplicitTitle",
+                "$defs": {
+                    "Root": {"type": "object", "title": "InnerTitle", "properties": {"c": {"$ref": "#/$defs/Child"}}},
+                    "Child": {"type": "object", "properties": {"id": {"type": "integer"}}},
+                    "Unused": {"type": "object", "properties": {"z": {"type": "string"}}},
+                },
+            },
+            True,
+        ),
+    ],
+    ids=["dangling_ref", "cyclic_ref", "non_mapping_target", "outer_title_and_unused_pruned"],
+)
+def test_unwrap_root_object_schema_edge_cases(
+    raw_schema: dict[str, Any],
+    expected_type_present: bool,
+) -> None:
+    unwrapped = unwrap_root_object_schema(raw_schema)
+    if expected_type_present:
+        assert unwrapped["type"] == "object"
+        assert unwrapped["title"] == "ExplicitTitle"
+        assert set(unwrapped["$defs"]) == {"Child"}
+    else:
+        assert unwrapped.get("type") != "object"
+
+
+def test_unwrap_and_cached_output_schema_do_not_mutate_shared_defs() -> None:
+    original: dict[str, Any] = {
+        "$ref": "#/$defs/OuterBox",
+        "$defs": {
+            "OuterBox": {"type": "object", "properties": {"item": {"$ref": "#/$defs/InnerBox"}}},
+            "InnerBox": {"type": "object", "properties": {"n": {"type": "integer"}}},
+        },
+    }
+    snapshot = copy.deepcopy(original)
+
+    unwrapped = unwrap_root_object_schema(original)
+    unwrapped["properties"]["extra"] = {"type": "string"}
+    unwrapped["$defs"]["InnerBox"]["properties"]["mutated"] = {"type": "boolean"}
+    assert original == snapshot
+
+    @get("/cached-out", sync_to_thread=False)
+    def cached_out() -> Outer:
+        return Outer(inner=Inner(x=1))
+
+    _, mounted = create_app_with_handler(cached_out.fn, "/cached-out")
+    first = copy.deepcopy(cached_output_schema_for_handler(mounted))
+    assert first is not None
+    first["$defs"]["Inner"]["properties"]["tampered"] = {"type": "string"}
+    second = cached_output_schema_for_handler(mounted)
+    assert second is not None
+    assert "tampered" not in second["$defs"]["Inner"]["properties"]
+
+
+def test_generate_output_schema_preserves_annotated_metadata_and_signature_namespace() -> None:
+    class LocalStruct(msgspec.Struct, rename="camel"):
+        local_id: str
+
+    def param_annotated() -> Annotated[Outer, Parameter(description="outer desc", title="ParamTitle")]:
+        return Outer(inner=Inner(x=1))
+
+    def meta_annotated() -> Annotated[
+        Outer,
+        msgspec.Meta(title="CustomOuter", description="meta desc", extra_json_schema={"x-domain": "billing"}),
+    ]:
+        return Outer(inner=Inner(x=2))
+
+    def forward_ref_fn() -> "LocalStruct":
+        return LocalStruct(local_id="x")
+
+    _, mounted_param = create_app_with_handler(param_annotated, "/out-param")
+    _, mounted_meta = create_app_with_handler(meta_annotated, "/out-meta")
+    _, mounted_fwd = create_app_with_handler(
+        forward_ref_fn,
+        "/out-fwd",
+        signature_namespace={"LocalStruct": LocalStruct},
+    )
+    unmounted_fwd = post("/out-fwd-raw", signature_namespace={"LocalStruct": LocalStruct})(forward_ref_fn)
+
+    param_schema = generate_output_schema_for_handler(mounted_param)
+    assert param_schema is not None
+    assert param_schema["type"] == "object"
+    assert param_schema["description"] == "outer desc"
+    assert param_schema["title"] == "ParamTitle"
+    assert set(param_schema["$defs"]) == {"Inner"}
+
+    meta_schema = generate_output_schema_for_handler(mounted_meta)
+    assert meta_schema is not None
+    assert meta_schema["type"] == "object"
+    assert meta_schema["title"] == "CustomOuter"
+    assert meta_schema["description"] == "meta desc"
+    assert meta_schema["x-domain"] == "billing"
+    assert set(meta_schema["$defs"]) == {"Inner"}
+
+    mounted_fwd_schema = generate_output_schema_for_handler(mounted_fwd)
+    unmounted_fwd_schema = generate_output_schema_for_handler(unmounted_fwd)
+    assert mounted_fwd_schema is not None
+    assert mounted_fwd_schema["type"] == "object"
+    assert mounted_fwd_schema["properties"] == {"localId": {"type": "string"}}
+    assert unmounted_fwd_schema == mounted_fwd_schema
+
+
+@pytest.mark.parametrize(
+    "annotation",
+    [
+        str,
+        int,
+        bool,
+        bytes,
+        list[str],
+        set[int],
+        tuple[int, str],
+        Color,
+        Literal["alpha", "beta"],
+        Any,
+        object,
+        UnknownReturnObject,
+        Response,
+        Response[dict[str, Any]],
+        MCPToolResult,
+        MCPBlobResource,
+        MCPResourceLink,
+        MCPInputRequiredResult,
+        Outer | None,
+        cast("Any", Annotated[Outer, Parameter(description="x")]) | None,
+        Annotated[Outer | None, Parameter(description="y")],
+        Outer | Inner,
+    ],
+    ids=[
+        "str",
+        "int",
+        "bool",
+        "bytes",
+        "list",
+        "set",
+        "tuple",
+        "enum",
+        "literal",
+        "any",
+        "object",
+        "custom_class",
+        "bare_response",
+        "typed_response",
+        "mcp_tool_result",
+        "mcp_blob_resource",
+        "mcp_resource_link",
+        "mcp_input_required",
+        "optional_struct",
+        "optional_annotated_struct",
+        "annotated_optional_struct",
+        "multi_object_union",
+    ],
+)
+def test_type_to_output_schema_rejects_non_object_and_wrapper_returns(annotation: Any) -> None:
+    assert type_to_output_schema(annotation) is None
+
+
+@pytest.mark.parametrize(
+    ("annotation", "expected_type", "expected_desc"),
+    [
+        (dict, "object", None),
+        (dict[str, int], "object", None),
+        (UserModel, "object", None),
+        (Filter, "object", "Filter dataclass with a meaningful docstring."),
+        (MCPInputRequiredResult | Outer, "object", None),
+        (Annotated[MCPInputRequiredResult | Outer, Parameter(description="mrtr desc")], "object", "mrtr desc"),
+    ],
+    ids=["bare_dict", "typed_dict_generic", "pydantic_model", "dataclass", "mrtr_union", "annotated_mrtr_union"],
+)
+def test_type_to_output_schema_accepts_objects_and_mrtr_unions(
+    annotation: Any,
+    expected_type: str,
+    expected_desc: str | None,
+) -> None:
+    schema = type_to_output_schema(annotation)
+    assert schema is not None
+    assert schema["type"] == expected_type
+    if expected_desc is not None:
+        assert schema["description"] == expected_desc
+
+
+@dataclass
+class _RecursiveTree:
+    label: str
+    children: "list[_RecursiveTree]"
+
+
+@dataclass
+class _MutualLeft:
+    name: str
+    right: "_MutualRight | None" = None
+
+
+@dataclass
+class _MutualRight:
+    score: int
+    left: "_MutualLeft | None" = None
+
+
+class _RecursiveTypedNode(typing_extensions.TypedDict):
+    key: str
+    next_node: "typing_extensions.NotRequired[_RecursiveTypedNode]"
+
+
+@pytest.mark.parametrize(
+    ("target_type", "expected_def_name", "expected_prop"),
+    [
+        (_RecursiveTree, "RecursiveTree", "label"),
+        (_MutualLeft, "MutualLeft", "name"),
+        (_RecursiveTypedNode, "RecursiveTypedNode", "key"),
+    ],
+    ids=["self_dataclass", "mutual_dataclass", "self_typeddict"],
+)
+def test_recursive_structured_types_emit_ref_and_defs_without_recursion_error(
+    target_type: Any,
+    expected_def_name: str,
+    expected_prop: str,
+) -> None:
+    """Verify recursive dataclasses and TypedDicts synthesize cycle-safe `$defs` schemas."""
+    schema = type_to_json_schema(target_type)
+    assert schema["type"] == "object"
+    assert expected_prop in schema["properties"]
+    assert expected_def_name in schema["$defs"]
+
+    out_schema = type_to_output_schema(target_type)
+    assert out_schema is not None
+    assert out_schema["type"] == "object"
+    assert expected_def_name in out_schema["$defs"]
+
+    def _tree_handler(node: Any) -> Any:
+        return node
+
+    _tree_handler.__annotations__ = {"node": target_type, "return": target_type}
+    _, route_handler = create_app_with_handler(_tree_handler, method="POST")
+    handler_schema = generate_schema_for_handler(route_handler)
+    assert "node" in handler_schema["properties"]
+    assert expected_def_name in handler_schema["$defs"]

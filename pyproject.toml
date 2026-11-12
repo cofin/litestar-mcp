@@ -35,14 +35,14 @@ maintainers = [
 name = "litestar-mcp"
 readme = "README.md"
 requires-python = ">=3.10"
-version = "0.19.0"
+version = "0.20.0"
 
 [project.urls]
-Changelog = "https://cofin.github.io/litestar-mcp/latest/changelog"
+Changelog = "https://cofin.github.io/litestar-mcp/changelog/"
 Discord = "https://discord.gg/litestar"
-Documentation = "https://cofin.github.io/litestar-mcp/latest/"
+Documentation = "https://cofin.github.io/litestar-mcp/"
 Funding = "https://github.com/sponsors/litestar-org"
-Homepage = "https://cofin.github.io/litestar-mcp/latest/"
+Homepage = "https://cofin.github.io/litestar-mcp/"
 Issue = "https://github.com/cofin/litestar-mcp/issues/"
 Source = "https://github.com/cofin/litestar-mcp"
 
@@ -100,7 +100,7 @@ test = [
 allow_dirty = true
 commit = false
 commit_args = "--no-verify"
-current_version = "0.19.0"
+current_version = "0.20.0"
 ignore_missing_files = false
 ignore_missing_version = false
 message = "chore(release): bump to v{new_version}"

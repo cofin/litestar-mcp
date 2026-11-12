@@ -3,13 +3,25 @@
 import json
 from typing import Any
 
+import msgspec
 import pytest
-from litestar import Litestar, get
+from litestar import Litestar, get, post
 from litestar.di import NamedDependency, Provide
 from litestar.testing import TestClient
 
-from litestar_mcp import LitestarMCP
+from litestar_mcp import MCP, LitestarMCP
+from litestar_mcp.mcp.content import MCPBlobResource, MCPToolResult
 from tests.unit.conftest import mcp_post
+
+
+class _Money:
+    def __init__(self, cents: int) -> None:
+        self.cents = cents
+
+
+class _CamelOut(msgspec.Struct, rename="camel"):
+    line_item: str
+    unit_qty: int = 1
 
 
 def _make_app() -> "Litestar":
@@ -128,3 +140,92 @@ def test_valid_request_id_is_preserved_for_results_and_errors(request_id: Any, m
     else:
         assert response.status_code == 404
         assert response.json()["error"]["code"] == -32601
+
+
+@pytest.mark.parametrize("surface", ["litestar_route", "standalone_mcp"])
+def test_mcp_tool_result_applies_route_type_encoders_and_struct_rename(surface: str) -> None:
+    encoders: dict[Any, Any] = {
+        _Money: lambda money: f"${money.cents / 100:.2f}",
+        bytes: lambda raw: raw.hex(),
+    }
+
+    def build_result() -> MCPToolResult:
+        return MCPToolResult(
+            content=[
+                MCPBlobResource(uri="app://receipt", data=b"\x01\x02"),
+                {"fee": _Money(250), "sig": b"\xca\xfe"},
+            ],
+            structured_content={
+                "price": _Money(500),
+                "raw": b"\xab\xcd",
+                "item": _CamelOut(line_item="widget", unit_qty=2),
+            },
+        )
+
+    if surface == "litestar_route":
+
+        @post("/quote", mcp_tool="quote", type_encoders=encoders, sync_to_thread=False)
+        def route_quote() -> MCPToolResult:
+            return build_result()
+
+        app = Litestar(route_handlers=[route_quote], plugins=[LitestarMCP()])
+    else:
+        mcp = MCP(name="quote-server")
+
+        @mcp.tool(name="quote", type_encoders=encoders, sync_to_thread=False)
+        def standalone_quote() -> MCPToolResult:
+            return build_result()
+
+        app = mcp.app
+
+    with TestClient(app=app) as client:
+        payload = mcp_post(client, "tools/call", {"name": "quote", "arguments": {}}).json()
+
+    result = payload["result"]
+    assert result["isError"] is False
+    assert result["structuredContent"] == {
+        "price": "$5.00",
+        "raw": "abcd",
+        "item": {"lineItem": "widget", "unitQty": 2},
+    }
+    assert result["content"][0] == {
+        "type": "resource",
+        "resource": {
+            "uri": "app://receipt",
+            "mimeType": "application/octet-stream",
+            "blob": "AQI=",
+        },
+    }
+    assert json.loads(result["content"][1]["text"]) == {"fee": "$2.50", "sig": "cafe"}
+
+
+def test_mcp_tool_result_unset_structured_content_preserved_with_type_encoders() -> None:
+    @post(
+        "/fee",
+        mcp_tool="fee",
+        type_encoders={_Money: lambda money: f"${money.cents / 100:.2f}"},
+        sync_to_thread=False,
+    )
+    def fee() -> MCPToolResult:
+        return MCPToolResult(content={"fee": _Money(250)})
+
+    app = Litestar(route_handlers=[fee], plugins=[LitestarMCP()])
+    with TestClient(app=app) as client:
+        result = mcp_post(client, "tools/call", {"name": "fee", "arguments": {}}).json()["result"]
+
+    assert result["isError"] is False
+    assert "structuredContent" not in result
+    assert json.loads(result["content"][0]["text"]) == {"fee": "$2.50"}
+
+
+def test_mcp_tool_result_unregistered_custom_type_returns_tool_error() -> None:
+    @post("/broken-quote", mcp_tool="broken_quote", sync_to_thread=False)
+    def broken_quote() -> MCPToolResult:
+        return MCPToolResult(content="ok", structured_content={"price": _Money(500)})
+
+    app = Litestar(route_handlers=[broken_quote], plugins=[LitestarMCP()])
+    with TestClient(app=app) as client:
+        result = mcp_post(client, "tools/call", {"name": "broken_quote", "arguments": {}}).json()["result"]
+
+    assert result["isError"] is True
+    assert "structuredContent" not in result

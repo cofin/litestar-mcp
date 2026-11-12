@@ -9,7 +9,7 @@ from litestar.handlers import HTTPRouteHandler, post
 from litestar_mcp.core._typing import DISHKA_INSTALLED, dishka_inject
 from litestar_mcp.core.tools import has_dishka_parameters
 from litestar_mcp.mcp.executor import require_internal_dispatch
-from litestar_mcp.utils import set_mcp_metadata
+from litestar_mcp.utils import clean_icons, clean_meta, clean_title, set_mcp_metadata
 from litestar_mcp.utils.handler_signature import normalize_synthesized_handler_signature
 
 if TYPE_CHECKING:
@@ -34,23 +34,29 @@ def prompt(
     description: str | None = None,
     arguments: list[dict[str, Any]] | None = None,
     icons: list[dict[str, Any]] | None = None,
+    meta: dict[str, Any] | None = None,
 ) -> "Callable[[Callable[..., Any]], HTTPRouteHandler]":
     """Mark a controller method as an MCP prompt served through the controller's guards and dependencies."""
 
     def decorator(fn: "Callable[..., Any]") -> HTTPRouteHandler:
         prompt_name = name or fn.__name__
-        metadata = {
+        cleaned_title = clean_title(title)
+        cleaned_icons = clean_icons(icons)
+        cleaned_meta = clean_meta(meta)
+        metadata: dict[str, Any] = {
             "type": "prompt",
             "name": prompt_name,
-            "title": title,
+            "title": cleaned_title,
             "description": description or inspect.cleandoc(fn.__doc__ or "") or None,
             "arguments": arguments,
-            "icons": icons,
+            "icons": cleaned_icons,
         }
-        set_mcp_metadata(fn, metadata)
+        if cleaned_meta is not None:
+            metadata["meta"] = cleaned_meta
+        set_mcp_metadata(fn, metadata, kind="prompt")
         target_fn = _wrap_dishka_if_needed(fn)
         if target_fn is not fn:
-            set_mcp_metadata(target_fn, metadata)
+            set_mcp_metadata(target_fn, metadata, kind="prompt")
         normalize_synthesized_handler_signature(target_fn, fn, path=f"/prompts/{prompt_name}")
         sync_option = None if inspect.iscoroutinefunction(target_fn) else False
         return post(

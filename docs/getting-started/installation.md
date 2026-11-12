@@ -10,7 +10,7 @@ title: Installation & Extras
 
 ## Base Package (litestar-mcp)
 
-The base package includes `LitestarMCP`, the standalone `MCP` application wrapper, dual-version Streamable HTTP (`2026-07-28` and `2025-06-18`), stdio & HTTP bridge CLI subcommands, Agent Skills (`SEP-2640`), in-process `MCPTaskStore` task execution, `Agent` / `AgentGroup` / `AgentRuntime`, and `DynamicWorkflow` / `WorkflowEngine`.
+The base package includes `LitestarMCP`, the standalone `MCP` application wrapper, dual-mode Streamable HTTP across stateless `2026-07-28` and session-aware `2025-11-25`, `2025-06-18`, and `2025-03-26` (`Mcp-Session-Id`, `GET /mcp` SSE, `resources/subscribe`, and `logging/setLevel` with RFC 5424 `MCPRequestContext.log()`), the `SEP-1865` MCP Apps UI extension (`io.modelcontextprotocol/ui`, `text/html;profile=mcp-app`), opt-in `outputSchema` synthesis and automatic `structuredContent`, Agent Skills (`SEP-2640` with `SkillCatalog`, `FilesystemSkillSource`, `SkillSource`, and `SkillController`), CLI subcommands (`stdio`, `bridge`, `export-tool-spec`, `list-tools`, `list-resources`, `list-skills`, and `run`), in-process `MCPTaskStore` task execution, `Agent` / `AgentGroup` / `AgentRuntime`, and `DynamicWorkflow` / `WorkflowEngine`.
 
 === "uv"
 

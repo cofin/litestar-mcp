@@ -137,7 +137,7 @@ class TestServerDiscover:
     def test_server_discover_returns_capabilities(self, client: "TestClient[Any]") -> "None":
         result = _rpc(client, "server/discover")
         assert "result" in result
-        assert result["result"]["supportedVersions"] == ["2026-07-28", "2025-06-18", "2025-03-26"]
+        assert result["result"]["supportedVersions"] == ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26"]
         assert "capabilities" in result["result"]
         assert "io.modelcontextprotocol/serverInfo" in result["result"]["_meta"]
 

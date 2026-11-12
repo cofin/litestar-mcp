@@ -59,116 +59,134 @@
   <input type="radio" name="lm-pipeline-mode" id="lm-pipe-stdio" />
 
   <div class="lm-diag-tabs" role="tablist" aria-label="MCP Transport and Dispatch Pipeline">
-    <label class="lm-diag-tab" for="lm-pipe-http">Streamable HTTP (2026-07-28 &amp; 2025-06-18)</label>
+    <label class="lm-diag-tab" for="lm-pipe-http">Streamable HTTP (2026-07-28, 2025-11-25 &amp; 2025-* Sessions)</label>
     <label class="lm-diag-tab" for="lm-pipe-stdio">In-Process Stdio &amp; HTTP Bridge</label>
   </div>
 
   <div class="lm-pipe-panels">
     <div class="lm-pipe-panel lm-panel-http">
-      <svg viewBox="0 0 920 280" role="img" aria-labelledby="lm-pipe-http-title lm-pipe-http-desc">
-        <title id="lm-pipe-http-title">Stateless Streamable HTTP and Internal ASGI Dispatch Pipeline</title>
-        <desc id="lm-pipe-http-desc">JSON-RPC requests arrive at MCPController (/mcp), negotiate 2026-07-28 or 2025-06-18 via MCPHandlerService, and execute tools and prompts through Litestar internal ASGI dispatch with middleware, guards, DI, and OpenTelemetry spans.</desc>
+      <svg viewBox="0 0 920 305" role="img" aria-labelledby="lm-pipe-http-title lm-pipe-http-desc">
+        <title id="lm-pipe-http-title">Streamable HTTP Sessions, SSE, and Internal ASGI Dispatch Pipeline</title>
+        <desc id="lm-pipe-http-desc">JSON-RPC requests and GET /mcp SSE streams (Accept: text/event-stream) arrive at MCPController (/mcp), negotiate stateless 2026-07-28 (server/discover, POST subscriptions/listen) or stateful 2025-11-25, 2025-06-18, and 2025-03-26 (initialize, Mcp-Session-Id via MCPSessionStore, resources/subscribe, RFC 5424 logging/setLevel, DELETE /mcp), and execute handlers through internal ASGI dispatch with MCPRequestContext.log() and SubscriptionManager.</desc>
 
-        <rect x="16" y="26" width="188" height="156" rx="10" fill="var(--lm-p-card)" stroke="var(--lm-p-blue)" stroke-width="2" />
-        <circle class="lm-pulse" cx="34" cy="46" r="5" fill="var(--lm-p-blue)" />
-        <text x="110" y="50" text-anchor="middle" fill="var(--lm-p-text)" font-size="13" font-weight="700">MCP Client</text>
-        <text x="110" y="74" text-anchor="middle" fill="var(--lm-p-blue)" font-size="11" font-family="monospace">POST / DELETE /mcp</text>
-        <text x="110" y="96" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">2026-07-28: server/discover</text>
-        <text x="110" y="114" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">2025-06-18: initialize &amp; ping</text>
-        <text x="110" y="132" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">SEP-2575 Capability Headers</text>
-        <text x="110" y="150" text-anchor="middle" fill="var(--lm-p-emerald)" font-size="10" font-family="monospace">JSON or text/event-stream</text>
+        <rect x="16" y="24" width="194" height="176" rx="10" fill="var(--lm-p-card)" stroke="var(--lm-p-blue)" stroke-width="2" />
+        <circle class="lm-pulse" cx="34" cy="44" r="5" fill="var(--lm-p-blue)" />
+        <text x="113" y="48" text-anchor="middle" fill="var(--lm-p-text)" font-size="13" font-weight="700">MCP Client</text>
+        <text x="113" y="70" text-anchor="middle" fill="var(--lm-p-blue)" font-size="10.5" font-family="monospace">POST • GET /mcp • DELETE /mcp</text>
+        <text x="113" y="90" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">2026-07-28: server/discover</text>
+        <text x="113" y="108" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">POST subscriptions/listen SSE</text>
+        <text x="113" y="126" text-anchor="middle" fill="var(--lm-p-muted)" font-size="9.2">2025-*: initialize + Mcp-Session-Id</text>
+        <text x="113" y="144" text-anchor="middle" fill="var(--lm-p-muted)" font-size="9.2">GET /mcp (Accept: text/event-stream)</text>
+        <text x="113" y="162" text-anchor="middle" fill="var(--lm-p-muted)" font-size="9">resources/subscribe • logging/setLevel</text>
+        <text x="113" y="184" text-anchor="middle" fill="var(--lm-p-emerald)" font-size="8.6" font-family="monospace">logLevel _meta &amp; SEP-2575 headers</text>
 
-        <line class="lm-flow-forward" x1="204" y1="88" x2="254" y2="88" stroke="var(--lm-p-blue)" stroke-width="2.5" />
-        <line class="lm-flow-reverse" x1="204" y1="120" x2="254" y2="120" stroke="var(--lm-p-emerald)" stroke-width="2" />
+        <line class="lm-flow-forward" x1="210" y1="96" x2="250" y2="96" stroke="var(--lm-p-blue)" stroke-width="2.5" />
+        <line class="lm-flow-reverse" x1="210" y1="128" x2="250" y2="128" stroke="var(--lm-p-emerald)" stroke-width="2" />
 
-        <rect x="254" y="26" width="196" height="156" rx="10" fill="var(--lm-p-card)" stroke="var(--lm-p-amber)" stroke-width="2" />
-        <text x="352" y="50" text-anchor="middle" fill="var(--lm-p-text)" font-size="13" font-weight="700">MCPController</text>
-        <text x="352" y="74" text-anchor="middle" fill="var(--lm-p-amber)" font-size="11" font-family="monospace">MCPHandlerService</text>
-        <text x="352" y="96" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Router Guards &amp; route_opt</text>
-        <text x="352" y="114" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Origin &amp; Protocol Validation</text>
-        <text x="352" y="132" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">202 Accepted (notifications)</text>
-        <text x="352" y="150" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">204 No Content (DELETE /mcp)</text>
+        <rect x="250" y="24" width="204" height="176" rx="10" fill="var(--lm-p-card)" stroke="var(--lm-p-amber)" stroke-width="2" />
+        <text x="352" y="48" text-anchor="middle" fill="var(--lm-p-text)" font-size="13" font-weight="700">MCPController</text>
+        <text x="352" y="70" text-anchor="middle" fill="var(--lm-p-amber)" font-size="10.5" font-family="monospace">MCPHandlerService</text>
+        <text x="352" y="90" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Router Guards, auth &amp; Origin check</text>
+        <text x="352" y="108" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">MCPSessionStore (Mcp-Session-Id TTL)</text>
+        <text x="352" y="126" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">RFC 5424 logging/setLevel state</text>
+        <text x="352" y="144" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">GET /mcp SSE stream &amp; 405 toggle</text>
+        <text x="352" y="162" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">202 Accepted • 204 DELETE /mcp</text>
+        <text x="352" y="184" text-anchor="middle" fill="var(--lm-p-amber)" font-size="9.5" font-family="monospace">2026-07-28 • 2025-11-25 • 2025-06-18</text>
 
-        <line class="lm-flow-forward" x1="450" y1="88" x2="500" y2="88" stroke="var(--lm-p-amber)" stroke-width="2.5" />
-        <line class="lm-flow-reverse" x1="450" y1="120" x2="500" y2="120" stroke="var(--lm-p-emerald)" stroke-width="2" />
+        <line class="lm-flow-forward" x1="454" y1="96" x2="494" y2="96" stroke="var(--lm-p-amber)" stroke-width="2.5" />
+        <line class="lm-flow-reverse" x1="454" y1="128" x2="494" y2="128" stroke="var(--lm-p-emerald)" stroke-width="2" />
 
-        <rect x="500" y="26" width="194" height="156" rx="10" fill="var(--lm-p-card)" stroke="var(--lm-p-violet)" stroke-width="2" />
-        <text x="597" y="50" text-anchor="middle" fill="var(--lm-p-text)" font-size="13" font-weight="700">Internal ASGI Dispatch</text>
-        <text x="597" y="74" text-anchor="middle" fill="var(--lm-p-violet)" font-size="11" font-family="monospace">execute_tool / prompt</text>
-        <text x="597" y="96" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Forwards Auth &amp; Trace Headers</text>
-        <text x="597" y="114" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Preserves request.user &amp; auth</text>
-        <text x="597" y="132" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Binds ToolContext in scope</text>
-        <text x="597" y="150" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Zero TCP Loopback Hop</text>
+        <rect x="494" y="24" width="196" height="176" rx="10" fill="var(--lm-p-card)" stroke="var(--lm-p-violet)" stroke-width="2" />
+        <text x="592" y="48" text-anchor="middle" fill="var(--lm-p-text)" font-size="13" font-weight="700">Internal ASGI Dispatch</text>
+        <text x="592" y="70" text-anchor="middle" fill="var(--lm-p-violet)" font-size="10.5" font-family="monospace">execute_tool / prompt / res</text>
+        <text x="592" y="90" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Forwards Auth &amp; Trace Headers</text>
+        <text x="592" y="108" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Preserves request.user &amp; auth</text>
+        <text x="592" y="126" text-anchor="middle" fill="var(--lm-p-muted)" font-size="9.2">Binds session_id &amp; log_level threshold</text>
+        <text x="592" y="144" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">MCPRequestContext.log() &amp; progress</text>
+        <text x="592" y="162" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">subscription_authorizer enforcement</text>
+        <text x="592" y="184" text-anchor="middle" fill="var(--lm-p-violet)" font-size="9.5" font-family="monospace">Zero TCP Loopback Hop</text>
 
-        <line class="lm-flow-forward" x1="694" y1="88" x2="742" y2="88" stroke="var(--lm-p-violet)" stroke-width="2.5" />
-        <line class="lm-flow-reverse" x1="694" y1="120" x2="742" y2="120" stroke="var(--lm-p-emerald)" stroke-width="2" />
+        <line class="lm-flow-forward" x1="690" y1="96" x2="730" y2="96" stroke="var(--lm-p-violet)" stroke-width="2.5" />
+        <line class="lm-flow-reverse" x1="690" y1="128" x2="730" y2="128" stroke="var(--lm-p-emerald)" stroke-width="2" />
 
-        <rect x="742" y="26" width="162" height="156" rx="10" fill="var(--lm-p-card)" stroke="var(--lm-p-emerald)" stroke-width="2" />
-        <circle class="lm-pulse" cx="760" cy="46" r="5" fill="var(--lm-p-emerald)" />
-        <text x="823" y="50" text-anchor="middle" fill="var(--lm-p-text)" font-size="13" font-weight="700">Litestar Handler</text>
-        <text x="823" y="74" text-anchor="middle" fill="var(--lm-p-emerald)" font-size="11" font-family="monospace">@get / @post / @tool</text>
-        <text x="823" y="96" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Middleware &amp; Route Guards</text>
-        <text x="823" y="114" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Provide &amp; FromDishka[T]</text>
-        <text x="823" y="132" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">DTOs &amp; msgspec Validation</text>
-        <text x="823" y="150" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">before/after_request Hooks</text>
+        <rect x="730" y="24" width="174" height="176" rx="10" fill="var(--lm-p-card)" stroke="var(--lm-p-emerald)" stroke-width="2" />
+        <circle class="lm-pulse" cx="748" cy="44" r="5" fill="var(--lm-p-emerald)" />
+        <text x="817" y="48" text-anchor="middle" fill="var(--lm-p-text)" font-size="13" font-weight="700">Litestar Handler</text>
+        <text x="817" y="70" text-anchor="middle" fill="var(--lm-p-emerald)" font-size="10.5" font-family="monospace">@get / @post / @mcp_tool</text>
+        <text x="817" y="90" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Middleware &amp; Route Guards</text>
+        <text x="817" y="108" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Provide &amp; FromDishka[T]</text>
+        <text x="817" y="126" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">msgspec DTOs &amp; outputSchema</text>
+        <text x="817" y="144" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">SEP-1865 ui:// HTML resources</text>
+        <text x="817" y="162" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">ctx.log() -&gt; notifications/message</text>
+        <text x="817" y="184" text-anchor="middle" fill="var(--lm-p-emerald)" font-size="9.5" font-family="monospace">before/after_request hooks</text>
 
-        <rect x="16" y="206" width="888" height="54" rx="8" fill="var(--lm-p-card)" stroke="var(--lm-p-border)" stroke-width="1.5" />
-        <text x="460" y="228" text-anchor="middle" fill="var(--lm-p-text)" font-size="12" font-weight="700">Cross-Cutting Observability &amp; Registry Layer</text>
-        <text x="460" y="246" text-anchor="middle" fill="var(--lm-p-muted)" font-size="11" font-family="monospace">Registry (Tools • Resources • Prompts • Skills)  |  SpanManager (TelemetryConfig) OpenTelemetry Spans (mcp.request • mcp.tool.call)</text>
+        <rect x="16" y="216" width="888" height="70" rx="8" fill="var(--lm-p-card)" stroke="var(--lm-p-border)" stroke-width="1.5" />
+        <text x="460" y="236" text-anchor="middle" fill="var(--lm-p-text)" font-size="12" font-weight="700">Session State, Subscription Fan-Out &amp; Observability Layer</text>
+        <text x="460" y="255" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10.5" font-family="monospace">MCPSessionStore (TTL)  |  SubscriptionManager (owner_id • session_id • subscription_authorizer)</text>
+        <text x="460" y="273" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10.5" font-family="monospace">Registry (Tools • Resources • Prompts • Skills)  |  SpanManager OpenTelemetry (mcp.request • mcp.tool.call)</text>
       </svg>
     </div>
 
     <div class="lm-pipe-panel lm-panel-stdio">
-      <svg viewBox="0 0 920 280" role="img" aria-labelledby="lm-pipe-stdio-title lm-pipe-stdio-desc">
-        <title id="lm-pipe-stdio-title">In-Process Stdio and HTTP Bridge Pipeline</title>
-        <desc id="lm-pipe-stdio-desc">Desktop MCP clients communicate over newline-delimited JSON on stdin/stdout using either in-process Litestar.lifespan() execution with MCPStdioContext or the stateless HTTP relay bridge.</desc>
+      <svg viewBox="0 0 920 305" role="img" aria-labelledby="lm-pipe-stdio-title lm-pipe-stdio-desc">
+        <title id="lm-pipe-stdio-title">In-Process Stdio and Stateful/Stateless HTTP Bridge Pipeline</title>
+        <desc id="lm-pipe-stdio-desc">Desktop MCP clients exchange newline-delimited JSON on stdin/stdout using in-process Litestar.lifespan() execution with MCPStdioContext or the remote HTTP bridge supporting both stateless 2026-07-28 and stateful 2025-11-25 Mcp-Session-Id sessions, GET /mcp SSE notification forwarding, and DELETE /mcp teardown.</desc>
 
-        <rect x="16" y="26" width="196" height="156" rx="10" fill="var(--lm-p-card)" stroke="var(--lm-p-blue)" stroke-width="2" />
-        <circle class="lm-pulse" cx="34" cy="46" r="5" fill="var(--lm-p-blue)" />
-        <text x="114" y="50" text-anchor="middle" fill="var(--lm-p-text)" font-size="13" font-weight="700">Desktop Host</text>
-        <text x="114" y="74" text-anchor="middle" fill="var(--lm-p-blue)" font-size="11" font-family="monospace">stdin / stdout NDJSON</text>
-        <text x="114" y="96" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Claude Desktop / Cursor / IDE</text>
-        <text x="114" y="114" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">litestar mcp stdio</text>
-        <text x="114" y="132" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">litestar mcp bridge</text>
-        <text x="114" y="150" text-anchor="middle" fill="var(--lm-p-emerald)" font-size="10" font-family="monospace">mcp.run(transport="stdio")</text>
+        <rect x="16" y="24" width="194" height="176" rx="10" fill="var(--lm-p-card)" stroke="var(--lm-p-blue)" stroke-width="2" />
+        <circle class="lm-pulse" cx="34" cy="44" r="5" fill="var(--lm-p-blue)" />
+        <text x="113" y="48" text-anchor="middle" fill="var(--lm-p-text)" font-size="13" font-weight="700">Desktop Host</text>
+        <text x="113" y="70" text-anchor="middle" fill="var(--lm-p-blue)" font-size="10.5" font-family="monospace">stdin / stdout NDJSON</text>
+        <text x="113" y="90" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">IDE &amp; Desktop MCP Clients</text>
+        <text x="113" y="108" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">litestar mcp stdio (in-process)</text>
+        <text x="113" y="126" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">litestar mcp bridge (--endpoint)</text>
+        <text x="113" y="144" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">2026-07-28 or 2025-11-25 frames</text>
+        <text x="113" y="162" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Receives notifications/* on stdout</text>
+        <text x="113" y="184" text-anchor="middle" fill="var(--lm-p-emerald)" font-size="9.5" font-family="monospace">mcp.run(transport="stdio")</text>
 
-        <line class="lm-flow-forward" x1="212" y1="88" x2="262" y2="88" stroke="var(--lm-p-blue)" stroke-width="2.5" />
-        <line class="lm-flow-reverse" x1="212" y1="120" x2="262" y2="120" stroke="var(--lm-p-emerald)" stroke-width="2" />
+        <line class="lm-flow-forward" x1="210" y1="96" x2="250" y2="96" stroke="var(--lm-p-blue)" stroke-width="2.5" />
+        <line class="lm-flow-reverse" x1="210" y1="128" x2="250" y2="128" stroke="var(--lm-p-emerald)" stroke-width="2" />
 
-        <rect x="262" y="26" width="206" height="156" rx="10" fill="var(--lm-p-card)" stroke="var(--lm-p-amber)" stroke-width="2" />
-        <text x="365" y="50" text-anchor="middle" fill="var(--lm-p-text)" font-size="13" font-weight="700">Stdio Lifecycle Adapter</text>
-        <text x="365" y="74" text-anchor="middle" fill="var(--lm-p-amber)" font-size="11" font-family="monospace">run_stdio_async()</text>
-        <text x="365" y="96" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Enters Litestar.lifespan()</text>
-        <text x="365" y="114" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Injects MCPStdioContext</text>
-        <text x="365" y="132" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">user • auth • session • state</text>
-        <text x="365" y="150" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Bounded shutdown_timeout=5.0s</text>
+        <rect x="250" y="24" width="204" height="176" rx="10" fill="var(--lm-p-card)" stroke="var(--lm-p-amber)" stroke-width="2" />
+        <text x="352" y="48" text-anchor="middle" fill="var(--lm-p-text)" font-size="13" font-weight="700">Stdio Lifecycle Adapter</text>
+        <text x="352" y="70" text-anchor="middle" fill="var(--lm-p-amber)" font-size="10.5" font-family="monospace">run_stdio_async()</text>
+        <text x="352" y="90" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Enters Litestar.lifespan()</text>
+        <text x="352" y="108" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Injects MCPStdioContext</text>
+        <text x="352" y="126" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">user • auth • session_id • state</text>
+        <text x="352" y="144" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Streams progress &amp; RFC 5424 logs</text>
+        <text x="352" y="162" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Resource &amp; skill list_changed push</text>
+        <text x="352" y="184" text-anchor="middle" fill="var(--lm-p-amber)" font-size="9.5" font-family="monospace">Bounded shutdown_timeout=5.0s</text>
 
-        <line class="lm-flow-forward" x1="468" y1="88" x2="518" y2="88" stroke="var(--lm-p-amber)" stroke-width="2.5" />
-        <line class="lm-flow-reverse" x1="468" y1="120" x2="518" y2="120" stroke="var(--lm-p-emerald)" stroke-width="2" />
+        <line class="lm-flow-forward" x1="454" y1="96" x2="494" y2="96" stroke="var(--lm-p-amber)" stroke-width="2.5" />
+        <line class="lm-flow-reverse" x1="454" y1="128" x2="494" y2="128" stroke="var(--lm-p-emerald)" stroke-width="2" />
 
-        <rect x="518" y="26" width="190" height="156" rx="10" fill="var(--lm-p-card)" stroke="var(--lm-p-violet)" stroke-width="2" />
-        <text x="613" y="50" text-anchor="middle" fill="var(--lm-p-text)" font-size="13" font-weight="700">Synthetic ASGI Scope</text>
-        <text x="613" y="74" text-anchor="middle" fill="var(--lm-p-violet)" font-size="11" font-family="monospace">MCPHandlerService</text>
-        <text x="613" y="96" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">In-Memory ASGI Dispatch</text>
-        <text x="613" y="114" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Or Remote HTTP Relay (--endpoint)</text>
-        <text x="613" y="132" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Owner ID: user:&lt;subject&gt;</text>
-        <text x="613" y="150" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">SSE Progress Notification Loop</text>
+        <rect x="494" y="24" width="196" height="176" rx="10" fill="var(--lm-p-card)" stroke="var(--lm-p-violet)" stroke-width="2" />
+        <text x="592" y="48" text-anchor="middle" fill="var(--lm-p-text)" font-size="13" font-weight="700">ASGI Scope or HTTP Bridge</text>
+        <text x="592" y="70" text-anchor="middle" fill="var(--lm-p-violet)" font-size="10.5" font-family="monospace">stdio.py / bridge.py</text>
+        <text x="592" y="90" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Stateless 2026-07-28 POST relay</text>
+        <text x="592" y="108" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">2025-11-25 Mcp-Session-Id capture</text>
+        <text x="592" y="126" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Background GET /mcp SSE listener</text>
+        <text x="592" y="144" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Forwards SSE notifications to NDJSON</text>
+        <text x="592" y="162" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Clean DELETE /mcp session teardown</text>
+        <text x="592" y="184" text-anchor="middle" fill="var(--lm-p-violet)" font-size="9.5" font-family="monospace">Owner ID: user:&lt;subject&gt;</text>
 
-        <line class="lm-flow-forward" x1="708" y1="88" x2="748" y2="88" stroke="var(--lm-p-violet)" stroke-width="2.5" />
-        <line class="lm-flow-reverse" x1="708" y1="120" x2="748" y2="120" stroke="var(--lm-p-emerald)" stroke-width="2" />
+        <line class="lm-flow-forward" x1="690" y1="96" x2="730" y2="96" stroke="var(--lm-p-violet)" stroke-width="2.5" />
+        <line class="lm-flow-reverse" x1="690" y1="128" x2="730" y2="128" stroke="var(--lm-p-emerald)" stroke-width="2" />
 
-        <rect x="748" y="26" width="156" height="156" rx="10" fill="var(--lm-p-card)" stroke="var(--lm-p-emerald)" stroke-width="2" />
-        <circle class="lm-pulse" cx="766" cy="46" r="5" fill="var(--lm-p-emerald)" />
-        <text x="826" y="50" text-anchor="middle" fill="var(--lm-p-text)" font-size="13" font-weight="700">Application DI</text>
-        <text x="826" y="74" text-anchor="middle" fill="var(--lm-p-emerald)" font-size="11" font-family="monospace">Full Litestar Pipeline</text>
-        <text x="826" y="96" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">DB Pools &amp; Stores Active</text>
-        <text x="826" y="114" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Dishka Scope.REQUEST</text>
-        <text x="826" y="132" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Route Guards Enforced</text>
-        <text x="826" y="150" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Identical Tool Semantics</text>
+        <rect x="730" y="24" width="174" height="176" rx="10" fill="var(--lm-p-card)" stroke="var(--lm-p-emerald)" stroke-width="2" />
+        <circle class="lm-pulse" cx="748" cy="44" r="5" fill="var(--lm-p-emerald)" />
+        <text x="817" y="48" text-anchor="middle" fill="var(--lm-p-text)" font-size="13" font-weight="700">Application DI</text>
+        <text x="817" y="70" text-anchor="middle" fill="var(--lm-p-emerald)" font-size="10.5" font-family="monospace">Full Litestar Pipeline</text>
+        <text x="817" y="90" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">DB Pools &amp; Stores Active</text>
+        <text x="817" y="108" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Dishka Scope.REQUEST</text>
+        <text x="817" y="126" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Route Guards Enforced</text>
+        <text x="817" y="144" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">SkillCatalog &amp; Registry live</text>
+        <text x="817" y="162" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Identical Tool &amp; UI Semantics</text>
+        <text x="817" y="184" text-anchor="middle" fill="var(--lm-p-emerald)" font-size="9.5" font-family="monospace">MCPSessionStore + Tasks active</text>
 
-        <rect x="16" y="206" width="888" height="54" rx="8" fill="var(--lm-p-card)" stroke="var(--lm-p-border)" stroke-width="1.5" />
-        <text x="460" y="228" text-anchor="middle" fill="var(--lm-p-text)" font-size="12" font-weight="700">Two CLI Modes: Local In-Process vs Remote HTTP Relay</text>
-        <text x="460" y="246" text-anchor="middle" fill="var(--lm-p-muted)" font-size="11" font-family="monospace">litestar --app app:app mcp stdio (in-process ASGI)  |  litestar mcp bridge --endpoint https://api.example.com/mcp (remote HTTP)</text>
+        <rect x="16" y="216" width="888" height="70" rx="8" fill="var(--lm-p-card)" stroke="var(--lm-p-border)" stroke-width="1.5" />
+        <text x="460" y="236" text-anchor="middle" fill="var(--lm-p-text)" font-size="12" font-weight="700">Two CLI Modes: Local In-Process ASGI vs Stateful/Stateless Remote HTTP Bridge</text>
+        <text x="460" y="255" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10.5" font-family="monospace">litestar --app app:app mcp stdio  |  litestar mcp bridge --endpoint https://api.example.com/mcp</text>
+        <text x="460" y="273" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10.5" font-family="monospace">Bridge 2025-11-25 lifecycle: initialize -&gt; Mcp-Session-Id -&gt; GET /mcp SSE forwarder -&gt; DELETE /mcp on EOF</text>
       </svg>
     </div>
   </div>

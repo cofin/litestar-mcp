@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 import anyio
@@ -16,6 +16,16 @@ if TYPE_CHECKING:
 
     from anyio.streams.memory import MemoryObjectSendStream
     from litestar.types import ASGIApp, Receive, Scope, Send
+
+__all__ = (
+    "DEFAULT_STREAM_CLEANUP_TIMEOUT",
+    "StreamCleanupMiddleware",
+    "StreamOwner",
+    "add_stream_cleanup",
+    "prefetch_stream",
+    "start_stream",
+    "validate_stream_cleanup_timeout",
+)
 
 DEFAULT_STREAM_CLEANUP_TIMEOUT = 5.0
 _STREAM_STATE_KEY = "litestar_mcp.stream_state"
@@ -100,6 +110,7 @@ class StreamOwner(Generic[_T, _R]):
 class _StreamState:
     cancel_scope: "anyio.CancelScope"
     owner: "StreamOwner[Any, Any] | None" = None
+    cleanups: "list[Callable[[], Awaitable[None]]]" = field(default_factory=list)
 
 
 class StreamCleanupMiddleware(ASGIMiddleware):
@@ -120,7 +131,20 @@ class StreamCleanupMiddleware(ASGIMiddleware):
                     if state.owner is not None:
                         await state.owner.close()
                 finally:
-                    scope_dict.pop(_STREAM_STATE_KEY, None)
+                    try:
+                        if state.cleanups:
+                            with anyio.CancelScope(shield=True):
+                                for cleanup in reversed(state.cleanups):
+                                    await cleanup()
+                    finally:
+                        scope_dict.pop(_STREAM_STATE_KEY, None)
+
+
+def add_stream_cleanup(scope: "Scope", callback: "Callable[[], Awaitable[None]]") -> None:
+    """Register an async cleanup callback invoked on ASGI request exit if bound."""
+    state = cast("dict[str, Any]", scope).get(_STREAM_STATE_KEY)
+    if isinstance(state, _StreamState):
+        state.cleanups.append(callback)
 
 
 def start_stream(

@@ -25,15 +25,15 @@ hide:
   <div class="lm-card">
     <div>
       <h3>Zero-Duplicate Route Exposure</h3>
-      <p>Mark existing Litestar routes with <code>mcp_tool</code>, <code>mcp_resource</code>, or <code>mcp_prompt</code>. Tool and prompt calls execute through in-process ASGI dispatch so your authentication middleware, guards, DTOs, and lifecycle callbacks run identically.</p>
+      <p>Mark existing Litestar routes with <code>mcp_tool</code>, <code>mcp_resource</code>, or <code>mcp_prompt</code>, advertise opt-in <code>outputSchema</code> with automatic <code>structuredContent</code>, and attach SEP-1865 MCP Apps metadata (<code>io.modelcontextprotocol/ui</code>, <code>_meta.ui</code>, <code>title</code>, <code>icons</code>). Calls run through in-process ASGI dispatch with full middleware, guards, and DTO validation.</p>
     </div>
     <a href="learn/marking-routes/">Route Marking &amp; Decorators &rarr;</a>
   </div>
 
   <div class="lm-card">
     <div>
-      <h3>Dual-Version Streamable HTTP &amp; Stdio</h3>
-      <p>Serve stateless <code>2026-07-28</code> (<code>server/discover</code> and SEP-2575 capability headers) and <code>2025-06-18</code> (<code>initialize</code>, <code>ping</code>, <code>DELETE /mcp</code>) on one <code>/mcp</code> endpoint alongside in-process <code>litestar mcp stdio</code> and remote HTTP <code>bridge</code>.</p>
+      <h3>Dual-Mode Streamable HTTP &amp; Stdio</h3>
+      <p>Serve stateless <code>2026-07-28</code> (<code>server/discover</code>, SEP-2575 headers, <code>POST subscriptions/listen</code>) and session-aware <code>2025-11-25</code> / <code>2025-06-18</code> / <code>2025-03-26</code> (<code>initialize</code>, <code>Mcp-Session-Id</code>, <code>GET /mcp</code> SSE, <code>resources/subscribe</code>, <code>logging/setLevel</code>, <code>DELETE /mcp</code>) on one <code>/mcp</code> endpoint alongside <code>litestar mcp stdio</code> and <code>bridge</code>.</p>
     </div>
     <a href="learn/discovery/">Transport &amp; Discovery &rarr;</a>
   </div>
@@ -41,7 +41,7 @@ hide:
   <div class="lm-card">
     <div>
       <h3>Agent Skills &amp; Universal DI</h3>
-      <p>Publish <code>io.modelcontextprotocol/skills</code> (SEP-2640) from static <code>SKILL.md</code> directories, dynamic request-aware <code>SkillSource</code> providers, or class-based <code>SkillController</code> and <code>PromptController</code> classes wired with <code>Provide</code> and <code>FromDishka[T]</code>.</p>
+      <p>Publish <code>io.modelcontextprotocol/skills</code> (SEP-2640) via <code>SkillCatalog</code> (<code>expose_as_prompts</code>, <code>notifications/skills/list_changed</code>, <code>litestar mcp list-skills</code>) from static <code>SKILL.md</code> directories, dynamic request-aware <code>SkillSource</code> providers, or <code>SkillController</code> and <code>PromptController</code> classes wired with <code>Provide</code> and <code>FromDishka[T]</code>.</p>
     </div>
     <a href="learn/skills/">Agent Skills Guide &rarr;</a>
   </div>
@@ -143,8 +143,8 @@ Install `litestar-mcp` and any optional integration extras (`a2a`, `queues`, `go
 | :--- | :--- |
 | [**Architecture & Examples**](architecture/index.md) | Interactive HTML/SVG system diagrams, the 10-variant Notes reference application matrix (`advanced_alchemy` and `sqlspec`), and single-file PEP 723 `uv run` / `uvx` execution |
 | [**Getting Started**](getting-started/index.md) | Entry-point comparison, optional extra matrix, step-by-step quickstart, standalone `MCP` server guide, and core architectural concepts |
-| [**MCP Core**](learn/index.md) | `MCPConfig`, route markers, `MCPOptKeys` and tool annotations, resources and RFC 6570 URI templates, `PromptController`, Agent Skills (`SEP-2640`), Streamable HTTP discovery, stdio, and bridge |
-| [**Tasks, Queues & Workflows**](queues/index.md) | `io.modelcontextprotocol/tasks`, `MCPInputRequiredResult`, distributed `QueueTaskExecutor`, `DurableWorkflowEngine` DAGs, `QueuedAgentChatController`, and multi-replica deployment |
-| [**Agents & A2A**](agents/index.md) | `Agent`, `AgentRuntime`, `TurnBudget`, `GoogleGenAIClient`, `AgentGroup` handoffs, SSE session streaming, bidirectional protocol bridges, `LitestarA2A`, and multi-tenancy |
-| [**Security & Operations**](security/index.md) | Litestar authentication middleware, first-party `litestar-security` & RFC 9728 OAuth Protected Resource Metadata, guards/scopes, and OpenTelemetry `TelemetryConfig` |
-| [**Reference**](reference/index.md) | Curated API reference across all modules, auto-generated `litestar mcp` CLI documentation, contributor workflow, and release changelog |
+| [**MCP Core**](learn/index.md) | `MCPConfig`, route markers, `MCPOptKeys`, `outputSchema` and `structuredContent`, `io.modelcontextprotocol/ui` MCP Apps, static `uri=` resources and RFC 6570 URI templates, `PromptController`, `SkillCatalog` (`SEP-2640`), RFC 5424 `MCPRequestContext.log()`, `2026-07-28` and `2025-11-25` Streamable HTTP, stdio, and bridge |
+| [**Tasks, Queues & Workflows**](queues/index.md) | `io.modelcontextprotocol/tasks`, `progress_token` forwarding, `MCPInputRequiredResult`, distributed `QueueTaskExecutor`, `DurableWorkflowEngine` DAGs, `QueuedAgentChatController`, and multi-replica deployment |
+| [**Agents & A2A**](agents/index.md) | `Agent`, `AgentRuntime`, `TurnBudget`, `GoogleGenAIClient`, `AgentGroup` handoffs, SSE session streaming, visibility-aware bidirectional protocol bridges, `LitestarA2A`, and multi-tenancy |
+| [**Security & Operations**](security/index.md) | Litestar authentication middleware, first-party `litestar-security` & RFC 9728 metadata, `MCPSessionStore` owner isolation, `subscription_authorizer`, guards/scopes, RFC 5424 server logging, and OpenTelemetry `TelemetryConfig` |
+| [**Reference**](reference/index.md) | Curated API reference across all modules, auto-generated `litestar mcp` CLI documentation (`stdio`, `bridge`, `export-tool-spec`, `list-tools`, `list-resources`, `list-skills`, `run`), contributor workflow, and release changelog |

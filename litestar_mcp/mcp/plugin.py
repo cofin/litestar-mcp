@@ -1,5 +1,6 @@
 """Litestar MCP Plugin implementation."""
 
+import copy
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
@@ -7,21 +8,31 @@ from litestar import Litestar, Router
 from litestar.di import Provide
 from litestar.exceptions import ImproperlyConfiguredException
 from litestar.handlers import BaseRouteHandler
-from litestar.plugins import CLIPlugin, InitPluginProtocol
+from litestar.plugins import CLIPlugin, InitPluginProtocol, ReceiveRoutePlugin
 
 from litestar_mcp.core.schema_builder import generate_schema_for_handler, validate_mcp_header_schema
 from litestar_mcp.core.sse import SubscriptionManager
 from litestar_mcp.mcp.cli import mcp_group
 from litestar_mcp.mcp.config import MCPConfig, MCPSkillsConfig, MCPTaskConfig
 from litestar_mcp.mcp.prompt_controller import PromptController
-from litestar_mcp.mcp.registry import PromptRegistration, Registry
+from litestar_mcp.mcp.registry import PromptRegistration, Registry, _same_handler
 from litestar_mcp.mcp.routes import MCPController
 from litestar_mcp.mcp.service import MCPHandlerService
 from litestar_mcp.mcp.skill_controller import SkillController
 from litestar_mcp.mcp.skills import SkillCatalog
 from litestar_mcp.mcp.tasks import MCPTaskRuntime, MCPTaskStore, TaskRecord
 from litestar_mcp.mcp.tool_handlers import build_tool_route_handler
-from litestar_mcp.utils import get_handler_function, get_mcp_metadata, resolve_app_store
+from litestar_mcp.utils import (
+    classify_resource_uri,
+    clean_icons,
+    clean_meta,
+    clean_title,
+    get_all_mcp_metadata,
+    get_handler_function,
+    get_mcp_metadata,
+    resolve_app_store,
+    set_mcp_metadata,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -32,12 +43,19 @@ if TYPE_CHECKING:
 
     from click import Group
     from litestar.config.app import AppConfig
+    from litestar.routes import BaseRoute
     from litestar.types import Guard
 
     from litestar_mcp.core.tools import Tool
+    from litestar_mcp.utils import Kind
+
+__all__ = (
+    "TASK_STORE_NAME",
+    "LitestarMCP",
+)
 
 
-class LitestarMCP(InitPluginProtocol, CLIPlugin):
+class LitestarMCP(InitPluginProtocol, CLIPlugin, ReceiveRoutePlugin):
     """Litestar plugin for Model Context Protocol integration."""
 
     def __init__(
@@ -48,14 +66,15 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         """Initialize the MCP plugin.
 
         Args:
-            config: Plugin configuration. Defaults to ``MCPConfig()``.
+            config: Plugin configuration. Defaults to `MCPConfig()`.
             prompts: Optional sequence of standalone prompt functions
-                decorated with ``@mcp_prompt`` or ``@prompt``.
+                decorated with `@mcp_prompt` or `@prompt`.
         """
         self._config = config or MCPConfig()
         self._registry = Registry()
+        self._app: Litestar | None = None
         self._dynamic_handlers: list[Any] = []
-        self._dynamic_handler_paths: set[tuple[str, ...]] = set()
+        self._dynamic_handler_routes: dict[tuple[tuple[str, ...], tuple[str, ...]], BaseRouteHandler] = {}
 
         for entry in self._config.prompt_controllers:
             self.register_dynamic_handler(self._coerce_controller_class(entry, PromptController))
@@ -72,6 +91,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                     description=metadata.get("description"),
                     arguments=metadata.get("arguments"),
                     icons=metadata.get("icons"),
+                    meta=metadata.get("meta"),
                 )
         self._subscription_manager = SubscriptionManager(
             max_streams=self._config.subscription_max_streams,
@@ -84,6 +104,8 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         self._skill_catalog: SkillCatalog | None = (
             SkillCatalog.from_config(self._config.skills) if isinstance(self._config.skills, MCPSkillsConfig) else None
         )
+        if self._skill_catalog is not None:
+            self._skill_catalog.bind_app(None, registry=self._registry)
 
     @property
     def config(self) -> "MCPConfig":
@@ -126,14 +148,35 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         This is typically used by the wrapper class to register decorated
         tools and resources.
         """
-        paths_attr = getattr(handler, "paths", None)
-        if paths_attr:
-            path_key = tuple(sorted(str(p) for p in paths_attr))
-            if path_key in self._dynamic_handler_paths:
-                return
-            self._dynamic_handler_paths.add(path_key)
+        if isinstance(handler, BaseRouteHandler):
+            paths_attr = getattr(handler, "paths", None)
+            if paths_attr:
+                path_key = tuple(sorted(str(p) for p in paths_attr))
+                raw_methods = getattr(handler, "http_methods", None) or ()
+                methods_key = tuple(sorted(str(getattr(m, "value", m)).upper() for m in raw_methods))
+                route_key = (path_key, methods_key)
+                existing = self._dynamic_handler_routes.get(route_key)
+                if existing is not None:
+                    if _same_handler(existing, handler):
+                        return
+                    msg = (
+                        f"Conflicting dynamic MCP route handler for paths {list(path_key)} "
+                        f"and methods {list(methods_key)}"
+                    )
+                    raise ImproperlyConfiguredException(msg)
+                self._dynamic_handler_routes[route_key] = handler
+        elif handler in self._dynamic_handlers:
+            return
         if handler not in self._dynamic_handlers:
             self._dynamic_handlers.append(handler)
+        if self._app is not None:
+            if not _is_handler_registered(handler, self._app.routes):
+                self._app.register(handler)
+            self._discover_mcp_routes([handler])
+            if isinstance(handler, BaseRouteHandler) and any(
+                _same_handler(registered, handler) for registered in self._registry.tools.values()
+            ):
+                validate_mcp_header_schema(_tool_header_validation_schema(handler))
 
     def register_tool(
         self,
@@ -149,7 +192,65 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
             guards=guards,
             dependencies=dependencies,
         )
+        opt_keys = self._config.opt_keys
+        output_policy = tool.output_schema_policy
+        if output_policy is not None:
+            copied_policy: Any = (
+                copy.deepcopy(dict(output_policy)) if isinstance(output_policy, dict) else output_policy
+            )
+            route_handler.opt.setdefault(opt_keys.output_schema, copied_policy)
+        if tool.title:
+            route_handler.opt.setdefault(opt_keys.tool_title, tool.title)
+        if tool.icons:
+            route_handler.opt.setdefault(opt_keys.tool_icons, [copy.deepcopy(dict(item)) for item in tool.icons])
+        if tool.meta:
+            route_handler.opt.setdefault(opt_keys.tool_meta, copy.deepcopy(dict(tool.meta)))
+
+        if tool.title or tool.icons or tool.meta:
+            fn = get_handler_function(route_handler)
+            existing_meta: dict[str, Any] = dict(
+                get_mcp_metadata(fn, kind="tool") or {"type": "tool", "name": tool.name}
+            )
+            if tool.title:
+                existing_meta["title"] = tool.title
+            if tool.icons:
+                icon_items: list[dict[str, Any]] = [copy.deepcopy(dict(item)) for item in tool.icons]
+                existing_meta["icons"] = icon_items
+            if tool.meta:
+                meta_payload: dict[str, Any] = copy.deepcopy(dict(tool.meta))
+                existing_meta["meta"] = meta_payload
+            set_mcp_metadata(fn, existing_meta, kind="tool")
+
         self.register_dynamic_handler(route_handler)
+
+    def receive_route(self, route: "BaseRoute") -> "None":
+        """Capture the owning Litestar app and discover route-bound MCP primitives as routes mount."""
+        raw_handlers = getattr(route, "route_handlers", None)
+        if isinstance(raw_handlers, (list, tuple)):
+            handlers = [h for h in raw_handlers if isinstance(h, BaseRouteHandler)]
+        else:
+            single = getattr(route, "route_handler", None)
+            handlers = [single] if isinstance(single, BaseRouteHandler) else []
+
+        if self._app is None:
+            for layer in getattr(route, "ownership_layers", ()):
+                if isinstance(layer, Litestar):
+                    self._app = layer
+                    break
+        if self._app is None:
+            for handler in handlers:
+                for layer in handler.ownership_layers:
+                    if isinstance(layer, Litestar):
+                        self._app = layer
+                        break
+                if self._app is not None:
+                    break
+        if self._skill_catalog is not None and self._app is not None:
+            self._skill_catalog.bind_app(self._app, registry=self._registry)
+
+        eligible = [h for h in handlers if not _is_options_only_handler(h)]
+        if eligible:
+            self._discover_mcp_routes(eligible)
 
     def on_cli_init(self, cli: "Group") -> "None":
         """Configure CLI commands for MCP operations."""
@@ -177,6 +278,9 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         def provide_skill_catalog() -> "SkillCatalog | None":
             return self._skill_catalog
 
+        skill_catalog_provider = Provide(provide_skill_catalog, sync_to_thread=False)
+        app_config.dependencies.setdefault("skill_catalog", skill_catalog_provider)
+
         router_kwargs: dict[str, Any] = {
             "path": self._config.base_path,
             "route_handlers": [MCPController],
@@ -186,7 +290,6 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                 "config": Provide(provide_mcp_config, sync_to_thread=False),
                 "registry": Provide(provide_registry, sync_to_thread=False),
                 "task_store": Provide(provide_task_store, sync_to_thread=False),
-                "skill_catalog": Provide(provide_skill_catalog, sync_to_thread=False),
                 "discovered_tools": Provide(lambda: self._registry.tools, sync_to_thread=False),
                 "discovered_resources": Provide(lambda: self._registry.resources, sync_to_thread=False),
                 "discovered_prompts": Provide(lambda: self._registry.prompts, sync_to_thread=False),
@@ -208,15 +311,21 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
 
     def on_startup(self, app: "Litestar") -> "None":
         """Perform discovery after app is fully initialized and routes are built."""
+        self._app = app
+        if self._skill_catalog is not None:
+            self._skill_catalog.bind_app(app, registry=self._registry)
         all_handlers: list[BaseRouteHandler] = []
         for route in app.routes:
-            if hasattr(route, "route_handlers"):
-                all_handlers.extend(route.route_handlers)  # pyright: ignore[reportAttributeAccessIssue]
+            raw_handlers = getattr(route, "route_handlers", None)
+            if isinstance(raw_handlers, (list, tuple)):
+                all_handlers.extend(
+                    h for h in raw_handlers if isinstance(h, BaseRouteHandler) and not _is_options_only_handler(h)
+                )
         _logger.debug("Plugin on_startup executing...")
         self._subscription_manager.start()
         self._discover_mcp_routes(all_handlers)
         for handler in self._registry.tools.values():
-            validate_mcp_header_schema(generate_schema_for_handler(handler))
+            validate_mcp_header_schema(_tool_header_validation_schema(handler))
 
         task_config = self._config.task_config
         executor = task_config.executor if task_config is not None else None
@@ -305,6 +414,8 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
             await self._registry.publish_notification(
                 "notifications/tasks",
                 record.to_dict(),
+                owner_id=record.owner_id,
+                strict_owner=True,
             )
 
         self._task_store.set_status_callback(publish_task_status)
@@ -340,11 +451,11 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         self,
         fn: "Callable[..., Any] | BaseRouteHandler",
     ) -> "tuple[Callable[..., Any], dict[str, Any]]":
-        """Extract the underlying callable and prompt metadata from ``fn``."""
+        """Extract the underlying callable and prompt metadata from `fn`."""
         callable_fn = get_handler_function(fn) if isinstance(fn, BaseRouteHandler) else fn
-        metadata = get_mcp_metadata(fn) or get_mcp_metadata(callable_fn) or {}
+        metadata = dict(get_mcp_metadata(fn, kind="prompt") or get_mcp_metadata(callable_fn, kind="prompt") or {})
+        opt_keys = self._config.opt_keys
         if metadata.get("type") != "prompt" and isinstance(fn, BaseRouteHandler) and isinstance(fn.opt, dict):
-            opt_keys = self._config.opt_keys
             if opt_keys.prompt in fn.opt:
                 metadata = {
                     "type": "prompt",
@@ -353,7 +464,18 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                     "description": fn.opt.get(opt_keys.prompt_description),
                     "arguments": fn.opt.get(opt_keys.prompt_arguments),
                     "icons": fn.opt.get(opt_keys.prompt_icons),
+                    "meta": fn.opt.get(opt_keys.prompt_meta),
                 }
+        elif isinstance(fn, BaseRouteHandler) and isinstance(fn.opt, dict) and opt_keys.prompt_meta in fn.opt:
+            merged_meta: dict[str, Any] = {}
+            dec_meta = clean_meta(metadata.get("meta"))
+            if dec_meta is not None:
+                merged_meta.update(dec_meta)
+            opt_meta = clean_meta(fn.opt.get(opt_keys.prompt_meta))
+            if opt_meta is not None:
+                merged_meta.update(opt_meta)
+            if merged_meta:
+                metadata["meta"] = merged_meta
         if metadata.get("type") != "prompt":
             msg = f"Function {fn!r} is not decorated with @mcp_prompt"
             raise ValueError(msg)
@@ -369,11 +491,12 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                 self._discover_mcp_routes(handler.get_route_handlers())
                 continue
             if isinstance(handler, BaseRouteHandler):
-                metadata = get_mcp_metadata(handler)
-                if not metadata:
-                    metadata = get_mcp_metadata(get_handler_function(handler))
-
-                if metadata:
+                if _is_options_only_handler(handler):
+                    continue
+                fn = get_handler_function(handler)
+                metadata_entries = get_all_mcp_metadata(handler) or get_all_mcp_metadata(fn)
+                self._propagate_skill_tool_descriptors(handler, metadata_entries)
+                for metadata in metadata_entries:
                     self._register_from_metadata(handler, metadata)
                 if handler.opt:
                     self._register_from_opt(handler)
@@ -386,15 +509,113 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
             if isinstance(nested_routes, (list, tuple)):
                 self._discover_mcp_routes(cast("Any", nested_routes))
 
+    def _propagate_skill_tool_descriptors(
+        self,
+        handler: BaseRouteHandler,
+        metadata_entries: list[dict[str, Any]],
+    ) -> None:
+        """Copy non-empty SkillController Tool descriptors onto a synthesized tool handler's opt."""
+        fn = get_handler_function(handler)
+        owner = (
+            getattr(fn, "__self__", None) or getattr(handler.fn, "__self__", None) or getattr(handler, "owner", None)
+        )
+        if not isinstance(owner, SkillController):
+            return
+        handler_opt = handler.opt
+        opt_keys = self._config.opt_keys
+        tool_entries = [entry for entry in metadata_entries if entry.get("type") == "tool"]
+        is_tool = bool(handler_opt.get("_mcp_synthesized_tool")) or opt_keys.tool in handler_opt or bool(tool_entries)
+        if not is_tool:
+            return
+        if opt_keys.tool in handler_opt:
+            tool_name = self._opt_name(handler, opt_keys.tool)
+        elif tool_entries and isinstance(tool_entries[0].get("name"), str) and tool_entries[0]["name"]:
+            tool_name = str(tool_entries[0]["name"])
+        else:
+            raw_name = str(getattr(fn, "__name__", None) or getattr(handler, "name", "") or "")
+            tool_name = raw_name.removeprefix("_tool_endpoint_")
+        tools_by_name = {tool_obj.name: tool_obj for tool_obj in owner.get_tools()}
+        tool_obj = tools_by_name.get(tool_name)
+        if tool_obj is None:
+            return
+        output_policy = tool_obj.output_schema_policy
+        if output_policy is not None:
+            copied_policy: Any = (
+                copy.deepcopy(dict(output_policy)) if isinstance(output_policy, dict) else output_policy
+            )
+            handler_opt.setdefault(opt_keys.output_schema, copied_policy)
+        if tool_obj.title:
+            handler_opt.setdefault(opt_keys.tool_title, tool_obj.title)
+        if tool_obj.icons:
+            handler_opt.setdefault(opt_keys.tool_icons, [copy.deepcopy(dict(item)) for item in tool_obj.icons])
+        if tool_obj.meta:
+            handler_opt.setdefault(opt_keys.tool_meta, copy.deepcopy(dict(tool_obj.meta)))
+
+    def _resolve_role_descriptors(
+        self,
+        handler: BaseRouteHandler,
+        kind: "Kind",
+        metadata: dict[str, Any] | None = None,
+    ) -> "tuple[str | None, list[dict[str, Any]] | None, dict[str, Any] | None]":
+        """Resolve normalized `(title, icons, meta)` for `kind` with `handler.opt` precedence."""
+        fn = get_handler_function(handler)
+        effective_meta = (
+            metadata
+            if metadata is not None
+            else (get_mcp_metadata(handler, kind=kind) or get_mcp_metadata(fn, kind=kind) or {})
+        )
+        handler_opt = handler.opt or {}
+        opt_keys = self._config.opt_keys
+
+        title = clean_title(handler_opt.get(opt_keys.for_field("title", kind))) or clean_title(
+            effective_meta.get("title")
+        )
+        icons = clean_icons(handler_opt.get(opt_keys.for_field("icons", kind))) or clean_icons(
+            effective_meta.get("icons")
+        )
+        merged_meta: dict[str, Any] = {}
+        dec_meta = clean_meta(effective_meta.get("meta"))
+        if dec_meta is not None:
+            merged_meta.update(dec_meta)
+        opt_meta = clean_meta(handler_opt.get(opt_keys.for_field("meta", kind)))
+        if opt_meta is not None:
+            merged_meta.update(opt_meta)
+        return title, icons, (merged_meta or None)
+
     def _register_from_metadata(self, handler: BaseRouteHandler, metadata: dict[str, Any]) -> None:
         """Register MCP handler from extracted metadata."""
         if metadata["type"] == "tool":
             self._registry.register_tool(metadata["name"], handler)
         elif metadata["type"] == "resource":
-            self._registry.register_resource(metadata["name"], handler)
-            template = metadata.get("resource_template")
-            if template is not None:
-                self._registry.register_resource_template(metadata["name"], handler, template)
+            handler_opt = handler.opt or {}
+            uri_key = self._config.opt_keys.resource_uri
+            template_key = self._config.opt_keys.resource_template
+            dec_uri = metadata.get("resource_uri")
+            dec_template = metadata.get("resource_template")
+            opt_uri = handler_opt.get(uri_key)
+            opt_template = handler_opt.get(template_key)
+            effective_uri = opt_uri if isinstance(opt_uri, str) else (dec_uri if isinstance(dec_uri, str) else None)
+            effective_template = (
+                opt_template
+                if isinstance(opt_template, str)
+                else (dec_template if isinstance(dec_template, str) else None)
+            )
+            _, template_uri = classify_resource_uri(
+                uri=effective_uri,
+                uri_template=effective_template,
+            )
+            if template_uri is not None:
+                title, icons, meta = self._resolve_role_descriptors(handler, "resource", metadata)
+                self._registry.register_resource_template(
+                    metadata["name"],
+                    handler,
+                    template_uri,
+                    title=title,
+                    icons=icons,
+                    meta=meta,
+                )
+            else:
+                self._registry.register_resource(metadata["name"], handler)
         elif metadata["type"] == "prompt":
             owner = (
                 getattr(get_handler_function(handler), "__self__", None)
@@ -407,13 +628,15 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
             else:
                 prompt_name = metadata["name"]
                 instructions = None
+            title, icons, meta = self._resolve_role_descriptors(handler, "prompt", metadata)
             self._registry.register_prompt_handler(
                 prompt_name,
                 handler,
-                title=metadata.get("title"),
+                title=title,
                 description=metadata.get("description"),
                 arguments=metadata.get("arguments"),
-                icons=metadata.get("icons"),
+                icons=icons,
+                meta=meta,
                 instructions=instructions,
             )
 
@@ -421,16 +644,44 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         """Register MCP handler from handler.opt keys."""
         tool_key = self._config.opt_keys.tool
         resource_key = self._config.opt_keys.resource
+        uri_key = self._config.opt_keys.resource_uri
         template_key = self._config.opt_keys.resource_template
         prompt_key = self._config.opt_keys.prompt
         if tool_key in handler.opt:
             self._registry.register_tool(self._opt_name(handler, tool_key), handler)
         if resource_key in handler.opt:
             resource_name = self._opt_name(handler, resource_key)
-            self._registry.register_resource(resource_name, handler)
+            fn = get_handler_function(handler)
+            dec_meta = get_mcp_metadata(handler, kind="resource") or get_mcp_metadata(fn, kind="resource") or {}
+            dec_uri = dec_meta.get("resource_uri") if dec_meta.get("name") == resource_name else None
+            dec_template = dec_meta.get("resource_template") if dec_meta.get("name") == resource_name else None
+            opt_uri = handler.opt.get(uri_key)
             opt_template = handler.opt.get(template_key)
-            if isinstance(opt_template, str):
-                self._registry.register_resource_template(resource_name, handler, opt_template)
+            effective_uri = opt_uri if isinstance(opt_uri, str) else (dec_uri if isinstance(dec_uri, str) else None)
+            effective_template = (
+                opt_template
+                if isinstance(opt_template, str)
+                else (dec_template if isinstance(dec_template, str) else None)
+            )
+            if effective_uri is not None and effective_template is not None:
+                msg = f"Resource '{resource_name}' cannot specify both '{uri_key}' and '{template_key}'"
+                raise ValueError(msg)
+            _, template_uri = classify_resource_uri(
+                uri=effective_uri,
+                uri_template=effective_template,
+            )
+            if template_uri is not None:
+                title, icons, meta = self._resolve_role_descriptors(handler, "resource")
+                self._registry.register_resource_template(
+                    resource_name,
+                    handler,
+                    template_uri,
+                    title=title,
+                    icons=icons,
+                    meta=meta,
+                )
+            else:
+                self._registry.register_resource(resource_name, handler)
         if prompt_key in handler.opt:
             opt_keys = self._config.opt_keys
             owner = (
@@ -445,13 +696,15 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
             else:
                 prompt_name = raw_name
                 instructions = None
+            title, icons, meta = self._resolve_role_descriptors(handler, "prompt")
             self._registry.register_prompt_handler(
                 prompt_name,
                 handler,
-                title=handler.opt.get(opt_keys.prompt_title),
+                title=title,
                 description=handler.opt.get(opt_keys.prompt_description),
                 arguments=handler.opt.get(opt_keys.prompt_arguments),
-                icons=handler.opt.get(opt_keys.prompt_icons),
+                icons=icons,
+                meta=meta,
                 instructions=instructions,
             )
 
@@ -466,6 +719,25 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         if value is True:
             return str(get_handler_function(handler).__name__)
         return str(value)
+
+
+def _tool_header_validation_schema(handler: "BaseRouteHandler") -> "dict[str, Any]":
+    """Return explicit `input_schema` metadata when declared, otherwise generate from `handler`."""
+    fn = get_handler_function(handler)
+    metadata = get_mcp_metadata(handler, kind="tool") or get_mcp_metadata(fn, kind="tool") or {}
+    explicit_schema = metadata.get("input_schema")
+    if isinstance(explicit_schema, dict):
+        return explicit_schema
+    return generate_schema_for_handler(handler)
+
+
+def _is_options_only_handler(handler: "BaseRouteHandler") -> "bool":
+    """Return whether `handler` is an auto-generated OPTIONS-only route handler."""
+    raw_methods = getattr(handler, "http_methods", None)
+    if not raw_methods:
+        return False
+    methods = {str(getattr(method, "value", method)).upper() for method in raw_methods}
+    return methods == {"OPTIONS"}
 
 
 def _is_handler_registered(dyn_handler: "Any", route_handlers: "Sequence[Any]") -> "bool":

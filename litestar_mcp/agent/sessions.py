@@ -23,6 +23,7 @@ __all__ = (
 )
 
 ANONYMOUS_OWNER = "anonymous"
+"""Sentinel owner identifier assigned to unauthenticated agent sessions."""
 
 
 class SessionStore(Protocol):

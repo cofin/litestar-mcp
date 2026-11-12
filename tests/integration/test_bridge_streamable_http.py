@@ -23,11 +23,12 @@ from litestar.params import FromPath  # noqa: TC002
 
 from litestar_mcp import LitestarMCP, MCPConfig, MCPSkillsConfig
 from litestar_mcp.mcp.bridge import run_stdio_streamable_http_bridge
+from litestar_mcp.mcp.routes import MCP_PROTOCOL_VERSION_HEADER, MCP_SESSION_ID_HEADER
 from tests.conftest import BridgeBytesSink, BridgeQueuedBytesSource
 from tests.integration._auth import FORGED_TOKEN, build_oauth_backend, mint_access_token
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
 
@@ -126,6 +127,36 @@ def _rpc_line(method: "str", params: "dict[str, Any] | None" = None, *, msg_id: 
 
 def _parse_stdout(stdout: "BridgeBytesSink") -> "list[dict[str, Any]]":
     return [json.loads(line) for line in stdout.buffer.splitlines()]
+
+
+class _ConditionGateSink(BridgeBytesSink):
+    """Stdout byte sink setting `ready` once parsed JSON-RPC lines satisfy `predicate`."""
+
+    def __init__(self, predicate: "Callable[[list[dict[str, Any]]], bool]") -> "None":
+        super().__init__()
+        self._predicate = predicate
+        self.ready = anyio.Event()
+
+    async def send(self, item: "bytes") -> "None":
+        await super().send(item)
+        messages = [json.loads(line) for line in self.buffer.splitlines() if line.strip()]
+        if self._predicate(messages):
+            self.ready.set()
+
+
+class _AckGatedSource(BridgeQueuedBytesSource):
+    """Receive stream holding stdin EOF until `gate` has been triggered."""
+
+    def __init__(self, *chunks: "bytes", gate: "anyio.Event") -> "None":
+        super().__init__(*chunks)
+        self._gate = gate
+
+    async def receive(self, max_bytes: "int" = 65536) -> "bytes":
+        chunk = await super().receive(max_bytes)
+        if chunk:
+            return chunk
+        await self._gate.wait()
+        return b""
 
 
 @pytest.mark.anyio
@@ -347,12 +378,90 @@ async def test_bridge_forwards_skill_methods_with_name_header(tmp_path: "Path") 
     by_id = {message.get("id"): message for message in messages}
     assert exit_code == 0
     assert set(by_id) == {1, 2, 3, 4, 5}
-    for msg_id in (1, 2, 3, 4, 5):
-        assert "result" in by_id[msg_id]
-        assert by_id[msg_id].get("error") is None
+    assert all("result" in by_id[msg_id] and by_id[msg_id].get("error") is None for msg_id in (1, 2, 3, 4, 5))
     assert not any(message.get("error", {}).get("code") == -32020 for message in messages)
 
     skill_entry = by_id[3]["result"]["skill"]
     digest = next(entry["digest"] for entry in skill_entry["resources"] if entry["uri"] == "skill://demo/SKILL.md")
     text = by_id[5]["result"]["contents"][0]["text"]
     assert f"sha256:{hashlib.sha256(text.encode()).hexdigest()}" == digest
+
+
+@pytest.mark.anyio
+@pytest.mark.integration
+async def test_bridge_2025_initialize_subscribe_sse_and_session_termination() -> "None":
+    seen_sessions: list[str] = []
+
+    @get("/publish", mcp_tool="publish")
+    async def publish_tool(request: "Request[Any, Any, Any]") -> "dict[str, str]":
+        sid = request.headers.get(MCP_SESSION_ID_HEADER)
+        if sid:
+            seen_sessions.append(sid)
+        mcp_plugin = request.app.plugins.get(LitestarMCP)
+        await mcp_plugin.registry.notify_resource_updated("litestar://live")
+        return {"published": "litestar://live"}
+
+    def _all_received(msgs: "list[dict[str, Any]]") -> "bool":
+        ids = {msg.get("id") for msg in msgs}
+        has_update = any(msg.get("method") == "notifications/resources/updated" for msg in msgs)
+        return {1, 2, 3}.issubset(ids) and has_update
+
+    app = Litestar(route_handlers=[publish_tool], plugins=[LitestarMCP(MCPConfig())])
+    with _run_app(app) as base_url:
+        stdout = _ConditionGateSink(_all_received)
+        stderr = io.StringIO()
+        stdin = _AckGatedSource(
+            _rpc_line(
+                "initialize",
+                {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": {"name": "live-bridge", "version": "1.0"},
+                },
+                msg_id=1,
+            ),
+            _rpc_line("notifications/initialized", msg_id=None),
+            _rpc_line("resources/subscribe", {"uri": "litestar://live"}, msg_id=2),
+            _rpc_line("tools/call", {"name": "publish", "arguments": {}}, msg_id=3),
+            gate=stdout.ready,
+        )
+
+        with anyio.fail_after(5):
+            exit_code = await run_stdio_streamable_http_bridge(
+                f"{base_url}/mcp",
+                stdin=stdin,
+                stdout=stdout,
+                stderr=stderr,
+                timeout=5,
+            )
+
+        assert seen_sessions
+        async with httpx2.AsyncClient(trust_env=False) as probe:
+            post_delete = await probe.post(
+                f"{base_url}/mcp",
+                headers={
+                    "Accept": "application/json, text/event-stream",
+                    "Content-Type": "application/json",
+                    MCP_PROTOCOL_VERSION_HEADER: "2025-11-25",
+                    MCP_SESSION_ID_HEADER: seen_sessions[0],
+                },
+                json={"jsonrpc": "2.0", "id": 99, "method": "ping", "params": {}},
+                timeout=5,
+            )
+
+    messages = _parse_stdout(stdout)
+    by_id = {msg["id"]: msg for msg in messages if "id" in msg}
+    updates = [msg for msg in messages if msg.get("method") == "notifications/resources/updated"]
+
+    assert exit_code == 0
+    assert stderr.getvalue() == ""
+    assert set(by_id) == {1, 2, 3}
+    assert by_id[1]["result"]["protocolVersion"] == "2025-11-25"
+    assert by_id[1]["result"]["capabilities"]["resources"]["subscribe"] is True
+    assert "error" not in by_id[2]
+    assert json.loads(by_id[3]["result"]["content"][0]["text"]) == {"published": "litestar://live"}
+    assert updates == [
+        {"jsonrpc": "2.0", "method": "notifications/resources/updated", "params": {"uri": "litestar://live"}}
+    ]
+    assert "_meta" not in updates[0]["params"]
+    assert post_delete.status_code == 404

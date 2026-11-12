@@ -7,7 +7,7 @@ import os
 import shlex
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -16,11 +16,10 @@ from anyio.to_thread import run_sync as run_sync_in_worker_thread
 from click.exceptions import Exit as ClickExit
 from litestar.cli._utils import LitestarGroup
 from litestar.exceptions import SerializationException
-from litestar.serialization import decode_json
 from rich.console import Console
 from rich.json import JSON
 
-from litestar_mcp.core.serialization import format_json
+from litestar_mcp.core.serialization import decode_json, format_json
 from litestar_mcp.mcp import bridge as bridge_transport
 from litestar_mcp.mcp import stdio as stdio_transport
 from litestar_mcp.mcp.bridge import BEARER_TOKEN_PREFIX, DEFAULT_AUTH_HEADER_NAME
@@ -46,6 +45,16 @@ if TYPE_CHECKING:
     from litestar_mcp.mcp.bridge import TokenProvider
     from litestar_mcp.mcp.plugin import LitestarMCP
 
+__all__ = (
+    "ToolExecutor",
+    "export_tool_spec",
+    "get_mcp_plugin",
+    "list_resources",
+    "list_skills",
+    "list_tools",
+    "mcp_group",
+)
+
 
 def get_mcp_plugin(app: "Litestar") -> "LitestarMCP":
     """Retrieve the MCP plugin from the Litestar application's plugins.
@@ -62,11 +71,9 @@ def get_mcp_plugin(app: "Litestar") -> "LitestarMCP":
     Raises:
         RuntimeError: If the MCP plugin is not found
     """
-    from contextlib import suppress
-
     from litestar_mcp.mcp.plugin import LitestarMCP
 
-    with suppress(KeyError):
+    with contextlib.suppress(KeyError):
         return app.plugins.get(LitestarMCP)
     msg = "Failed to initialize MCP commands. The required LitestarMCP plugin is missing."
     raise RuntimeError(msg)  # pragma: no cover
@@ -196,14 +203,18 @@ def list_resources(app: "Litestar") -> "None":
     plugin = get_mcp_plugin(app)
     console = Console()
     resources = _filtered_resources(plugin)
+    templates = _filtered_resource_templates(plugin)
+    combined: dict[str, tuple[Any, str | None]] = {name: (handler, None) for name, handler in resources.items()}
+    for name, template_entry in templates.items():
+        combined.setdefault(name, (template_entry.handler, template_entry.template))
 
-    if not resources:  # pragma: no cover
+    if not combined:  # pragma: no cover
         console.print("[yellow]No MCP resources discovered.[/yellow]")
         return
 
-    console.print(f"[bold green]Discovered {len(resources)} resources:[/bold green]")
-    for name in sorted(resources.keys()):
-        handler = resources[name]
+    console.print(f"[bold green]Discovered {len(combined)} resources:[/bold green]")
+    for name in sorted(combined.keys()):
+        handler, template_uri = combined[name]
         fn = get_handler_function(handler)
         description = render_description(
             handler,
@@ -214,7 +225,36 @@ def list_resources(app: "Litestar") -> "None":
             opt_keys=plugin.config.opt_keys,
         )
         first_line = description.split("\n")[0].strip()
-        console.print(f"- [bold]{name}[/bold]: {first_line}")
+        suffix = f" ({template_uri})" if template_uri is not None else ""
+        console.print(f"- [bold]{name}[/bold]{suffix}: {first_line}")
+
+
+@mcp_group.command(name="list-skills")  # type: ignore[untyped-decorator]
+@click.option("--tag", "tags", multiple=True, help="Filter skills by tag.")
+@click.option("--query", default=None, help="Filter skills by substring query.")
+def list_skills(
+    ctx: "click.Context",
+    tags: "tuple[str, ...]",
+    query: "str | None",
+) -> "None":
+    """List all available MCP skills."""
+    plugin = _get_ctx_plugin(ctx)
+    console = Console()
+    if plugin.skill_catalog is None:
+        console.print("[yellow]No MCP skills configured.[/yellow]")
+        return
+
+    skills = asyncio.run(plugin.skill_catalog.list_skills(tags=tags or None, query=query))
+    visible_skills = [skill for skill in skills if should_include_handler(skill.name, set(skill.tags), plugin.config)]
+    if not visible_skills:
+        console.print("[yellow]No MCP skills discovered.[/yellow]")
+        return
+
+    console.print(f"[bold green]Discovered {len(visible_skills)} skills:[/bold green]")
+    for skill in visible_skills:
+        first_line = skill.description.strip().splitlines()[0].strip() if skill.description.strip() else ""
+        suffix = f" ({', '.join(skill.tags)})" if skill.tags else ""
+        console.print(f"- [bold]{skill.name}[/bold]: {first_line}{suffix}")
 
 
 mcp_group.add_command(ToolExecutor(name="run", help="Run a discovered MCP tool by name."))  # pragma: no cover
@@ -442,7 +482,11 @@ def _get_ctx_app(ctx: "click.Context") -> "Litestar":
 
 def _handler_tags(handler: "Any") -> "set[str]":
     raw_tags = getattr(handler, "tags", None) or ()
-    return {str(tag) for tag in raw_tags}
+    tags = {str(tag) for tag in raw_tags}
+    resolve_tags = getattr(handler, "resolve_tags", None)
+    if callable(resolve_tags) and getattr(handler, "ownership_layers", None):
+        tags.update(str(tag) for tag in cast("Iterable[Any]", resolve_tags()))
+    return tags
 
 
 def _filtered_tools(plugin: "LitestarMCP") -> "dict[str, Any]":
@@ -458,6 +502,14 @@ def _filtered_resources(plugin: "LitestarMCP") -> "dict[str, Any]":
         name: handler
         for name, handler in plugin.discovered_resources.items()
         if should_include_handler(name, _handler_tags(handler), plugin.config)
+    }
+
+
+def _filtered_resource_templates(plugin: "LitestarMCP") -> "dict[str, Any]":
+    return {
+        name: entry
+        for name, entry in plugin.registry.templates.items()
+        if should_include_handler(name, _handler_tags(entry.handler), plugin.config)
     }
 
 

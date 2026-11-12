@@ -4,7 +4,7 @@ title: Tasks, Queues & Durable Workflows API
 
 # Tasks, Queues & Durable Workflows API
 
-API reference for the MCP Tasks protocol runtime (`MCPTaskExecutor`, `MCPTaskRuntime`, `MCPTaskStore`, `TaskRecord`, `ToolTaskCall`, `TaskLookupError`, `TaskStateError`) and the `litestar_mcp.queues` distributed execution layer (`QueueTaskExecutor`, `DurableWorkflowEngine`, `WorkflowStore`, `WorkflowRun`, `NodeRecord`, `TaskDependencyChain`, `QueuedAgentChatController`, `QueuedTurnManager`, `QueuedTurn`, `AgentRegistry`, `PrincipalSnapshot`).
+API reference for the MCP Tasks protocol runtime (`MCPTaskExecutor`, `MCPTaskRuntime`, `MCPTaskStore` including `MCPTaskStore.update_status_message`, `TaskRecord`, `ToolTaskCall` carrying `progress_token`, `session_id`, and `log_level` for promoted progress and log forwarding, `TaskLookupError`, `TaskStateError`) and the `litestar_mcp.queues` distributed execution layer (`QueueTaskExecutor`, `DurableWorkflowEngine`, `WorkflowStore`, `WorkflowRun`, `NodeRecord`, `TaskDependencyChain`, `QueuedAgentChatController`, `QueuedTurnManager`, `QueuedTurn`, `AgentRegistry`, `PrincipalSnapshot`).
 
 For architectural guides, see [MCP Tasks & Human-in-the-Loop](../queues/mcp-tasks.md), [Distributed Task Queues](../queues/distributed-task-queues.md), [Durable DAG Workflows](../queues/durable-workflows.md), and [Queued Agent Turns](../queues/queued-agent-turns.md).
 

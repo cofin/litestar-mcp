@@ -4,19 +4,26 @@ import asyncio
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import Mock
 
 import pytest
 from click import Context, Group
 from click.testing import CliRunner
-from litestar import Litestar, get
+from litestar import Controller, Litestar, Router, get
 from litestar.cli._utils import LitestarEnv
 
-from litestar_mcp import LitestarMCP, MCPConfig
+from litestar_mcp import LitestarMCP, MCPConfig, MCPSkillsConfig, Skill, mcp_prompt, mcp_resource
 from litestar_mcp.core.serialization import from_json
 from litestar_mcp.mcp.cli import ToolExecutor, list_resources, list_tools, mcp_group
 from litestar_mcp.utils import validate_tool_descriptions
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from litestar import Request
+
+    from litestar_mcp.mcp.skills import SkillFile
 
 
 @pytest.fixture(scope="session")
@@ -70,6 +77,7 @@ def test_mcp_group_help_command(cli_runner: CliRunner) -> None:
     assert "Manage MCP tools and resources" in result.output
     assert "list-tools" in result.output
     assert "list-resources" in result.output
+    assert "list-skills" in result.output
     assert "export-tool-spec" in result.output
     assert "run" in result.output
     assert "bridge" in result.output
@@ -118,7 +126,6 @@ def test_mcp_stdio_passes_app_and_options(
 def test_mcp_stdio_has_no_remote_options(
     cli_runner: CliRunner,
     make_env: Callable[..., LitestarEnv],
-    captured_stdio: dict[str, Any],
     option: str,
 ) -> None:
     result = cli_runner.invoke(mcp_group, ["stdio", option, "x"], obj=make_env())
@@ -490,3 +497,227 @@ def test_cli_list_and_run_respect_should_include_handler_filters(cli_runner: Cli
 
     assert list_tools.help == "List all available MCP tools."
     assert list_resources.help == "List all available MCP resources."
+
+
+class _StaticCLISkillSource:
+    """In-memory SkillSource serving pre-built Skill definitions for CLI tests."""
+
+    def __init__(self, skills: "Sequence[Skill]") -> None:
+        self._skills = list(skills)
+        self._by_name = {skill.name: skill for skill in skills}
+
+    async def list_skills(self, request: "Request[Any, Any, Any]", /) -> "Sequence[Skill]":
+        del request
+        return self._skills
+
+    async def get_skill(self, request: "Request[Any, Any, Any]", name: "str", /) -> "Skill | None":
+        del request
+        return self._by_name.get(name)
+
+    async def read_file(self, request: "Request[Any, Any, Any]", skill: "Skill", file: "SkillFile", /) -> "bytes":
+        del request, skill
+        if file.content is None:
+            msg = f"Missing inline content for {file.uri}"
+            raise LookupError(msg)
+        return file.content
+
+
+@pytest.mark.parametrize(
+    ("args", "skills_config", "use_dict_obj", "expected_substrings", "absent_substrings"),
+    [
+        pytest.param(
+            ["list-skills"],
+            MCPSkillsConfig(
+                sources=[
+                    _StaticCLISkillSource(
+                        [
+                            Skill.build("alpha", "Alpha operations skill", tags=["ops"]),
+                            Skill.build("beta", "Beta docs summary", tags=["docs"]),
+                        ]
+                    )
+                ]
+            ),
+            False,
+            ["Discovered 2 skills:", "alpha: Alpha operations skill (ops)", "beta: Beta docs summary (docs)"],
+            [],
+            id="all-skills-env",
+        ),
+        pytest.param(
+            ["list-skills", "--tag", "ops"],
+            MCPSkillsConfig(
+                sources=[
+                    _StaticCLISkillSource(
+                        [
+                            Skill.build("alpha", "Alpha operations skill", tags=["ops"]),
+                            Skill.build("beta", "Beta docs summary", tags=["docs"]),
+                        ]
+                    )
+                ]
+            ),
+            True,
+            ["Discovered 1 skills:", "alpha: Alpha operations skill (ops)"],
+            ["beta"],
+            id="tag-filter-dict-obj",
+        ),
+        pytest.param(
+            ["list-skills", "--query", "beta"],
+            MCPSkillsConfig(
+                sources=[
+                    _StaticCLISkillSource(
+                        [
+                            Skill.build("alpha", "Alpha operations skill", tags=["ops"]),
+                            Skill.build("beta", "Beta docs summary", tags=["docs"]),
+                        ]
+                    )
+                ]
+            ),
+            False,
+            ["Discovered 1 skills:", "beta: Beta docs summary (docs)"],
+            ["alpha"],
+            id="query-filter",
+        ),
+        pytest.param(
+            ["list-skills"],
+            MCPSkillsConfig(
+                sources=[
+                    _StaticCLISkillSource(
+                        [
+                            Skill.build("multiline", "\n  First line.\nSecond line."),
+                        ]
+                    )
+                ]
+            ),
+            False,
+            ["Discovered 1 skills:", "multiline: First line."],
+            ["Second line."],
+            id="multiline-description",
+        ),
+        pytest.param(
+            ["list-skills"],
+            None,
+            False,
+            ["No MCP skills configured."],
+            ["Discovered"],
+            id="skills-unconfigured",
+        ),
+    ],
+)
+def test_cli_list_skills_outputs_and_filters(
+    cli_runner: CliRunner,
+    args: list[str],
+    skills_config: MCPSkillsConfig | None,
+    use_dict_obj: bool,
+    expected_substrings: list[str],
+    absent_substrings: list[str],
+) -> None:
+    """Litestar mcp list-skills prints visible skills, applies --tag/--query, and handles unconfigured catalogs."""
+    app = Litestar(plugins=[LitestarMCP(MCPConfig(skills=skills_config))])
+    obj: Any = (
+        {"app": app}
+        if use_dict_obj
+        else LitestarEnv(app_path="tests.unit.test_cli:app", app=app, cwd=Path.cwd(), host=None, port=None)
+    )
+
+    result = cli_runner.invoke(mcp_group, args, obj=obj)
+
+    assert result.exit_code == 0, result.output
+    assert all(expected in result.output for expected in expected_substrings)
+    assert all(absent not in result.output for absent in absent_substrings)
+
+
+@pytest.mark.parametrize(
+    ("skills", "expected_substrings", "absent_substrings"),
+    [
+        pytest.param(
+            [
+                Skill.build("public", "Public ops skill", tags=["ops"]),
+                Skill.build("secret", "Hidden internal skill", tags=["internal"]),
+            ],
+            ["Discovered 1 skills:", "public: Public ops skill (ops)"],
+            ["secret"],
+            id="hides-excluded-tag",
+        ),
+        pytest.param(
+            [
+                Skill.build("secret", "Hidden internal skill", tags=["internal"]),
+            ],
+            ["No MCP skills discovered."],
+            ["secret", "Discovered"],
+            id="all-hidden-prints-empty-message",
+        ),
+    ],
+)
+def test_cli_list_skills_exclude_tags(
+    cli_runner: CliRunner,
+    skills: list[Skill],
+    expected_substrings: list[str],
+    absent_substrings: list[str],
+) -> None:
+    """Litestar mcp list-skills respects MCPConfig.exclude_tags and reports empty discovery cleanly."""
+    config = MCPConfig(
+        exclude_tags=["internal"],
+        skills=MCPSkillsConfig(sources=[_StaticCLISkillSource(skills)]),
+    )
+    app = Litestar(plugins=[LitestarMCP(config=config)])
+    env = LitestarEnv(app_path="tests.unit.test_cli:app", app=app, cwd=Path.cwd(), host=None, port=None)
+
+    result = cli_runner.invoke(mcp_group, ["list-skills"], obj=env)
+
+    assert result.exit_code == 0, result.output
+    assert all(expected in result.output for expected in expected_substrings)
+    assert all(absent not in result.output for absent in absent_substrings)
+
+
+def test_cli_list_skills_missing_plugin_raises(cli_runner: CliRunner) -> None:
+    """Litestar mcp list-skills raises RuntimeError when LitestarMCP is not installed on the app."""
+    app = Litestar(route_handlers=[])
+    env = LitestarEnv(app_path="tests.unit.test_cli:app", app=app, cwd=Path.cwd(), host=None, port=None)
+
+    result = cli_runner.invoke(mcp_group, ["list-skills"], obj=env)
+
+    assert result.exit_code != 0
+    assert isinstance(result.exception, RuntimeError)
+    assert "LitestarMCP" in str(result.exception)
+
+
+def test_cli_inherits_controller_and_router_tags_and_lists_template_resources(
+    cli_runner: CliRunner,
+) -> None:
+    """Verify CLI discovery honors inherited Router/Controller tags and includes resource URI templates."""
+
+    class InternalController(Controller):
+        path = "/internal"
+        tags = ["internal"]
+
+        @get("/secret-tool", mcp_tool="secret_tool", sync_to_thread=False)
+        def secret_tool(self) -> dict[str, str]:
+            return {"hidden": "yes"}
+
+        @mcp_resource("secret_res", uri="app://internal/secret")
+        @get("/secret-res", sync_to_thread=False)
+        def secret_res(self) -> dict[str, str]:
+            return {"hidden": "yes"}
+
+        @mcp_prompt("secret_prompt")
+        @get("/secret-prompt", sync_to_thread=False)
+        def secret_prompt(self) -> str:
+            return "hidden prompt"
+
+    @mcp_resource("user_card", uri_template="app://users/{user_id}")
+    @get("/users/{user_id:str}", sync_to_thread=False)
+    def user_card(user_id: str) -> dict[str, str]:
+        return {"user": user_id}
+
+    router = Router(path="/v1", route_handlers=[InternalController, user_card])
+    app = Litestar(route_handlers=[router], plugins=[LitestarMCP(MCPConfig(exclude_tags=["internal"]))])
+    env = LitestarEnv(app_path="tests.unit.test_cli:app", app=app, cwd=Path.cwd(), host=None, port=None)
+
+    tools_res = cli_runner.invoke(mcp_group, ["list-tools"], obj=env)
+    res_res = cli_runner.invoke(mcp_group, ["list-resources"], obj=env)
+
+    assert tools_res.exit_code == 0
+    assert "secret_tool" not in tools_res.output
+    assert res_res.exit_code == 0
+    assert "secret_res" not in res_res.output
+    assert "user_card" in res_res.output
+    assert "app://users/{user_id}" in res_res.output

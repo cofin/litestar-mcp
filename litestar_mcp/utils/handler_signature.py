@@ -6,7 +6,7 @@ import logging
 import re
 from collections import deque
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import UnionType
 from typing import TYPE_CHECKING, Annotated, Any, Union, cast, get_args, get_origin, get_type_hints
 
@@ -15,7 +15,15 @@ from litestar.constants import RESERVED_KWARGS
 from litestar.di import Dependency as DiDependency
 from litestar.di import NamedDependency, Provide
 from litestar.enums import ParamType
-from litestar.params import DependencyKwarg, FromPath, FromQuery, JSONBody, KwargDefinition, ParameterKwarg
+from litestar.params import (
+    DependencyKwarg,
+    FromPath,
+    FromQuery,
+    JSONBody,
+    KwargDefinition,
+    ParameterKwarg,
+    QueryParameter,
+)
 from litestar.types import Empty
 
 from litestar_mcp.core.typing import DISHKA_INSTALLED, DishkaDependencyKey
@@ -25,6 +33,20 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from litestar.handlers import BaseRouteHandler
+
+__all__ = (
+    "AdvertisedHandlerParameter",
+    "DIParameterSpec",
+    "extract_advertised_handler_arguments",
+    "extract_di_parameter",
+    "get_advertised_handler_parameters",
+    "has_dishka_parameters",
+    "iter_dependency_input_parameters",
+    "normalize_synthesized_handler_signature",
+    "parameter_aliases",
+    "resolve_tool_argument_aliases",
+    "strip_docstring_sections",
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -753,17 +775,18 @@ def normalize_synthesized_handler_signature(
     *,
     path: "str" = "",
     dependencies: "Mapping[str, Any] | None" = None,
+    allow_body: "bool" = True,
 ) -> "Callable[..., Any]":
-    """Annotate plain parameters on a synthesized internal route handler for Litestar 2.25+."""
+    """Annotate plain parameters and preserve source annotations on synthesized route handlers."""
     target = source_fn or wrapper_fn
     try:
         hints = get_type_hints(target, include_extras=True)
-    except Exception:  # noqa: BLE001
-        hints = dict(getattr(target, "__annotations__", {}) or {})
+    except (AttributeError, NameError, TypeError, ValueError):
+        hints = _read_raw_annotations(target)
 
     try:
         raw_sig = inspect.signature(wrapper_fn)
-    except (TypeError, ValueError):
+    except (AttributeError, NameError, TypeError, ValueError):
         return wrapper_fn
 
     path_param_names = set(_PATH_PARAM_RE.findall(path)) if path else set()
@@ -772,11 +795,29 @@ def normalize_synthesized_handler_signature(
         explicit_deps = _capture_class_dependencies()
 
     new_params: list[inspect.Parameter] = []
-    new_annotations: dict[str, Any] = dict(getattr(wrapper_fn, "__annotations__", {}) or {})
+    new_annotations = _read_raw_annotations(wrapper_fn)
     changed = False
+    if source_fn is not None and source_fn is not wrapper_fn:
+        for key, value in _read_raw_annotations(source_fn).items():
+            if key not in new_annotations or new_annotations[key] != value:
+                new_annotations[key] = value
+                changed = True
 
     for pname, param in raw_sig.parameters.items():
         ann = hints.get(pname, param.annotation)
+        if not allow_body and pname == "data":
+            renamed_ann = _resolve_bodyless_data_annotation(param, ann, path_param_names, explicit_deps)
+            if renamed_ann is not None:
+                renamed_kind = (
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD
+                    if param.kind is inspect.Parameter.POSITIONAL_ONLY
+                    else param.kind
+                )
+                new_params.append(param.replace(name="_mcp_param_data", kind=renamed_kind, annotation=renamed_ann))
+                new_annotations.pop("data", None)
+                new_annotations["_mcp_param_data"] = renamed_ann
+                changed = True
+                continue
         wrapped_ann = _resolve_synthesized_parameter_annotation(pname, param, ann, path_param_names, explicit_deps)
         if wrapped_ann is None:
             new_params.append(param)
@@ -787,8 +828,42 @@ def normalize_synthesized_handler_signature(
 
     if changed:
         wrapper_fn.__annotations__ = new_annotations
-        setattr(wrapper_fn, "__signature__", raw_sig.replace(parameters=new_params))
+        return_ann = new_annotations.get("return", raw_sig.return_annotation)
+        setattr(wrapper_fn, "__signature__", raw_sig.replace(parameters=new_params, return_annotation=return_ann))
     return wrapper_fn
+
+
+def _resolve_bodyless_data_annotation(
+    param: "inspect.Parameter",
+    ann: "Any",
+    path_param_names: "set[str]",
+    explicit_deps: "Mapping[str, Any]",
+) -> "Any | None":
+    if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD) or "data" in path_param_names:
+        return None
+    di_spec = extract_di_parameter("data", ann, default=param.default, explicit_dependencies=explicit_deps)
+    if di_spec is not None or _is_context_or_connection_type(ann):
+        return None
+    base_ann = Any if ann is inspect.Parameter.empty or isinstance(ann, str) else ann
+    inner_type, metas = _unwrap_all_annotated_metadata(base_ann)
+    non_query_param_meta = any(
+        isinstance(meta, ParameterKwarg) and meta.param_type in {ParamType.HEADER, ParamType.COOKIE} for meta in metas
+    )
+    if non_query_param_meta:
+        annotated_args = (inner_type, *metas)
+        return cast("Any", Annotated)[annotated_args]
+    query_meta = next(
+        (meta for meta in metas if isinstance(meta, ParameterKwarg) and meta.param_type is ParamType.QUERY),
+        None,
+    )
+    other_metas = [
+        meta for meta in metas if not (isinstance(meta, ParameterKwarg) and meta.param_type is ParamType.QUERY)
+    ]
+    effective_query = (
+        replace(query_meta, name=query_meta.name or "data") if query_meta is not None else QueryParameter(name="data")
+    )
+    annotated_args = (inner_type, *other_metas, effective_query)
+    return cast("Any", Annotated)[annotated_args]
 
 
 def _has_litestar_kwarg_marker(annotation: "Any") -> "bool":
@@ -801,6 +876,14 @@ def _is_context_or_connection_type(annotation: "Any") -> "bool":
     if not isinstance(inner, type):
         return False
     return issubclass(inner, ASGIConnection) or inner.__name__ == "ToolContext"
+
+
+def _read_raw_annotations(fn: "Callable[..., Any]") -> "dict[str, Any]":
+    try:
+        raw = getattr(fn, "__annotations__", None)
+    except (AttributeError, NameError, TypeError, ValueError):
+        return {}
+    return dict(raw) if isinstance(raw, Mapping) else {}
 
 
 def _capture_class_dependencies() -> "dict[str, Any]":
@@ -848,18 +931,3 @@ def _resolve_synthesized_parameter_annotation(
     if pname in path_param_names:
         return cast("Any", FromPath)[ann]
     return cast("Any", JSONBody)[ann] if pname == "data" else cast("Any", FromQuery)[ann]
-
-
-__all__ = (
-    "AdvertisedHandlerParameter",
-    "DIParameterSpec",
-    "extract_advertised_handler_arguments",
-    "extract_di_parameter",
-    "get_advertised_handler_parameters",
-    "has_dishka_parameters",
-    "iter_dependency_input_parameters",
-    "normalize_synthesized_handler_signature",
-    "parameter_aliases",
-    "resolve_tool_argument_aliases",
-    "strip_docstring_sections",
-)
