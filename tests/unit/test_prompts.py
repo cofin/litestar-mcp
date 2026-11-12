@@ -4,12 +4,13 @@ from collections.abc import Callable  # noqa: TC003
 from typing import Any
 
 import pytest
-from litestar import Litestar, Request, Response, get
+from litestar import Litestar, Request, Response, Router, get
 from litestar.exceptions import ImproperlyConfiguredException
 from litestar.status_codes import HTTP_400_BAD_REQUEST, HTTP_500_INTERNAL_SERVER_ERROR
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig, PromptController, SkillController, mcp_prompt, prompt
+from litestar_mcp.mcp.executor import MCPToolErrorResult, execute_handler
 from litestar_mcp.mcp.registry import (
     PromptRegistration,
     Registry,
@@ -1094,8 +1095,6 @@ class TestCaptureAsgiResponseStatusZero:
 
     @pytest.mark.asyncio
     async def test_asgi_app_without_response_start_classified_as_500(self) -> "None":
-        from litestar_mcp.mcp.executor import MCPToolErrorResult, execute_handler
-
         class SilentResponse(Response[None]):
             def to_asgi_response(self, app: "Any", request: "Any", **kwargs: "Any") -> "Any":
                 async def _silent_asgi(scope: "Any", receive: "Any", send: "Any") -> "None":
@@ -1419,3 +1418,43 @@ def test_render_prompt_entry_opt_precedence_and_meta_shallow_merge(
     assert entry | expected_fields == entry
     assert absent_fields.isdisjoint(entry.keys())
     assert reg.meta == original_meta
+
+
+def test_prompts_inherit_router_and_controller_tags_for_exclusion_and_inclusion_filters() -> None:
+    """Verify prompts inherit Router and PromptController tags when filtered by exclude_tags / include_tags."""
+
+    class InternalPrompts(PromptController):
+        path = "/ctrl-prompts"
+        prefix = "ops"
+        tags = ["internal"]
+
+        @prompt(name="secret_runbook", description="Internal runbook.")
+        async def secret_runbook(self) -> str:
+            return "secret"
+
+    @get("/router-hidden", mcp_prompt="router_hidden", sync_to_thread=False)
+    def router_hidden() -> dict[str, Any]:
+        return {"messages": [{"role": "user", "content": {"type": "text", "text": "hidden"}}]}
+
+    @get("/public-prompt", mcp_prompt="public_prompt", sync_to_thread=False)
+    def public_prompt() -> dict[str, Any]:
+        return {"messages": [{"role": "user", "content": {"type": "text", "text": "public"}}]}
+
+    internal_router = Router(path="/internal", tags=["internal"], route_handlers=[router_hidden, InternalPrompts])
+    excluded_app = Litestar(
+        route_handlers=[internal_router, public_prompt],
+        plugins=[LitestarMCP(MCPConfig(exclude_tags=["internal"]))],
+    )
+    with TestClient(app=excluded_app) as client:
+        listed = [item["name"] for item in _rpc(client, "prompts/list")["result"]["prompts"]]
+        assert listed == ["public_prompt"]
+        assert _rpc(client, "prompts/get", {"name": "router_hidden"})["error"]["code"] == -32602
+        assert _rpc(client, "prompts/get", {"name": "ops/secret_runbook"})["error"]["code"] == -32602
+
+    included_app = Litestar(
+        route_handlers=[internal_router, public_prompt],
+        plugins=[LitestarMCP(MCPConfig(include_tags=["internal"]))],
+    )
+    with TestClient(app=included_app) as client:
+        inc_listed = {item["name"] for item in _rpc(client, "prompts/list")["result"]["prompts"]}
+        assert inc_listed == {"router_hidden", "ops/secret_runbook"}

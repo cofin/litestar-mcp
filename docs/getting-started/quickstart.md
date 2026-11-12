@@ -85,7 +85,6 @@ async def get_runtime_config() -> dict[str, Any]:
     media_type="text/html;profile=mcp-app",
     mcp_resource="notes_viewer",
     mcp_resource_uri="ui://notes/viewer",
-    mcp_resource_mime_type="text/html;profile=mcp-app",
 )
 async def get_notes_viewer() -> str:
     """Render an interactive MCP App view for created notes."""

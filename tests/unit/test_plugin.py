@@ -5,7 +5,8 @@ import logging
 from typing import Any
 
 import pytest
-from litestar import Litestar, get, post
+from litestar import Litestar, Router, get, post
+from litestar.exceptions import ImproperlyConfiguredException
 from litestar.openapi.config import OpenAPIConfig
 from litestar.routes import HTTPRoute
 from litestar.testing import TestClient
@@ -212,8 +213,6 @@ class TestLitestarMCP:
         assert parsed["version"] == "1.0"
 
     def test_nested_router_tool_discovery(self) -> "None":
-        from litestar import Router
-
         @get("/nested-tool", opt={"mcp_tool": "nested_tool"})
         async def nested_tool() -> "dict[str, Any]":
             return {"result": "nested"}
@@ -468,3 +467,40 @@ def test_receive_route_plugin_captures_app_and_ownership_layers_before_startup()
         prompts = _rpc(client, "prompts/list")["result"]["prompts"]
     assert {"hello", "ping_skill"} <= {tool["name"] for tool in tools}
     assert any(prompt["name"] == "boot/guide" for prompt in prompts)
+
+
+def test_post_startup_register_tool_mounts_live_and_rejects_conflicting_routes() -> None:
+    """Verify plugin.register_tool works after Litestar startup and rejects duplicate (path, method) routes."""
+    plugin = LitestarMCP()
+    app = Litestar(plugins=[plugin])
+
+    @tool(name="late_adder", description="Add numbers after startup.")
+    def late_adder(a: int, b: int = 2) -> dict[str, int]:
+        return {"sum": a + b}
+
+    with TestClient(app=app) as client:
+        plugin.register_tool(late_adder)
+        tools = _rpc(client, "tools/list")["result"]["tools"]
+        assert any(item["name"] == "late_adder" for item in tools)
+        call_res = _rpc(client, "tools/call", {"name": "late_adder", "arguments": {"a": 5}})["result"]
+        assert call_res["isError"] is False
+        assert json.loads(call_res["content"][0]["text"]) == {"sum": 7}
+
+        @post("/mcp/internal/tools/late_adder", mcp_tool="late_adder_dup", sync_to_thread=False)
+        def conflicting_route() -> dict[str, str]:
+            return {"bad": "dup"}
+
+        with pytest.raises(ImproperlyConfiguredException, match="late_adder"):
+            plugin.register_dynamic_handler(conflicting_route)
+
+
+def test_plugin_rejects_mixed_decorator_uri_and_route_opt_template() -> None:
+    """Verify mixing @mcp_resource(uri=...) and @get(mcp_resource_template=...) raises ValueError."""
+
+    @mcp_resource("mixed_panel", uri="ui://panel/a")
+    @get("/mixed/{slug:str}", mcp_resource_template="ui://panel/{slug}", sync_to_thread=False)
+    def mixed_panel(slug: str) -> str:
+        return slug
+
+    with pytest.raises(ValueError, match="Cannot specify both 'uri' and 'uri_template'"):
+        Litestar(route_handlers=[mixed_panel], plugins=[LitestarMCP()])

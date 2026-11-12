@@ -80,13 +80,13 @@ runtime = AgentRuntime(
 app = Litestar(
     stores=stores,
     plugins=[
-        LitestarMCP(MCPConfig(tasks=True, session_ttl_seconds=3600.0)),
+        LitestarMCP(MCPConfig(tasks=True)),
         runtime,
     ],
 )
 ```
 
-Because `StoreRegistry(default_factory=root_redis_store.with_namespace)` automatically namespaces every named store lookup, `LitestarMCP` resolves `"litestar_mcp_tasks"` and reserved `"litestar_mcp_sessions"` (`MCPSessionStore`) and `DurableWorkflowEngine` resolves `"litestar_mcp_workflows"` against Redis automatically, while `AgentRuntime` keeps conversation transcripts isolated in its own `"sessions"` namespace.
+Because `StoreRegistry(default_factory=root_redis_store.with_namespace)` automatically namespaces every named store lookup, `LitestarMCP` resolves `"litestar_mcp_tasks"` and reserved `"litestar_mcp_sessions"` (`MCPSessionStore`, bounded by `MCPConfig.session_ttl_seconds`) and `DurableWorkflowEngine` resolves `"litestar_mcp_workflows"` against Redis automatically, while `AgentRuntime` keeps conversation transcripts isolated in its own `"sessions"` namespace.
 
 ---
 

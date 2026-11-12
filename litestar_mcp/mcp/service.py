@@ -9,9 +9,11 @@ import copy
 import inspect
 import logging
 import math
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, TypeVar, cast, get_type_hints, overload
+from decimal import Decimal, InvalidOperation
+from typing import TYPE_CHECKING, Any, TypeGuard, TypeVar, cast, get_type_hints, overload
 from uuid import uuid4
 
 import anyio
@@ -63,6 +65,7 @@ from litestar_mcp.mcp.registry import (
     _normalize_prompt_result,
     apply_prompt_instructions,
     evaluate_subscription_authorizer,
+    is_model_visible_tool_meta,
     render_prompt_entry,
     resolve_descriptor_fields,
     resolve_prompt_description,
@@ -106,10 +109,26 @@ if TYPE_CHECKING:
     from litestar_mcp.mcp.registry import ResourceTemplate
     from litestar_mcp.mcp.skills import Skill, SkillCatalog
 
+__all__ = (
+    "MCP_PROTOCOL_VERSION",
+    "MISSING_REQUIRED_CLIENT_CAPABILITY",
+    "SESSION_STORE_NAME",
+    "SKILLS_EXTENSION",
+    "TASKS_EXTENSION",
+    "MCPHandlerService",
+    "MCPRequestContext",
+    "MCPSession",
+    "MCPSessionStore",
+    "get_mcp_request_context",
+    "get_session_store",
+    "resolve_session_store",
+)
+
 _logger = logging.getLogger(__name__)
 
 MCP_PROTOCOL_VERSION = "2026-07-28"
 SESSION_STORE_NAME: str = "litestar_mcp_sessions"
+"""Default Litestar `StoreRegistry` name used by `MCPSessionStore`."""
 TASKS_EXTENSION = "io.modelcontextprotocol/tasks"
 
 SKILLS_EXTENSION = "io.modelcontextprotocol/skills"
@@ -469,10 +488,11 @@ def _handler_media_type(handler: "BaseRouteHandler") -> "str | None":
 
 def _handler_tags(handler: "BaseRouteHandler") -> "set[str]":
     """Resolve effective tags for a Litestar route handler including router and controller ancestry."""
+    tags = set(cast("Iterable[str]", getattr(handler, "tags", None) or ()))
     resolve_tags = getattr(handler, "resolve_tags", None)
-    if callable(resolve_tags):
-        return set(cast("Iterable[str]", resolve_tags()))
-    return set(cast("Iterable[str]", getattr(handler, "tags", None) or ()))
+    if callable(resolve_tags) and getattr(handler, "ownership_layers", None):
+        tags.update(cast("Iterable[str]", resolve_tags()))
+    return tags
 
 
 def _apply_descriptor_fields(
@@ -589,7 +609,7 @@ def _looks_like_tool_content(value: "Any") -> "bool":
         return True
     if is_content_block(value):
         return True
-    if isinstance(value, list) and value:
+    if isinstance(value, (list, tuple)) and value:
         return all(isinstance(item, (MCPBlobResource, MCPResourceLink)) or is_content_block(item) for item in value)
     return False
 
@@ -692,8 +712,235 @@ def _resolve_annotated_types(handler: "BaseRouteHandler") -> "dict[str, Any]":
         return {}
 
 
+_JSON_SCHEMA_SIMPLE_TYPES: dict[str, type[Any]] = {
+    "string": str,
+    "boolean": bool,
+    "object": dict,
+    "array": list,
+}
+
+
+def _matches_json_schema_type(value: "Any", expected: "str") -> "bool":
+    simple = _JSON_SCHEMA_SIMPLE_TYPES.get(expected)
+    if simple is not None:
+        return isinstance(value, simple)
+    if expected == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected == "number":
+        return _is_json_number(value)
+    return value is None if expected == "null" else True
+
+
+def _json_value_equals(left: "Any", right: "Any") -> "bool":
+    if isinstance(left, bool) or isinstance(right, bool):
+        return type(left) is type(right) and left == right
+    return bool(left == right)
+
+
+def _is_json_number(value: "Any") -> "TypeGuard[int | float]":
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _validate_number_constraints(
+    value: "int | float",
+    schema: "Mapping[str, Any]",
+    *,
+    pointer: "str",
+    errors: "list[dict[str, str]]",
+) -> "None":
+    minimum = schema.get("minimum")
+    if _is_json_number(minimum) and value < minimum:
+        errors.append({"path": pointer, "message": f"Must be >= {minimum}"})
+    maximum = schema.get("maximum")
+    if _is_json_number(maximum) and value > maximum:
+        errors.append({"path": pointer, "message": f"Must be <= {maximum}"})
+    exclusive_min = schema.get("exclusiveMinimum")
+    if _is_json_number(exclusive_min) and value <= exclusive_min:
+        errors.append({"path": pointer, "message": f"Must be > {exclusive_min}"})
+    exclusive_max = schema.get("exclusiveMaximum")
+    if _is_json_number(exclusive_max) and value >= exclusive_max:
+        errors.append({"path": pointer, "message": f"Must be < {exclusive_max}"})
+    multiple_of = schema.get("multipleOf")
+    if _is_json_number(multiple_of) and multiple_of > 0:
+        try:
+            remainder = Decimal(str(value)) % Decimal(str(multiple_of))
+        except InvalidOperation:
+            remainder = Decimal(1)
+        if remainder != 0:
+            errors.append({"path": pointer, "message": f"Must be a multiple of {multiple_of}"})
+
+
+def _validate_string_constraints(
+    value: "str",
+    schema: "Mapping[str, Any]",
+    *,
+    pointer: "str",
+    errors: "list[dict[str, str]]",
+) -> "None":
+    min_length = schema.get("minLength")
+    if isinstance(min_length, int) and not isinstance(min_length, bool) and len(value) < min_length:
+        errors.append({"path": pointer, "message": f"Length must be >= {min_length}"})
+    max_length = schema.get("maxLength")
+    if isinstance(max_length, int) and not isinstance(max_length, bool) and len(value) > max_length:
+        errors.append({"path": pointer, "message": f"Length must be <= {max_length}"})
+    pattern = schema.get("pattern")
+    if isinstance(pattern, str):
+        try:
+            matched = re.search(pattern, value) is not None
+        except re.error:
+            matched = True
+        if not matched:
+            errors.append({"path": pointer, "message": f"Must match pattern {pattern!r}"})
+
+
+def _validate_json_schema_node(
+    value: "Any",
+    schema: "Mapping[str, Any]",
+    *,
+    defs: "Mapping[str, Any]",
+    pointer: "str",
+    errors: "list[dict[str, str]]",
+    visited_refs: "frozenset[str]" = frozenset(),
+) -> "None":
+    ref = schema.get("$ref")
+    if isinstance(ref, str) and ref.startswith("#/$defs/") and ref not in visited_refs:
+        target = defs.get(ref[len("#/$defs/") :])
+        if isinstance(target, Mapping):
+            before_count = len(errors)
+            _validate_json_schema_node(
+                value,
+                target,
+                defs=defs,
+                pointer=pointer,
+                errors=errors,
+                visited_refs=visited_refs | {ref},
+            )
+            if len(errors) > before_count or len(schema) == 1:
+                return
+
+    if "const" in schema and not _json_value_equals(value, schema["const"]):
+        errors.append({"path": pointer, "message": f"Expected {schema['const']!r}"})
+        return
+
+    enum_values = schema.get("enum")
+    if isinstance(enum_values, list) and not any(_json_value_equals(value, candidate) for candidate in enum_values):
+        errors.append({"path": pointer, "message": f"Expected one of {enum_values!r}"})
+        return
+
+    all_of = schema.get("allOf")
+    if isinstance(all_of, list):
+        for subschema in all_of:
+            if isinstance(subschema, Mapping):
+                _validate_json_schema_node(
+                    value,
+                    subschema,
+                    defs=defs,
+                    pointer=pointer,
+                    errors=errors,
+                    visited_refs=visited_refs,
+                )
+
+    for combinator in ("anyOf", "oneOf"):
+        branches = schema.get(combinator)
+        if isinstance(branches, list) and branches:
+            branch_errors_list: list[list[dict[str, str]]] = []
+            matched = 0
+            for branch in branches:
+                if not isinstance(branch, Mapping):
+                    continue
+                branch_errors: list[dict[str, str]] = []
+                _validate_json_schema_node(
+                    value,
+                    branch,
+                    defs=defs,
+                    pointer=pointer,
+                    errors=branch_errors,
+                    visited_refs=visited_refs,
+                )
+                if not branch_errors:
+                    matched += 1
+                branch_errors_list.append(branch_errors)
+            if (combinator == "anyOf" and matched == 0) or (combinator == "oneOf" and matched != 1):
+                if matched == 0 and branch_errors_list and branch_errors_list[0]:
+                    errors.extend(branch_errors_list[0])
+                else:
+                    errors.append({"path": pointer, "message": f"Value does not match `{combinator}` schema"})
+                return
+
+    schema_type = schema.get("type")
+    expected_types: list[str] = []
+    if isinstance(schema_type, str):
+        expected_types = [schema_type]
+    elif isinstance(schema_type, list):
+        expected_types = [t for t in schema_type if isinstance(t, str)]
+
+    if expected_types and not any(_matches_json_schema_type(value, t) for t in expected_types):
+        label = " | ".join(expected_types)
+        errors.append({"path": pointer, "message": f"Expected `{label}`, got `{type(value).__name__}`"})
+        return
+
+    if _is_json_number(value):
+        _validate_number_constraints(value, schema, pointer=pointer, errors=errors)
+    elif isinstance(value, str):
+        _validate_string_constraints(value, schema, pointer=pointer, errors=errors)
+    elif isinstance(value, dict):
+        min_props = schema.get("minProperties")
+        if isinstance(min_props, int) and not isinstance(min_props, bool) and len(value) < min_props:
+            errors.append({"path": pointer, "message": f"Object must contain at least {min_props} properties"})
+        max_props = schema.get("maxProperties")
+        if isinstance(max_props, int) and not isinstance(max_props, bool) and len(value) > max_props:
+            errors.append({"path": pointer, "message": f"Object must contain at most {max_props} properties"})
+        props_raw = schema.get("properties")
+        props = props_raw if isinstance(props_raw, Mapping) else {}
+        req_raw = schema.get("required")
+        if isinstance(req_raw, list):
+            for req_key in req_raw:
+                if isinstance(req_key, str) and req_key not in value:
+                    child_ptr = f"{pointer}/{req_key}" if pointer != "/arguments" else _to_pointer(req_key, "")
+                    errors.append({"path": child_ptr, "message": "Missing required argument"})
+        if schema.get("additionalProperties") is False:
+            for key in value:
+                if key not in props:
+                    errors.append({"path": pointer, "message": f"Unexpected argument: {key}"})
+        for key, item_val in value.items():
+            prop_schema = props.get(key)
+            if isinstance(prop_schema, Mapping):
+                child_ptr = f"{pointer}/{key}" if pointer != "/arguments" else _to_pointer(key, "")
+                _validate_json_schema_node(
+                    item_val,
+                    prop_schema,
+                    defs=defs,
+                    pointer=child_ptr,
+                    errors=errors,
+                    visited_refs=visited_refs,
+                )
+    elif isinstance(value, list):
+        min_items = schema.get("minItems")
+        if isinstance(min_items, int) and not isinstance(min_items, bool) and len(value) < min_items:
+            errors.append({"path": pointer, "message": f"Array must contain at least {min_items} items"})
+        max_items = schema.get("maxItems")
+        if isinstance(max_items, int) and not isinstance(max_items, bool) and len(value) > max_items:
+            errors.append({"path": pointer, "message": f"Array must contain at most {max_items} items"})
+        if schema.get("uniqueItems") is True:
+            for idx, item in enumerate(value):
+                if any(_json_value_equals(item, prev) for prev in value[:idx]):
+                    errors.append({"path": pointer, "message": "Array items must be unique"})
+                    break
+        items_schema = schema.get("items")
+        if isinstance(items_schema, Mapping):
+            for idx, item in enumerate(value):
+                _validate_json_schema_node(
+                    item,
+                    items_schema,
+                    defs=defs,
+                    pointer=f"{pointer}/{idx}",
+                    errors=errors,
+                    visited_refs=visited_refs,
+                )
+
+
 def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: "dict[str, Any]") -> "list[dict[str, str]]":
-    """Validate ``tool_args`` against the handler's Litestar signature.
+    """Validate ``tool_args`` against the handler's Litestar signature or raw `input_schema`.
 
     Path parameters are excluded since Litestar extracts them directly from
     path variables; remaining scalars are matched against the handler's
@@ -704,6 +951,23 @@ def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: "dict[str, 
     Returns a list of ``{"path": <json-pointer>, "message": <reason>}`` dicts,
     sorted by path for deterministic output.
     """
+    if (getattr(handler, "opt", None) or {}).get("_mcp_raw_tool_args"):
+        fn = get_handler_function(handler)
+        metadata = get_mcp_metadata(handler, kind="tool") or get_mcp_metadata(fn, kind="tool") or {}
+        raw_schema = metadata.get("input_schema")
+        if isinstance(raw_schema, Mapping):
+            raw_defs = raw_schema.get("$defs")
+            defs: Mapping[str, Any] = raw_defs if isinstance(raw_defs, Mapping) else {}
+            schema_errors: list[dict[str, str]] = []
+            _validate_json_schema_node(
+                tool_args,
+                raw_schema,
+                defs=defs,
+                pointer="/arguments",
+                errors=schema_errors,
+            )
+            return sorted(schema_errors, key=lambda entry: (entry["path"], entry["message"]))
+        return []
 
     advertised_params = get_advertised_handler_parameters(handler)
     python_to_wire = {p.python_name: p.wire_name for p in advertised_params}
@@ -723,7 +987,6 @@ def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: "dict[str, 
     except Exception:  # noqa: BLE001
         return []
 
-    advertised_params = get_advertised_handler_parameters(handler)
     advertised_by_name = {param.python_name: param for param in advertised_params}
     annotated_types = _resolve_annotated_types(handler)
     errors: list[dict[str, str]] = []
@@ -1239,7 +1502,7 @@ class MCPHandlerService:
                 JSONRPCError(code=INTERNAL_ERROR, message=f"Tool '{label}' has {normalized_detail}")
             ) from exc
 
-    def build_tool_entries(self) -> "list[dict[str, Any]]":
+    def build_tool_entries(self, *, include_app_only: "bool" = True) -> "list[dict[str, Any]]":
         """Build the unpaginated list of advertised MCP tool specifications."""
         tools: list[dict[str, Any]] = []
         for name, handler in sorted(self.discovered_tools.items()):
@@ -1248,12 +1511,15 @@ class MCPHandlerService:
 
             fn = get_handler_function(handler)
             metadata = get_mcp_metadata(handler, kind="tool") or get_mcp_metadata(fn, kind="tool") or {}
+            title, icons, meta = resolve_descriptor_fields(handler, kind="tool", opt_keys=self.config.opt_keys)
+            if not is_model_visible_tool_meta(meta, include_app_only=include_app_only):
+                continue
             tool_entry: dict[str, Any] = {
                 "name": name,
                 "description": render_description(
                     handler, fn, kind="tool", fallback_name=name, opt_keys=self.config.opt_keys
                 ),
-                "inputSchema": metadata["input_schema"]
+                "inputSchema": copy.deepcopy(metadata["input_schema"])
                 if "input_schema" in metadata
                 else cached_schema_for_handler(handler),
             }
@@ -1263,21 +1529,24 @@ class MCPHandlerService:
             annotations = resolve_tool_annotations(handler, metadata, self.config)
             if annotations:
                 tool_entry["annotations"] = annotations
-            title, icons, meta = resolve_descriptor_fields(handler, kind="tool", opt_keys=self.config.opt_keys)
             _apply_descriptor_fields(tool_entry, title=title, icons=icons, meta=meta)
             tools.append(tool_entry)
         return tools
 
     async def tools_list(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
         """Return a paginated list of registered MCP tools matching active filters."""
-        tools = self.build_tool_entries()
-        try:
-            page, next_cursor = _paginate_list(tools, params, self.config.list_page_size)
-        except ValueError as exc:
-            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
+        include_app_only = not (
+            self.config.filter_app_only_tools
+            and context.client_capabilities is not None
+            and context.ui_capabilities is None
+        )
+        tools = self.build_tool_entries(include_app_only=include_app_only)
+        page, next_cursor = _paginate_list(tools, params, self.config.list_page_size)
         result: dict[str, Any] = {"tools": page}
         if next_cursor is not None:
             result["nextCursor"] = next_cursor
+        if self.config.filter_app_only_tools:
+            result["cacheScope"] = "private"
         return result
 
     def _resolve_tool_task_support(
@@ -1486,10 +1755,7 @@ class MCPHandlerService:
                         resources.extend(skill.to_resources())
             finally:
                 _request_context.reset(token)
-        try:
-            page, next_cursor = _paginate_list(resources, params, self.config.list_page_size)
-        except ValueError as exc:
-            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
+        page, next_cursor = _paginate_list(resources, params, self.config.list_page_size)
         result: dict[str, Any] = {"resources": page}
         if next_cursor is not None:
             result["nextCursor"] = next_cursor
@@ -1526,10 +1792,7 @@ class MCPHandlerService:
             )
             _apply_descriptor_fields(template_entry, title=title, icons=icons, meta=meta)
             templates.append(template_entry)
-        try:
-            page, next_cursor = _paginate_list(templates, params, self.config.list_page_size)
-        except ValueError as exc:
-            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
+        page, next_cursor = _paginate_list(templates, params, self.config.list_page_size)
         result: dict[str, Any] = {"resourceTemplates": page}
         if next_cursor is not None:
             result["nextCursor"] = next_cursor
@@ -1589,7 +1852,7 @@ class MCPHandlerService:
                 else (match.skill.meta if skill_file.relative_path == "SKILL.md" else None)
             )
             if meta:
-                content["_meta"] = dict(meta)
+                content["_meta"] = copy.deepcopy(dict(meta))
             return {"contents": [content]}
 
         resource_match = next(
@@ -1732,7 +1995,7 @@ class MCPHandlerService:
         return {}
 
     async def logging_set_level(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
-        """Set the active minimum RFC 5424 log severity for the session or validate statelessly."""
+        """Set the active minimum RFC 5424 log severity for the current MCP session."""
         if not self.config.logging:
             raise JSONRPCErrorException(
                 JSONRPCError(code=METHOD_NOT_FOUND, message="Method not found: logging/setLevel")
@@ -1740,16 +2003,22 @@ class MCPHandlerService:
         level = params.get("level")
         if not isinstance(level, str) or level not in LOG_LEVEL_SEVERITY:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=f"Invalid logging level: {level!r}"))
-        if context.session_id is not None:
-            session = await get_session_store(self.app_ref, self.config).set_log_level(
-                context.session_id,
-                context.owner_id,
-                level,
+        if context.session_id is None:
+            raise JSONRPCErrorException(
+                JSONRPCError(
+                    code=INVALID_PARAMS,
+                    message="logging/setLevel requires an active Mcp-Session-Id session",
+                )
             )
-            if session is None:
-                raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Session not found or expired"))
-            if self.registry is not None and self.registry.has_subscription_manager:
-                self.registry.subscription_manager.set_session_log_level(context.session_id, level)
+        session = await get_session_store(self.app_ref, self.config).set_log_level(
+            context.session_id,
+            context.owner_id,
+            level,
+        )
+        if session is None:
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Session not found or expired"))
+        if self.registry is not None and self.registry.has_subscription_manager:
+            self.registry.subscription_manager.set_session_log_level(context.session_id, level)
         return {}
 
     async def skills_list(self, params: "dict[str, Any]", context: "MCPRequestContext") -> "dict[str, Any]":
@@ -1774,10 +2043,7 @@ class MCPHandlerService:
         visible_skills = [skill for skill in skills if self._should_include_skill(skill)]
         filtered_skills = filter_skills(visible_skills, tags=raw_tags, query=raw_query)
         entries = [skill.to_entry() for skill in filtered_skills]
-        try:
-            page, next_cursor = _paginate_list(entries, params, self.config.list_page_size)
-        except ValueError as exc:
-            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
+        page, next_cursor = _paginate_list(entries, params, self.config.list_page_size)
         result: dict[str, Any] = {"skills": page}
         if next_cursor is not None:
             result["nextCursor"] = next_cursor
@@ -1822,10 +2088,7 @@ class MCPHandlerService:
             _request_context.reset(token)
         if children is None:
             raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
-        try:
-            page, next_cursor = _paginate_list(children, params, self.config.list_page_size)
-        except ValueError as exc:
-            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
+        page, next_cursor = _paginate_list(children, params, self.config.list_page_size)
         result: dict[str, Any] = {"resources": page}
         if next_cursor is not None:
             result["nextCursor"] = next_cursor
@@ -1860,14 +2123,11 @@ class MCPHandlerService:
                 if skill.title is not None:
                     skill_prompt["title"] = skill.title
                 if skill.icons:
-                    skill_prompt["icons"] = [dict(icon) for icon in skill.icons]
+                    skill_prompt["icons"] = [copy.deepcopy(dict(icon)) for icon in skill.icons]
                 if skill.meta:
-                    skill_prompt["_meta"] = dict(skill.meta)
+                    skill_prompt["_meta"] = copy.deepcopy(dict(skill.meta))
                 prompts.append(skill_prompt)
-        try:
-            page, next_cursor = _paginate_list(prompts, params, self.config.list_page_size)
-        except ValueError as exc:
-            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
+        page, next_cursor = _paginate_list(prompts, params, self.config.list_page_size)
         result: dict[str, Any] = {"prompts": page}
         if next_cursor is not None:
             result["nextCursor"] = next_cursor
@@ -2064,6 +2324,7 @@ class MCPHandlerService:
                         log_level=refreshed_log_level,
                     )
                     await self.task_store.set_dispatch(task_id, call)
+                    await self.task_store.delete_job_id(task_id)
                     await executor.resume(call)
         except TaskLookupError as exc:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
@@ -2107,6 +2368,8 @@ class MCPHandlerService:
                     params,
                     owner_id=owner_id,
                     session_id=session_id,
+                    strict_owner=True,
+                    strict_session=True,
                 )
 
         return _report
@@ -2131,6 +2394,8 @@ class MCPHandlerService:
                 payload,
                 owner_id=owner_id,
                 session_id=session_id,
+                strict_owner=True,
+                strict_session=True,
             )
 
         return _report_log
@@ -2202,7 +2467,7 @@ class MCPHandlerService:
             is_ui_resource = (
                 uri.lower().startswith("ui://")
                 or "profile=mcp-app" in resolved_mime.lower()
-                or (meta is not None and "ui" in meta)
+                or (meta is not None and isinstance(meta.get("ui"), Mapping))
             )
             if not is_ui_resource:
                 continue
@@ -2212,6 +2477,35 @@ class MCPHandlerService:
                 advertised.append(handler_mt)
             else:
                 advertised.append(UI_MIME_TYPE)
+
+        if self.skill_catalog is not None:
+            for skill in self.skill_catalog.preloaded_skills():
+                if not self._should_include_skill(skill):
+                    continue
+                for skill_file in skill.files:
+                    file_meta = (
+                        skill_file.meta
+                        if skill_file.meta is not None
+                        else (skill.meta if skill_file.relative_path == "SKILL.md" else None)
+                    )
+                    file_mime = skill_file.mime_type
+                    is_skill_ui = (
+                        skill_file.uri.lower().startswith("ui://")
+                        or "profile=mcp-app" in file_mime.lower()
+                        or (file_meta is not None and isinstance(file_meta.get("ui"), Mapping))
+                    )
+                    if not is_skill_ui:
+                        continue
+                    advertised.append(file_mime if "profile=mcp-app" in file_mime.lower() else UI_MIME_TYPE)
+
+        for name, tool_handler in sorted(self.discovered_tools.items()):
+            if not should_include_handler(name, _handler_tags(tool_handler), self.config):
+                continue
+            _, _, tool_meta = resolve_descriptor_fields(tool_handler, kind="tool", opt_keys=self.config.opt_keys)
+            if tool_meta is not None and isinstance(tool_meta.get("ui"), Mapping):
+                advertised.append(UI_MIME_TYPE)
+                break
+
         return list(dict.fromkeys(advertised))
 
     def _should_include_skill(self, skill: "Skill") -> "bool":
@@ -2285,7 +2579,7 @@ class MCPHandlerService:
             "messages": [{"role": "user", "content": {"type": "text", "text": text}}],
         }
         if match.skill.meta:
-            result["_meta"] = dict(match.skill.meta)
+            result["_meta"] = copy.deepcopy(dict(match.skill.meta))
         return result
 
 

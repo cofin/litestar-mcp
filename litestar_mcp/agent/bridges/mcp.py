@@ -25,6 +25,7 @@ from litestar_mcp.mcp.executor import MCPToolErrorResult, blank_http_scope, exec
 from litestar_mcp.mcp.plugin import LitestarMCP
 from litestar_mcp.mcp.prompt_controller import PromptController
 from litestar_mcp.mcp.registry import (
+    is_model_visible_tool_meta,
     resolve_descriptor_fields,
     resolve_tool_annotations,
     resolve_tool_output_schema,
@@ -104,7 +105,7 @@ def mcp_to_tools(
     if isinstance(raw_tools, Sequence) and not isinstance(raw_tools, (str, bytes)):
         for item in raw_tools:
             name, description, schema, annotations, output_schema, title, icons, meta = _extract_remote_tool_spec(item)
-            if not _is_model_visible(meta, include_app_only=include_app_only):
+            if not is_model_visible_tool_meta(meta, include_app_only=include_app_only):
                 continue
             converted.append(
                 Tool.from_schema(
@@ -150,21 +151,6 @@ def _make_remote_call(client: Any, target_name: str) -> Callable[..., Any]:
         return f"Remote tool {target_name} called with {kwargs}"
 
     return _remote_call
-
-
-def _is_model_visible(meta: Mapping[str, Any] | None, *, include_app_only: bool) -> bool:
-    """Return whether a tool descriptor is visible to the model under SEP-1865 `_meta.ui.visibility`."""
-    if include_app_only or not isinstance(meta, Mapping):
-        return True
-    ui: Any = meta.get("ui")
-    if not isinstance(ui, Mapping) or "visibility" not in ui or ui.get("visibility") is None:
-        return True
-    visibility: Any = ui.get("visibility")
-    if isinstance(visibility, str):
-        return visibility == "model"
-    if isinstance(visibility, Sequence) and not isinstance(visibility, bytes):
-        return "model" in visibility
-    return False
 
 
 def _extract_tool_metadata(item: Any) -> tuple[str, str, dict[str, Any]]:
@@ -406,7 +392,9 @@ def _normalize_local_tool_result(result: Any, *, max_blob_bytes: int | None) -> 
         if normalized.get("isError"):
             raise MCPToolErrorResult(normalized)
         return normalized
-    if isinstance(result, list) and any(isinstance(item, (MCPBlobResource, MCPResourceLink)) for item in result):
+    if isinstance(result, (list, tuple)) and any(
+        isinstance(item, (MCPBlobResource, MCPResourceLink)) for item in result
+    ):
         return normalize_content_blocks(result, max_blob_bytes=max_blob_bytes)
     return result
 
@@ -447,14 +435,15 @@ def _convert_local_handler(
     if not should_include_handler(tool_name, _resolve_handler_tags(handler), client.config):
         return None
     if isinstance(handler, Tool):
-        return handler if _is_model_visible(handler.meta, include_app_only=include_app_only) else None
+        return handler if is_model_visible_tool_meta(handler.meta, include_app_only=include_app_only) else None
     if not isinstance(handler, BaseRouteHandler):
         return None
 
     handler_fn = get_handler_function(handler)
     opt_keys = client.config.opt_keys
     metadata = get_mcp_metadata(handler, kind="tool") or get_mcp_metadata(handler_fn, kind="tool") or {}
-    fallback_tool = skill_tools_by_name.get(tool_name)
+    raw_opt_tool = (getattr(handler, "opt", None) or {}).get("_mcp_tool_instance")
+    fallback_tool = skill_tools_by_name.get(tool_name) or (raw_opt_tool if isinstance(raw_opt_tool, Tool) else None)
     title, icons, meta = resolve_descriptor_fields(
         handler,
         kind="tool",
@@ -462,7 +451,7 @@ def _convert_local_handler(
         metadata=metadata,
         fallback_source=fallback_tool,
     )
-    if not _is_model_visible(meta, include_app_only=include_app_only):
+    if not is_model_visible_tool_meta(meta, include_app_only=include_app_only):
         return None
 
     annotations = resolve_tool_annotations(handler, metadata, client.config)

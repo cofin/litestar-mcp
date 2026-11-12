@@ -1,6 +1,7 @@
 """Async Streamable HTTP client and request-header helpers for Litestar MCP endpoints."""
 
 import contextlib
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -10,8 +11,10 @@ from typing_extensions import Self
 
 from litestar_mcp.__metadata__ import __version__
 from litestar_mcp.core.exceptions import LitestarMCPError
+from litestar_mcp.core.schema_builder import iter_mcp_header_fields
 from litestar_mcp.core.serialization import from_json
 from litestar_mcp.mcp.routes import (
+    HEADER_MISMATCH,
     MCP_METHOD_HEADER,
     MCP_NAME_FIELDS,
     MCP_NAME_HEADER,
@@ -23,7 +26,7 @@ from litestar_mcp.mcp.routes import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Mapping, Sequence
+    from collections.abc import AsyncIterator, Sequence
 
 __all__ = (
     "MCPClientError",
@@ -66,6 +69,7 @@ def mcp_request_headers(
     *,
     protocol_version: "str" = MCP_PROTOCOL_VERSION,
     session_id: "str | None" = None,
+    tool_schema: "Mapping[str, Any] | None" = None,
 ) -> "dict[str, str]":
     """Return Streamable HTTP headers for `message` under `protocol_version`."""
     headers = {
@@ -84,6 +88,18 @@ def mcp_request_headers(
         name_field = MCP_NAME_FIELDS.get(method)
         if name_field is not None and isinstance(params.get(name_field), str):
             headers[MCP_NAME_HEADER] = encode_mcp_header_value(params[name_field])
+        arguments = params.get("arguments")
+        if method == "tools/call" and isinstance(arguments, Mapping) and isinstance(tool_schema, Mapping):
+            for path, header_name, _ in iter_mcp_header_fields(dict(tool_schema)):
+                value: Any = arguments
+                for part in path:
+                    if not isinstance(value, Mapping) or part not in value:
+                        break
+                    value = value[part]
+                else:
+                    if value is not None:
+                        rendered = ("true" if value else "false") if isinstance(value, bool) else str(value)
+                        headers[f"Mcp-Param-{header_name}"] = encode_mcp_header_value(rendered)
     return headers
 
 
@@ -143,6 +159,7 @@ class MCPStreamableHTTPClient:
         self._client: httpx2.AsyncClient | None = client
         self._session_id: str | None = None
         self._discovered_tools: list[dict[str, Any]] = []
+        self._tool_schemas: dict[str, dict[str, Any]] | None = None
 
     async def __aenter__(self) -> "Self":
         """Enter client context manager, initializing HTTP client if needed."""
@@ -157,6 +174,7 @@ class MCPStreamableHTTPClient:
                 with contextlib.suppress(httpx2.HTTPError, MCPClientError, RuntimeError):
                     await self.terminate_session()
         finally:
+            self._tool_schemas = None
             if self._client is not None and self._custom_client is None:
                 await self._client.aclose()
                 self._client = None
@@ -180,6 +198,8 @@ class MCPStreamableHTTPClient:
         """Perform `server/discover` (`2026-07-28`) or `initialize` + `notifications/initialized` (`2025-*`)."""
         if capabilities is not None:
             self._capabilities = dict(capabilities)
+        self._session_id = None
+        self._tool_schemas = None
         if self.protocol_version == MCP_PROTOCOL_VERSION:
             result = await self.request("server/discover", {})
             caps = result.get("capabilities")
@@ -200,11 +220,14 @@ class MCPStreamableHTTPClient:
         negotiated = result.get("protocolVersion")
         if isinstance(negotiated, str) and negotiated in SUPPORTED_PROTOCOL_VERSIONS:
             self.protocol_version = negotiated
+        if self.protocol_version == MCP_PROTOCOL_VERSION:
+            self._session_id = None
         caps = result.get("capabilities")
         self.server_capabilities = dict(caps) if isinstance(caps, dict) else {}
         raw_info = result.get("serverInfo")
         self.server_info = dict(raw_info) if isinstance(raw_info, dict) else {}
-        await self.notify("notifications/initialized")
+        if self.protocol_version != MCP_PROTOCOL_VERSION:
+            await self.notify("notifications/initialized")
         return result
 
     async def notify(self, method: "str", params: "dict[str, Any] | None" = None) -> "None":
@@ -218,24 +241,48 @@ class MCPStreamableHTTPClient:
             protocol_version=self.protocol_version,
             capabilities=self._capabilities,
         )
-        req_headers = mcp_request_headers(
-            prepared,
-            protocol_version=self.protocol_version,
-            session_id=self._session_id,
-        )
-        req_headers.update(self._headers)
+        req_headers = {
+            **self._headers,
+            **mcp_request_headers(
+                prepared,
+                protocol_version=self.protocol_version,
+                session_id=self._session_id,
+            ),
+        }
         response = await self._get_client().post(self.endpoint, json=prepared, headers=req_headers)
         if response.status_code >= httpx2.codes.BAD_REQUEST:
             self._raise_for_error_response(response)
 
-    async def request(self, method: "str", params: "dict[str, Any] | None" = None) -> "dict[str, Any]":
+    async def request(
+        self,
+        method: "str",
+        params: "dict[str, Any] | None" = None,
+        *,
+        tool_schema: "Mapping[str, Any] | None" = None,
+    ) -> "dict[str, Any]":
         """Send JSON-RPC request to MCP endpoint and parse response."""
+        return await self._send_request(
+            method,
+            params,
+            allow_param_header_retry=True,
+            tool_schema=tool_schema,
+        )
+
+    async def _send_request(
+        self,
+        method: "str",
+        params: "dict[str, Any] | None",
+        *,
+        allow_param_header_retry: "bool",
+        tool_schema: "Mapping[str, Any] | None" = None,
+    ) -> "dict[str, Any]":
         req_id = uuid4().hex
+        params_dict = dict(params) if params is not None else {}
         message: dict[str, Any] = {
             "jsonrpc": "2.0",
             "id": req_id,
             "method": method,
-            "params": dict(params) if params is not None else {},
+            "params": params_dict,
         }
         prepared = prepare_mcp_request(
             message,
@@ -244,12 +291,25 @@ class MCPStreamableHTTPClient:
             capabilities=self._capabilities,
         )
         active_session = None if method == "initialize" else self._session_id
-        req_headers = mcp_request_headers(
-            prepared,
-            protocol_version=self.protocol_version,
-            session_id=active_session,
+        tool_name = params_dict.get("name")
+        resolved_tool_schema = (
+            tool_schema
+            if tool_schema is not None
+            else (
+                self._tool_schemas.get(tool_name)
+                if method == "tools/call" and isinstance(tool_name, str) and self._tool_schemas is not None
+                else None
+            )
         )
-        req_headers.update(self._headers)
+        req_headers = {
+            **self._headers,
+            **mcp_request_headers(
+                prepared,
+                protocol_version=self.protocol_version,
+                session_id=active_session,
+                tool_schema=resolved_tool_schema,
+            ),
+        }
 
         response = await self._get_client().post(
             self.endpoint,
@@ -264,9 +324,25 @@ class MCPStreamableHTTPClient:
             result = await self._parse_sse_result(response, req_id)
         else:
             if response.status_code >= httpx2.codes.BAD_REQUEST:
-                self._raise_for_error_response(response)
-            result = self._extract_jsonrpc_result(from_json(response.content))
+                try:
+                    self._raise_for_error_response(response)
+                except MCPClientError as exc:
+                    if (
+                        allow_param_header_retry
+                        and tool_schema is None
+                        and method == "tools/call"
+                        and self.protocol_version == MCP_PROTOCOL_VERSION
+                        and self._tool_schemas is None
+                        and exc.code == HEADER_MISMATCH
+                        and str(exc).startswith("Mcp-Param-")
+                    ):
+                        await self.list_tools()
+                        return await self._send_request(method, params, allow_param_header_retry=False)
+                    raise
+            result = self._extract_jsonrpc_result(self._decode_json_payload(response.content))
 
+        if method == "tools/list":
+            self._cache_tool_schemas(result.get("tools"))
         if method == "initialize" and self.protocol_version != MCP_PROTOCOL_VERSION:
             raw_sid = response.headers.get(MCP_SESSION_ID_HEADER)
             self._session_id = raw_sid.strip() if isinstance(raw_sid, str) and raw_sid.strip() else None
@@ -292,7 +368,7 @@ class MCPStreamableHTTPClient:
             async for sse_event in event_source:
                 if not sse_event.data:
                     continue
-                payload = from_json(sse_event.data)
+                payload = self._decode_json_payload(sse_event.data)
                 if isinstance(payload, dict):
                     yield payload
 
@@ -343,10 +419,16 @@ class MCPStreamableHTTPClient:
         self._discovered_tools = all_tools
         return all_tools
 
-    async def call_tool(self, name: "str", arguments: "Mapping[str, Any] | None" = None) -> "Any":
+    async def call_tool(
+        self,
+        name: "str",
+        arguments: "Mapping[str, Any] | None" = None,
+        *,
+        tool_schema: "Mapping[str, Any] | None" = None,
+    ) -> "Any":
         """Call a remote tool by name with arguments and extract structured or text content."""
         params = {"name": name, "arguments": dict(arguments or {})}
-        res = await self.request("tools/call", params)
+        res = await self.request("tools/call", params, tool_schema=tool_schema)
         if res.get("isError"):
             content_items = res.get("content", [])
             text_parts = [
@@ -425,12 +507,33 @@ class MCPStreamableHTTPClient:
             self._client = httpx2.AsyncClient(headers=self._headers, transport=self._transport)
         return self._client
 
+    def _cache_tool_schemas(self, tools: "Any") -> "None":
+        if not isinstance(tools, list):
+            return
+        if self._tool_schemas is None:
+            self._tool_schemas = {}
+        for item in tools:
+            if (
+                isinstance(item, dict)
+                and isinstance(item.get("name"), str)
+                and isinstance(item.get("inputSchema"), dict)
+            ):
+                self._tool_schemas[item["name"]] = dict(item["inputSchema"])
+
+    @staticmethod
+    def _decode_json_payload(raw: "bytes | str") -> "Any":
+        try:
+            return from_json(raw)
+        except (SerializationException, ValueError, TypeError) as exc:
+            msg = "Invalid JSON payload returned by MCP server"
+            raise MCPClientError(msg) from exc
+
     async def _parse_sse_result(self, response: "httpx2.Response", req_id: "str") -> "dict[str, Any]":
         event_source = httpx2.EventSource(response, max_event_size=self._max_event_size)
         async for sse_event in event_source:
             if not sse_event.data:
                 continue
-            data = from_json(sse_event.data)
+            data = self._decode_json_payload(sse_event.data)
             if isinstance(data, dict) and data.get("id") == req_id:
                 return self._extract_jsonrpc_result(data)
         msg = f"No matching SSE response received for request ID {req_id}"

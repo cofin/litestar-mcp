@@ -59,7 +59,7 @@
   <input type="radio" name="lm-pipeline-mode" id="lm-pipe-stdio" />
 
   <div class="lm-diag-tabs" role="tablist" aria-label="MCP Transport and Dispatch Pipeline">
-    <label class="lm-diag-tab" for="lm-pipe-http">Streamable HTTP (2026-07-28, 2025-11-25 &amp; 2025-06-18)</label>
+    <label class="lm-diag-tab" for="lm-pipe-http">Streamable HTTP (2026-07-28, 2025-11-25 &amp; 2025-* Sessions)</label>
     <label class="lm-diag-tab" for="lm-pipe-stdio">In-Process Stdio &amp; HTTP Bridge</label>
   </div>
 
@@ -75,10 +75,10 @@
         <text x="113" y="70" text-anchor="middle" fill="var(--lm-p-blue)" font-size="10.5" font-family="monospace">POST • GET /mcp • DELETE /mcp</text>
         <text x="113" y="90" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">2026-07-28: server/discover</text>
         <text x="113" y="108" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">POST subscriptions/listen SSE</text>
-        <text x="113" y="126" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">2025-11-25: initialize + Mcp-Session-Id</text>
-        <text x="113" y="144" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">GET /mcp (Accept: text/event-stream)</text>
-        <text x="113" y="162" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">resources/subscribe • logging/setLevel</text>
-        <text x="113" y="184" text-anchor="middle" fill="var(--lm-p-emerald)" font-size="9.5" font-family="monospace">_meta.logLevel &amp; SEP-2575 headers</text>
+        <text x="113" y="126" text-anchor="middle" fill="var(--lm-p-muted)" font-size="9.2">2025-*: initialize + Mcp-Session-Id</text>
+        <text x="113" y="144" text-anchor="middle" fill="var(--lm-p-muted)" font-size="9.2">GET /mcp (Accept: text/event-stream)</text>
+        <text x="113" y="162" text-anchor="middle" fill="var(--lm-p-muted)" font-size="9">resources/subscribe • logging/setLevel</text>
+        <text x="113" y="184" text-anchor="middle" fill="var(--lm-p-emerald)" font-size="8.6" font-family="monospace">logLevel _meta &amp; SEP-2575 headers</text>
 
         <line class="lm-flow-forward" x1="210" y1="96" x2="250" y2="96" stroke="var(--lm-p-blue)" stroke-width="2.5" />
         <line class="lm-flow-reverse" x1="210" y1="128" x2="250" y2="128" stroke="var(--lm-p-emerald)" stroke-width="2" />
@@ -101,7 +101,7 @@
         <text x="592" y="70" text-anchor="middle" fill="var(--lm-p-violet)" font-size="10.5" font-family="monospace">execute_tool / prompt / res</text>
         <text x="592" y="90" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Forwards Auth &amp; Trace Headers</text>
         <text x="592" y="108" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Preserves request.user &amp; auth</text>
-        <text x="592" y="126" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">Binds session_id &amp; _meta.logLevel</text>
+        <text x="592" y="126" text-anchor="middle" fill="var(--lm-p-muted)" font-size="9.2">Binds session_id &amp; log_level threshold</text>
         <text x="592" y="144" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">MCPRequestContext.log() &amp; progress</text>
         <text x="592" y="162" text-anchor="middle" fill="var(--lm-p-muted)" font-size="10">subscription_authorizer enforcement</text>
         <text x="592" y="184" text-anchor="middle" fill="var(--lm-p-violet)" font-size="9.5" font-family="monospace">Zero TCP Loopback Hop</text>

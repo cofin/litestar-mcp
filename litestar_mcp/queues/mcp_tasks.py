@@ -134,6 +134,8 @@ class QueueTaskExecutor:
             won = await service.cancel_task(UUID(job_id), include_running=True)
         if won or job_id is None or record.status == "input_required":
             await store.mark_cancelled(record.task_id)
+            if job_id is not None:
+                await store.delete_job_id(record.task_id)
 
     async def load_principal(self, owner_id: str | None) -> Any:
         """Rehydrate user principal from owner_id."""
@@ -145,14 +147,20 @@ class QueueTaskExecutor:
         """Enqueue one attempt keyed by task id and attempt number, then record its job id."""
         if call.log_level is not None:
             validate_log_level(call.log_level)
-        result = await self._queue_service().enqueue(
+        service = self._queue_service()
+        store = self.runtime.task_store
+        result = await service.enqueue(
             run_mcp_tool_task,
             call=msgspec.to_builtins(call),
             key=f"mcp-task:{call.task_id}:{call.attempt}",
             queue=call.queue or self._queue,
             timeout=self._timeout,
         )
-        await self.runtime.task_store.set_job_id(call.task_id, str(result.id))
+        await store.set_job_id(call.task_id, str(result.id))
+        latest = await store.peek(call.task_id)
+        if latest is not None and latest.status == "cancelled":
+            await service.cancel_task(result.id, include_running=True)
+            await store.delete_job_id(call.task_id)
 
     def _queue_service(self) -> "QueueService":
         """Return the queue service bound to the started application's state.
@@ -183,6 +191,11 @@ class QueueTaskExecutor:
 async def run_mcp_tool_task(call: dict[str, Any], mcp_task_executor: QueueTaskExecutor) -> dict[str, Any]:
     """Run one MCP Tasks attempt in the worker and return the record status."""
     tool_call = msgspec.convert(call, ToolTaskCall)
+    task_id = tool_call.task_id
+    store = mcp_task_executor.runtime.task_store
+    initial = await store.get(task_id, tool_call.owner_id)
+    if initial.is_terminal():
+        return {"task_id": task_id, "status": initial.status}
     user = await mcp_task_executor.load_principal(tool_call.owner_id)
     context = get_current_task_context()
     async with anyio.create_task_group() as group:
@@ -190,8 +203,7 @@ async def run_mcp_tool_task(call: dict[str, Any], mcp_task_executor: QueueTaskEx
             group.start_soon(_cancel_on_signal, context, group.cancel_scope)
         await mcp_task_executor.runtime.run_attempt(tool_call, user)
         group.cancel_scope.cancel()
-    task_id = tool_call.task_id
-    record = await mcp_task_executor.runtime.task_store.get(task_id, None)
+    record = await store.get(task_id, tool_call.owner_id)
     return {"task_id": task_id, "status": record.status}
 
 

@@ -110,7 +110,7 @@ Some tools need to complete an initial elicitation or approval round *before* al
 
 ## Task JSON-RPC Methods & Ownership Isolation
 
-All task methods require the caller to advertise `extensions["io.modelcontextprotocol/tasks"]` (otherwise the server returns JSON-RPC error `-32021`). Every `TaskRecord` is bound to `context.owner_id` (derived from the authenticated principal when authentication middleware is active). A caller with a different `owner_id` cannot inspect, update, or cancel another principal's task.
+All task methods require the caller to advertise `extensions["io.modelcontextprotocol/tasks"]` (otherwise the server returns JSON-RPC error `-32021`). Every `TaskRecord` is strictly bound to `context.owner_id` (`None` for anonymous callers, or the principal identifier derived when authentication middleware is active): an anonymous caller cannot inspect, update, or cancel an authenticated principal's task, and an authenticated principal cannot inspect, update, or cancel an anonymous or foreign principal's task.
 
 | Method | Parameters | Response & Behavior |
 | :--- | :--- | :--- |
@@ -134,7 +134,7 @@ When a `tools/call` invocation promotes into a background task, `MCPHandlerServi
 
 - **`TaskRecord.status_message` (`statusMessage`)**: Calling `await MCPTaskStore.update_status_message(task_id, status_message)` updates `record.status_message` (serialized as `"statusMessage"` in `tasks/get` and `notifications/tasks`) while the task is in `working` or `input_required`. Terminal task records (`completed`, `failed`, `cancelled`) remain immutable no-ops.
 - **Post-Promotion `report_progress` & `ctx.log` Forwarding**: Inside both in-process task runners and distributed `QueueTaskExecutor` workers (`run_mcp_tool_task` / `run_task_attempt`), calling `await ctx.report_progress(progress, total=..., message=...)` updates `TaskRecord.status_message` (`statusMessage`) when `message` is supplied and emits `notifications/progress` carrying `progressToken` when `progress_token` and `session_id` are set. Calling `await ctx.log(level, data, logger=...)` emits threshold-filtered `notifications/message` events. When `MCPConfig.subscription_channels` was omitted, `QueueTaskExecutor.bind()` automatically discovers and attaches the application's `ChannelsPlugin` onto `SubscriptionManager` for cross-worker delivery.
-- **Session SSE vs `subscriptions/listen` Stream Isolation**: `notifications/progress` and session-scoped `notifications/message` events deliver to the originating `2025-*` session `GET /mcp` SSE stream (`owner_id` and `session_id`). Stateless `2026-07-28` `POST /mcp` `subscriptions/listen` task streams (`taskIds`) receive `notifications/tasks` (`status` and `statusMessage`) updates and strictly exclude `notifications/progress` frames.
+- **Session SSE vs `subscriptions/listen` Stream Isolation**: `notifications/progress` and session-scoped `notifications/message` events deliver strictly to the originating `2025-*` session `GET /mcp` SSE stream matching both `owner_id` and `session_id`. Stateless `2026-07-28` `POST /mcp` `subscriptions/listen` streams receive owner-matched `notifications/tasks` (`taskIds`: `status` and `statusMessage`) and opted-in `"logLevel"` `notifications/message` events, while strictly excluding `notifications/progress` frames.
 
 ```python
 from litestar import post

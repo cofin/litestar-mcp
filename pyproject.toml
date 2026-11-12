@@ -38,11 +38,11 @@ requires-python = ">=3.10"
 version = "0.20.0"
 
 [project.urls]
-Changelog = "https://cofin.github.io/litestar-mcp/latest/changelog"
+Changelog = "https://cofin.github.io/litestar-mcp/changelog/"
 Discord = "https://discord.gg/litestar"
-Documentation = "https://cofin.github.io/litestar-mcp/latest/"
+Documentation = "https://cofin.github.io/litestar-mcp/"
 Funding = "https://github.com/sponsors/litestar-org"
-Homepage = "https://cofin.github.io/litestar-mcp/latest/"
+Homepage = "https://cofin.github.io/litestar-mcp/"
 Issue = "https://github.com/cofin/litestar-mcp/issues/"
 Source = "https://github.com/cofin/litestar-mcp"
 

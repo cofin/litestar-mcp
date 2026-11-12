@@ -10,10 +10,10 @@ from unittest.mock import Mock
 import pytest
 from click import Context, Group
 from click.testing import CliRunner
-from litestar import Litestar, get
+from litestar import Controller, Litestar, Router, get
 from litestar.cli._utils import LitestarEnv
 
-from litestar_mcp import LitestarMCP, MCPConfig, MCPSkillsConfig, Skill
+from litestar_mcp import LitestarMCP, MCPConfig, MCPSkillsConfig, Skill, mcp_prompt, mcp_resource
 from litestar_mcp.core.serialization import from_json
 from litestar_mcp.mcp.cli import ToolExecutor, list_resources, list_tools, mcp_group
 from litestar_mcp.utils import validate_tool_descriptions
@@ -621,10 +621,8 @@ def test_cli_list_skills_outputs_and_filters(
     result = cli_runner.invoke(mcp_group, args, obj=obj)
 
     assert result.exit_code == 0, result.output
-    for expected in expected_substrings:
-        assert expected in result.output
-    for absent in absent_substrings:
-        assert absent not in result.output
+    assert all(expected in result.output for expected in expected_substrings)
+    assert all(absent not in result.output for absent in absent_substrings)
 
 
 @pytest.mark.parametrize(
@@ -666,10 +664,8 @@ def test_cli_list_skills_exclude_tags(
     result = cli_runner.invoke(mcp_group, ["list-skills"], obj=env)
 
     assert result.exit_code == 0, result.output
-    for expected in expected_substrings:
-        assert expected in result.output
-    for absent in absent_substrings:
-        assert absent not in result.output
+    assert all(expected in result.output for expected in expected_substrings)
+    assert all(absent not in result.output for absent in absent_substrings)
 
 
 def test_cli_list_skills_missing_plugin_raises(cli_runner: CliRunner) -> None:
@@ -682,3 +678,46 @@ def test_cli_list_skills_missing_plugin_raises(cli_runner: CliRunner) -> None:
     assert result.exit_code != 0
     assert isinstance(result.exception, RuntimeError)
     assert "LitestarMCP" in str(result.exception)
+
+
+def test_cli_inherits_controller_and_router_tags_and_lists_template_resources(
+    cli_runner: CliRunner,
+) -> None:
+    """Verify CLI discovery honors inherited Router/Controller tags and includes resource URI templates."""
+
+    class InternalController(Controller):
+        path = "/internal"
+        tags = ["internal"]
+
+        @get("/secret-tool", mcp_tool="secret_tool", sync_to_thread=False)
+        def secret_tool(self) -> dict[str, str]:
+            return {"hidden": "yes"}
+
+        @mcp_resource("secret_res", uri="app://internal/secret")
+        @get("/secret-res", sync_to_thread=False)
+        def secret_res(self) -> dict[str, str]:
+            return {"hidden": "yes"}
+
+        @mcp_prompt("secret_prompt")
+        @get("/secret-prompt", sync_to_thread=False)
+        def secret_prompt(self) -> str:
+            return "hidden prompt"
+
+    @mcp_resource("user_card", uri_template="app://users/{user_id}")
+    @get("/users/{user_id:str}", sync_to_thread=False)
+    def user_card(user_id: str) -> dict[str, str]:
+        return {"user": user_id}
+
+    router = Router(path="/v1", route_handlers=[InternalController, user_card])
+    app = Litestar(route_handlers=[router], plugins=[LitestarMCP(MCPConfig(exclude_tags=["internal"]))])
+    env = LitestarEnv(app_path="tests.unit.test_cli:app", app=app, cwd=Path.cwd(), host=None, port=None)
+
+    tools_res = cli_runner.invoke(mcp_group, ["list-tools"], obj=env)
+    res_res = cli_runner.invoke(mcp_group, ["list-resources"], obj=env)
+
+    assert tools_res.exit_code == 0
+    assert "secret_tool" not in tools_res.output
+    assert res_res.exit_code == 0
+    assert "secret_res" not in res_res.output
+    assert "user_card" in res_res.output
+    assert "app://users/{user_id}" in res_res.output

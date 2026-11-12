@@ -178,15 +178,18 @@ def test_directory_read_disabled_is_method_not_found(tmp_path: "Path") -> "None"
     assert response.json()["error"]["code"] == -32601
 
 
-def test_skill_methods_unavailable_when_skills_disabled() -> "None":
+@pytest.mark.parametrize(
+    ("method", "params"),
+    [
+        ("skills/list", {}),
+        ("skills/get", {"uri": "skill://alpha/SKILL.md"}),
+        ("resources/directory/read", {"uri": "skill://alpha"}),
+    ],
+)
+def test_skill_methods_unavailable_when_skills_disabled(method: str, params: dict[str, Any]) -> "None":
     with TestClient(app=Litestar(plugins=[LitestarMCP()])) as client:
-        for method, params in (
-            ("skills/list", {}),
-            ("skills/get", {"uri": "skill://alpha/SKILL.md"}),
-            ("resources/directory/read", {"uri": "skill://alpha"}),
-        ):
-            response = _rpc(client, method, params)
-            assert response["error"]["code"] == -32601
+        response = _rpc(client, method, params)
+    assert response["error"]["code"] == -32601
 
 
 def test_skills_get_requires_matching_name_header(tmp_path: "Path") -> "None":
@@ -708,3 +711,131 @@ def test_expose_as_prompts_get_collision_excluded_and_tampered(tmp_path: "Path")
         )
         tampered_err = _rpc(client, "prompts/get", {"name": "beta"})["error"]
         assert tampered_err["code"] == -32603
+
+
+def test_skill_and_skill_file_deep_copy_isolation_and_build_descriptor_clearing() -> None:
+    """Verify Skill/SkillFile nested dicts/lists cannot leak mutations and Skill.build clears empty descriptors."""
+    src_icons = [{"src": "https://example.com/icon.svg", "sizes": ["16x16"]}]
+    src_meta: dict[str, Any] = {"nested": {"flag": True}}
+    file_item = SkillFile.from_content(
+        "ops",
+        "notes.md",
+        "hello",
+        icons=src_icons,
+        meta=src_meta,
+    )
+    skill = Skill.build(
+        "ops",
+        "Ops skill",
+        files={"notes.md": file_item},
+        metadata={"extra": {"items": [1, 2]}},
+        icons=src_icons,
+        meta=src_meta,
+    )
+    src_icons[0]["sizes"].append("32x32")  # type: ignore[attr-defined]
+    src_meta["nested"]["flag"] = False
+
+    assert skill.icons == [{"src": "https://example.com/icon.svg", "sizes": ["16x16"]}]
+    assert skill.meta == {"nested": {"flag": True}}
+
+    entry = skill.to_entry()
+    entry["frontmatter"]["extra"]["items"].append(99)
+    entry["icons"][0]["sizes"].append("64x64")
+    entry["_meta"]["nested"]["flag"] = False
+    res = file_item.to_resource(skill)
+    res["icons"][0]["sizes"].append("128x128")
+    res["_meta"]["nested"]["flag"] = False
+    manifest_entry = file_item.to_manifest_entry()
+    manifest_entry["uri"] = "skill://tampered"
+
+    assert skill.frontmatter["extra"] == {"items": [1, 2]}
+    assert skill.to_entry()["icons"] == [{"src": "https://example.com/icon.svg", "sizes": ["16x16"]}]
+    assert skill.to_entry()["_meta"] == {"nested": {"flag": True}}
+    assert file_item.to_resource(skill)["icons"] == [{"src": "https://example.com/icon.svg", "sizes": ["16x16"]}]
+    assert file_item.to_resource(skill)["_meta"] == {"nested": {"flag": True}}
+
+    cleared = Skill.build(
+        "clean",
+        "Clean skill",
+        metadata={
+            "tags": ["legacy"],
+            "title": "Legacy Title",
+            "icons": [{"src": "https://example.com/legacy.svg"}],
+            "_meta": {"legacy": True},
+            "keep": "yes",
+        },
+        tags=(),
+        title="",
+        icons=(),
+        meta={},
+    )
+    assert cleared.tags == ()
+    assert cleared.title is None
+    assert cleared.icons is None
+    assert cleared.meta is None
+    assert "tags" not in cleared.frontmatter
+    assert "title" not in cleared.frontmatter
+    assert "icons" not in cleared.frontmatter
+    assert "_meta" not in cleared.frontmatter
+    assert cleared.frontmatter["keep"] == "yes"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("list_changed", "expose_as_prompts", "expected_methods"),
+    [
+        (
+            False,
+            False,
+            ["notifications/resources/list_changed"],
+        ),
+        (
+            False,
+            True,
+            ["notifications/resources/list_changed", "notifications/prompts/list_changed"],
+        ),
+        (
+            True,
+            True,
+            [
+                "notifications/skills/list_changed",
+                "notifications/resources/list_changed",
+                "notifications/prompts/list_changed",
+            ],
+        ),
+    ],
+)
+async def test_skills_list_changed_config_gates_skill_notifications_only(
+    list_changed: bool,
+    expose_as_prompts: bool,
+    expected_methods: list[str],
+) -> None:
+    """Verify MCPSkillsConfig.list_changed suppresses notifications/skills/list_changed while retaining resource/prompt notifications."""
+    plugin = LitestarMCP(
+        MCPConfig(
+            skills=MCPSkillsConfig(
+                sources=[_StaticSkillSource([Skill.build("alpha", "Alpha skill")])],
+                list_changed=list_changed,
+                expose_as_prompts=expose_as_prompts,
+            )
+        )
+    )
+    Litestar(plugins=[plugin])
+    manager = plugin.registry.subscription_manager
+    assert manager is not None
+    assert plugin.skill_catalog is not None
+
+    published: list[str] = []
+    orig_publish = manager.publish
+
+    async def _capture(method: str, params: dict[str, Any], **kwargs: Any) -> None:
+        published.append(method)
+        await orig_publish(method, params, **kwargs)
+
+    monkeypatch_orig = manager.publish
+    object.__setattr__(manager, "publish", _capture)
+    try:
+        await plugin.skill_catalog.notify_list_changed()
+    finally:
+        object.__setattr__(manager, "publish", monkeypatch_orig)
+    assert published == expected_methods

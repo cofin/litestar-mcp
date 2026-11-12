@@ -613,7 +613,7 @@ def test_postbuild_indexes_primitives_and_skills_symbols(tmp_path: Path, symbol_
         ),
     ],
 )
-def test_reference_api_pages_document_ch01_to_ch06_contracts(
+def test_reference_api_pages_document_protocol_and_runtime_contracts(
     rel_path: str,
     required_directives: tuple[str, ...],
     required_tokens: tuple[str, ...],
@@ -645,7 +645,7 @@ def test_reference_api_pages_document_ch01_to_ch06_contracts(
         "litestar_mcp.mcp.tasks.MCPTaskStore.update_status_message py:method 1 reference/tasks-and-queues/#litestar_mcp.mcp.tasks.MCPTaskStore.update_status_message",
     ],
 )
-def test_postbuild_indexes_ch09_reference_anchors(tmp_path: Path, symbol_entry: str) -> None:
+def test_postbuild_indexes_protocol_and_runtime_reference_anchors(tmp_path: Path, symbol_entry: str) -> None:
     """Verify `run_postbuild` indexes all synchronized `plugin-and-config`, `core-and-observability`, and `tasks-and-queues` anchors."""
     site_dir = tmp_path / "site"
     run_postbuild(site_dir=site_dir, docs_dir=REPO_ROOT / "docs")

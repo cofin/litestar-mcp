@@ -5,7 +5,6 @@ import asyncio
 import base64
 import binascii
 import contextlib
-import inspect
 from typing import TYPE_CHECKING, Any, Literal
 
 import anyio
@@ -25,7 +24,7 @@ from litestar.status_codes import (
     HTTP_503_SERVICE_UNAVAILABLE,
 )
 
-from litestar_mcp.core._streaming import StreamCleanupMiddleware, start_stream
+from litestar_mcp.core._streaming import StreamCleanupMiddleware, add_stream_cleanup, start_stream
 from litestar_mcp.core.jsonrpc import (
     INVALID_PARAMS,
     INVALID_REQUEST,
@@ -45,6 +44,7 @@ from litestar_mcp.mcp.registry import PromptRegistration, Registry, evaluate_sub
 from litestar_mcp.mcp.service import MCPHandlerService, MCPRequestContext, get_session_store
 from litestar_mcp.mcp.skills import SkillCatalog  # noqa: TC001
 from litestar_mcp.mcp.tasks import MCPTaskStore  # noqa: TC001
+from litestar_mcp.utils import get_handler_function, get_mcp_metadata
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable
@@ -54,10 +54,27 @@ if TYPE_CHECKING:
     from litestar_mcp.core.jsonrpc import JSONRPCRequest
     from litestar_mcp.mcp.service import MCPSession
 
+__all__ = (
+    "HEADER_MISMATCH",
+    "MCP_METHOD_HEADER",
+    "MCP_NAME_HEADER",
+    "MCP_OWNER_ID_SCOPE_KEY",
+    "MCP_PROTOCOL_VERSION",
+    "MCP_PROTOCOL_VERSION_HEADER",
+    "MCP_SESSION_ID_HEADER",
+    "MISSING_REQUIRED_CLIENT_CAPABILITY",
+    "SUPPORTED_PROTOCOL_VERSIONS",
+    "UNSUPPORTED_PROTOCOL_VERSION",
+    "MCPController",
+    "decode_mcp_header_value",
+    "encode_mcp_header_value",
+)
+
 MCP_PROTOCOL_VERSION = "2026-07-28"
 MCP_FALLBACK_SESSION_VERSION = "2025-11-25"
 MCP_PROTOCOL_VERSION_HEADER = "MCP-Protocol-Version"
 MCP_SESSION_ID_HEADER = "Mcp-Session-Id"
+"""HTTP header carrying the stateful `2025-*` Streamable HTTP session identifier."""
 MCP_METHOD_HEADER = "Mcp-Method"
 MCP_NAME_HEADER = "Mcp-Name"
 MCP_OWNER_ID_SCOPE_KEY = "litestar_mcp.owner_id"
@@ -78,6 +95,15 @@ MCP_NAME_FIELDS = {
 }
 _MODERN_DISALLOWED_METHODS = frozenset(
     {"initialize", "ping", "resources/subscribe", "resources/unsubscribe", "logging/setLevel"}
+)
+_MODERN_2026_META_KEYS = frozenset(
+    {
+        "io.modelcontextprotocol/protocolVersion",
+        "io.modelcontextprotocol/clientCapabilities",
+        "io.modelcontextprotocol/clientInfo",
+        "io.modelcontextprotocol/logLevel",
+        "io.modelcontextprotocol/subscriptionId",
+    }
 )
 _CACHEABLE_METHODS = {
     "server/discover",
@@ -122,7 +148,7 @@ def decode_mcp_header_value(value: "str") -> "str":
 class MCPController(Controller):
     """MCP JSON-RPC Streamable HTTP controller."""
 
-    @get("/", name="mcp_get", status_code=HTTP_200_OK)
+    @get("/", name="mcp_get", status_code=HTTP_200_OK, middleware=[StreamCleanupMiddleware()])
     async def stream_events(
         self,
         request: "Request[Any, Any, Any]",
@@ -136,6 +162,8 @@ class MCPController(Controller):
         header_version = _header_protocol_version(request)
         if not config.enable_get_sse or header_version == MCP_PROTOCOL_VERSION:
             return _method_not_allowed()
+        if header_version is not None and header_version not in SUPPORTED_PROTOCOL_VERSIONS:
+            return _unsupported_version_error(None, header_version)
         accept_mode = _accepts_sse(request.headers.get("accept"))
         if accept_mode == "missing_or_wildcard":
             ver = _supported_header_version(header_version) or MCP_PROTOCOL_VERSION
@@ -148,8 +176,6 @@ class MCPController(Controller):
                 status_code=HTTP_406_NOT_ACCEPTABLE,
                 protocol_version=_supported_header_version(header_version) or MCP_FALLBACK_SESSION_VERSION,
             )
-        if header_version is not None and header_version not in SUPPORTED_PROTOCOL_VERSIONS:
-            return _unsupported_version_error(None, header_version)
 
         owner_id = _request_owner_id(request)
         session: MCPSession | None = None
@@ -186,7 +212,14 @@ class MCPController(Controller):
                 status_code=HTTP_503_SERVICE_UNAVAILABLE,
                 protocol_version=resolved_version,
             )
-        return _stream_subscription_events(stream_id, stream, registry, config, protocol_version=resolved_version)
+        return _stream_subscription_events(
+            request.scope,
+            stream_id,
+            stream,
+            registry,
+            config,
+            protocol_version=resolved_version,
+        )
 
     @delete(
         "/",
@@ -301,7 +334,7 @@ class MCPController(Controller):
             return session_error
         _sync_session_logging(registry, config, session)
         if rpc_request.method == "subscriptions/listen":
-            return await _subscription_response(request, rpc_request, registry, config)
+            return await _subscription_response(request, rpc_request, registry, config, task_store=task_store)
 
         router = _ensure_router(
             request.app,
@@ -471,7 +504,7 @@ def _is_modern_2026_rpc(request: "Request[Any, Any, Any]", rpc_request: "JSONRPC
     header_method = raw_header_method.strip() if raw_header_method is not None else None
     body_version = meta.get("io.modelcontextprotocol/protocolVersion") if isinstance(meta, dict) else None
     client_capabilities = meta.get("io.modelcontextprotocol/clientCapabilities") if isinstance(meta, dict) else None
-    has_mcp_meta = isinstance(meta, dict) and any(k.startswith("io.modelcontextprotocol/") for k in meta)
+    has_mcp_meta = isinstance(meta, dict) and any(k in _MODERN_2026_META_KEYS for k in meta)
     return (
         rpc_request.method == "server/discover"
         or header_version == MCP_PROTOCOL_VERSION
@@ -595,7 +628,11 @@ def _param_header_error(
     arguments = params.get("arguments")
     if not isinstance(arguments, dict):
         return None
-    for path, custom_name, _property_schema in iter_mcp_header_fields(cached_schema_for_handler(handler)):
+    fn = get_handler_function(handler)
+    metadata = get_mcp_metadata(handler, kind="tool") or get_mcp_metadata(fn, kind="tool") or {}
+    explicit_schema = metadata.get("input_schema")
+    tool_schema = explicit_schema if isinstance(explicit_schema, dict) else cached_schema_for_handler(handler)
+    for path, custom_name, _property_schema in iter_mcp_header_fields(tool_schema):
         value: Any = arguments
         present = True
         for part in path:
@@ -700,23 +737,15 @@ def _sync_session_logging(registry: "Registry", config: "MCPConfig", session: "M
     if not config.logging or not registry.has_subscription_manager:
         return
     manager = registry.subscription_manager
-    set_default = getattr(manager, "set_default_log_level", None)
-    if callable(set_default):
-        set_default(config.default_log_level)
+    manager.set_default_log_level(config.default_log_level)
     if session is not None and session.log_level is not None and session.log_level in LOG_LEVEL_SEVERITY:
-        set_session = getattr(manager, "set_session_log_level", None)
-        if callable(set_session):
-            set_session(session.session_id, session.log_level)
+        manager.set_session_log_level(session.session_id, session.log_level)
 
 
 async def _close_registry_session_streams(registry: "Registry", session_id: "str") -> "None":
     if not registry.has_subscription_manager:
         return
-    close_session = getattr(registry.subscription_manager, "close_session", None)
-    if callable(close_session):
-        outcome = close_session(session_id)
-        if inspect.isawaitable(outcome):
-            await outcome
+    await registry.subscription_manager.close_session(session_id)
 
 
 def _make_subscription_authorizer(
@@ -766,11 +795,9 @@ def _resolve_request_logging(
         if session.log_level is not None and session.log_level in LOG_LEVEL_SEVERITY:
             resolved_level = session.log_level
         elif registry.has_subscription_manager:
-            get_level = getattr(registry.subscription_manager, "get_session_log_level", None)
-            resolved_level = (
-                str(get_level(session.session_id, default=config.default_log_level))
-                if callable(get_level)
-                else config.default_log_level
+            resolved_level = registry.subscription_manager.get_session_log_level(
+                session.session_id,
+                default=config.default_log_level,
             )
         else:
             resolved_level = config.default_log_level
@@ -793,6 +820,8 @@ def _resolve_request_logging(
             payload,
             owner_id=owner_id,
             session_id=target_session_id,
+            strict_owner=True,
+            strict_session=True,
         )
 
     return resolved_level, _default_log_reporter
@@ -1043,12 +1072,28 @@ def _make_progress_log_reporter(
             payload["logger"] = logger_name
         if session is not None:
             if registry.has_subscription_manager:
-                await registry.subscription_manager.publish(
-                    "notifications/message",
-                    payload,
-                    owner_id=owner_id,
-                    session_id=session.session_id,
+                manager = registry.subscription_manager
+                if manager.channels is not None or manager.has_session_stream(session.session_id):
+                    await manager.publish(
+                        "notifications/message",
+                        payload,
+                        owner_id=owner_id,
+                        session_id=session.session_id,
+                        strict_owner=True,
+                        strict_session=True,
+                    )
+                    return
+                threshold = meta_level or manager.get_session_log_level(
+                    session.session_id,
+                    default=session.log_level or config.default_log_level,
                 )
+            else:
+                threshold = meta_level or session.log_level or config.default_log_level
+            if log_level_allows(level, threshold):
+                try:
+                    await sender.send({"jsonrpc": "2.0", "method": "notifications/message", "params": payload})
+                except (anyio.BrokenResourceError, anyio.ClosedResourceError) as exc:
+                    raise asyncio.CancelledError from exc
             return
         if registry.has_subscription_manager:
             await registry.subscription_manager.publish(
@@ -1056,6 +1101,8 @@ def _make_progress_log_reporter(
                 payload,
                 owner_id=owner_id,
                 session_id=None,
+                strict_owner=True,
+                strict_session=True,
             )
         if log_level_allows(level, meta_level or config.default_log_level):
             try:
@@ -1140,6 +1187,7 @@ def _progress_response(
 
 
 def _stream_subscription_events(
+    scope: "Any",
     stream_id: "str",
     stream: "AsyncGenerator[dict[str, Any], None]",
     registry: "Registry",
@@ -1147,6 +1195,8 @@ def _stream_subscription_events(
     *,
     protocol_version: "str" = MCP_PROTOCOL_VERSION,
 ) -> "Response[Any]":
+    add_stream_cleanup(scope, lambda: registry.subscription_manager.disconnect(stream_id))
+
     async def event_stream() -> "AsyncGenerator[ServerSentEventMessage, None]":
         next_message = asyncio.create_task(stream.__anext__())
         try:
@@ -1183,6 +1233,8 @@ async def _subscription_response(
     rpc_request: "JSONRPCRequest",
     registry: "Registry",
     config: "MCPConfig",
+    *,
+    task_store: "MCPTaskStore | None" = None,
 ) -> "Response[Any]":
     notifications = rpc_request.params.get("notifications")
     if not isinstance(notifications, dict):
@@ -1192,6 +1244,27 @@ async def _subscription_response(
             message="subscriptions/listen notifications must be an object",
             status_code=HTTP_400_BAD_REQUEST,
         )
+    raw_tasks = notifications.get("taskIds")
+    if raw_tasks is not None and (
+        not isinstance(raw_tasks, list) or any(not isinstance(tid, str) or not tid for tid in raw_tasks)
+    ):
+        return _error(
+            rpc_request.id,
+            code=INVALID_PARAMS,
+            message="subscriptions/listen taskIds must be a list of non-empty task ID strings",
+            status_code=HTTP_400_BAD_REQUEST,
+        )
+    owner_id = _request_owner_id(request)
+    if task_store is not None and isinstance(raw_tasks, list):
+        for task_id in raw_tasks:
+            record = await task_store.peek(task_id)
+            if record is not None and record.owner_id != owner_id:
+                return _error(
+                    rpc_request.id,
+                    code=INVALID_PARAMS,
+                    message="Failed to retrieve task: Task not found",
+                    status_code=HTTP_400_BAD_REQUEST,
+                )
     raw_resources = notifications.get("resourceSubscriptions")
     if raw_resources is not None and (
         not isinstance(raw_resources, list) or any(not isinstance(uri, str) or not uri for uri in raw_resources)
@@ -1213,21 +1286,13 @@ async def _subscription_response(
                 )
 
     _sync_session_logging(registry, config, None)
-    open_fn = registry.subscription_manager.open
-    open_kwargs: dict[str, Any] = {}
     try:
-        sig = inspect.signature(open_fn)
-    except (TypeError, ValueError):
-        sig = None
-    if sig is not None:
-        accepts_var_kw = any(param.kind is inspect.Parameter.VAR_KEYWORD for param in sig.parameters.values())
-        if accepts_var_kw or "owner_id" in sig.parameters:
-            open_kwargs["owner_id"] = _request_owner_id(request)
-        if accepts_var_kw or "authorize" in sig.parameters:
-            open_kwargs["authorize"] = _make_subscription_authorizer(request, config)
-
-    try:
-        stream_id, stream = await open_fn(rpc_request.id, notifications, **open_kwargs)
+        stream_id, stream = await registry.subscription_manager.open(
+            rpc_request.id,
+            notifications,
+            owner_id=owner_id,
+            authorize=_make_subscription_authorizer(request, config),
+        )
     except (StreamLimitExceeded, ValueError) as exc:
         return _error(
             rpc_request.id,
@@ -1235,21 +1300,11 @@ async def _subscription_response(
             message=str(exc),
             status_code=HTTP_400_BAD_REQUEST,
         )
-    return _stream_subscription_events(stream_id, stream, registry, config, protocol_version=MCP_PROTOCOL_VERSION)
-
-
-__all__ = (
-    "HEADER_MISMATCH",
-    "MCP_METHOD_HEADER",
-    "MCP_NAME_HEADER",
-    "MCP_OWNER_ID_SCOPE_KEY",
-    "MCP_PROTOCOL_VERSION",
-    "MCP_PROTOCOL_VERSION_HEADER",
-    "MCP_SESSION_ID_HEADER",
-    "MISSING_REQUIRED_CLIENT_CAPABILITY",
-    "SUPPORTED_PROTOCOL_VERSIONS",
-    "UNSUPPORTED_PROTOCOL_VERSION",
-    "MCPController",
-    "decode_mcp_header_value",
-    "encode_mcp_header_value",
-)
+    return _stream_subscription_events(
+        request.scope,
+        stream_id,
+        stream,
+        registry,
+        config,
+        protocol_version=MCP_PROTOCOL_VERSION,
+    )

@@ -16,6 +16,7 @@ this single module.
 import copy
 import inspect
 import re
+import weakref
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
@@ -31,6 +32,32 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
     from litestar_mcp.mcp.config import MCPConfig
+
+__all__ = (
+    "DescriptionSources",
+    "MetadataRegistry",
+    "classify_resource_uri",
+    "clean_icons",
+    "clean_meta",
+    "clean_title",
+    "expand_template",
+    "extract_description_sources",
+    "get_all_mcp_metadata",
+    "get_handler_function",
+    "get_mcp_metadata",
+    "match_uri",
+    "mcp_prompt",
+    "mcp_resource",
+    "mcp_tool",
+    "normalize_task_support",
+    "parse_template",
+    "render_description",
+    "resolve_app_store",
+    "set_mcp_metadata",
+    "should_include_handler",
+    "strip_docstring_sections",
+    "validate_tool_descriptions",
+)
 
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -113,59 +140,85 @@ def strip_docstring_sections(docstring: "str | None") -> "str":
 
 
 class MetadataRegistry:
-    """Singleton registry for MCP metadata keyed by `(role, module.qualname)`."""
+    """Singleton registry for MCP metadata keyed weakly by callable identity and role."""
 
     _instance: "MetadataRegistry | None" = None
-    _data: "dict[tuple[str, str], dict[str, Any]]"
+    _data: "weakref.WeakKeyDictionary[Any, dict[str, dict[str, Any]]]"
+    _fallback: "dict[int, tuple[Any, dict[str, dict[str, Any]]]]"
 
     def __new__(cls) -> "Self":
         if cls._instance is None:
             inst = super().__new__(cls)
-            inst._data = {}
+            inst._data = weakref.WeakKeyDictionary()
+            inst._fallback = {}
             cls._instance = inst
         return cast("Self", cls._instance)
 
     def set(self, obj: "Any", value: "dict[str, Any]", *, kind: "Kind | str | None" = None) -> "None":
-        """Store MCP metadata dictionary for `obj` keyed by `(role, module.qualname)`."""
+        """Store MCP metadata dictionary for `obj` under `kind`."""
         role = str(kind or value.get("type") or "tool")
-        key = self._get_key(obj)
-        self._data[(role, key)] = value
+        bucket = self._bucket(self._unwrap_target(obj), create=True)
+        if bucket is not None:
+            bucket[role] = value
 
     def get(self, obj: "Any", *, kind: "Kind | str | None" = None) -> "dict[str, Any] | None":
         """Retrieve the stored MCP metadata dictionary for `obj`, optionally filtered by `kind`."""
-        qualname_key = self._get_key(obj)
+        bucket = self._bucket(self._unwrap_target(obj), create=False)
+        if not bucket:
+            return None
         if kind is not None:
-            return self._data.get((str(kind), qualname_key))
+            return bucket.get(str(kind))
         for role in ("tool", "resource", "prompt"):
-            entry = self._data.get((role, qualname_key))
+            entry = bucket.get(role)
             if entry is not None:
                 return entry
-        for (_, stored_key), value in self._data.items():
-            if stored_key == qualname_key:
-                return value
-        return None
+        return next(iter(bucket.values()), None)
 
     def get_all(self, obj: "Any") -> "list[dict[str, Any]]":
         """Return all stored role metadata dictionaries associated with `obj`."""
-        qualname_key = self._get_key(obj)
-        return [value for (_, stored_key), value in self._data.items() if stored_key == qualname_key]
+        bucket = self._bucket(self._unwrap_target(obj), create=False)
+        if not bucket:
+            return []
+        return list(bucket.values())
 
-    def _get_key(self, obj: "Any") -> "str":
+    def _bucket(self, target: "Any", *, create: "bool") -> "dict[str, dict[str, Any]] | None":
+        try:
+            existing = self._data.get(target)
+            if existing is None and create:
+                existing = {}
+                self._data[target] = existing
+        except TypeError:
+            entry = self._fallback.get(id(target))
+            if entry is not None and entry[0] is target:
+                return entry[1]
+            if not create:
+                return None
+            created: dict[str, dict[str, Any]] = {}
+            self._fallback[id(target)] = (target, created)
+            return created
+        else:
+            return existing
+
+    @staticmethod
+    def _unwrap_target(obj: "Any") -> "Any":
         target = obj
-        if hasattr(obj, "fn"):
+        if hasattr(obj, "fn") and not isinstance(obj, type):
             target = obj.fn
-            if hasattr(target, "value"):
+            if not isinstance(target, type) and hasattr(target, "value") and callable(target.value):
                 target = target.value
 
-        if hasattr(target, "__func__"):
-            target = target.__func__
-
-        if hasattr(target, "__wrapped__"):
-            target = target.__wrapped__
-
-        module = getattr(target, "__module__", "unknown")
-        qualname = getattr(target, "__qualname__", "unknown")
-        return f"{module}.{qualname}"
+        seen: set[int] = set()
+        sentinel = object()
+        while id(target) not in seen:
+            seen.add(id(target))
+            for attr in ("__dishka_orig_func__", "__func__", "__wrapped__"):
+                unwrapped = getattr(target, attr, sentinel)
+                if unwrapped is not sentinel:
+                    target = unwrapped
+                    break
+            else:
+                break
+        return target
 
 
 _REGISTRY = MetadataRegistry()
@@ -348,7 +401,7 @@ def mcp_tool(
                 "agent_instructions": agent_instructions,
                 "when_to_use": when_to_use,
                 "returns": returns,
-                "input_schema": input_schema,
+                "input_schema": copy.deepcopy(dict(input_schema)) if input_schema is not None else None,
             },
         )
         if validated_output_schema is not None:
@@ -358,7 +411,7 @@ def mcp_tool(
                 else validated_output_schema
             )
         if annotations is not None or read_only is not None:
-            merged_annotations = dict(annotations or {})
+            merged_annotations: dict[str, Any] = copy.deepcopy(dict(annotations)) if annotations else {}
             if read_only is not None:
                 merged_annotations["readOnlyHint"] = bool(read_only)
             metadata["annotations"] = merged_annotations
@@ -1084,30 +1137,3 @@ class _Literal:
 
 
 Segment = _Variable | _Literal
-
-
-__all__ = (
-    "DescriptionSources",
-    "MetadataRegistry",
-    "classify_resource_uri",
-    "clean_icons",
-    "clean_meta",
-    "clean_title",
-    "expand_template",
-    "extract_description_sources",
-    "get_all_mcp_metadata",
-    "get_handler_function",
-    "get_mcp_metadata",
-    "match_uri",
-    "mcp_prompt",
-    "mcp_resource",
-    "mcp_tool",
-    "normalize_task_support",
-    "parse_template",
-    "render_description",
-    "resolve_app_store",
-    "set_mcp_metadata",
-    "should_include_handler",
-    "strip_docstring_sections",
-    "validate_tool_descriptions",
-)

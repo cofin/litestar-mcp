@@ -959,6 +959,7 @@ def _split_tool_args(
 
     body_payload: Any = None
     body_supplied = False
+    raw_tool_args = bool((getattr(handler, "opt", None) or {}).get("_mcp_raw_tool_args"))
     if has_data:
         if "data" in remaining:
             body_payload = remaining["data"]
@@ -966,6 +967,9 @@ def _split_tool_args(
         else:
             body_payload = {k: v for k, v in remaining.items() if k not in consumed}
             body_supplied = bool(body_payload)
+    elif raw_tool_args and remaining:
+        body_payload = dict(remaining)
+        body_supplied = True
 
     body = encode_json(body_payload, serializer=handler.default_serializer) if body_supplied else b""
     return path_values, query_payload, body

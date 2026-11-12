@@ -5,8 +5,12 @@ from typing import Any, Literal
 
 import msgspec
 import pytest
+from litestar import Litestar
+from litestar.testing import TestClient
 
+from litestar_mcp import LitestarMCP, MCPConfig
 from litestar_mcp.core.context import ToolContext
+from litestar_mcp.core.serialization import decode_json
 from litestar_mcp.core.tools import (
     Tool,
     ToolArgumentError,
@@ -15,9 +19,10 @@ from litestar_mcp.core.tools import (
     execute_tool_calls,
     tool,
 )
-from litestar_mcp.mcp.content import MCPToolResult
+from litestar_mcp.mcp.content import MCPBlobResource, MCPResourceLink, MCPToolResult
 from litestar_mcp.mcp.tool_handlers import build_controller_tool_handler, build_tool_route_handler
 from litestar_mcp.utils import get_mcp_metadata
+from tests.unit.conftest import mcp_envelope, mcp_post
 
 
 class ItemOutput(msgspec.Struct, rename="camel"):
@@ -482,3 +487,137 @@ def test_tool_normalizes_empty_and_whitespace_descriptors_to_none(
     assert "title" not in exported
     assert "icons" not in exported
     assert "meta" not in exported
+
+
+def test_tool_from_schema_wire_roundtrip_validation_and_docstring_descriptions() -> None:
+    """Verify Tool.from_schema preserves nested JSON types/validation, SEP-2575 headers, and @tool Args descriptions."""
+    raw_schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "count": {"type": "integer", "minimum": 1},
+            "enabled": {"type": "boolean"},
+            "tags": {"type": "array", "items": {"type": "string"}},
+            "meta_map": {"type": "object", "properties": {"tier": {"type": "string"}}, "required": ["tier"]},
+            "tenant": {"type": "string", "x-mcp-header": "Tenant"},
+        },
+        "required": ["count", "enabled", "tenant"],
+        "additionalProperties": False,
+    }
+    captured: list[dict[str, Any]] = []
+
+    def handle_raw(**kwargs: Any) -> dict[str, Any]:
+        captured.append(dict(kwargs))
+        return {"received": kwargs, "count_type": type(kwargs["count"]).__name__}
+
+    schema_tool = Tool.from_schema(
+        "raw_ingest",
+        description="Raw JSON schema tool.",
+        parameters=raw_schema,
+        call=handle_raw,
+    )
+    raw_schema["properties"]["mutated"] = {"type": "string"}
+    assert "mutated" not in schema_tool.parameters["properties"]
+
+    @tool(description="Search catalog.")
+    def catalog_search(query: str, limit: int = 5) -> list[MCPResourceLink]:
+        """Search catalog.
+
+        Args:
+            query: Search phrase for matching items.
+            limit: Maximum hits returned.
+        """
+        return [MCPResourceLink(name=f"{query}:{limit}", uri="app://hit")]
+
+    @tool(description="Emit binary tuple.")
+    def binary_blobs() -> tuple[MCPBlobResource, ...]:
+        return (MCPBlobResource(uri="app://blob", data=b"xyz"),)
+
+    plugin = LitestarMCP(MCPConfig())
+    plugin.register_tool(schema_tool)
+    plugin.register_tool(catalog_search)
+    plugin.register_tool(binary_blobs)
+    app = Litestar(plugins=[plugin])
+
+    with TestClient(app=app) as client:
+        tools_by_name = {item["name"]: item for item in mcp_post(client, "tools/list", {}).json()["result"]["tools"]}
+        assert tools_by_name["raw_ingest"]["inputSchema"] == schema_tool.parameters
+        assert (
+            tools_by_name["catalog_search"]["inputSchema"]["properties"]["query"]["description"]
+            == "Search phrase for matching items."
+        )
+
+        valid_args = {
+            "count": 3,
+            "enabled": True,
+            "tags": ["a", "b"],
+            "meta_map": {"tier": "gold"},
+            "tenant": "acme",
+        }
+        body, headers = mcp_envelope("tools/call", {"name": "raw_ingest", "arguments": valid_args})
+        headers["Mcp-Param-Tenant"] = "acme"
+        ok_resp = client.post("/mcp", json=body, headers=headers).json()
+        assert ok_resp["result"]["isError"] is False
+        decoded = decode_json(ok_resp["result"]["content"][0]["text"])
+        assert decoded == {"received": valid_args, "count_type": "int"}
+        assert isinstance(captured[0]["enabled"], bool)
+        assert captured[0]["tags"] == ["a", "b"]
+
+        missing_hdr_body, missing_hdr_headers = mcp_envelope(
+            "tools/call",
+            {"name": "raw_ingest", "arguments": valid_args},
+        )
+        hdr_err = client.post("/mcp", json=missing_hdr_body, headers=missing_hdr_headers).json()
+        assert hdr_err["error"]["code"] == -32020
+
+        links_resp = mcp_post(client, "tools/call", {"name": "catalog_search", "arguments": {"query": "mcp"}}).json()
+        assert links_resp["result"]["content"][0]["type"] == "resource_link"
+        blobs_resp = mcp_post(client, "tools/call", {"name": "binary_blobs", "arguments": {}}).json()
+        assert blobs_resp["result"]["content"][0]["type"] == "resource"
+
+
+@pytest.mark.parametrize(
+    "bad_args",
+    [
+        {"enabled": True, "tenant": "acme"},
+        {"count": True, "enabled": True, "tenant": "acme"},
+        {"count": 0, "enabled": True, "tenant": "acme"},
+        {"count": 2, "enabled": True, "tenant": "acme", "extra": "nope"},
+        {"count": 2, "enabled": True, "tenant": "acme", "meta_map": {}},
+    ],
+    ids=["missing_required", "bool_for_integer", "below_minimum", "unexpected_prop", "nested_missing_required"],
+)
+def test_tool_from_schema_rejects_invalid_wire_arguments(bad_args: dict[str, Any]) -> None:
+    """Verify Tool.from_schema enforces JSON Schema keywords and rejects bool-for-int with SEP-2663 isError."""
+    called = False
+
+    def _never_called(**kw: Any) -> dict[str, Any]:
+        nonlocal called
+        called = True
+        return kw
+
+    schema_tool = Tool.from_schema(
+        "strict_raw",
+        parameters={
+            "type": "object",
+            "properties": {
+                "count": {"type": "integer", "minimum": 1},
+                "enabled": {"type": "boolean"},
+                "tenant": {"type": "string"},
+                "meta_map": {"type": "object", "properties": {"tier": {"type": "string"}}, "required": ["tier"]},
+            },
+            "required": ["count", "enabled", "tenant"],
+            "additionalProperties": False,
+        },
+        call=_never_called,
+    )
+    plugin = LitestarMCP()
+    plugin.register_tool(schema_tool)
+    app = Litestar(plugins=[plugin])
+
+    with TestClient(app=app) as client:
+        resp = mcp_post(client, "tools/call", {"name": "strict_raw", "arguments": bad_args}).json()
+    assert called is False
+    assert resp["result"]["isError"] is True
+    payload = decode_json(resp["result"]["content"][0]["text"])
+    assert payload["error"] == "Invalid tool arguments"
+    assert payload["errors"]

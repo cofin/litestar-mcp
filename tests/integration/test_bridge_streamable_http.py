@@ -378,9 +378,7 @@ async def test_bridge_forwards_skill_methods_with_name_header(tmp_path: "Path") 
     by_id = {message.get("id"): message for message in messages}
     assert exit_code == 0
     assert set(by_id) == {1, 2, 3, 4, 5}
-    for msg_id in (1, 2, 3, 4, 5):
-        assert "result" in by_id[msg_id]
-        assert by_id[msg_id].get("error") is None
+    assert all("result" in by_id[msg_id] and by_id[msg_id].get("error") is None for msg_id in (1, 2, 3, 4, 5))
     assert not any(message.get("error", {}).get("code") == -32020 for message in messages)
 
     skill_entry = by_id[3]["result"]["skill"]

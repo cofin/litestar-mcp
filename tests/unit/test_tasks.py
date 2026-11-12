@@ -10,6 +10,8 @@ from typing import Any, cast
 import msgspec
 import pytest
 from litestar import Litestar, get
+from litestar.enums import ScopeType
+from litestar.middleware import ASGIMiddleware
 from litestar.stores.memory import MemoryStore
 from litestar.testing import AsyncTestClient, TestClient
 
@@ -22,9 +24,10 @@ from litestar_mcp import (
 )
 from litestar_mcp.core.serialization import from_json
 from litestar_mcp.mcp.client import MCPStreamableHTTPClient
+from litestar_mcp.mcp.routes import MCP_OWNER_ID_SCOPE_KEY
 from litestar_mcp.mcp.service import TASKS_EXTENSION
 from litestar_mcp.mcp.stdio import ASGIStreamingTransport
-from litestar_mcp.mcp.tasks import MCPTaskStore, ToolTaskCall
+from litestar_mcp.mcp.tasks import MCPTaskStore, TaskLookupError, ToolTaskCall
 from litestar_mcp.utils import mcp_tool
 from tests.unit.conftest import mcp_envelope, mcp_post
 
@@ -585,3 +588,99 @@ async def test_inprocess_task_reflects_mid_execution_set_logging_level() -> None
             sse_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await sse_task
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("creator_owner", "caller_owner"),
+    [
+        ("user:alice", None),
+        (None, "user:alice"),
+        ("user:alice", "user:bob"),
+    ],
+)
+async def test_task_store_strict_owner_isolation_and_internal_peek(
+    creator_owner: str | None,
+    caller_owner: str | None,
+) -> None:
+    """Verify MCPTaskStore isolates anonymous and authenticated owners while allowing internal peek."""
+    store = MCPTaskStore(store=MemoryStore())
+    try:
+        created = await store.create(creator_owner)
+        assert await store.peek(created.task_id) is not None
+        assert (await store.get(created.task_id, creator_owner)).task_id == created.task_id
+        with pytest.raises(TaskLookupError):
+            await store.get(created.task_id, caller_owner)
+        with pytest.raises(TaskLookupError):
+            await store.update(created.task_id, caller_owner, {"ok": True})
+        with pytest.raises(TaskLookupError):
+            await store.cancel(created.task_id, caller_owner)
+    finally:
+        await store.close()
+
+
+def test_task_store_discards_local_runners_and_queues_on_terminal_transition() -> None:
+    """Verify completed and cancelled in-process tasks release runner, queue, and event entries."""
+    app = _make_task_app()
+    plugin = app.plugins.get(LitestarMCP)
+    with TestClient(app=app) as client:
+        done_id = _rpc(
+            client,
+            "tools/call",
+            {"name": "optional_task", "arguments": {"delay": 0.01}},
+            tasks_capable=True,
+        )["result"]["taskId"]
+        _wait_for_status(client, done_id, "completed")
+        time.sleep(0.02)
+
+        assert plugin.task_store is not None
+        assert done_id not in plugin.task_store._runners
+        assert done_id not in plugin.task_store._input_queues
+        assert done_id not in plugin.task_store._cancel_events
+
+
+@pytest.mark.anyio
+async def test_subscriptions_listen_rejects_anonymous_subscription_to_owned_task() -> None:
+    """Verify anonymous callers cannot subscribe via taskIds to an authenticated user's task."""
+
+    class _OwnerMiddleware(ASGIMiddleware):
+        scopes = (ScopeType.HTTP,)
+
+        async def handle(self, scope: Any, receive: Any, send: Any, next_app: Any) -> None:
+            hdrs = dict(scope.get("headers", ()))
+            owner = hdrs.get(b"x-owner")
+            if owner:
+                scope[MCP_OWNER_ID_SCOPE_KEY] = owner.decode("utf-8")
+            await next_app(scope, receive, send)
+
+    @get("/owned-task")
+    @mcp_tool(name="owned_task", task_support="optional")
+    async def owned_task() -> dict[str, str]:
+        await asyncio.sleep(0.05)
+        return {"ok": "yes"}
+
+    scoped_app = Litestar(
+        route_handlers=[owned_task],
+        middleware=[_OwnerMiddleware()],
+        plugins=[LitestarMCP(MCPConfig(tasks=True))],
+    )
+    async with AsyncTestClient(app=scoped_app) as client:
+        body, headers = mcp_envelope(
+            "tools/call",
+            {
+                "name": "owned_task",
+                "arguments": {},
+                "_meta": {"io.modelcontextprotocol/clientCapabilities": {"extensions": {TASKS_EXTENSION: {}}}},
+            },
+        )
+        create_resp = await client.post("/mcp", json=body, headers={**headers, "x-owner": "user:alice"})
+        assert create_resp.status_code == 200
+        task_id = create_resp.json()["result"]["taskId"]
+
+        sub_body, sub_headers = mcp_envelope(
+            "subscriptions/listen",
+            {"notifications": {"taskIds": [task_id]}},
+        )
+        anon_sub = await client.post("/mcp", json=sub_body, headers=sub_headers)
+        assert anon_sub.status_code == 400
+        assert anon_sub.json()["error"]["code"] == -32602

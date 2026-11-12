@@ -26,7 +26,7 @@ This reference documents the public Python API, CLI subcommands, and contributor
   <div class="lm-card">
     <div>
       <h3><a href="plugin-and-config.md">Plugin &amp; Configuration</a></h3>
-      <p><code>LitestarMCP</code> plugin lifecycle, standalone <code>MCP</code> wrapper, <code>MCPConfig</code> (<code>auto_output_schema</code>, <code>ui_mime_types</code>, <code>enable_get_sse</code>, <code>session_ttl_seconds</code>, <code>logging</code>, <code>default_log_level</code>, <code>subscription_authorizer</code>), <code>MCPOptKeys</code> descriptor and schema keys, <code>MCPTaskConfig</code>, <code>MCPSkillsConfig</code> (<code>expose_as_prompts</code>, <code>list_changed</code>), tool-call hooks, and <code>MCPController</code>.</p>
+      <p><code>LitestarMCP</code> plugin lifecycle, standalone <code>MCP</code> wrapper, <code>MCPConfig</code> (<code>auto_output_schema</code>, <code>filter_app_only_tools</code>, <code>ui_mime_types</code>, <code>enable_get_sse</code>, <code>session_ttl_seconds</code>, <code>logging</code>, <code>default_log_level</code>, <code>subscription_authorizer</code>), <code>MCPOptKeys</code> descriptor and schema keys, <code>MCPTaskConfig</code>, <code>MCPSkillsConfig</code> (<code>expose_as_prompts</code>, <code>list_changed</code>), tool-call hooks, <code>MCPController</code>, <code>MCPSession</code>, and <code>MCPSessionStore</code>.</p>
     </div>
     <a href="plugin-and-config.md">Plugin &amp; Config API &rarr;</a>
   </div>
@@ -42,7 +42,7 @@ This reference documents the public Python API, CLI subcommands, and contributor
   <div class="lm-card">
     <div>
       <h3><a href="tasks-and-queues.md">Tasks, Queues &amp; Durable Workflows</a></h3>
-      <p><code>MCPTaskExecutor</code>, <code>MCPTaskRuntime</code>, <code>MCPTaskStore</code>, <code>TaskRecord</code> (<code>progress_token</code>, <code>session_id</code>, <code>log_level</code>), <code>MCPSessionStore</code>, <code>QueueTaskExecutor</code>, <code>DurableWorkflowEngine</code>, <code>WorkflowStore</code>, <code>TaskDependencyChain</code>, <code>QueuedAgentChatController</code>, and <code>QueuedTurnManager</code>.</p>
+      <p><code>MCPTaskExecutor</code>, <code>MCPTaskRuntime</code>, <code>MCPTaskStore</code>, <code>TaskRecord</code>, <code>ToolTaskCall</code> (<code>progress_token</code>, <code>session_id</code>, <code>log_level</code>), <code>QueueTaskExecutor</code>, <code>DurableWorkflowEngine</code>, <code>WorkflowStore</code>, <code>TaskDependencyChain</code>, <code>QueuedAgentChatController</code>, and <code>QueuedTurnManager</code>.</p>
     </div>
     <a href="tasks-and-queues.md">Tasks &amp; Queues API &rarr;</a>
   </div>

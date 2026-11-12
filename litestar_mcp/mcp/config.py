@@ -32,8 +32,13 @@ __all__ = (
 )
 
 SUPPORTED_PROTOCOL_VERSIONS: tuple[str, ...] = ("2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26")
+"""Supported MCP wire protocol revisions ordered from newest to oldest."""
+
 UI_EXTENSION: str = "io.modelcontextprotocol/ui"
+"""SEP-1865 MCP Apps extension capability identifier."""
+
 UI_MIME_TYPE: str = "text/html;profile=mcp-app"
+"""Default MIME type advertised for SEP-1865 MCP Apps HTML resources."""
 
 
 class BeforeToolCallHook(Protocol):
@@ -343,6 +348,8 @@ class MCPConfig:
     """Whether to advertise `capabilities.logging`, handle `logging/setLevel`, and emit `notifications/message` events."""
     default_log_level: "str" = "info"
     """Initial RFC 5424 severity threshold applied to new sessions and log subscriptions before `logging/setLevel` overrides it."""
+    filter_app_only_tools: "bool" = False
+    """Whether `tools/list` omits SEP-1865 app-only tools (`_meta.ui.visibility` without `"model"`) when an initialized caller omits `io.modelcontextprotocol/ui` capabilities (`tools/call` stays callable)."""
 
     def __post_init__(self) -> "None":
         validate_stream_cleanup_timeout(self.stream_cleanup_timeout)

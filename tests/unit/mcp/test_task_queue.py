@@ -256,7 +256,12 @@ async def test_worker_runs_with_loaded_principal() -> None:
             headers={"X-User-Id": "alice"},
         )
         task_id = result["result"]["taskId"]
-        status_result = await _mcp_post(client, "tasks/get", {"taskId": task_id})
+        status_result = await _mcp_post(
+            client,
+            "tasks/get",
+            {"taskId": task_id},
+            headers={"X-User-Id": "alice"},
+        )
         assert status_result["result"]["status"] == "completed"
         assert json.loads(status_result["result"]["result"]["content"][0]["text"]) == {"user_id": "alice"}
 
@@ -360,8 +365,7 @@ async def test_dispatch_not_on_wire() -> None:
         status_result = await _mcp_post(client, "tasks/get", {"taskId": task_id})
         record = status_result["result"]
 
-        for forbidden_key in ("dispatch", "jobId", "dispatchInternal", "inputResponsesInternal"):
-            assert forbidden_key not in record
+        assert not ({"dispatch", "jobId", "dispatchInternal", "inputResponsesInternal"} & record.keys())
 
 
 @pytest.mark.anyio
@@ -1128,8 +1132,7 @@ async def test_task_and_queue_override_hierarchy() -> None:
         )
     )
     mcp_disabled = LitestarMCP(MCPConfig(tasks=False))
-    app_disabled = Litestar(route_handlers=[], plugins=[queue_plugin_disabled, mcp_disabled])
-    assert app_disabled is not None
+    Litestar(route_handlers=[], plugins=[queue_plugin_disabled, mcp_disabled])
     assert mcp_disabled.config.task_config is None
     assert mcp_disabled.task_store is None
 
@@ -1141,10 +1144,11 @@ async def test_task_and_queue_override_hierarchy() -> None:
         )
     )
     mcp_inproc = LitestarMCP(MCPConfig(tasks=MCPTaskConfig(executor="in_process")))
-    app_inproc = Litestar(route_handlers=[], plugins=[queue_plugin_inproc, mcp_inproc])
-    assert app_inproc is not None
+    Litestar(route_handlers=[], plugins=[queue_plugin_inproc, mcp_inproc])
     assert mcp_inproc.config.task_config is not None
     assert mcp_inproc.config.task_config.executor is None
+
+    inproc_gate = asyncio.Event()
 
     class BatchController(Controller):
         path = "/batch"
@@ -1167,6 +1171,7 @@ async def test_task_and_queue_override_hierarchy() -> None:
         @get("/inproc-override")
         @mcp_tool(name="batch_inproc", queue=False)
         async def inproc_override(self) -> dict[str, str]:
+            await inproc_gate.wait()
             return {"mode": "inproc"}
 
     queue_plugin = QueuePlugin(
@@ -1202,15 +1207,19 @@ async def test_task_and_queue_override_hierarchy() -> None:
         inproc_res = await _mcp_post(client, "tools/call", {"name": "batch_inproc", "arguments": {}})
         assert inproc_res["result"]["resultType"] == "task"
         inproc_id = inproc_res["result"]["taskId"]
-        inproc_status: dict[str, Any] = {}
-        for _ in range(20):
-            inproc_status = await _mcp_post(client, "tasks/get", {"taskId": inproc_id})
-            if inproc_status["result"]["status"] == "completed":
-                break
-            await asyncio.sleep(0.01)
-        assert inproc_status["result"]["status"] == "completed"
         assert await mcp_plugin.task_store.get_dispatch(inproc_id) is None
+        assert await mcp_plugin.task_store.get_job_id(inproc_id) is None
         assert mcp_plugin.task_store.has_local_runner(inproc_id) is True
+        inproc_gate.set()
+        inproc_status: dict[str, Any] = {}
+        while inproc_status.get("result", {}).get("status") != "completed":
+            inproc_status = await _mcp_post(client, "tasks/get", {"taskId": inproc_id})
+            if inproc_status["result"]["status"] != "completed":
+                await asyncio.sleep(0.01)
+        assert inproc_status["result"]["status"] == "completed"
+        assert json.loads(inproc_status["result"]["result"]["content"][0]["text"]) == {"mode": "inproc"}
+        await asyncio.sleep(0)
+        assert mcp_plugin.task_store.has_local_runner(inproc_id) is False
 
 
 @pytest.mark.anyio
@@ -1733,3 +1742,43 @@ async def test_queue_executor_validates_log_level_on_enqueue() -> None:
         )
         with pytest.raises(ValueError, match="log level"):
             await executor.submit(record, invalid_call)
+
+
+@pytest.mark.anyio
+async def test_queued_task_enforces_anon_vs_owner_isolation_and_clears_job_id_on_cancel() -> None:
+    """Verify anonymous callers cannot read or cancel owned queued tasks and cancellation removes stale job IDs."""
+    executor = QueueTaskExecutor(principal_loader=_load_user)
+    app, _executor = _make_queued_app(executor=executor, execution_backend="local")
+    plugin = app.plugins.get(LitestarMCP)
+    async with AsyncTestClient(app) as client:
+        created = await _mcp_post(
+            client,
+            "tools/call",
+            {"name": "slow_echo", "arguments": {"text": "private"}},
+            headers={"X-User-Id": "alice"},
+        )
+        task_id = created["result"]["taskId"]
+        assert plugin.task_store is not None
+        assert await plugin.task_store.get_job_id(task_id) is not None
+
+        anon_get = await _mcp_post(client, "tasks/get", {"taskId": task_id})
+        anon_cancel = await _mcp_post(client, "tasks/cancel", {"taskId": task_id})
+        assert anon_get["error"]["code"] == -32602
+        assert anon_cancel["error"]["code"] == -32602
+
+        owner_cancel = await _mcp_post(
+            client,
+            "tasks/cancel",
+            {"taskId": task_id},
+            headers={"X-User-Id": "alice"},
+        )
+        assert "error" not in owner_cancel
+        owner_status = await _mcp_post(
+            client,
+            "tasks/get",
+            {"taskId": task_id},
+            headers={"X-User-Id": "alice"},
+        )
+        assert owner_status["result"]["status"] == "cancelled"
+        assert await plugin.task_store.get_job_id(task_id) is None
+        await plugin.task_store.delete_job_id(task_id)

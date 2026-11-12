@@ -113,6 +113,7 @@ class Tool:
         "_di_injected",
         "_injected",
         "_output_schema_policy",
+        "_raw_schema",
         "annotations",
         "bound_instance",
         "dependencies",
@@ -139,6 +140,7 @@ class Tool:
     dependencies: dict[str, Any]
     _di_injected: dict[str, DIParameterSpec]
     _output_schema_policy: dict[str, Any] | bool | None
+    _raw_schema: bool
 
     def __init__(
         self,
@@ -159,6 +161,7 @@ class Tool:
         _di_injected: "dict[str, DIParameterSpec] | None" = None,
         parameters: "dict[str, Any] | None" = None,
         _enclosing_dependencies: "Mapping[str, Any] | None" = None,
+        _raw_schema: "bool" = False,
     ) -> "None":
         self.fn = fn
         self.bound_instance = bound_instance
@@ -180,12 +183,13 @@ class Tool:
         resolved_output, resolved_policy = self._resolve_output_schema(fn, output_schema)
         self.output_schema = resolved_output
         self._output_schema_policy = resolved_policy
+        self._raw_schema = bool(_raw_schema)
 
         if parameters is not None and _injected is not None:
             self._args_model = _args_model
             self._injected = _injected
             self._di_injected = dict(_di_injected or {})
-            self.parameters = parameters
+            self.parameters = copy.deepcopy(dict(parameters))
             return
 
         effective_deps: dict[str, Any] = {}
@@ -223,6 +227,7 @@ class Tool:
             _injected=self._injected,
             _di_injected=self._di_injected,
             parameters=self.parameters,
+            _raw_schema=self._raw_schema,
         )
 
     def __call__(self, *args: "Any", **kwargs: "Any") -> "Any":
@@ -247,6 +252,11 @@ class Tool:
         return self.parameters
 
     @property
+    def has_raw_schema(self) -> "bool":
+        """Return whether this tool was built from a raw JSON Schema (`Tool.from_schema`)."""
+        return self._raw_schema
+
+    @property
     def output_schema_policy(self) -> "dict[str, Any] | bool | None":
         """Return the configured output schema policy (`dict`, `True`, `False`, or `None`)."""
         if isinstance(self._output_schema_policy, dict):
@@ -257,6 +267,9 @@ class Tool:
         """Merge controller-level dependencies and rebuild the tool schema."""
         merged = dict(controller_dependencies)
         merged.update(self.dependencies)
+        if self._raw_schema:
+            self.dependencies = merged
+            return
         param_schema, args_model, injected, di_injected = self._build_tool_schema(
             self.name,
             self.fn,
@@ -284,7 +297,9 @@ class Tool:
         read_only: "bool | None" = None,
     ) -> "Tool":
         """Construct a tool instance from an explicit JSON schema and callable."""
-        param_schema = dict(parameters) if parameters is not None else {"type": "object", "properties": {}}
+        param_schema = (
+            copy.deepcopy(dict(parameters)) if parameters is not None else {"type": "object", "properties": {}}
+        )
         if call is None:
 
             async def _noop(**_: Any) -> None:
@@ -307,6 +322,7 @@ class Tool:
             _args_model=None,
             _injected={},
             _di_injected={},
+            _raw_schema=True,
         )
 
     def to_json_schema(self) -> "dict[str, Any]":
@@ -378,6 +394,16 @@ class Tool:
             and getattr(result_cls, "__name__", None) in _MCP_CONTENT_RESULT_NAMES
         ):
             return result
+        if (
+            isinstance(result, (list, tuple))
+            and result
+            and all(
+                getattr(type(item), "__module__", None) == "litestar_mcp.mcp.content"
+                and getattr(type(item), "__name__", None) in {"MCPBlobResource", "MCPResourceLink"}
+                for item in result
+            )
+        ):
+            return list(result)
         serializer = get_serializer(effective_ctx.type_encoders) if effective_ctx.type_encoders else None
         return decode_json(encode_json(result, serializer=serializer))
 

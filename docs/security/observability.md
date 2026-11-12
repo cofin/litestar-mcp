@@ -164,6 +164,6 @@ async def rollout_service(service: str) -> dict[str, str]:
     return {"service": service, "status": "deployed"}
 
 
-config = MCPConfig(logging=True, default_log_level="info")
+config = MCPConfig(default_log_level="notice")
 plugin = LitestarMCP(config)
 ```

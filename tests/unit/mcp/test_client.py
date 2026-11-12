@@ -2,11 +2,12 @@
 
 import asyncio
 import contextlib
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import httpx2
 import pytest
 from litestar import Litestar, get
+from litestar.params import Parameter
 
 from litestar_mcp.core.serialization import from_json
 from litestar_mcp.core.tools import tool
@@ -616,6 +617,81 @@ async def test_mcp_client_get_skill_and_errors(
             with pytest.raises(MCPClientError) as exc_info:
                 await client.get_skill(uri)
             assert exc_info.value.code == expected_code
+
+
+@pytest.mark.anyio
+async def test_mcp_client_sep2575_header_binding_lazy_cache_and_header_precedence() -> None:
+    """Verify call_tool emits Mcp-Param-* via explicit schema or lazy list_tools cache and preserves Mcp-* headers."""
+
+    @get("/tenant-echo", mcp_tool="tenant_echo", sync_to_thread=False)
+    def tenant_echo(
+        tenant: Annotated[str, Parameter(schema_extra={"x-mcp-header": "Tenant"})],
+    ) -> dict[str, str]:
+        return {"tenant": tenant}
+
+    app = Litestar(route_handlers=[tenant_echo], plugins=[LitestarMCP(MCPConfig(base_path="/mcp"))])
+    transport = _RecordingStreamingTransport(app)
+
+    async with (
+        app.lifespan(),
+        MCPStreamableHTTPClient(
+            "http://testserver/mcp",
+            transport=transport,
+            headers={"Mcp-Method": "wrong/method", "X-Custom": "kept"},
+        ) as client,
+    ):
+        cold_result = await client.call_tool("tenant_echo", {"tenant": "acme corp"})
+        assert from_json(cold_result) == {"tenant": "acme corp"}
+
+        warm_result = await client.call_tool("tenant_echo", {"tenant": "beta"})
+        assert from_json(warm_result) == {"tenant": "beta"}
+
+        explicit_schema = {
+            "type": "object",
+            "properties": {"tenant": {"type": "string", "x-mcp-header": "Tenant"}},
+        }
+        explicit_result = await client.call_tool(
+            "tenant_echo",
+            {"tenant": "gamma"},
+            tool_schema=explicit_schema,
+        )
+        assert from_json(explicit_result) == {"tenant": "gamma"}
+
+    assert any(hdrs.get("x-custom") == "kept" for _, hdrs, _ in transport.requests)
+    assert all(hdrs.get("mcp-method") != "wrong/method" for _, hdrs, _ in transport.requests)
+
+
+@pytest.mark.anyio
+async def test_mcp_client_modern_init_clears_stale_session_and_rejects_malformed_json() -> None:
+    """Verify 2026-07-28 initialize clears stale _session_id without initialized notify and bad JSON raises."""
+    app = Litestar(plugins=[LitestarMCP(MCPConfig(base_path="/mcp"))])
+    transport = _RecordingStreamingTransport(app)
+
+    async with (
+        app.lifespan(),
+        MCPStreamableHTTPClient("http://testserver/mcp", transport=transport) as client,
+    ):
+        client._session_id = "stale-session"
+        await client.initialize()
+        assert client.session_id is None
+
+    methods_sent = [from_json(raw.decode("utf-8")).get("method") for _, _, raw in transport.requests if raw]
+    assert "notifications/initialized" not in methods_sent
+
+    def _bad_json_handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            headers={"content-type": "application/json"},
+            content=b"{not-valid-json",
+            request=request,
+        )
+
+    async with MCPStreamableHTTPClient(
+        "http://testserver/mcp",
+        transport=httpx2.MockTransport(_bad_json_handler),
+    ) as bad_client:
+        with pytest.raises(MCPClientError, match="Invalid JSON"):
+            await bad_client.request("tools/list", {})
 
 
 @pytest.mark.anyio

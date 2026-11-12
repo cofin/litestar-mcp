@@ -278,15 +278,15 @@ async def test_open_session_stream_seeds_list_changed_defaults_and_merges_overri
 
     assert [item["method"] for item in received] == expected_methods
     assert all(item["method"] != "notifications/subscriptions/acknowledged" for item in received)
-    for item in received:
-        meta = item["params"].get("_meta")
-        if meta is not None:
-            assert "io.modelcontextprotocol/subscriptionId" not in meta
-        if item["method"] == "notifications/tools/list_changed":
-            assert "_meta" not in item["params"]
-        if item["method"] == "notifications/resources/updated":
-            assert item["params"]["uri"] == "doc://1"
-            assert item["params"]["_meta"] == {"trace": "keep"}
+    assert all("io.modelcontextprotocol/subscriptionId" not in (item["params"].get("_meta") or {}) for item in received)
+    assert all(
+        "_meta" not in item["params"] for item in received if item["method"] == "notifications/tools/list_changed"
+    )
+    assert all(
+        item["params"]["uri"] == "doc://1" and item["params"]["_meta"] == {"trace": "keep"}
+        for item in received
+        if item["method"] == "notifications/resources/updated"
+    )
 
     await manager.disconnect(stream_id)
 
@@ -1389,3 +1389,124 @@ async def test_registry_notify_skills_list_changed_unbound_is_noop() -> None:
     registry = Registry()
     assert registry.has_subscription_manager is False
     await registry.notify_skills_list_changed()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("list_changed", "expose_as_prompts", "expected_methods"),
+    [
+        (False, False, ["notifications/resources/list_changed"]),
+        (False, True, ["notifications/resources/list_changed", "notifications/prompts/list_changed"]),
+        (
+            True,
+            True,
+            [
+                "notifications/skills/list_changed",
+                "notifications/resources/list_changed",
+                "notifications/prompts/list_changed",
+            ],
+        ),
+    ],
+)
+async def test_registry_configure_skill_notifications_gates_channels(
+    list_changed: bool,
+    expose_as_prompts: bool,
+    expected_methods: list[str],
+) -> None:
+    """Verify configure_skill_notifications gates skills and prompt fanout independently of resources."""
+    manager = SubscriptionManager()
+    registry = Registry()
+    registry.set_subscription_manager(manager)
+    registry.configure_skill_notifications(list_changed=list_changed, expose_as_prompts=expose_as_prompts)
+    stream_id, stream = await manager.open_session_stream(session_id="sess-skill-cfg")
+
+    await registry.notify_skills_list_changed()
+
+    received: list[str] = []
+    while not manager._streams[stream_id].queue.empty():
+        frame = await asyncio.wait_for(stream.__anext__(), 0.2)
+        received.append(frame["method"])
+
+    assert received == expected_methods
+    await manager.disconnect(stream_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("listener_owner", "publish_owner", "publish_session", "expect_anon_listen", "expect_alice_listen", "expect_sess"),
+    [
+        ("user:alice", "user:alice", None, False, True, False),
+        ("user:alice", None, None, True, False, False),
+        ("user:alice", "user:alice", "sess-a", False, False, True),
+    ],
+)
+async def test_strict_owner_and_session_isolation_for_logs_and_tasks(
+    listener_owner: str,
+    publish_owner: str | None,
+    publish_session: str | None,
+    expect_anon_listen: bool,
+    expect_alice_listen: bool,
+    expect_sess: bool,
+) -> None:
+    """Verify strict_owner and strict_session isolate anonymous, authenticated, and session SSE streams."""
+    manager = SubscriptionManager()
+    anon_id, anon_stream = await manager.open("anon-sub", {"logLevel": "info", "taskIds": ["t-iso"]}, owner_id=None)
+    alice_id, alice_stream = await manager.open(
+        "alice-sub",
+        {"logLevel": "info", "taskIds": ["t-iso"]},
+        owner_id=listener_owner,
+    )
+    sess_id, _sess_stream = await manager.open_session_stream(session_id="sess-a", owner_id=listener_owner)
+    assert manager.has_session_stream("sess-a") is True
+    assert manager.has_session_stream("missing") is False
+    await anon_stream.__anext__()
+    await alice_stream.__anext__()
+
+    await manager.publish(
+        "notifications/message",
+        {"level": "error", "data": "secret"},
+        owner_id=publish_owner,
+        session_id=publish_session,
+        strict_owner=True,
+        strict_session=True,
+    )
+    await manager.publish(
+        "notifications/tasks/status",
+        {"taskId": "t-iso", "status": "working"},
+        owner_id=publish_owner,
+        session_id=publish_session,
+        strict_owner=True,
+        strict_session=publish_session is not None,
+    )
+
+    assert (not manager._streams[anon_id].queue.empty()) is expect_anon_listen
+    assert (not manager._streams[alice_id].queue.empty()) is expect_alice_listen
+    assert (not manager._streams[sess_id].queue.empty()) is expect_sess
+
+    await manager.disconnect(anon_id)
+    await manager.disconnect(alice_id)
+    await manager.disconnect(sess_id)
+    assert manager.has_session_stream("sess-a") is False
+
+
+@pytest.mark.asyncio
+async def test_sessionless_logging_set_level_raises_invalid_params() -> None:
+    """Verify logging_set_level rejects sessionless legacy contexts with INVALID_PARAMS."""
+    service = MCPHandlerService(
+        config=MCPConfig(),
+        discovered_tools={},
+        discovered_resources={},
+        discovered_prompts={},
+        app_ref=Litestar(route_handlers=[]),
+        registry=Registry(),
+        task_store=None,
+    )
+    ctx = MCPRequestContext(
+        client_id="unit",
+        owner_id=None,
+        protocol_version="2025-11-25",
+        session_id=None,
+    )
+    with pytest.raises(JSONRPCErrorException) as exc_info:
+        await service.logging_set_level({"level": "warning"}, ctx)
+    assert exc_info.value.error.code == INVALID_PARAMS

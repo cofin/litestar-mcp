@@ -63,7 +63,7 @@ When a `litestar-queues` worker claims `litestar_mcp.agent.run_turn` (configured
 
 Clients consume the turn output by connecting to `GET /agent/turns/{turn_id:str}/stream` on `QueuedAgentChatController`:
 
-1. **History Replay + Live Wakeup**: `QueuedAgentChatController.stream_turn` opens a subscription on `agent_turn_channel(turn_id)` with `channels.start_subscription([channel_name], history=self.replay_limit)` (default `replay_limit = 1000`). If the worker already emitted frames—or even completed the turn—before the client opened the SSE stream, the buffered history frames are replayed immediately in order before transitioning seamlessly to live channel publications.
+1. **History Replay + Live Wakeup**: `QueuedAgentChatController.stream_turn` opens a subscription on `agent_turn_channel(turn_id)` with `channels.start_subscription([channel_name], history=self.replay_limit)` (default `replay_limit = 1000`). If the worker already emitted frames—or even completed the turn—before the client opened the SSE stream, the buffered history frames are replayed immediately in order before transitioning to live channel publications.
 2. **Deterministic Sequence Numbers & `Last-Event-ID` Cursor Resumption**: Every `AgentStreamFrame` carries a 1-based `seq` integer. `frame.to_sse_message()` sets the SSE `id` field to `str(frame.seq)` and `event` to `frame.event_type`. On connect, `QueuedAgentChatController.stream_turn` parses the incoming `Last-Event-ID` HTTP request header (`request.headers.get("last-event-id")`) to initialize `last_seq`:
    ```text
    id: 1

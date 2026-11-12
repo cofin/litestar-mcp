@@ -67,7 +67,7 @@
     <div class="lm-task-panel lm-panel-queue">
       <svg viewBox="0 0 920 310" role="img" aria-labelledby="lm-task-q-title lm-task-q-desc">
         <title id="lm-task-q-title">Distributed QueueTaskExecutor and Task Progress/Log Forwarding on litestar-queues</title>
-        <desc id="lm-task-q-desc">tools/call with params.task persists TaskRecord and ToolTaskCall (progress_token, session_id, log_level, PrincipalSnapshot) in MCPTaskStore, runs on litestar-queues workers calling ctx.report_progress() and ctx.log() to update MCPTaskStore.update_status_message() and fan out notifications/progress and notifications/message via ChannelsPlugin onto 2025-11-25 GET /mcp session SSE streams (excluding 2026-07-28 POST subscriptions/listen), and refreshes log_level from MCPSessionStore on tasks/update.</desc>
+        <desc id="lm-task-q-desc">tools/call with params.task persists TaskRecord and ToolTaskCall (progress_token, session_id, log_level, PrincipalSnapshot) in MCPTaskStore, runs on litestar-queues workers calling ctx.report_progress() and ctx.log() to update MCPTaskStore.update_status_message() and fan out notifications/progress onto strictly matched 2025-* GET /mcp session SSE streams (while 2026-07-28 POST subscriptions/listen carries notifications/tasks and opted-in logLevel notifications/message while excluding notifications/progress), and refreshes log_level from MCPSessionStore on tasks/update.</desc>
 
         <rect x="16" y="24" width="198" height="180" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-blue)" stroke-width="2" />
         <circle class="lm-pulse" cx="34" cy="44" r="5" fill="var(--lm-t-blue)" />
@@ -86,7 +86,7 @@
         <text x="353" y="48" text-anchor="middle" fill="var(--lm-t-text)" font-size="13" font-weight="700">Durable Store &amp; Broker</text>
         <text x="353" y="70" text-anchor="middle" fill="var(--lm-t-amber)" font-size="10.5" font-family="monospace">MCPTaskStore + QueuePlugin</text>
         <text x="353" y="90" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Store: litestar_mcp_tasks (TTL)</text>
-        <text x="353" y="108" text-anchor="middle" fill="var(--lm-t-muted)" font-size="9.5" font-family="monospace">MCPTaskStore.update_status_message()</text>
+        <text x="353" y="108" text-anchor="middle" fill="var(--lm-t-muted)" font-size="8.8" font-family="monospace">MCPTaskStore.update_status_message()</text>
         <text x="353" y="126" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">QueueTaskExecutor.submit() / resume()</text>
         <text x="353" y="144" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">MCPSessionStore log_level refresh</text>
         <text x="353" y="162" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">on tasks/update • queue="..."</text>
@@ -121,14 +121,14 @@
         <rect x="16" y="220" width="888" height="72" rx="8" fill="var(--lm-t-card)" stroke="var(--lm-t-border)" stroke-width="1.5" />
         <text x="460" y="240" text-anchor="middle" fill="var(--lm-t-text)" font-size="12" font-weight="700">Cross-Replica Progress, Logging &amp; Transport Isolation</text>
         <text x="460" y="259" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10" font-family="monospace">Worker ctx.report_progress() &amp; ctx.log() -&gt; update_status_message() + ChannelsPlugin -&gt; 2025-11-25 GET /mcp SSE</text>
-        <text x="460" y="277" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10" font-family="monospace">2026-07-28 POST subscriptions/listen task streams excluded from progress/log SSE  |  tasks/get returns statusMessage</text>
+        <text x="460" y="277" text-anchor="middle" fill="var(--lm-t-muted)" font-size="9.5" font-family="monospace">2026-07-28 subscriptions/listen: notifications/tasks + opted-in logLevel (excludes progress)  |  tasks/get statusMessage</text>
       </svg>
     </div>
 
     <div class="lm-task-panel lm-panel-inproc">
       <svg viewBox="0 0 920 310" role="img" aria-labelledby="lm-task-in-title lm-task-in-desc">
         <title id="lm-task-in-title">Built-In MCPTaskStore, Promoted Progress/Logging, and Elicitation Lifecycle</title>
-        <desc id="lm-task-in-desc">Built-in MCPTaskStore persists owner-scoped TaskRecord and ToolTaskCall metadata (progress_token, session_id, log_level), updates TaskRecord.statusMessage via MCPTaskStore.update_status_message(), and forwards notifications/progress and notifications/message onto 2025-11-25 GET /mcp session SSE streams while excluding 2026-07-28 subscriptions/listen streams.</desc>
+        <desc id="lm-task-in-desc">Built-in MCPTaskStore persists strictly owner-scoped TaskRecord and ToolTaskCall metadata (progress_token, session_id, log_level), updates TaskRecord.statusMessage via MCPTaskStore.update_status_message(), and forwards notifications/progress and notifications/message onto 2025-* GET /mcp session SSE streams while 2026-07-28 subscriptions/listen carries taskIds and opted-in logLevel events (excluding progress).</desc>
 
         <rect x="16" y="24" width="224" height="180" rx="10" fill="var(--lm-t-card)" stroke="var(--lm-t-blue)" stroke-width="2" />
         <circle class="lm-pulse" cx="34" cy="44" r="5" fill="var(--lm-t-blue)" />
@@ -161,7 +161,7 @@
         <text x="756" y="70" text-anchor="middle" fill="var(--lm-t-emerald)" font-size="10.5" font-family="monospace">GET /mcp SSE • tasks/get • update</text>
         <text x="756" y="90" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Forwards notifications/progress &amp; message</text>
         <text x="756" y="108" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">onto 2025-11-25 GET /mcp session SSE</text>
-        <text x="756" y="126" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">Excludes 2026-07-28 subscriptions/listen</text>
+        <text x="756" y="126" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">subscriptions/listen: tasks + logLevel only</text>
         <text x="756" y="144" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">tasks/get returns statusMessage &amp; result</text>
         <text x="756" y="162" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10">tasks/update resumes &amp; refreshes log_level</text>
         <text x="756" y="186" text-anchor="middle" fill="var(--lm-t-emerald)" font-size="9.5" font-family="monospace">Owner-isolated lookup &amp; tasks/cancel</text>
@@ -169,7 +169,7 @@
         <rect x="16" y="220" width="888" height="72" rx="8" fill="var(--lm-t-card)" stroke="var(--lm-t-border)" stroke-width="1.5" />
         <text x="460" y="240" text-anchor="middle" fill="var(--lm-t-text)" font-size="12" font-weight="700">Post-Promotion Progress, RFC 5424 Logging &amp; Transport Rules</text>
         <text x="460" y="259" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10" font-family="monospace">ToolTaskCall(progress_token, session_id, log_level) -&gt; MCPTaskStore.update_status_message() -&gt; TaskRecord.statusMessage</text>
-        <text x="460" y="277" text-anchor="middle" fill="var(--lm-t-muted)" font-size="10" font-family="monospace">2025-11-25 GET /mcp receives notifications/progress + notifications/message  |  2026-07-28 subscriptions/listen excluded</text>
+        <text x="460" y="277" text-anchor="middle" fill="var(--lm-t-muted)" font-size="9.5" font-family="monospace">2025-* GET /mcp: notifications/progress + notifications/message  |  2026-07-28 subscriptions/listen: excludes progress</text>
       </svg>
     </div>
   </div>

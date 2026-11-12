@@ -211,12 +211,12 @@ def test_notes_readmes_contain_variants_and_uvx(path: "Path") -> "None":
 
 
 def test_architecture_reference_examples_links_both_families_and_auth_modes() -> "None":
-    """Verify ``docs/architecture/reference-examples.md`` links both persistence families and all 4 auth tiers."""
+    """Verify ``docs/architecture/reference-examples.md`` links both persistence families and all auth tiers."""
     text = (ARCHITECTURE_DIR / "reference-examples.md").read_text(encoding="utf-8")
     assert "advanced_alchemy" in text
     assert "sqlspec" in text
-    for auth_mode in ("no-auth", "JWT", "Cloud Run", "IAP"):
-        assert auth_mode in text, f"reference-examples.md missing comparison label: {auth_mode!r}"
+    missing_modes = [auth_mode for auth_mode in ("no-auth", "JWT", "Cloud Run", "IAP") if auth_mode not in text]
+    assert missing_modes == [], f"reference-examples.md missing comparison labels: {missing_modes!r}"
 
 
 def test_architecture_uvx_guide_contains_template_and_pitfalls() -> "None":
@@ -795,11 +795,11 @@ def test_security_reference_and_learn_index_cover_new_contracts(
     ),
     ids=("tools-snippet-embed", "skills-snippet-embed", "primitives-reference-directives"),
 )
-def test_learn_guides_embed_ch09_snippet_slices(
+def test_learn_guides_embed_snippet_slices_and_reference_directives(
     rel_path: "str",
     required_directives: "tuple[str, ...]",
 ) -> "None":
-    """Verify learn guides embed ch09 snippet slices and primitives reference includes new directives."""
+    """Verify learn guides embed runnable snippet slices and primitives reference includes required directives."""
     text = (DOCS_DIR / rel_path).read_text(encoding="utf-8")
     missing = [directive for directive in required_directives if directive not in text]
     assert missing == [], f"docs/{rel_path} missing required directives: {missing}"

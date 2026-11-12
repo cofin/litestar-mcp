@@ -178,7 +178,7 @@ DEFAULT_REFERENCE_SYMBOLS: tuple[tuple[str, str, str], ...] = (
     ("litestar_mcp.mcp.service.MCPSession", "py:class", "reference/plugin-and-config/"),
     ("litestar_mcp.mcp.service.MCPSessionStore", "py:class", "reference/plugin-and-config/"),
     ("litestar_mcp.utils.classify_resource_uri", "py:function", "reference/primitives-and-skills/"),
-    ("litestar_mcp.utils.get_all_mcp_metadata", "py:function", "reference/primitives-and-skills/"),
+    ("litestar_mcp.utils.get_all_mcp_metadata", "py:function", "reference/core-and-observability/"),
     ("litestar_mcp.mcp.skills.filter_skills", "py:function", "reference/primitives-and-skills/"),
     ("litestar_mcp.mcp.skills.SkillCatalog.bind_app", "py:method", "reference/primitives-and-skills/"),
     ("litestar_mcp.mcp.skills.SkillCatalog.notify_list_changed", "py:method", "reference/primitives-and-skills/"),
@@ -317,7 +317,7 @@ def build_objects_inv(
     Returns:
         Path to the written `objects.inv` file.
     """
-    entries = _collect_inventory_entries(docs_dir=docs_dir, package_root=package_root)
+    entries = _collect_inventory_entries(docs_dir=docs_dir, package_root=package_root, site_dir=site_dir)
     header = (
         f"# Sphinx inventory version 2\n"
         f"# Project: litestar-mcp\n"
@@ -449,20 +449,77 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
-def _ast_symbol_roles(package_root: Path) -> dict[str, str]:
-    """Scan `litestar_mcp/**/*.py` via AST to map dotted symbols to Sphinx roles without importing extras."""
+HTML_ID_RE = re.compile(r'\bid="([^"]+)"')
+
+
+def _resolve_import_from_module(current_mod: str, is_package_init: bool, node: ast.ImportFrom) -> str | None:
+    """Resolve an `ast.ImportFrom` statement to a dotted `litestar_mcp.*` module path."""
+    if node.level == 0:
+        return node.module if node.module and node.module.startswith("litestar_mcp") else None
+    base_parts = current_mod.split(".") if is_package_init else current_mod.split(".")[:-1]
+    drop = node.level - 1
+    if drop > len(base_parts):
+        return None
+    prefix = base_parts[: len(base_parts) - drop]
+    if node.module:
+        prefix.extend(node.module.split("."))
+    resolved = ".".join(prefix)
+    return resolved if resolved.startswith("litestar_mcp") else None
+
+
+def _record_imports_from_statements(
+    stmts: Sequence[ast.stmt],
+    *,
+    mod_name: str,
+    is_package_init: bool,
+    aliases: dict[str, str],
+) -> None:
+    """Record module-level and `TYPE_CHECKING` re-export aliases into `aliases`."""
+    for stmt in stmts:
+        if isinstance(stmt, ast.ImportFrom):
+            src_mod = _resolve_import_from_module(mod_name, is_package_init, stmt)
+            if src_mod is None:
+                continue
+            for imported in stmt.names:
+                if imported.name == "*":
+                    continue
+                local_name = imported.asname or imported.name
+                src_symbol = f"{src_mod}.{imported.name}"
+                local_symbol = f"{mod_name}.{local_name}"
+                if local_symbol != src_symbol:
+                    aliases[local_symbol] = src_symbol
+        elif isinstance(stmt, ast.If):
+            _record_imports_from_statements(
+                stmt.body,
+                mod_name=mod_name,
+                is_package_init=is_package_init,
+                aliases=aliases,
+            )
+
+
+def _ast_symbol_info(package_root: Path) -> tuple[dict[str, str], dict[str, str]]:
+    """Scan `litestar_mcp/**/*.py` via AST for Sphinx symbol roles and re-export alias targets."""
     roles: dict[str, str] = {"litestar_mcp": "py:module"}
+    aliases: dict[str, str] = {}
     if not package_root.exists():
-        return roles
+        return roles, aliases
 
     for py_path in sorted(package_root.rglob("*.py")):
         rel_parts = list(py_path.relative_to(package_root.parent).with_suffix("").parts)
-        mod_name = ".".join(rel_parts[:-1]) if rel_parts[-1] == "__init__" else ".".join(rel_parts)
+        is_init = rel_parts[-1] == "__init__"
+        mod_name = ".".join(rel_parts[:-1]) if is_init else ".".join(rel_parts)
         roles[mod_name] = "py:module"
         try:
             tree = ast.parse(py_path.read_text(encoding="utf-8"), filename=str(py_path))
         except SyntaxError:
             continue
+
+        _record_imports_from_statements(
+            tree.body,
+            mod_name=mod_name,
+            is_package_init=is_init,
+            aliases=aliases,
+        )
 
         for node in tree.body:
             if isinstance(node, ast.ClassDef) and not node.name.startswith("_"):
@@ -478,21 +535,96 @@ def _ast_symbol_roles(package_root: Path) -> dict[str, str]:
                         roles[f"{mod_name}.{node.name}.{child.name}"] = "py:method"
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not node.name.startswith("_"):
                 roles[f"{mod_name}.{node.name}"] = "py:function"
-    return roles
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                if not node.target.id.startswith("_") and node.target.id != "TYPE_CHECKING":
+                    roles[f"{mod_name}.{node.target.id}"] = "py:data"
+            elif isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and not target.id.startswith("_") and target.id != "TYPE_CHECKING":
+                        roles[f"{mod_name}.{target.id}"] = "py:data"
+    return roles, aliases
 
 
-def _collect_inventory_entries(docs_dir: Path, package_root: Path) -> list[InventoryEntry]:
+def _resolve_alias_target(dotted: str, aliases: dict[str, str], roles: dict[str, str]) -> str:
+    """Resolve `dotted` transitively through package re-export aliases to its canonical defining symbol."""
+    current = dotted
+    seen: set[str] = set()
+    while current not in seen:
+        seen.add(current)
+        direct = aliases.get(current)
+        if direct is not None and direct != current:
+            if direct in roles and roles[direct] == "py:module" and current in roles and roles[current] != "py:module":
+                break
+            current = direct
+            continue
+        if "." in current:
+            parent, member = current.rsplit(".", 1)
+            parent_target = aliases.get(parent)
+            if parent_target is not None and parent_target != parent:
+                current = f"{parent_target}.{member}"
+                continue
+        break
+    return current
+
+
+def _load_built_reference_ids(site_dir: Path | None) -> dict[str, set[str]]:
+    """Extract rendered HTML `id` attributes for mkdocstrings-built reference pages under `site_dir`."""
+    page_ids: dict[str, set[str]] = {}
+    if site_dir is None or not site_dir.exists():
+        return page_ids
+    candidates = sorted((site_dir / "reference").glob("*/index.html")) if (site_dir / "reference").exists() else []
+    root_ref = site_dir / "reference" / "index.html"
+    if root_ref.exists():
+        candidates.append(root_ref)
+    for html_file in candidates:
+        html_text = html_file.read_text(encoding="utf-8")
+        if 'class="doc doc-object' not in html_text and html_file != root_ref:
+            continue
+        rel_dir = html_file.parent.relative_to(site_dir).as_posix() + "/"
+        page_ids[rel_dir] = set(HTML_ID_RE.findall(html_text))
+    return page_ids
+
+
+def _resolve_symbol_uri(
+    dotted: str,
+    fallback_page: str,
+    *,
+    rendered_uris: dict[str, str],
+    aliases: dict[str, str],
+    roles: dict[str, str],
+    page_ids: dict[str, set[str]],
+) -> str:
+    """Resolve a documentation URI whose `#fragment`, when present, corresponds to a real rendered anchor."""
+    uri = fallback_page
+    if rendered_uris:
+        if dotted in rendered_uris:
+            uri = rendered_uris[dotted]
+        else:
+            canonical = _resolve_alias_target(dotted, aliases, roles)
+            if canonical in rendered_uris:
+                uri = rendered_uris[canonical]
+            elif "." in canonical and canonical.rsplit(".", 1)[0] in rendered_uris:
+                uri = rendered_uris[canonical.rsplit(".", 1)[0]]
+            else:
+                uri = fallback_page
+
+    page, sep, frag = uri.partition("#")
+    if sep and page in page_ids and frag not in page_ids[page]:
+        parent_frag = frag.rsplit(".", 1)[0] if "." in frag else ""
+        if parent_frag and parent_frag in page_ids[page]:
+            return f"{page}#{parent_frag}"
+        return page
+    return uri
+
+
+def _collect_inventory_entries(
+    docs_dir: Path,
+    package_root: Path,
+    site_dir: Path | None = None,
+) -> list[InventoryEntry]:
     """Collect Sphinx inventory entries from default symbols, AST scan, and `docs/reference/*.md` directives."""
-    entries: dict[str, InventoryEntry] = {}
-    ast_roles = _ast_symbol_roles(package_root)
-
-    for dotted, role, page_uri in DEFAULT_REFERENCE_SYMBOLS:
-        entries[dotted] = InventoryEntry(name=dotted, domain_role=role, priority=1, uri=f"{page_uri}#{dotted}")
-
-    for dotted, role in ast_roles.items():
-        if dotted not in entries:
-            page_uri = _default_page_for_symbol(dotted)
-            entries[dotted] = InventoryEntry(name=dotted, domain_role=role, priority=1, uri=f"{page_uri}#{dotted}")
+    ast_roles, aliases = _ast_symbol_info(package_root)
+    page_ids = _load_built_reference_ids(site_dir)
 
     ref_pages = (
         ("plugin-and-config.md", "reference/plugin-and-config/"),
@@ -503,23 +635,74 @@ def _collect_inventory_entries(docs_dir: Path, package_root: Path) -> list[Inven
         ("core-and-observability.md", "reference/core-and-observability/"),
     )
 
+    directive_pages: dict[str, str] = {}
+    rendered_uris: dict[str, str] = {}
     for filename, page_uri in ref_pages:
         page_path = docs_dir / "reference" / filename
         if not page_path.exists():
             continue
         content = page_path.read_text(encoding="utf-8")
         for dotted in DIRECTIVE_RE.findall(content):
-            role = ast_roles.get(dotted) or _infer_role_by_name(dotted)
-            entries[dotted] = InventoryEntry(name=dotted, domain_role=role, priority=1, uri=f"{page_uri}#{dotted}")
-            short_name = dotted.rsplit(".", 1)[-1]
-            if short_name in litestar_mcp.__all__:
-                root_dotted = f"litestar_mcp.{short_name}"
-                entries[root_dotted] = InventoryEntry(
-                    name=root_dotted,
-                    domain_role=role,
-                    priority=1,
-                    uri=f"{page_uri}#{dotted}",
-                )
+            directive_pages[dotted] = page_uri
+            rendered_uris[dotted] = f"{page_uri}#{dotted}"
+
+    class_prefixes = {
+        dotted: page_uri
+        for dotted, page_uri in directive_pages.items()
+        if (ast_roles.get(dotted) or _infer_role_by_name(dotted)) in {"py:class", "py:exception"}
+    }
+    for dotted, role in ast_roles.items():
+        if role == "py:method" and "." in dotted:
+            owner = dotted.rsplit(".", 1)[0]
+            if owner in class_prefixes:
+                rendered_uris[dotted] = f"{class_prefixes[owner]}#{dotted}"
+
+    entries: dict[str, InventoryEntry] = {}
+
+    for dotted, role, page_uri in DEFAULT_REFERENCE_SYMBOLS:
+        resolved_uri = _resolve_symbol_uri(
+            dotted,
+            page_uri,
+            rendered_uris=rendered_uris,
+            aliases=aliases,
+            roles=ast_roles,
+            page_ids=page_ids,
+        )
+        entries[dotted] = InventoryEntry(name=dotted, domain_role=role, priority=1, uri=resolved_uri)
+
+    for dotted, role in ast_roles.items():
+        if dotted not in entries:
+            fallback_page = _default_page_for_symbol(_resolve_alias_target(dotted, aliases, ast_roles))
+            resolved_uri = _resolve_symbol_uri(
+                dotted,
+                fallback_page,
+                rendered_uris=rendered_uris,
+                aliases=aliases,
+                roles=ast_roles,
+                page_ids=page_ids,
+            )
+            entries[dotted] = InventoryEntry(name=dotted, domain_role=role, priority=1, uri=resolved_uri)
+
+    for dotted, page_uri in directive_pages.items():
+        role = ast_roles.get(dotted) or _infer_role_by_name(dotted)
+        resolved_uri = _resolve_symbol_uri(
+            dotted,
+            page_uri,
+            rendered_uris=rendered_uris,
+            aliases=aliases,
+            roles=ast_roles,
+            page_ids=page_ids,
+        )
+        entries[dotted] = InventoryEntry(name=dotted, domain_role=role, priority=1, uri=resolved_uri)
+        short_name = dotted.rsplit(".", 1)[-1]
+        if short_name in litestar_mcp.__all__:
+            root_dotted = f"litestar_mcp.{short_name}"
+            entries[root_dotted] = InventoryEntry(
+                name=root_dotted,
+                domain_role=role,
+                priority=1,
+                uri=resolved_uri,
+            )
 
     return sorted(entries.values(), key=lambda item: item.name)
 

@@ -190,15 +190,15 @@ def test_standalone_internal_routes_follow_custom_base_path() -> "None":
     assert prompt_get["result"]["messages"][0]["content"]["text"] == "Hello Alice!"
 
 
-def test_standalone_decorator_signatures_mirror_litestar_route_kwargs() -> "None":
+@pytest.mark.parametrize("decorator", [MCP.tool, MCP.resource, MCP.prompt])
+def test_standalone_decorator_signatures_mirror_litestar_route_kwargs(decorator: Any) -> "None":
     litestar_route_kwargs = set(inspect.signature(get).parameters) - {"path", "kwargs", "name"}
     expected_kwargs = litestar_route_kwargs | {"route_name"}
 
-    for decorator in (MCP.tool, MCP.resource, MCP.prompt):
-        params = inspect.signature(decorator).parameters
-        missing = sorted(expected_kwargs - set(params))
-        assert not missing
-        assert params["kwargs"].kind is inspect.Parameter.VAR_KEYWORD
+    params = inspect.signature(decorator).parameters
+    missing = sorted(expected_kwargs - set(params))
+    assert not missing
+    assert params["kwargs"].kind is inspect.Parameter.VAR_KEYWORD
 
 
 def test_standalone_tool_decorator_accepts_litestar_route_dependencies() -> "None":
@@ -1066,3 +1066,78 @@ def test_standalone_decorators_preserve_user_opt_when_descriptor_kwargs_blank(ki
         assert entry["title"] == "Keep Prompt"
         assert entry["icons"] == user_icons
         assert entry["_meta"] == {"c": 3}
+
+
+def test_standalone_resource_and_prompt_support_data_params_distinct_uris_and_type_encoders() -> None:
+    """Verify standalone resources/prompts handle `data` params, query/fragment URIs, rich lists, and encoders."""
+    mcp = MCP(
+        name="standalone-edge-cases",
+        type_encoders={_Money: lambda money: f"${money.cents / 100:.2f}"},
+    )
+
+    @mcp.resource("app://cfg?env=dev", name="cfg_dev", sync_to_thread=False)
+    def cfg_dev(data: str = "d1") -> str:
+        return f"dev:{data}"
+
+    @mcp.resource("app://cfg?env=prod", name="cfg_prod", sync_to_thread=False)
+    def cfg_prod() -> str:
+        return "prod"
+
+    @mcp.resource("app://sec#a", name="sec_a", sync_to_thread=False)
+    def sec_a() -> str:
+        return "frag-a"
+
+    @mcp.resource("app://sec#b", name="sec_b", sync_to_thread=False)
+    def sec_b() -> str:
+        return "frag-b"
+
+    @mcp.resource("app://items/{data}", name="item_tpl", sync_to_thread=False)
+    def item_tpl(data: str) -> str:
+        return f"tpl:{data}"
+
+    @mcp.prompt(name="summarize_data", sync_to_thread=False)
+    def summarize_data(data: str) -> list[dict[str, Any]]:
+        return [{"role": "user", "content": {"type": "text", "text": f"Summarize {data} ({_Money(250).cents})"}}]
+
+    @mcp.prompt(name="budget_prompt", sync_to_thread=False)
+    def budget_prompt() -> dict[str, Any]:
+        return {
+            "role": "user",
+            "content": {"type": "text", "text": "check"},
+            "_meta": {"limit": _Money(1250)},
+        }
+
+    @mcp.tool(name="link_list", sync_to_thread=False)
+    def link_list() -> list[MCPResourceLink]:
+        return [MCPResourceLink(uri="app://cfg?env=dev", name="cfg_dev")]
+
+    @mcp.tool(name="blob_tuple", sync_to_thread=False)
+    def blob_tuple() -> tuple[MCPBlobResource, ...]:
+        return (MCPBlobResource(data=b"abc", mime_type="application/octet-stream", uri="app://bin"),)
+
+    with TestClient(app=mcp.app) as client:
+        dev_res = _rpc(client, "resources/read", {"uri": "app://cfg?env=dev"})["result"]
+        prod_res = _rpc(client, "resources/read", {"uri": "app://cfg?env=prod"})["result"]
+        fa_res = _rpc(client, "resources/read", {"uri": "app://sec#a"})["result"]
+        fb_res = _rpc(client, "resources/read", {"uri": "app://sec#b"})["result"]
+        tpl_res = _rpc(client, "resources/read", {"uri": "app://items/alpha"})["result"]
+        prompt_list = _rpc(client, "prompts/list")["result"]["prompts"]
+        prompt_res = _rpc(client, "prompts/get", {"name": "summarize_data", "arguments": {"data": "Q4"}})["result"]
+        budget_res = _rpc(client, "prompts/get", {"name": "budget_prompt", "arguments": {}})["result"]
+        links_call = _rpc(client, "tools/call", {"name": "link_list", "arguments": {}})["result"]
+        blobs_call = _rpc(client, "tools/call", {"name": "blob_tuple", "arguments": {}})["result"]
+
+    assert dev_res["contents"][0]["text"] == "dev:d1"
+    assert prod_res["contents"][0]["text"] == "prod"
+    assert fa_res["contents"][0]["text"] == "frag-a"
+    assert fb_res["contents"][0]["text"] == "frag-b"
+    assert tpl_res["contents"][0]["text"] == "tpl:alpha"
+    summarize_entry = next(p for p in prompt_list if p["name"] == "summarize_data")
+    assert summarize_entry["arguments"][0]["name"] == "data"
+    assert prompt_res["messages"][0]["content"]["text"] == "Summarize Q4 (250)"
+    assert budget_res["messages"][0]["_meta"]["limit"] == "$12.50"
+    assert links_call["isError"] is False
+    assert links_call["content"][0]["type"] == "resource_link"
+    assert blobs_call["isError"] is False
+    assert blobs_call["content"][0]["type"] == "resource"
+    assert "blob" in blobs_call["content"][0]["resource"]

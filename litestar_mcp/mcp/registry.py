@@ -3,9 +3,9 @@
 import copy
 import inspect
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from litestar.handlers import BaseRouteHandler  # noqa: TC002
 
@@ -34,6 +34,20 @@ if TYPE_CHECKING:
     from litestar_mcp.core.sse import SubscriptionManager
     from litestar_mcp.mcp.config import MCPConfig, MCPOptKeys
     from litestar_mcp.utils import Kind
+
+__all__ = (
+    "PromptRegistration",
+    "Registry",
+    "ResourceTemplate",
+    "_same_handler",
+    "apply_prompt_instructions",
+    "evaluate_subscription_authorizer",
+    "infer_http_method_annotations",
+    "is_model_visible_tool_meta",
+    "resolve_descriptor_fields",
+    "resolve_tool_annotations",
+    "resolve_tool_output_schema",
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -310,6 +324,21 @@ def resolve_descriptor_fields(
     return title, icons, (merged_meta or None)
 
 
+def is_model_visible_tool_meta(meta: "Mapping[str, Any] | None", *, include_app_only: "bool" = False) -> "bool":
+    """Return whether a tool descriptor is visible to models under SEP-1865 `_meta.ui.visibility`."""
+    if include_app_only or not isinstance(meta, Mapping):
+        return True
+    ui: Any = meta.get("ui")
+    if not isinstance(ui, Mapping) or "visibility" not in ui or ui.get("visibility") is None:
+        return True
+    visibility: Any = ui.get("visibility")
+    if isinstance(visibility, str):
+        return visibility == "model"
+    if isinstance(visibility, Sequence) and not isinstance(visibility, bytes):
+        return "model" in visibility
+    return False
+
+
 def _normalize_prompt_result(result: "Any") -> "list[dict[str, Any]]":
     """Normalize a prompt's return value to a list of PromptMessage dicts.
 
@@ -470,7 +499,10 @@ def should_include_prompt(registration: "PromptRegistration", config: "MCPConfig
     by prompt name, which fn-based prompts have just like everything else.
     """
     if registration.handler is not None:
-        handler_tags = set(getattr(registration.handler, "tags", None) or [])
+        handler_tags = set(cast("Iterable[str]", getattr(registration.handler, "tags", None) or ()))
+        resolve_tags = getattr(registration.handler, "resolve_tags", None)
+        if callable(resolve_tags) and getattr(registration.handler, "ownership_layers", None):
+            handler_tags.update(cast("Iterable[str]", resolve_tags()))
         return should_include_handler(registration.name, handler_tags, config)
     if config.exclude_operations and registration.name in config.exclude_operations:
         return False
@@ -501,6 +533,13 @@ class Registry:
         self._prompts: dict[str, PromptRegistration] = {}
         self._subscription_manager: SubscriptionManager | None = None
         self._change_callbacks: list[Callable[[], None]] = []
+        self._skills_list_changed_enabled: bool = True
+        self._skills_expose_as_prompts: bool = False
+
+    def configure_skill_notifications(self, *, list_changed: "bool", expose_as_prompts: "bool") -> "None":
+        """Configure which list-changed notifications fire when skill catalogs change."""
+        self._skills_list_changed_enabled = bool(list_changed)
+        self._skills_expose_as_prompts = bool(expose_as_prompts)
 
     def register_change_callback(self, callback: "Callable[[], None]") -> "None":
         """Register a callback to be invoked when the registry changes.
@@ -778,6 +817,8 @@ class Registry:
         *,
         owner_id: "str | None" = None,
         session_id: "str | None" = None,
+        strict_owner: "bool" = False,
+        strict_session: "bool" = False,
     ) -> "None":
         """Publish a JSON-RPC 2.0 notification to connected clients.
 
@@ -786,6 +827,8 @@ class Registry:
             params: The notification parameters.
             owner_id: Optional authenticated owner identifier restricting delivery to matching streams.
             session_id: Optional session identifier restricting delivery to streams bound to that session.
+            strict_owner: Require exact `stream.owner_id == owner_id` equality including `None`.
+            strict_session: Require exact session binding or stateless `subscriptions/listen` delivery.
         """
         if self._subscription_manager is not None:
             kwargs: dict[str, Any] = {}
@@ -793,6 +836,10 @@ class Registry:
                 kwargs["owner_id"] = owner_id
             if session_id is not None:
                 kwargs["session_id"] = session_id
+            if strict_owner:
+                kwargs["strict_owner"] = True
+            if strict_session:
+                kwargs["strict_session"] = True
             await self._subscription_manager.publish(method, params, **kwargs)
 
     async def notify_resource_updated(self, uri: "str", *, owner_id: "str | None" = None) -> "None":
@@ -817,19 +864,9 @@ class Registry:
         await self.publish_notification("notifications/prompts/list_changed", {})
 
     async def notify_skills_list_changed(self) -> "None":
-        """Notify clients that the skill and derived resource lists have changed."""
-        await self.publish_notification("notifications/skills/list_changed", {})
+        """Notify clients that the skill catalog and derived resource or prompt projections have changed."""
+        if self._skills_list_changed_enabled:
+            await self.publish_notification("notifications/skills/list_changed", {})
         await self.publish_notification("notifications/resources/list_changed", {})
-
-
-__all__ = (
-    "PromptRegistration",
-    "Registry",
-    "ResourceTemplate",
-    "apply_prompt_instructions",
-    "evaluate_subscription_authorizer",
-    "infer_http_method_annotations",
-    "resolve_descriptor_fields",
-    "resolve_tool_annotations",
-    "resolve_tool_output_schema",
-)
+        if self._skills_expose_as_prompts:
+            await self.publish_notification("notifications/prompts/list_changed", {})

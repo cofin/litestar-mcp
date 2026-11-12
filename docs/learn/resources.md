@@ -58,7 +58,7 @@ Pass `mcp_resource_template="scheme://path/{var}"` alongside `mcp_resource` (or 
 Static and templated resources accept SEP-1865 presentation and extension metadata via `@mcp_resource(..., title=..., icons=..., meta=...)`, standalone `MCP.resource(..., title=..., icons=..., meta=...)`, or route `opt` keys `mcp_resource_title`, `mcp_resource_icons`, and `mcp_resource_meta` (`MCPOptKeys`). When both decorator `meta` and route `mcp_resource_meta` are present, route `opt` entries shallow-merge over decorator defaults.
 
 - **Catalog & Read Wire Output**: Resolved `title`, `icons`, and `_meta` fields are emitted on `resources/list` and `resources/templates/list` entries, and `resources/read` attaches the resource's `_meta` dictionary to `contents[0]._meta` alongside `uri`, `mimeType`, and `text` or `blob`.
-- **Automatic MCP Apps Extension Advertisement (`io.modelcontextprotocol/ui`)**: Registering any static or templated resource with `mime_type="text/html;profile=mcp-app"` (`UI_MIME_TYPE`)—or configuring explicit `MCPConfig(ui_mime_types=[...])`—automatically advertises `capabilities.extensions["io.modelcontextprotocol/ui"] = {"mimeTypes": [...]}` in both `server/discover` and `initialize`.
+- **Automatic MCP Apps Extension Advertisement (`io.modelcontextprotocol/ui`)**: Registering any static or templated `ui://` resource or `mime_type="text/html;profile=mcp-app"` (`UI_MIME_TYPE`) resource, preloading a static skill exposing UI metadata or `UI_MIME_TYPE`, declaring `_meta.ui` on a visible tool, or configuring explicit `MCPConfig(ui_mime_types=[...])` automatically advertises `capabilities.extensions["io.modelcontextprotocol/ui"] = {"mimeTypes": [...]}` in both `server/discover` and `initialize`.
 
 ```python
 from litestar import Litestar, get

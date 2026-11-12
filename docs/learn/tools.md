@@ -112,9 +112,9 @@ app = Litestar(
 
 Tools support SEP-1865 presentation and interactive UI metadata via `title`, `icons`, and `meta` across `@mcp_tool`, `@mcp.tool`, `@tool`, and route `opt` keys `mcp_tool_title`, `mcp_tool_icons`, and `mcp_tool_meta` (`MCPOptKeys`). Route `opt` `mcp_tool_meta` shallow-merges over decorator `meta`, emitting `title`, `icons`, and `_meta` on `tools/list` entries.
 
-- **Linking Tools to MCP Apps (`io.modelcontextprotocol/ui`)**: Declare `meta={"ui": {"resourceUri": "ui://widgets/orders", "visibility": ["model", "app"]}}` to pair a tool with an interactive HTML resource (`text/html;profile=mcp-app`). Set `"visibility": ["app"]` for UI-triggered helper tools that should remain callable from the embedded view while hidden from LLM agent bridges by default.
+- **Linking Tools to MCP Apps (`io.modelcontextprotocol/ui`)**: Declare `meta={"ui": {"resourceUri": "ui://widgets/orders", "visibility": ["model", "app"]}}` to pair a tool with an interactive HTML resource (`text/html;profile=mcp-app`). Set `"visibility": ["app"]` for UI-triggered helper tools hidden from LLM agent bridges (`mcp_to_tools`) by default, and pass `MCPConfig(filter_app_only_tools=True)` when wire `tools/list` responses should also omit app-only tools (stamping `cacheScope: "private"` while keeping `tools/call` active for embedded views).
 - **Inspecting Client UI Support (`ui_capabilities`)**: Inside an active MCP call, read `get_mcp_request_context().ui_capabilities` to check the client's negotiated `io.modelcontextprotocol/ui` capability dictionary (such as supported `mimeTypes`) and tailor fallback output when a host does not render MCP Apps.
-- **Stacked Decorator Isolation (`MetadataRegistry`)**: `MetadataRegistry` keys attached metadata by `(role, qualname)` (`"tool"`, `"resource"`, `"prompt"`), so stacking `@mcp_tool` and `@mcp_resource` on the same Litestar route handler keeps tool `title`, `icons`, `meta`, and `output_schema` strictly isolated from resource `uri`, `mime_type`, `title`, `icons`, and `meta`.
+- **Stacked Decorator Isolation (`MetadataRegistry`)**: `MetadataRegistry` keys attached metadata weakly by target callable and primitive role (`"tool"`, `"resource"`, `"prompt"`), isolating even nested closures sharing a `__qualname__` so stacking `@mcp_tool` and `@mcp_resource` on the same Litestar route handler keeps tool `title`, `icons`, `meta`, and `output_schema` strictly separated from resource `uri`, `mime_type`, `title`, `icons`, and `meta`.
 
 ```python
 from litestar import get
@@ -136,8 +136,8 @@ from litestar_mcp import get_mcp_request_context, mcp_resource, mcp_tool
 )
 async def orders_widget() -> dict[str, object]:
     """Expose independent tool and UI resource metadata from one handler."""
-    ctx = get_mcp_request_context()
-    return {"uiSupported": ctx.ui_capabilities is not None}
+    ctx = get_mcp_request_context(None)
+    return {"uiSupported": ctx is not None and ctx.ui_capabilities is not None}
 ```
 
 ### Paired Structured Tool and UI Resource Example

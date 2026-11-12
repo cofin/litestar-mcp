@@ -24,6 +24,8 @@ __all__ = (
 )
 
 MCPLogLevel = Literal["debug", "info", "notice", "warning", "error", "critical", "alert", "emergency"]
+"""RFC 5424 severity level literals accepted by MCP logging endpoints."""
+
 MCP_LOG_LEVELS: tuple[MCPLogLevel, ...] = (
     "debug",
     "info",
@@ -34,7 +36,10 @@ MCP_LOG_LEVELS: tuple[MCPLogLevel, ...] = (
     "alert",
     "emergency",
 )
+"""Ordered tuple of RFC 5424 MCP log levels from lowest to highest severity."""
+
 LOG_LEVEL_SEVERITY: dict[str, int] = {level: index for index, level in enumerate(MCP_LOG_LEVELS)}
+"""Mapping from RFC 5424 log level name to numeric severity rank."""
 
 _CLOSED = object()
 _BROKER_CHANNEL = "litestar-mcp-subscriptions"
@@ -148,6 +153,15 @@ class SubscriptionManager:
         """Remove any cached log severity threshold bound to `session_id`."""
         self._session_log_levels.pop(session_id, None)
 
+    def has_session_stream(self, session_id: "str") -> "bool":
+        """Return whether at least one active session SSE stream is bound to `session_id`."""
+        if not session_id:
+            return False
+        return any(
+            not state.closed and state.is_session_stream and state.session_id == session_id
+            for state in self._streams.values()
+        )
+
     def start(self) -> None:
         """Start cross-worker fan-out when a ChannelsPlugin was supplied."""
         if self._channels is not None and self._broker_task is None:
@@ -253,6 +267,8 @@ class SubscriptionManager:
         *,
         owner_id: "str | None" = None,
         session_id: "str | None" = None,
+        strict_owner: "bool" = False,
+        strict_session: "bool" = False,
     ) -> "None":
         """Publish a notification only to authorized subscriptions whose filter, session, and owner match."""
         if self._channels is not None:
@@ -261,6 +277,10 @@ class SubscriptionManager:
                 envelope["owner_id"] = owner_id
             if session_id is not None:
                 envelope["session_id"] = session_id
+            if strict_owner:
+                envelope["strict_owner"] = True
+            if strict_session:
+                envelope["strict_session"] = True
             if hasattr(self._channels, "wait_published"):
                 await self._channels.wait_published(envelope, channels=_BROKER_CHANNEL)
             else:
@@ -268,7 +288,14 @@ class SubscriptionManager:
                 if inspect.isawaitable(outcome):
                     await outcome
             return
-        await self._publish_local(method, params, target_owner_id=owner_id, session_id=session_id)
+        await self._publish_local(
+            method,
+            params,
+            target_owner_id=owner_id,
+            session_id=session_id,
+            strict_owner=strict_owner,
+            strict_session=strict_session,
+        )
 
     async def disconnect(self, stream_id: "str") -> "None":
         """Remove one stream and wake its consumer."""
@@ -324,22 +351,37 @@ class SubscriptionManager:
         params: "dict[str, Any]",
         *,
         target_owner_id: "str | None" = None,
-        owner_id: "str | None" = None,
         session_id: "str | None" = None,
+        strict_owner: "bool" = False,
+        strict_session: "bool" = False,
     ) -> "None":
-        resolved_owner_id = target_owner_id if target_owner_id is not None else owner_id
         async with self._lock:
             states = tuple(self._streams.values())
         for state in states:
             if state.closed:
                 continue
-            if resolved_owner_id is not None and state.owner_id != resolved_owner_id:
+            if strict_owner:
+                if state.owner_id != target_owner_id:
+                    continue
+            elif target_owner_id is not None and state.owner_id != target_owner_id:
                 continue
-            if not self._matches_stream(state, method, params, target_session_id=session_id):
+            if not self._matches_stream(
+                state,
+                method,
+                params,
+                target_session_id=session_id,
+                strict_session=strict_session,
+            ):
                 continue
             if not await self._is_authorized(state, method, params):
                 continue
-            if state.closed or not self._matches_stream(state, method, params, target_session_id=session_id):
+            if state.closed or not self._matches_stream(
+                state,
+                method,
+                params,
+                target_session_id=session_id,
+                strict_session=strict_session,
+            ):
                 continue
             tagged_params = self._format_params(state, params)
             try:
@@ -360,14 +402,23 @@ class SubscriptionManager:
         params: "dict[str, Any]",
         *,
         target_session_id: "str | None" = None,
+        strict_session: "bool" = False,
     ) -> "bool":
         if method == "notifications/progress":
             return bool(
                 state.is_session_stream and target_session_id is not None and state.session_id == target_session_id
             )
         if method == "notifications/message":
-            return self._matches_log_stream(state, params, target_session_id=target_session_id)
-        if target_session_id is not None and state.session_id != target_session_id:
+            return self._matches_log_stream(
+                state,
+                params,
+                target_session_id=target_session_id,
+                strict_session=strict_session,
+            )
+        if strict_session and state.is_session_stream:
+            if target_session_id is None or state.session_id != target_session_id:
+                return False
+        elif target_session_id is not None and state.session_id != target_session_id:
             return False
         return self._matches(state.notifications, method, params)
 
@@ -377,18 +428,20 @@ class SubscriptionManager:
         params: "dict[str, Any]",
         *,
         target_session_id: "str | None" = None,
+        strict_session: "bool" = False,
     ) -> "bool":
         msg_level = params.get("level")
         if not isinstance(msg_level, str) or msg_level not in LOG_LEVEL_SEVERITY:
             return False
         if state.is_session_stream:
-            if target_session_id is not None and state.session_id != target_session_id:
+            session_mismatch = (strict_session and target_session_id is None) or (
+                target_session_id is not None and state.session_id != target_session_id
+            )
+            if session_mismatch:
                 return False
             return log_level_allows(msg_level, self.get_session_log_level(state.session_id))
-        if target_session_id is not None:
-            return False
         threshold = state.notifications.get("logLevel")
-        if not isinstance(threshold, str) or threshold not in LOG_LEVEL_SEVERITY:
+        if target_session_id is not None or not isinstance(threshold, str) or threshold not in LOG_LEVEL_SEVERITY:
             return False
         return log_level_allows(msg_level, threshold)
 
@@ -476,24 +529,32 @@ class SubscriptionManager:
         except Exception:  # noqa: BLE001
             _logger.warning("Ignoring undecodable MCP subscription broker event")
             return
-        if not isinstance(payload, dict) or not isinstance(payload.get("method"), str):
-            return
-        params = payload.get("params")
-        if not isinstance(params, dict):
+        if (
+            not isinstance(payload, dict)
+            or not isinstance(payload.get("method"), str)
+            or not isinstance(payload.get("params"), dict)
+        ):
             return
         raw_owner = payload.get("owner_id")
-        if raw_owner is not None and not isinstance(raw_owner, str):
-            _logger.warning("Ignoring MCP subscription broker event with invalid owner_id")
-            return
         raw_session = payload.get("session_id")
-        if raw_session is not None and not isinstance(raw_session, str):
-            _logger.warning("Ignoring MCP subscription broker event with invalid session_id")
+        raw_strict_owner = payload.get("strict_owner", False)
+        raw_strict_session = payload.get("strict_session", False)
+        invalid_scope = (
+            (raw_owner is not None and not isinstance(raw_owner, str))
+            or (raw_session is not None and not isinstance(raw_session, str))
+            or not isinstance(raw_strict_owner, bool)
+            or not isinstance(raw_strict_session, bool)
+        )
+        if invalid_scope:
+            _logger.warning("Ignoring MCP subscription broker event with invalid routing scope metadata")
             return
         await self._publish_local(
             payload["method"],
-            params,
+            payload["params"],
             target_owner_id=raw_owner,
             session_id=raw_session,
+            strict_owner=raw_strict_owner,
+            strict_session=raw_strict_session,
         )
 
     def _normalize_filter(self, notifications: "dict[str, Any]") -> "dict[str, Any]":

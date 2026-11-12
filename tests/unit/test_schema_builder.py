@@ -1790,3 +1790,61 @@ def test_type_to_output_schema_accepts_objects_and_mrtr_unions(
     assert schema["type"] == expected_type
     if expected_desc is not None:
         assert schema["description"] == expected_desc
+
+
+@dataclass
+class _RecursiveTree:
+    label: str
+    children: "list[_RecursiveTree]"
+
+
+@dataclass
+class _MutualLeft:
+    name: str
+    right: "_MutualRight | None" = None
+
+
+@dataclass
+class _MutualRight:
+    score: int
+    left: "_MutualLeft | None" = None
+
+
+class _RecursiveTypedNode(typing_extensions.TypedDict):
+    key: str
+    next_node: "typing_extensions.NotRequired[_RecursiveTypedNode]"
+
+
+@pytest.mark.parametrize(
+    ("target_type", "expected_def_name", "expected_prop"),
+    [
+        (_RecursiveTree, "RecursiveTree", "label"),
+        (_MutualLeft, "MutualLeft", "name"),
+        (_RecursiveTypedNode, "RecursiveTypedNode", "key"),
+    ],
+    ids=["self_dataclass", "mutual_dataclass", "self_typeddict"],
+)
+def test_recursive_structured_types_emit_ref_and_defs_without_recursion_error(
+    target_type: Any,
+    expected_def_name: str,
+    expected_prop: str,
+) -> None:
+    """Verify recursive dataclasses and TypedDicts synthesize cycle-safe `$defs` schemas."""
+    schema = type_to_json_schema(target_type)
+    assert schema["type"] == "object"
+    assert expected_prop in schema["properties"]
+    assert expected_def_name in schema["$defs"]
+
+    out_schema = type_to_output_schema(target_type)
+    assert out_schema is not None
+    assert out_schema["type"] == "object"
+    assert expected_def_name in out_schema["$defs"]
+
+    def _tree_handler(node: Any) -> Any:
+        return node
+
+    _tree_handler.__annotations__ = {"node": target_type, "return": target_type}
+    _, route_handler = create_app_with_handler(_tree_handler, method="POST")
+    handler_schema = generate_schema_for_handler(route_handler)
+    assert "node" in handler_schema["properties"]
+    assert expected_def_name in handler_schema["$defs"]

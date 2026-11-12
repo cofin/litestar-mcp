@@ -27,6 +27,7 @@ __all__ = [
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MAX_REFERENCE_HTML_BYTES = 240 * 1024
+MIN_INVENTORY_PARTS = 4
 
 WARNING_PATTERN = re.compile(r"\b(WARNING|ERROR)\b")
 IGNORED_HTML_TAGS: frozenset[str] = frozenset({"pre", "code", "textarea", "script", "style"})
@@ -284,6 +285,46 @@ def _check_objects_inv(site_dir: Path) -> list[ArtifactFinding]:
         for symbol in REQUIRED_INVENTORY_SYMBOLS
         if symbol not in decompressed
     )
+
+    id_attr_re = re.compile(r'\bid="([^"]+)"')
+    page_ids: dict[str, set[str]] = {}
+    has_built_reference_docs = False
+    ref_dir = site_dir / "reference"
+    if ref_dir.exists():
+        for html_file in sorted(ref_dir.glob("*/index.html")):
+            html_text = html_file.read_text(encoding="utf-8")
+            if 'class="doc doc-object' in html_text:
+                has_built_reference_docs = True
+                rel_dir = html_file.parent.relative_to(site_dir).as_posix() + "/"
+                page_ids[rel_dir] = set(id_attr_re.findall(html_text))
+        root_ref = ref_dir / "index.html"
+        if has_built_reference_docs and root_ref.exists():
+            page_ids["reference/"] = set(id_attr_re.findall(root_ref.read_text(encoding="utf-8")))
+
+    if has_built_reference_docs:
+        for inv_line in decompressed.splitlines():
+            parts = inv_line.split(" ", MIN_INVENTORY_PARTS)
+            if len(parts) < MIN_INVENTORY_PARTS:
+                continue
+            sym_name, _, _, sym_uri = parts[0], parts[1], parts[2], parts[3]
+            page, sep, frag = sym_uri.partition("#")
+            target_html = site_dir / page / "index.html"
+            if not target_html.exists():
+                findings.append(
+                    ArtifactFinding(
+                        path="objects.inv",
+                        rule="broken-inventory-target",
+                        detail=f"Inventory entry {sym_name!r} points to missing page {page!r}.",
+                    )
+                )
+            elif sep and page in page_ids and frag not in page_ids[page]:
+                findings.append(
+                    ArtifactFinding(
+                        path="objects.inv",
+                        rule="broken-inventory-anchor",
+                        detail=f"Inventory entry {sym_name!r} points to missing HTML anchor #{frag} on {page}.",
+                    )
+                )
     return findings
 
 

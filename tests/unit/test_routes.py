@@ -11,7 +11,7 @@ import pytest
 from litestar import Controller, Litestar, Response, Router, get, post
 from litestar.params import Parameter
 from litestar.testing import AsyncTestClient, TestClient
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing_extensions import NotRequired, TypedDict
 
 from litestar_mcp import (
@@ -20,6 +20,7 @@ from litestar_mcp import (
     MCPBlobResource,
     MCPConfig,
     MCPOptKeys,
+    MCPSkillsConfig,
     MCPToolResult,
     mcp_resource,
     mcp_tool,
@@ -1184,3 +1185,179 @@ def test_routes_ctx_log_positional_and_keyword_logger() -> None:
     ]
     assert frames[-1]["id"] == "log-styles-1"
     assert frames[-1]["result"]["isError"] is False
+
+
+@pytest.mark.parametrize(
+    ("filter_enabled", "protocol", "ui_capable", "expected_names", "expect_private_cache"),
+    [
+        (False, "2026-07-28", False, {"public_op", "app_only_op"}, False),
+        (True, "2026-07-28", False, {"public_op"}, True),
+        (True, "2026-07-28", True, {"public_op", "app_only_op"}, True),
+        (True, "2025-11-25", False, {"public_op"}, True),
+        (True, "2025-11-25", True, {"public_op", "app_only_op"}, True),
+    ],
+)
+def test_filter_app_only_tools_visibility_cache_scope_and_direct_call(
+    filter_enabled: bool,
+    protocol: str,
+    ui_capable: bool,
+    expected_names: set[str],
+    expect_private_cache: bool,
+) -> None:
+    """Verify filter_app_only_tools omits app-only tools for non-UI clients while keeping tools/call runnable."""
+
+    @mcp_tool("public_op")
+    @get("/public-op", sync_to_thread=False)
+    def public_op() -> dict[str, str]:
+        return {"kind": "public"}
+
+    @mcp_tool("app_only_op", meta={"ui": {"resourceUri": "ui://app/panel.html", "visibility": ["app"]}})
+    @get("/app-only-op", sync_to_thread=False)
+    def app_only_op() -> dict[str, str]:
+        return {"kind": "app"}
+
+    app = Litestar(
+        route_handlers=[public_op, app_only_op],
+        plugins=[LitestarMCP(MCPConfig(cache_scope="public", filter_app_only_tools=filter_enabled))],
+    )
+    caps: dict[str, Any] = {"extensions": {UI_EXTENSION: {"mimeTypes": [UI_MIME_TYPE]}}} if ui_capable else {}
+
+    with TestClient(app=app) as client:
+        if protocol == "2026-07-28":
+            body, headers = mcp_envelope(
+                "tools/list",
+                {"_meta": {"io.modelcontextprotocol/clientCapabilities": caps}},
+            )
+            list_resp = client.post("/mcp", json=body, headers=headers).json()["result"]
+        else:
+            init_resp = client.post(
+                "/mcp",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {"protocolVersion": "2025-11-25", "capabilities": caps},
+                },
+            )
+            sid = init_resp.headers["mcp-session-id"]
+            list_resp = client.post(
+                "/mcp",
+                json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+                headers={"MCP-Protocol-Version": "2025-11-25", "Mcp-Session-Id": sid},
+            ).json()["result"]
+        call_resp = mcp_post(client, "tools/call", {"name": "app_only_op", "arguments": {}}).json()["result"]
+
+    assert (list_resp.get("cacheScope") == "private") is expect_private_cache
+    assert {item["name"] for item in list_resp["tools"]} == expected_names
+    assert call_resp["isError"] is False
+    assert json.loads(call_resp["content"][0]["text"]) == {"kind": "app"}
+
+
+@pytest.mark.parametrize(
+    ("mode", "expect_ui_cap"),
+    [
+        ("template", True),
+        ("static_skill", True),
+        ("tool_ui", True),
+        ("tool_ui_none", False),
+    ],
+)
+def test_auto_detected_ui_server_capability_sources(tmp_path: Any, mode: str, expect_ui_cap: bool) -> None:
+    """Verify server extensions UI capability detects templates, static skills, and valid tool _meta.ui."""
+    handlers: list[Any] = []
+    config = MCPConfig()
+    if mode == "template":
+
+        @mcp_resource("panel_tpl", uri_template="ui://panels/{slug}", mime_type=UI_MIME_TYPE)
+        @get("/panels/{slug:str}", sync_to_thread=False)
+        def panel_tpl(slug: str) -> Response[str]:
+            return Response(content=f"<p>{slug}</p>", media_type=UI_MIME_TYPE)
+
+        handlers.append(panel_tpl)
+    elif mode == "static_skill":
+        skill_dir = tmp_path / "ui-helper"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: ui-helper\ndescription: UI skill\n_meta:\n  ui:\n    prefersBorder: true\n---\n\n# UI\n",
+            encoding="utf-8",
+        )
+        config = MCPConfig(skills=MCPSkillsConfig(paths=[tmp_path]))
+    elif mode == "tool_ui":
+
+        @mcp_tool("widget_op", meta={"ui": {"resourceUri": "ui://ext/widget.html"}})
+        @get("/widget-op", sync_to_thread=False)
+        def widget_op() -> dict[str, bool]:
+            return {"ok": True}
+
+        handlers.append(widget_op)
+    else:
+
+        @mcp_tool("null_ui_op", meta={"ui": None})
+        @get("/null-ui-op", sync_to_thread=False)
+        def null_ui_op() -> dict[str, bool]:
+            return {"ok": True}
+
+        handlers.append(null_ui_op)
+
+    app = Litestar(route_handlers=handlers, plugins=[LitestarMCP(config)])
+    with TestClient(app=app) as client:
+        caps = mcp_post(client, "server/discover", {}).json()["result"]["capabilities"]
+
+    extensions = caps.get("extensions") or {}
+    assert (UI_EXTENSION in extensions) is expect_ui_cap
+
+
+class _OpaqueReceipt:
+    def __init__(self, code: str) -> None:
+        self.code = code
+
+
+class _PydanticWithOpaqueField(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    receipt: _OpaqueReceipt
+
+
+@pytest.mark.parametrize("return_mode", ["custom_class", "pydantic_arbitrary"])
+def test_auto_output_schema_omits_schema_and_succeeds_for_type_encoded_returns(return_mode: str) -> None:
+    """Verify non-JSON-Schema return types serialized via type_encoders omit outputSchema and succeed on tools/call."""
+    if return_mode == "custom_class":
+
+        @mcp_tool("emit_encoded", output_schema=True)
+        @get("/emit-encoded", sync_to_thread=False)
+        def emit_custom() -> _OpaqueReceipt:
+            return _OpaqueReceipt("rcpt-1")
+
+        handler: Any = emit_custom
+        expected_payload: dict[str, Any] = {"code": "rcpt-1"}
+    else:
+
+        @mcp_tool("emit_encoded", output_schema=True)
+        @get("/emit-encoded", sync_to_thread=False)
+        def emit_pydantic() -> _PydanticWithOpaqueField:
+            return _PydanticWithOpaqueField(receipt=_OpaqueReceipt("rcpt-2"))
+
+        handler = emit_pydantic
+        expected_payload = {"receipt": {"code": "rcpt-2"}}
+
+    def _encode_model(value: _PydanticWithOpaqueField) -> dict[str, Any]:
+        return {"receipt": {"code": value.receipt.code}}
+
+    app = Litestar(
+        route_handlers=[handler],
+        type_encoders={
+            _OpaqueReceipt: lambda r: {"code": r.code},
+            _PydanticWithOpaqueField: _encode_model,
+        },
+        plugins=[LitestarMCP(MCPConfig(auto_output_schema=True))],
+    )
+    with TestClient(app=app) as client:
+        listed = mcp_post(client, "tools/list", {}).json()["result"]["tools"]
+        entry = next(item for item in listed if item["name"] == "emit_encoded")
+        assert "outputSchema" not in entry
+
+        call_json = mcp_post(client, "tools/call", {"name": "emit_encoded", "arguments": {}}).json()
+        assert "error" not in call_json
+        result = call_json["result"]
+        assert result["isError"] is False
+        assert from_json(result["content"][0]["text"]) == expected_payload

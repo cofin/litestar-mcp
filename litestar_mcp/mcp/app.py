@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, cast, get_args, get_origin, get_type_hints
 
 from litestar import Litestar, Response
+from litestar.constants import RESERVED_KWARGS
 from litestar.exceptions import PermissionDeniedException
 from litestar.handlers import get, post
 from litestar.openapi.spec import Operation
@@ -23,7 +24,13 @@ from litestar.types import Empty, TypeDecodersSequence
 from litestar_mcp.core.schema_builder import unwrap_root_object_schema
 from litestar_mcp.core.serialization import encode_json
 from litestar_mcp.mcp.config import MCPConfig
-from litestar_mcp.mcp.content import MCPBlobResource, MCPInputRequiredResult, MCPResourceLink, MCPToolResult
+from litestar_mcp.mcp.content import (
+    MCPBlobResource,
+    MCPInputRequiredResult,
+    MCPResourceLink,
+    MCPToolResult,
+    is_content_block,
+)
 from litestar_mcp.mcp.plugin import LitestarMCP
 from litestar_mcp.mcp.stdio import MCPStdioContext, run_stdio
 from litestar_mcp.utils import classify_resource_uri, clean_icons, clean_meta, clean_title
@@ -57,6 +64,8 @@ if TYPE_CHECKING:
         TypeEncodersMap,
     )
     from litestar.types.callable_types import OperationIDCreator
+
+__all__ = ("MCP",)
 
 _INTERNAL_DISPATCH_SCOPE_KEY = "litestar_mcp.internal_dispatch"
 _FULL_TEMPLATE_SEGMENT_RE = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}")
@@ -197,10 +206,14 @@ def _default_resource_mime_type_for_callable(fn: "Callable[..., Any]") -> "str |
 
 
 def _normalize_resource_path_segment(seg: "str", uri: "str") -> "str":
-    """Keep whole `{var}` path segments typed for Litestar and sanitize partial-brace segments."""
+    """Keep clean `{var}` and `[A-Za-z0-9._-]` segments intact and sanitize unsafe or reserved segments."""
     if _FULL_TEMPLATE_SEGMENT_RE.fullmatch(seg):
-        return f"{{{seg[1:-1]}:str}}"
-    if "{" in seg or "}" in seg:
+        var_name = seg[1:-1]
+        if var_name not in RESERVED_KWARGS:
+            return f"{{{var_name}:str}}"
+        digest = hashlib.sha256(uri.encode("utf-8")).hexdigest()[:8]
+        return f"{var_name}-{digest}"
+    if "{" in seg or "}" in seg or _SAFE_SEGMENT_CHARS_RE.search(seg):
         cleaned = _SAFE_SEGMENT_CHARS_RE.sub("-", seg.replace("{", "").replace("}", "")).strip("-") or "segment"
         digest = hashlib.sha256(uri.encode("utf-8")).hexdigest()[:8]
         return f"{cleaned}-{digest}"
@@ -208,13 +221,18 @@ def _normalize_resource_path_segment(seg: "str", uri: "str") -> "str":
 
 
 def _standalone_resource_internal_path(base_path: "str", uri: "str", resource_name: "str") -> "str":
-    """Build a normalized internal Litestar route path for a standalone MCP resource."""
+    """Build a collision-free internal Litestar route path for a standalone MCP resource."""
     parsed = urllib.parse.urlparse(uri)
     raw_parts = [parsed.scheme] if parsed.scheme else []
     raw_parts.extend((parsed.netloc, parsed.path))
     segments = [_normalize_resource_path_segment(seg, uri) for part in raw_parts for seg in part.split("/") if seg]
     if not segments:
-        segments = [resource_name]
+        segments = [_normalize_resource_path_segment(resource_name, uri)]
+    digest = hashlib.sha256(uri.encode("utf-8")).hexdigest()[:8]
+    if not parsed.scheme:
+        segments.append(f"u-{digest}")
+    if parsed.params or parsed.query or parsed.fragment:
+        segments.append(f"qf-{digest}")
     return _standalone_internal_path(base_path, "resources", *segments)
 
 
@@ -344,6 +362,25 @@ def _merge_type_encoders(app_encoders: "Any", route_encoders: "Any") -> "TypeEnc
     return merged or None
 
 
+def _make_type_encoders_resolver(
+    app_encoders: "Any",
+    route_encoders: "Any",
+) -> "tuple[TypeEncodersMap | None, list[Any], Callable[[], TypeEncodersMap | None]]":
+    """Build `(fallback_encoders, handler_ref, resolver)` for standalone synthesized routes."""
+    fallback_encoders = _merge_type_encoders(app_encoders, route_encoders)
+    handler_ref: list[Any] = []
+
+    def _resolve_encoders() -> "TypeEncodersMap | None":
+        if handler_ref and getattr(handler_ref[0], "ownership_layers", None):
+            with contextlib.suppress(Exception):
+                resolved = handler_ref[0].resolve_type_encoders()
+                if resolved:
+                    return cast("TypeEncodersMap", resolved)
+        return fallback_encoders
+
+    return fallback_encoders, handler_ref, _resolve_encoders
+
+
 def _json_response_wrapper(
     fn: "Callable[..., Any]",
     *,
@@ -351,6 +388,7 @@ def _json_response_wrapper(
     dependencies: "Mapping[str, Any] | None" = None,
     type_encoders: "TypeEncodersMap | None" = None,
     type_encoders_resolver: "Callable[[], TypeEncodersMap | None] | None" = None,
+    allow_body: "bool" = True,
 ) -> "Callable[..., Any]":
     """Wrap a handler function to return a JSON `Response` or MCP content helper."""
 
@@ -362,15 +400,31 @@ def _json_response_wrapper(
 
         @wraps(fn)
         async def async_wrapped(*args: "Any", **kwargs: "Any") -> "Any":
+            if not allow_body and "_mcp_param_data" in kwargs:
+                kwargs["data"] = kwargs.pop("_mcp_param_data")
             return _to_json_response(await fn(*args, **kwargs), type_encoders=_active_encoders())
 
-        return normalize_synthesized_handler_signature(async_wrapped, fn, path=path, dependencies=dependencies)
+        return normalize_synthesized_handler_signature(
+            async_wrapped,
+            fn,
+            path=path,
+            dependencies=dependencies,
+            allow_body=allow_body,
+        )
 
     @wraps(fn)
     def sync_wrapped(*args: "Any", **kwargs: "Any") -> "Any":
+        if not allow_body and "_mcp_param_data" in kwargs:
+            kwargs["data"] = kwargs.pop("_mcp_param_data")
         return _to_json_response(fn(*args, **kwargs), type_encoders=_active_encoders())
 
-    return normalize_synthesized_handler_signature(sync_wrapped, fn, path=path, dependencies=dependencies)
+    return normalize_synthesized_handler_signature(
+        sync_wrapped,
+        fn,
+        path=path,
+        dependencies=dependencies,
+        allow_body=allow_body,
+    )
 
 
 def _to_json_response(res: "Any", *, type_encoders: "TypeEncodersMap | None" = None) -> "Any":
@@ -383,6 +437,12 @@ def _to_json_response(res: "Any", *, type_encoders: "TypeEncodersMap | None" = N
     """
     if isinstance(res, (Response, MCPToolResult, MCPBlobResource, MCPResourceLink, MCPInputRequiredResult)):
         return res
+    if (
+        isinstance(res, (list, tuple))
+        and res
+        and all(isinstance(item, (MCPBlobResource, MCPResourceLink)) or is_content_block(item) for item in res)
+    ):
+        return list(res)
     if res is None or isinstance(res, (str, bytes, bytearray)):
         if type_encoders:
             for base in type(res).__mro__[:-1]:
@@ -430,15 +490,31 @@ def _resource_response_wrapper(
 
         @wraps(fn)
         async def async_wrapped(*args: "Any", **kwargs: "Any") -> "Any":
+            if "_mcp_param_data" in kwargs:
+                kwargs["data"] = kwargs.pop("_mcp_param_data")
             return _to_resource_response(await fn(*args, **kwargs), media_type=media_type)
 
-        return normalize_synthesized_handler_signature(async_wrapped, fn, path=path, dependencies=dependencies)
+        return normalize_synthesized_handler_signature(
+            async_wrapped,
+            fn,
+            path=path,
+            dependencies=dependencies,
+            allow_body=False,
+        )
 
     @wraps(fn)
     def sync_wrapped(*args: "Any", **kwargs: "Any") -> "Any":
+        if "_mcp_param_data" in kwargs:
+            kwargs["data"] = kwargs.pop("_mcp_param_data")
         return _to_resource_response(fn(*args, **kwargs), media_type=media_type)
 
-    return normalize_synthesized_handler_signature(sync_wrapped, fn, path=path, dependencies=dependencies)
+    return normalize_synthesized_handler_signature(
+        sync_wrapped,
+        fn,
+        path=path,
+        dependencies=dependencies,
+        allow_body=False,
+    )
 
 
 class MCP:
@@ -585,19 +661,10 @@ class MCP:
                 meta=cleaned_meta,
             )
 
-            fallback_encoders = _merge_type_encoders(
+            fallback_encoders, handler_ref, _resolve_encoders = _make_type_encoders_resolver(
                 self._kwargs.get("type_encoders"),
                 route_kwargs.get("type_encoders"),
             )
-            handler_ref: list[Any] = []
-
-            def _resolve_encoders() -> "TypeEncodersMap | None":
-                if handler_ref and getattr(handler_ref[0], "ownership_layers", None):
-                    with contextlib.suppress(Exception):
-                        resolved = handler_ref[0].resolve_type_encoders()
-                        if resolved:
-                            return cast("TypeEncodersMap", resolved)
-                return fallback_encoders
 
             handler = post(
                 path=path,
@@ -818,6 +885,10 @@ class MCP:
                 icons=cleaned_icons,
                 meta=cleaned_meta,
             )
+            fallback_encoders, handler_ref, _resolve_encoders = _make_type_encoders_resolver(
+                self._kwargs.get("type_encoders"),
+                route_kwargs.get("type_encoders"),
+            )
             handler = get(
                 path=path,
                 **_build_standalone_route_kwargs(
@@ -826,7 +897,17 @@ class MCP:
                     forced_opt=forced_opt,
                     default_opt={opt_keys.prompt_description: description or fn.__doc__ or ""},
                 ),
-            )(_json_response_wrapper(fn, path=path, dependencies=route_kwargs.get("dependencies")))
+            )(
+                _json_response_wrapper(
+                    fn,
+                    path=path,
+                    dependencies=route_kwargs.get("dependencies"),
+                    type_encoders=fallback_encoders,
+                    type_encoders_resolver=_resolve_encoders,
+                    allow_body=False,
+                )
+            )
+            handler_ref.append(handler)
             self.plugin.register_dynamic_handler(handler)
             return fn
 

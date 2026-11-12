@@ -1,5 +1,6 @@
 """Filesystem and dynamic skill sources and catalog for the Skills over MCP extension."""
 
+import copy
 import hashlib
 import logging
 import mimetypes
@@ -166,11 +167,11 @@ class SkillFile:
         if self.title is not None:
             entry["title"] = self.title
         if self.icons:
-            entry["icons"] = [dict(icon) for icon in self.icons]
+            entry["icons"] = [copy.deepcopy(dict(icon)) for icon in self.icons]
         if self.tags:
             entry["tags"] = list(self.tags)
         if self.meta:
-            entry["_meta"] = dict(self.meta)
+            entry["_meta"] = copy.deepcopy(dict(self.meta))
         return entry
 
     def to_resource(self, skill: "Skill") -> "dict[str, Any]":
@@ -189,10 +190,10 @@ class SkillFile:
             entry["title"] = title
         icons = self.icons if self.icons is not None else (skill.icons if is_skill_md else None)
         if icons:
-            entry["icons"] = [dict(icon) for icon in icons]
+            entry["icons"] = [copy.deepcopy(dict(icon)) for icon in icons]
         meta = self.meta if self.meta is not None else (skill.meta if is_skill_md else None)
         if meta:
-            entry["_meta"] = dict(meta)
+            entry["_meta"] = copy.deepcopy(dict(meta))
         return entry
 
 
@@ -263,19 +264,25 @@ class Skill:
             msg = f"Skill {self.name!r} must include a 'SKILL.md' file"
             raise ValueError(msg)
 
+        copied_frontmatter = copy.deepcopy(dict(self.frontmatter))
+        object.__setattr__(self, "frontmatter", copied_frontmatter)
         sorted_files = tuple(sorted(self.files, key=lambda item: item.relative_path))
         object.__setattr__(self, "files", sorted_files)
 
         normalized_title = (
-            _normalize_title(self.title) if self.title is not None else _normalize_title(self.frontmatter.get("title"))
+            _normalize_title(self.title)
+            if self.title is not None
+            else _normalize_title(copied_frontmatter.get("title"))
         )
         normalized_icons = (
-            _copy_icons(self.icons) if self.icons is not None else _copy_icons(self.frontmatter.get("icons"))
+            _copy_icons(self.icons) if self.icons is not None else _copy_icons(copied_frontmatter.get("icons"))
         )
         normalized_tags = _normalize_tags(self.tags)
         if not normalized_tags:
-            normalized_tags = _extract_frontmatter_tags(self.frontmatter.get("tags"))
-        normalized_meta = _copy_meta(self.meta) if self.meta is not None else _copy_meta(self.frontmatter.get("_meta"))
+            normalized_tags = _extract_frontmatter_tags(copied_frontmatter.get("tags"))
+        normalized_meta = (
+            _copy_meta(self.meta) if self.meta is not None else _copy_meta(copied_frontmatter.get("_meta"))
+        )
 
         object.__setattr__(self, "title", normalized_title)
         object.__setattr__(self, "icons", normalized_icons)
@@ -363,20 +370,27 @@ class Skill:
 
         fm_mapping: dict[str, Any] = {"name": name, "description": description}
         if metadata:
-            fm_mapping.update(metadata)
-        normalized_title = _normalize_title(title)
-        if normalized_title is not None:
-            fm_mapping["title"] = normalized_title
-        normalized_icons = _copy_icons(icons)
-        if normalized_icons is not None:
-            fm_mapping["icons"] = normalized_icons
+            fm_mapping.update(copy.deepcopy(dict(metadata)))
+        if title is not None:
+            fm_mapping.pop("title", None)
+            normalized_title = _normalize_title(title)
+            if normalized_title is not None:
+                fm_mapping["title"] = normalized_title
+        if icons is not None:
+            fm_mapping.pop("icons", None)
+            normalized_icons = _copy_icons(icons)
+            if normalized_icons is not None:
+                fm_mapping["icons"] = normalized_icons
         if tags is not None:
+            fm_mapping.pop("tags", None)
             normalized_tags = _normalize_tags(tags)
             if normalized_tags:
                 fm_mapping["tags"] = list(normalized_tags)
-        normalized_meta = _copy_meta(meta)
-        if normalized_meta is not None:
-            fm_mapping["_meta"] = normalized_meta
+        if meta is not None:
+            fm_mapping.pop("_meta", None)
+            normalized_meta = _copy_meta(meta)
+            if normalized_meta is not None:
+                fm_mapping["_meta"] = normalized_meta
         rendered_fm = yaml.safe_dump(fm_mapping, sort_keys=False, allow_unicode=True).rstrip("\n")
         skill_md_text = f"---\n{rendered_fm}\n---\n\n{body}" if body else f"---\n{rendered_fm}\n---\n"
         return cls.from_content(skill_md_text, files=files)
@@ -427,17 +441,17 @@ class Skill:
         """Return the ``skills/list`` / ``skills/get`` entry for this skill."""
         entry: dict[str, Any] = {
             "uri": self.uri,
-            "frontmatter": dict(self.frontmatter),
+            "frontmatter": copy.deepcopy(self.frontmatter),
             "resources": [file.to_manifest_entry() for file in self.files],
         }
         if self.title is not None:
             entry["title"] = self.title
         if self.icons:
-            entry["icons"] = [dict(icon) for icon in self.icons]
+            entry["icons"] = [copy.deepcopy(dict(icon)) for icon in self.icons]
         if self.tags:
             entry["tags"] = list(self.tags)
         if self.meta:
-            entry["_meta"] = dict(self.meta)
+            entry["_meta"] = copy.deepcopy(dict(self.meta))
         return entry
 
     def to_resources(self) -> "list[dict[str, Any]]":
@@ -638,13 +652,28 @@ class SkillCatalog:
             self._app_ref = app
         if registry is not None:
             self._registry = registry
+            registry.configure_skill_notifications(
+                list_changed=self.list_changed,
+                expose_as_prompts=self.expose_as_prompts,
+            )
+
+    def preloaded_skills(self) -> "tuple[Skill, ...]":
+        """Return eagerly loaded static skills from filesystem sources in priority order."""
+        by_name: dict[str, Skill] = {}
+        for source in self._sources:
+            if isinstance(source, FilesystemSkillSource):
+                for skill in source.skills:
+                    by_name.setdefault(skill.name, skill)
+        return tuple(by_name[name] for name in sorted(by_name))
 
     async def notify_list_changed(self) -> "None":
         """Emit skill list-changed (and prompt list-changed when ``expose_as_prompts`` is enabled) notifications."""
         if self._registry is not None:
+            self._registry.configure_skill_notifications(
+                list_changed=self.list_changed,
+                expose_as_prompts=self.expose_as_prompts,
+            )
             await self._registry.notify_skills_list_changed()
-            if self.expose_as_prompts:
-                await self._registry.notify_prompts_list_changed()
 
     async def list_skills(
         self,
@@ -1107,7 +1136,7 @@ def _normalize_title(title: "Any") -> "str | None":
 def _copy_icons(icons: "Any") -> "list[dict[str, Any]] | None":
     if icons is None or isinstance(icons, (str, bytes)) or not isinstance(icons, Sequence):
         return None
-    copied = [dict(item) for item in icons if isinstance(item, Mapping)]
+    copied = [copy.deepcopy(dict(item)) for item in icons if isinstance(item, Mapping)]
     return copied or None
 
 
@@ -1135,7 +1164,7 @@ def _extract_frontmatter_tags(raw_tags: "Any") -> "tuple[str, ...]":
 def _copy_meta(meta: "Any") -> "dict[str, Any] | None":
     if not isinstance(meta, Mapping):
         return None
-    copied = dict(meta)
+    copied = copy.deepcopy(dict(meta))
     return copied or None
 
 

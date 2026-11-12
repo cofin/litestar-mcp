@@ -4,7 +4,7 @@ title: Core Primitives & Observability API
 
 # Core Primitives & Observability API
 
-API reference for protocol-agnostic core primitives (`Tool`, `ToolCall`, `ToolResult`, `ToolArgumentError`, `@tool`, `ToolContext`), OpenTelemetry GenAI observability (`TelemetryConfig`, `SpanManager`), JSON serialization helpers (`encode_json`, `decode_json`, `to_json`, `from_json`), JSON-RPC 2.0 wire types (`JSONRPCRequest`, `JSONRPCError`, `JSONRPCErrorException`), SSE `SubscriptionManager` and RFC 5424 log-level helpers (`validate_log_level`, `log_level_allows`), the `litestar-mcp` exception hierarchy, schema generation and validation helpers (`validate_tool_descriptions`, `typed_dict_to_json_schema`, `unwrap_root_object_schema`, `type_to_output_schema`, `generate_output_schema_for_handler`), and internal ASGI scope executors (`execute_tool`, `execute_handler_response`, `blank_http_scope`).
+API reference for protocol-agnostic core primitives (`Tool`, `ToolCall`, `ToolResult`, `ToolArgumentError`, `@tool`, `ToolContext`), OpenTelemetry GenAI observability (`TelemetryConfig`, `SpanManager`), JSON serialization helpers (`encode_json`, `decode_json`, `to_json`, `from_json`), JSON-RPC 2.0 wire types (`JSONRPCRequest`, `JSONRPCError`, `JSONRPCErrorException`), SSE `SubscriptionManager` and RFC 5424 log-level helpers (`MCPLogLevel`, `MCP_LOG_LEVELS`, `LOG_LEVEL_SEVERITY`, `validate_log_level`, `log_level_allows`), the `litestar-mcp` exception hierarchy, schema and metadata helpers (`validate_tool_descriptions`, `get_all_mcp_metadata`, `typed_dict_to_json_schema`, `unwrap_root_object_schema`, `type_to_output_schema`, `generate_output_schema_for_handler`, `cached_output_schema_for_handler`), and internal ASGI scope executors (`execute_tool`, `execute_handler_response`, `blank_http_scope`).
 
 For guides, see [Core Architectural Concepts](../getting-started/concepts.md) and [OpenTelemetry & Observability](../security/observability.md).
 
@@ -48,6 +48,12 @@ For guides, see [Core Architectural Concepts](../getting-started/concepts.md) an
 
 ::: litestar_mcp.core.sse.SubscriptionManager
 
+::: litestar_mcp.core.sse.MCPLogLevel
+
+::: litestar_mcp.core.sse.MCP_LOG_LEVELS
+
+::: litestar_mcp.core.sse.LOG_LEVEL_SEVERITY
+
 ::: litestar_mcp.core.sse.validate_log_level
 
 ::: litestar_mcp.core.sse.log_level_allows
@@ -64,6 +70,8 @@ For guides, see [Core Architectural Concepts](../getting-started/concepts.md) an
 
 ::: litestar_mcp.utils.validate_tool_descriptions
 
+::: litestar_mcp.utils.get_all_mcp_metadata
+
 ::: litestar_mcp.core.schema_builder.typed_dict_to_json_schema
 
 ::: litestar_mcp.core.schema_builder.unwrap_root_object_schema
@@ -71,6 +79,8 @@ For guides, see [Core Architectural Concepts](../getting-started/concepts.md) an
 ::: litestar_mcp.core.schema_builder.type_to_output_schema
 
 ::: litestar_mcp.core.schema_builder.generate_output_schema_for_handler
+
+::: litestar_mcp.core.schema_builder.cached_output_schema_for_handler
 
 ## Internal ASGI Scope Execution
 

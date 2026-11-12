@@ -129,7 +129,7 @@ Applications that load skills from a database, object store, or tenant-scoped re
 
 ### Constructing In-Memory Skills (Skill.build, Skill.from_content, SkillFile.from_content)
 
-- **`Skill.build(name, description, body="", *, metadata=None, files=None, title=None, icons=None, tags=(), meta=None)`**: Renders YAML frontmatter around `body`, preserves presentation metadata and tags, and computes SHA-256 digests and byte sizes for `SKILL.md` and any auxiliary `files`.
+- **`Skill.build(name, description, body="", *, metadata=None, files=None, title=None, icons=None, tags=None, meta=None)`**: Renders YAML frontmatter around `body`, preserves presentation metadata and tags (explicit empty overrides such as `title=""`, `icons=()`, `tags=()`, or `meta={}` clear inherited keys from `metadata`), and computes SHA-256 digests and byte sizes for `SKILL.md` and any auxiliary `files`.
 - **`Skill.from_content(skill_md, files=None)`**: Parses raw `SKILL.md` markdown containing frontmatter (`name`, `description`, and optional `title`, `icons`, `tags`, `meta`) and attaches optional auxiliary files.
 - **`SkillFile.from_content(skill_name, relative_path, content, *, title=None, icons=None, tags=(), meta=None)`**: Computes `size`, `sha256:<hex>` `digest`, `mime_type`, and canonical `skill://` `uri` from `content`. To serve a large auxiliary file lazily on demand via `source.read_file(...)` while keeping its SHA-256 digest locked in the manifest, use `dataclasses.replace(SkillFile.from_content(...), content=None)`.
 

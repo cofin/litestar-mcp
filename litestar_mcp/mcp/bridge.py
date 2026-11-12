@@ -36,7 +36,9 @@ TokenProvider = Callable[[], str] | Callable[[], Awaitable[str]]
 BRIDGE_ERROR = -32001
 DEFAULT_MAX_STDIN_MESSAGE_SIZE = 16 * 1024 * 1024
 _DEFAULT_CLIENT_INFO = {"name": "litestar-mcp-stdio-bridge", "version": __version__}
-_SEQUENTIAL_BRIDGE_METHODS = frozenset({"initialize", "resources/subscribe", "resources/unsubscribe"})
+_SEQUENTIAL_BRIDGE_METHODS = frozenset(
+    {"initialize", "resources/subscribe", "resources/unsubscribe", "logging/setLevel"}
+)
 BEARER_TOKEN_PREFIX = "Bearer "  # noqa: S105
 DEFAULT_AUTH_HEADER_NAME = "Authorization"
 
@@ -146,7 +148,7 @@ async def run_stdio_streamable_http_bridge(
         return 0
 
     await _write_bridge_error(stdout_stream, str(error))
-    print(f"litestar mcp bridge transport error: {error}", file=stderr_stream)
+    stderr_stream.write(f"litestar mcp bridge transport error: {error}\n")
     return 1
 
 
@@ -269,12 +271,7 @@ class _StreamableHTTPBridgeClient:
             self._inflight.clear()
         for scope in scopes:
             scope.cancel()
-        event_task = self._event_stream_task
-        self._event_stream_task = None
-        if event_task is not None:
-            event_task.cancel()
-            with anyio.CancelScope(shield=True):
-                await asyncio.gather(event_task, return_exceptions=True)
+        await self._stop_session_event_stream()
         session_id = self._session_id
         self._session_id = None
         if session_id is not None:
@@ -310,12 +307,16 @@ class _StreamableHTTPBridgeClient:
             async with self._inflight_lock:
                 self._inflight[request_id] = cancel_scope
         try:
+            is_initialize = message.get("method") == "initialize"
             with cancel_scope:
+                if is_initialize:
+                    await self._stop_session_event_stream()
+                    self._tool_headers = None
                 should_open_stream = await self._send_post(
                     prepared,
                     headers=headers,
                     request_id=request_id,
-                    is_initialize=message.get("method") == "initialize",
+                    is_initialize=is_initialize,
                 )
                 if should_open_stream:
                     await self._start_session_event_stream()
@@ -397,6 +398,14 @@ class _StreamableHTTPBridgeClient:
             return not self._stdin_closed
         self._session_id = None
         return False
+
+    async def _stop_session_event_stream(self) -> None:
+        event_task = self._event_stream_task
+        self._event_stream_task = None
+        if event_task is not None:
+            event_task.cancel()
+            with anyio.CancelScope(shield=True):
+                await asyncio.gather(event_task, return_exceptions=True)
 
     async def _start_session_event_stream(self) -> None:
         if self._event_stream_task is not None and not self._event_stream_task.done():
@@ -545,7 +554,7 @@ class _StreamableHTTPBridgeClient:
                             else []
                         )
                 cursor = result.get("nextCursor") if isinstance(result, dict) else None
-                if not isinstance(cursor, str):
+                if not isinstance(cursor, str) or not cursor:
                     break
                 page += 1
             self._tool_headers = cache

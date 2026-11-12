@@ -347,6 +347,7 @@ async def _app_lifespan(app: "Litestar", *, shutdown_timeout: "float" = 5.0) -> 
 
 
 def _resolve_plugin(app: "Litestar") -> "Any":
+    """Resolve `LitestarMCP` lazily to break the `plugin -> cli -> stdio -> plugin` import cycle."""
     from litestar_mcp.mcp.plugin import LitestarMCP
 
     try:

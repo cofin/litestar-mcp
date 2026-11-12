@@ -370,7 +370,19 @@ def test_subscriptions_listen_streams_acknowledgement_first() -> None:
     plugin = app.plugins.get(LitestarMCP)
 
     class FiniteSubscriptions:
-        async def open(self, subscription_id: Any, notifications: dict[str, Any]) -> Any:
+        def set_default_log_level(self, level: str) -> str:
+            return level
+
+        async def open(
+            self,
+            subscription_id: Any,
+            notifications: dict[str, Any],
+            *,
+            owner_id: str | None = None,
+            authorize: Any = None,
+        ) -> Any:
+            del owner_id, authorize
+
             async def stream() -> Any:
                 yield {
                     "jsonrpc": "2.0",
@@ -1374,3 +1386,172 @@ async def test_raising_subscription_authorizer_fails_closed() -> None:
         )
         assert sub_resp.status_code == 400
         assert sub_resp.json()["error"]["code"] == -32602
+
+
+@pytest.mark.asyncio
+async def test_legacy_post_streams_logs_inline_without_get_sse_and_isolates_modern_logs() -> None:
+    """Verify 2025-11-25 POST /mcp emits SSE logs inline when no GET stream is open and isolates 2026 logs."""
+
+    @get("/emit-isolated", mcp_tool="emit_isolated")
+    async def emit_isolated() -> dict[str, str]:
+        ctx = get_mcp_request_context()
+        await ctx.report_progress(1, 1, "done")
+        await ctx.log("warning", "warn-msg", logger="iso")
+        return {"ok": "true"}
+
+    app = Litestar(route_handlers=[emit_isolated], plugins=[LitestarMCP(MCPConfig(default_log_level="info"))])
+    plugin = app.plugins.get(LitestarMCP)
+
+    async with (
+        app.lifespan(),
+        httpx2.AsyncClient(transport=ASGIStreamingTransport(app), base_url="http://testserver.local") as client,
+    ):
+        init_resp = await client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"protocolVersion": "2025-11-25", "capabilities": {}},
+            },
+        )
+        sid = init_resp.headers["mcp-session-id"]
+
+        async with client.stream(
+            "POST",
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": "inline-1",
+                "method": "tools/call",
+                "params": {"name": "emit_isolated", "arguments": {}, "_meta": {"progressToken": "pt-1"}},
+            },
+            headers={
+                "Accept": "application/json, text/event-stream",
+                "MCP-Protocol-Version": "2025-11-25",
+                "Mcp-Session-Id": sid,
+            },
+        ) as inline_resp:
+            assert inline_resp.status_code == 200
+            assert inline_resp.headers["content-type"].startswith("text/event-stream")
+            inline_frames = await _drain_remaining_sse_payloads(inline_resp.aiter_lines())
+
+        assert [frame.get("method") for frame in inline_frames[:-1]] == [
+            "notifications/progress",
+            "notifications/message",
+        ]
+        assert inline_frames[-1]["id"] == "inline-1"
+
+        async with client.stream(
+            "GET",
+            "/mcp",
+            headers={"Accept": "text/event-stream", "MCP-Protocol-Version": "2025-11-25", "Mcp-Session-Id": sid},
+        ) as sess_sse:
+            assert sess_sse.status_code == 200
+            sse_lines = sess_sse.aiter_lines()
+            mod_body, mod_headers = mcp_envelope(
+                "tools/call",
+                {"name": "emit_isolated", "arguments": {}, "_meta": {"progressToken": "pt-mod"}},
+                msg_id="mod-1",
+            )
+            async with client.stream("POST", "/mcp", json=mod_body, headers=mod_headers) as mod_resp:
+                assert mod_resp.status_code == 200
+                mod_frames = await _drain_remaining_sse_payloads(mod_resp.aiter_lines())
+            assert any(f.get("method") == "notifications/message" for f in mod_frames)
+
+            await plugin.registry.notify_tools_list_changed()
+            next_sess_event = await _next_sse_payload(sse_lines)
+            assert next_sess_event["method"] == "notifications/tools/list_changed"
+
+
+def test_legacy_session_meta_ui_extension_is_accepted() -> None:
+    """Verify 2025-11-25 requests carrying io.modelcontextprotocol/ui in _meta are not rejected as 2026."""
+    app = _app()
+    with TestClient(app=app) as client:
+        init_resp = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"protocolVersion": "2025-11-25", "capabilities": {}},
+            },
+        )
+        sid = init_resp.headers["mcp-session-id"]
+        resp = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/list",
+                "params": {"_meta": {"io.modelcontextprotocol/ui": {"theme": "dark"}}},
+            },
+            headers={"MCP-Protocol-Version": "2025-11-25", "Mcp-Session-Id": sid},
+        )
+    assert resp.status_code == 200
+    assert "tools" in resp.json()["result"]
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"MCP-Protocol-Version": "1999-01-01"},
+        {"MCP-Protocol-Version": "1999-01-01", "Accept": "text/event-stream"},
+    ],
+)
+def test_get_mcp_unsupported_protocol_version_returns_400_before_accept_check(
+    headers: dict[str, str],
+) -> None:
+    """Verify GET /mcp rejects unsupported MCP-Protocol-Version with 400 -32022 regardless of Accept."""
+    app = _app()
+    with TestClient(app=app) as client:
+        resp = client.get("/mcp", headers=headers)
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == UNSUPPORTED_PROTOCOL_VERSION
+
+
+@pytest.mark.asyncio
+async def test_aborted_sse_response_runs_stream_cleanup_and_releases_slot() -> None:
+    """Verify StreamCleanupMiddleware releases SubscriptionManager slots when SSE closes before iteration."""
+    app = _app(MCPConfig(subscription_max_streams=1))
+    plugin = app.plugins.get(LitestarMCP)
+    async with app.lifespan():
+        disconnect_gate: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        await disconnect_gate.put({"type": "http.disconnect"})
+        started = asyncio.Event()
+
+        async def receive() -> dict[str, Any]:
+            await started.wait()
+            return await disconnect_gate.get()
+
+        async def send(message: Any) -> None:
+            if message["type"] == "http.response.start":
+                started.set()
+                msg = "client disconnected before body chunk"
+                raise ConnectionResetError(msg)
+
+        scope: dict[str, Any] = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": "/mcp",
+            "raw_path": b"/mcp",
+            "query_string": b"",
+            "root_path": "",
+            "headers": [(b"accept", b"text/event-stream")],
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver.local", 80),
+            "app": app,
+        }
+        with pytest.raises(Exception, match=r"client disconnected|response started"):
+            await app(cast("Scope", scope), cast("Receive", receive), cast("Send", send))
+
+        assert plugin.registry.subscription_manager._streams == {}
+
+        async with (
+            httpx2.AsyncClient(transport=ASGIStreamingTransport(app), base_url="http://testserver.local") as client,
+            client.stream("GET", "/mcp", headers={"Accept": "text/event-stream"}) as followup,
+        ):
+            assert followup.status_code == 200

@@ -11,7 +11,7 @@ import anyio
 import httpx2
 import pytest
 from litestar import Litestar, get
-from litestar.connection import Request  # noqa: TC002
+from litestar.connection import Request
 from typing_extensions import Self
 
 from litestar_mcp import LitestarMCP, MCPConfig
@@ -866,3 +866,96 @@ async def test_bridge_2025_ignores_405_when_server_disables_get_sse() -> None:
     assert methods[-1] == "DELETE"
     by_id = {msg["id"]: msg for msg in (decode_json(bytes(line)) for line in stdout.buffer.splitlines() if line)}
     assert set(by_id) == {1, 2, 3}
+
+
+@pytest.mark.anyio
+async def test_bridge_terminates_empty_next_cursor_and_sequences_set_logging_level() -> None:
+    """Verify HTTP bridge ignores empty nextCursor pagination and completes logging/setLevel before tools/call."""
+
+    @get("/bridge-log", mcp_tool="bridge_log")
+    async def bridge_log(request: Request[Any, Any, Any]) -> dict[str, str]:
+        mcp_plugin = request.app.plugins.get(LitestarMCP)
+        sid = request.headers.get(MCP_SESSION_ID_HEADER) or ""
+        level = mcp_plugin.registry.subscription_manager.get_session_log_level(sid)
+        return {"level": level}
+
+    plugin = LitestarMCP(MCPConfig(base_path="/mcp", default_log_level="info", enable_get_sse=False))
+    app = Litestar(route_handlers=[bridge_log], plugins=[plugin])
+    transport = _RecordingBridgeTransport(app)
+    stdout = BridgeBytesSink()
+    stderr = io.StringIO()
+
+    async with app.lifespan():
+        with anyio.fail_after(5):
+            exit_code = await run_stdio_streamable_http_bridge(
+                "http://mcp-stdio/mcp",
+                transport=transport,
+                stdin=BridgeQueuedBytesSource(
+                    _bridge_rpc_line(
+                        "initialize",
+                        {"protocolVersion": "2025-11-25", "capabilities": {}},
+                        msg_id=1,
+                    ),
+                    _bridge_rpc_line("notifications/initialized"),
+                    _bridge_rpc_line("logging/setLevel", {"level": "error"}, msg_id=2),
+                    _bridge_rpc_line("tools/call", {"name": "bridge_log", "arguments": {}}, msg_id=3),
+                ),
+                stdout=stdout,
+                stderr=stderr,
+            )
+
+    assert exit_code == 0
+    assert stderr.getvalue() == ""
+    by_id = {msg["id"]: msg for msg in (decode_json(bytes(line)) for line in stdout.buffer.splitlines() if line)}
+    assert json.loads(by_id[3]["result"]["content"][0]["text"]) == {"level": "error"}
+
+
+@pytest.mark.anyio
+async def test_bridge_empty_next_cursor_stops_tool_header_pagination(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify _populate_tool_headers breaks cleanly when server returns an empty string nextCursor."""
+    calls = 0
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        body = decode_json(request.content)
+        method = body.get("method")
+        if method == "tools/list":
+            calls += 1
+            return httpx2.Response(
+                200,
+                headers={"content-type": "application/json"},
+                content=encode_json(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": body["id"],
+                        "result": {"tools": [], "nextCursor": ""},
+                    }
+                ),
+                request=request,
+            )
+        return httpx2.Response(
+            200,
+            headers={"content-type": "application/json"},
+            content=encode_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {"content": [{"type": "text", "text": "ok"}], "isError": False},
+                }
+            ),
+            request=request,
+        )
+
+    _patch_async_client(monkeypatch, handler)
+    stdout = BridgeBytesSink()
+    with anyio.fail_after(2):
+        exit_code = await run_stdio_streamable_http_bridge(
+            ENDPOINT,
+            stdin=BridgeQueuedBytesSource(
+                _bridge_rpc_line("tools/call", {"name": "demo", "arguments": {"x": "1"}}, msg_id=1),
+            ),
+            stdout=stdout,
+            stderr=io.StringIO(),
+        )
+    assert exit_code == 0
+    assert calls == 1

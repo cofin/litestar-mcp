@@ -23,6 +23,21 @@ if TYPE_CHECKING:
     from litestar import Litestar
     from litestar.config.app import AppConfig
 
+__all__ = (
+    "DEFAULT_PROTOCOL_VERSION",
+    "TERMINAL_TASK_STATUSES",
+    "MCPTaskExecutor",
+    "MCPTaskRuntime",
+    "MCPTaskStore",
+    "PrincipalProxy",
+    "TaskLookupError",
+    "TaskRecord",
+    "TaskStateError",
+    "ToolTaskCall",
+    "extract_principal_snapshot",
+    "rehydrate_security_scope",
+)
+
 DEFAULT_PROTOCOL_VERSION: str = "2026-07-28"
 TERMINAL_TASK_STATUSES = frozenset({"completed", "failed", "cancelled"})
 _PRINCIPAL_ATTR_KEYS: tuple[str, ...] = (
@@ -293,16 +308,26 @@ class MCPTaskStore:
     async def attach_runner(self, task_id: str, runner: asyncio.Task[Any]) -> None:
         """Attach a process-local runner to a durable task."""
         async with self._lock:
-            await self._lookup(task_id, None)
+            record = await self._load(task_id)
+            if record.is_terminal() or runner.done():
+                self._discard_local_state(task_id)
+                return
             self._runners[task_id] = runner
+
+        def _cleanup_done_runner(done_task: asyncio.Task[Any]) -> None:
+            if self._runners.get(task_id) is done_task:
+                self._runners.pop(task_id, None)
+
+        runner.add_done_callback(_cleanup_done_runner)
 
     def has_local_runner(self, task_id: str) -> bool:
         """Return whether a process-local runner is attached to ``task_id``."""
-        return task_id in self._runners
+        runner = self._runners.get(task_id)
+        return runner is not None and not runner.done()
 
     async def set_job_id(self, task_id: str, job_id: str) -> None:
         """Persist the executor's job id for the task's current attempt under a separate key."""
-        record = await self.get(task_id, None)
+        record = await self._load(task_id)
         expires_in = None if record.ttl_ms is None else max(1, (record.ttl_ms + 999) // 1000)
         await self.store.set(f"mcp-task:{task_id}:job", job_id.encode("utf-8"), expires_in=expires_in)
 
@@ -313,10 +338,14 @@ class MCPTaskStore:
             return None
         return value.decode("utf-8") if isinstance(value, (bytes, bytearray)) else str(value)
 
+    async def delete_job_id(self, task_id: str) -> None:
+        """Delete any persisted executor job id recorded for ``task_id``."""
+        await self.store.delete(f"mcp-task:{task_id}:job")
+
     async def set_dispatch(self, task_id: str, call: ToolTaskCall) -> None:
         """Save the serializable dispatch envelope on the record before executor submission."""
         async with self._lock:
-            record = await self._lookup(task_id, None)
+            record = await self._load(task_id)
             record.dispatch = msgspec.to_builtins(call)
             record.last_updated_at = _utc_now()
             await self._save(record)
@@ -324,13 +353,18 @@ class MCPTaskStore:
     async def get_dispatch(self, task_id: str) -> ToolTaskCall | None:
         """Retrieve and decode the serializable dispatch envelope."""
         async with self._lock:
-            record = await self._lookup(task_id, None)
+            record = await self._load(task_id)
             if record.dispatch is None:
                 return None
             return msgspec.convert(record.dispatch, ToolTaskCall)
 
+    async def peek(self, task_id: str) -> TaskRecord | None:
+        """Return the persisted task record without owner filtering, or ``None`` when missing."""
+        value = await self.store.get(self._key(task_id))
+        return _decode_record(value) if value is not None else None
+
     async def get(self, task_id: str, owner_id: str | None) -> TaskRecord:
-        """Retrieve a task, enforcing authenticated ownership when present."""
+        """Retrieve a task owned by ``owner_id``."""
         async with self._lock:
             return await self._lookup(task_id, owner_id)
 
@@ -338,7 +372,7 @@ class MCPTaskStore:
         """Update status_message on an active non-terminal task without altering its lifecycle state."""
         async with self._lock:
             try:
-                record = await self._lookup(task_id, None)
+                record = await self._load(task_id)
             except TaskLookupError:
                 return None
             if record.is_terminal():
@@ -444,10 +478,19 @@ class MCPTaskStore:
             runner for runner in self._runners.values() if runner.get_loop() is current_loop and not runner.done()
         ]
         self._runners.clear()
+        self._input_queues.clear()
+        self._cancel_events.clear()
         for runner in runners:
             runner.cancel()
         if runners:
             await asyncio.gather(*runners, return_exceptions=True)
+
+    def _discard_local_state(self, task_id: str) -> None:
+        self._input_queues.pop(task_id, None)
+        self._cancel_events.pop(task_id, None)
+        runner = self._runners.get(task_id)
+        if runner is not None and runner.done():
+            self._runners.pop(task_id, None)
 
     async def _transition(
         self,
@@ -461,8 +504,9 @@ class MCPTaskStore:
         error: JSONRPCError | None = None,
     ) -> TaskRecord:
         async with self._lock:
-            record = await self._lookup(task_id, None)
+            record = await self._load(task_id)
             if record.is_terminal():
+                self._discard_local_state(task_id)
                 return record
             record.status = status
             record.last_updated_at = _utc_now()
@@ -473,16 +517,21 @@ class MCPTaskStore:
             record.error = error
             record.input_responses = None
             await self._save(record)
+            if status in TERMINAL_TASK_STATUSES:
+                self._discard_local_state(task_id)
         await self._notify(record)
         return record
 
-    async def _lookup(self, task_id: str, owner_id: str | None) -> TaskRecord:
+    async def _load(self, task_id: str) -> TaskRecord:
         value = await self.store.get(self._key(task_id))
         if value is None:
             msg = "Failed to retrieve task: Task not found"
             raise TaskLookupError(msg)
-        record = _decode_record(value)
-        if owner_id is not None and record.owner_id is not None and record.owner_id != owner_id:
+        return _decode_record(value)
+
+    async def _lookup(self, task_id: str, owner_id: str | None) -> TaskRecord:
+        record = await self._load(task_id)
+        if record.owner_id != owner_id:
             msg = "Failed to retrieve task: Task not found"
             raise TaskLookupError(msg)
         return record

@@ -255,8 +255,9 @@ async def test_bridge_agent_executor_tool_context_owner_alignment(
     assert tool_ctx.tenant_id == expected_tenant_id
 
 
-def test_mcp_to_tools_includes_pre_init_dynamic_handlers() -> None:
-    """mcp_to_tools extracts pre-init dynamic handlers via get_handler_function."""
+@pytest.mark.anyio
+async def test_mcp_to_tools_includes_pre_init_dynamic_handlers() -> None:
+    """mcp_to_tools preserves `@tool` parameter names and execution both before and after app startup."""
 
     @tool(description="Lookup order by id.")
     def lookup_order(order_id: str) -> str:
@@ -266,8 +267,16 @@ def test_mcp_to_tools_includes_pre_init_dynamic_handlers() -> None:
     plugin = LitestarMCP()
     plugin.register_tool(lookup_order)
     plugin.register_tool(ping)
-    tools = mcp_to_tools(plugin)
-    assert [t.name for t in tools] == ["lookup_order", "ping"]
+    pre_tools = {t.name: t for t in mcp_to_tools(plugin)}
+    assert list(pre_tools) == ["lookup_order", "ping"]
+    assert "order_id" in pre_tools["lookup_order"].parameters["properties"]
+    assert "_mcp_arg_payload" not in pre_tools["lookup_order"].parameters["properties"]
+    assert await pre_tools["lookup_order"].execute({"order_id": "42"}) == "order:42"
+
+    Litestar(plugins=[plugin])
+    post_tools = {t.name: t for t in mcp_to_tools(plugin)}
+    assert "order_id" in post_tools["lookup_order"].parameters["properties"]
+    assert await post_tools["lookup_order"].execute({"order_id": "99"}) == "order:99"
 
 
 @pytest.mark.anyio
