@@ -329,9 +329,9 @@ class MCPConfig:
     max_tool_description_length: "int | None" = None
     """Optional maximum character length for tool descriptions enforced during tool-spec validation."""
     max_param_description_length: "int | None" = None
-    """Optional maximum character length for input parameter descriptions enforced during tool-spec validation."""
+    """Optional maximum character length for input parameter and nested `inputSchema` descriptions enforced during tool-spec validation."""
     max_output_field_description_length: "int | None" = None
-    """Optional maximum character length for output schema property descriptions enforced during tool-spec validation."""
+    """Optional maximum character length for output field and nested `outputSchema` descriptions enforced during tool-spec validation."""
     auth: "Any | None" = None
     """Optional route authentication policy merged into the mounted MCP router's `opt["auth"]` (for example `litestar_security.required(...)`)."""
     auto_output_schema: "bool" = False

@@ -4,13 +4,14 @@ import asyncio
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 from unittest.mock import Mock
 
+import msgspec
 import pytest
 from click import Context, Group
 from click.testing import CliRunner
-from litestar import Controller, Litestar, Router, get
+from litestar import Controller, Litestar, Router, get, post
 from litestar.cli._utils import LitestarEnv
 
 from litestar_mcp import LitestarMCP, MCPConfig, MCPSkillsConfig, Skill, mcp_prompt, mcp_resource
@@ -447,6 +448,44 @@ def test_validate_tool_descriptions_traverses_defs_nested_items_combinators_and_
         in violations
     )
     assert "Tool 'complex_tool' output field 'result.detail' description length 301 exceeds maximum 300" in violations
+
+
+def test_mcp_export_tool_spec_strict_bounds_catches_nested_msgspec_and_optional_fields(
+    cli_runner: CliRunner,
+) -> None:
+    """export-tool-spec --strict-bounds fails with nested paths across hoisted $defs and optional branches."""
+    long_param = "p" * 755
+    long_output = "o" * 305
+
+    class NestedFilter(msgspec.Struct):
+        opt_cursor: Annotated[str, msgspec.Meta(description=long_param)] | None = None
+        extra_tags: dict[str, Annotated[str, msgspec.Meta(description=long_param)]] = {}
+
+    class SearchRequest(msgspec.Struct):
+        filters: NestedFilter
+
+    class SearchHit(msgspec.Struct):
+        opt_snippet: Annotated[str, msgspec.Meta(description=long_output)] | None = None
+
+    class SearchResponse(msgspec.Struct):
+        hits: list[SearchHit]
+
+    class SearchController(Controller):
+        path = "/search"
+
+        @post("/run", mcp_tool="run_search", opt={"mcp_output_schema": True}, sync_to_thread=False)
+        def run_search(self, data: SearchRequest) -> SearchResponse:
+            """Execute search."""
+            raise NotImplementedError
+
+    app = Litestar(route_handlers=[SearchController], plugins=[LitestarMCP(MCPConfig())])
+    env = LitestarEnv(app_path="tests.unit.test_cli:app", app=app, cwd=Path.cwd(), host=None, port=None)
+    result = cli_runner.invoke(mcp_group, ["export-tool-spec", "--strict-bounds"], obj=env)
+
+    assert result.exit_code != 0
+    assert "data.filters.opt_cursor" in result.output
+    assert "data.filters.extra_tags.*" in result.output
+    assert "hits.opt_snippet" in result.output
 
 
 def test_cli_list_and_run_respect_should_include_handler_filters(cli_runner: CliRunner) -> None:

@@ -63,6 +63,19 @@ __all__ = (
 F = TypeVar("F", bound=Callable[..., Any])
 Kind = Literal["tool", "resource", "prompt"]
 _DEFS_REF_PREFIX = "#/$defs/"
+_DEFINITIONS_REF_PREFIX = "#/definitions/"
+_COMBINATOR_KEYWORDS: "tuple[str, ...]" = ("anyOf", "oneOf", "allOf")
+_SINGLE_SUBSCHEMA_SPECS: "tuple[tuple[str, str | None, bool], ...]" = (
+    ("additionalProperties", "*", False),
+    ("unevaluatedProperties", "*", False),
+    ("unevaluatedItems", "[]", False),
+    ("contains", "[]", False),
+    ("propertyNames", "<propertyNames>", True),
+    ("not", None, False),
+    ("if", None, False),
+    ("then", None, False),
+    ("else", None, False),
+)
 _STRUCTURED_FIELDS: "tuple[str, str, str]" = ("when_to_use", "returns", "agent_instructions")
 _VAR_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -673,7 +686,31 @@ def validate_tool_descriptions(
     max_param_description_length: "int | None" = 750,
     max_output_field_description_length: "int | None" = 300,
 ) -> "list[str]":
-    """Validate tool, input parameter, and output schema field description lengths."""
+    """Validate tool, input parameter, and output schema field description lengths.
+
+    Recursively inspects `$defs`, `definitions`, nested `properties`,
+    `patternProperties`, `dependentSchemas`, `items`, `prefixItems`,
+    `additionalProperties`, `unevaluatedProperties`, `unevaluatedItems`,
+    `contains`, `propertyNames`, `not`, `if`/`then`/`else`, and combinator
+    branches (`anyOf`, `oneOf`, `allOf`). The root `description` of
+    `inputSchema` and `outputSchema` is a summary of the tool and is not
+    checked. A definition shared by several fields is inspected once and
+    reported under the first path that references it.
+
+    Args:
+        tools: Advertised MCP tool descriptor mappings (`name`, `description`,
+            `inputSchema`, and optional `outputSchema`).
+        max_tool_description_length: Maximum characters allowed for
+            `tool["description"]`, or `None` to skip.
+        max_param_description_length: Maximum characters allowed for any nested
+            `inputSchema` parameter or schema node description, or `None` to skip.
+        max_output_field_description_length: Maximum characters allowed for any
+            nested `outputSchema` field or schema node description, or `None` to skip.
+
+    Returns:
+        Formatted violation messages reporting the tool name, nested schema path,
+        observed character length, and configured maximum.
+    """
     violations: list[str] = []
     for tool_entry in tools:
         tool_name = str(tool_entry.get("name", "<unnamed>"))
@@ -688,10 +725,8 @@ def validate_tool_descriptions(
             )
         input_schema = tool_entry.get("inputSchema")
         if max_param_description_length is not None and isinstance(input_schema, Mapping):
-            input_defs = input_schema.get("$defs")
-            resolved_input_defs = input_defs if isinstance(input_defs, Mapping) else {}
             seen_input: set[tuple[str, int]] = set()
-            for label, param_desc in _iter_schema_field_descriptions(input_schema, resolved_input_defs):
+            for label, param_desc in _iter_schema_field_descriptions(input_schema):
                 desc_len = len(param_desc)
                 if desc_len > max_param_description_length and (label, desc_len) not in seen_input:
                     seen_input.add((label, desc_len))
@@ -701,10 +736,8 @@ def validate_tool_descriptions(
                     )
         output_schema = tool_entry.get("outputSchema")
         if max_output_field_description_length is not None and isinstance(output_schema, Mapping):
-            output_defs = output_schema.get("$defs")
-            resolved_output_defs = output_defs if isinstance(output_defs, Mapping) else {}
             seen_output: set[tuple[str, int]] = set()
-            for label, field_desc in _iter_schema_field_descriptions(output_schema, resolved_output_defs):
+            for label, field_desc in _iter_schema_field_descriptions(output_schema):
                 desc_len = len(field_desc)
                 if desc_len > max_output_field_description_length and (label, desc_len) not in seen_output:
                     seen_output.add((label, desc_len))
@@ -902,6 +935,11 @@ def _validate_output_schema_value(output_schema: "Any") -> "dict[str, Any] | boo
     return normalized
 
 
+def _unescape_json_pointer_segment(segment: "str") -> "str":
+    """Unescape RFC 6901 `~1` and `~0` tokens in a local JSON Pointer segment."""
+    return segment.replace("~1", "/").replace("~0", "~")
+
+
 def _resolve_local_schema_ref(
     schema: "Mapping[str, Any]",
     defs: "Mapping[str, Any]",
@@ -918,111 +956,250 @@ def _resolve_local_schema_ref(
     return ref, def_name, target
 
 
-def _iter_schema_field_descriptions(
+def _merge_schema_defs(
+    raw_local: "Any",
+    inherited: "Mapping[str, Any]",
+) -> "tuple[Mapping[str, Any], Mapping[str, Any]]":
+    """Merge local `$defs` or `definitions` entries over inherited scope definitions."""
+    if not isinstance(raw_local, Mapping) or not raw_local:
+        return {}, inherited
+    if not inherited:
+        return raw_local, raw_local
+    return raw_local, {**inherited, **raw_local}
+
+
+def _resolve_scoped_schema_ref(
     schema: "Mapping[str, Any]",
     defs: "Mapping[str, Any]",
-    *,
-    path: "tuple[str, ...]" = (),
-    visited_refs: "frozenset[str]" = frozenset(),
-    seen_defs: "set[str] | None" = None,
-) -> "list[tuple[str, str]]":
-    """Return `(dotted_field_path, description)` pairs across nested schema nodes and `$defs`."""
-    is_root = path == () and not visited_refs and seen_defs is None
-    active_seen_defs = seen_defs if seen_defs is not None else set()
-    results: list[tuple[str, str]] = []
+    definitions: "Mapping[str, Any]",
+) -> "Mapping[str, Any] | None":
+    """Resolve `#/$defs/<Name>` or `#/definitions/<Name>` against active scopes."""
+    ref = schema.get("$ref")
+    if not isinstance(ref, str):
+        return None
+    if ref.startswith(_DEFS_REF_PREFIX):
+        key = _unescape_json_pointer_segment(ref[len(_DEFS_REF_PREFIX) :])
+        target = defs.get(key)
+        return target if isinstance(target, Mapping) else None
+    if ref.startswith(_DEFINITIONS_REF_PREFIX):
+        key = _unescape_json_pointer_segment(ref[len(_DEFINITIONS_REF_PREFIX) :])
+        target = definitions.get(key)
+        return target if isinstance(target, Mapping) else None
+    return None
 
-    resolved_ref = _resolve_local_schema_ref(schema, defs, visited_refs)
-    if resolved_ref is not None:
-        ref, def_name, target = resolved_ref
-        active_seen_defs.add(def_name)
-        results.extend(
-            _iter_schema_field_descriptions(
-                target,
-                defs,
+
+@dataclass(slots=True)
+class _SchemaDescriptionWalker:
+    """Recursive visitor collecting `(dotted_path, description)` pairs.
+
+    Each schema node is expanded once, at the first path that reaches it, so
+    `$ref` cycles terminate and heavily cross-referenced definitions stay
+    linear in the size of the schema.
+    """
+
+    results: "list[tuple[str, str]]"
+    expanded: "set[int]"
+
+    def walk(
+        self,
+        schema: "Mapping[str, Any]",
+        *,
+        defs: "Mapping[str, Any]",
+        definitions: "Mapping[str, Any]",
+        path: "tuple[str, ...]" = (),
+        self_path: "tuple[str, ...]" = (),
+    ) -> "None":
+        node_id = id(schema)
+        if node_id in self.expanded:
+            return
+        self.expanded.add(node_id)
+
+        if self_path:
+            own_desc = schema.get("description")
+            if isinstance(own_desc, str):
+                self.results.append((".".join(self_path), own_desc))
+
+        local_defs, active_defs = _merge_schema_defs(schema.get("$defs"), defs)
+        local_definitions, active_definitions = _merge_schema_defs(schema.get("definitions"), definitions)
+
+        ref_target = _resolve_scoped_schema_ref(schema, active_defs, active_definitions)
+        if ref_target is not None:
+            self.walk(
+                ref_target,
+                defs=active_defs,
+                definitions=active_definitions,
                 path=path,
-                visited_refs=visited_refs | {ref},
-                seen_defs=active_seen_defs,
+                self_path=self_path,
             )
+
+        self._walk_mapping_children(
+            schema,
+            defs=active_defs,
+            definitions=active_definitions,
+            path=path,
+        )
+        self._walk_array_and_combinator_children(
+            schema,
+            defs=active_defs,
+            definitions=active_definitions,
+            path=path,
+        )
+        self._walk_unreferenced_defs(
+            local_defs,
+            defs=active_defs,
+            definitions=active_definitions,
+            path=path,
+        )
+        self._walk_unreferenced_defs(
+            local_definitions,
+            defs=active_defs,
+            definitions=active_definitions,
+            path=path,
         )
 
-    props = schema.get("properties")
-    if isinstance(props, Mapping):
-        for prop_name, prop_schema in props.items():
-            if not isinstance(prop_schema, Mapping):
-                continue
-            prop_path = (*path, str(prop_name))
-            prop_desc = prop_schema.get("description")
-            if isinstance(prop_desc, str):
-                results.append((".".join(prop_path), prop_desc))
-            results.extend(
-                _iter_schema_field_descriptions(
-                    prop_schema,
-                    defs,
-                    path=prop_path,
-                    visited_refs=visited_refs,
-                    seen_defs=active_seen_defs,
-                )
-            )
-
-    items_schema = schema.get("items")
-    if isinstance(items_schema, Mapping):
-        items_desc = items_schema.get("description")
-        if isinstance(items_desc, str) and "$ref" not in items_schema:
-            items_path = (*path, "[]") if path else ("[]",)
-            results.append((".".join(items_path), items_desc))
-        results.extend(
-            _iter_schema_field_descriptions(
-                items_schema,
-                defs,
-                path=path,
-                visited_refs=visited_refs,
-                seen_defs=active_seen_defs,
-            )
-        )
-
-    additional_props = schema.get("additionalProperties")
-    if isinstance(additional_props, Mapping):
-        results.extend(
-            _iter_schema_field_descriptions(
-                additional_props,
-                defs,
-                path=path,
-                visited_refs=visited_refs,
-                seen_defs=active_seen_defs,
-            )
-        )
-
-    for key in ("prefixItems", "anyOf", "oneOf", "allOf"):
-        branches = schema.get(key)
-        if isinstance(branches, Sequence) and not isinstance(branches, (str, bytes)):
-            for branch in branches:
-                if isinstance(branch, Mapping):
-                    results.extend(
-                        _iter_schema_field_descriptions(
-                            branch,
-                            defs,
-                            path=path,
-                            visited_refs=visited_refs,
-                            seen_defs=active_seen_defs,
+    def _walk_mapping_children(
+        self,
+        schema: "Mapping[str, Any]",
+        *,
+        defs: "Mapping[str, Any]",
+        definitions: "Mapping[str, Any]",
+        path: "tuple[str, ...]",
+    ) -> "None":
+        for container_key in ("properties", "patternProperties"):
+            mapping = schema.get(container_key)
+            if isinstance(mapping, Mapping):
+                for key, subschema in mapping.items():
+                    if isinstance(subschema, Mapping):
+                        child_path = (*path, str(key))
+                        self.walk(
+                            subschema,
+                            defs=defs,
+                            definitions=definitions,
+                            path=child_path,
+                            self_path=child_path,
                         )
+
+        dependent_schemas = schema.get("dependentSchemas")
+        if isinstance(dependent_schemas, Mapping):
+            for dep_key, dep_schema in dependent_schemas.items():
+                if isinstance(dep_schema, Mapping):
+                    self.walk(
+                        dep_schema,
+                        defs=defs,
+                        definitions=definitions,
+                        path=path,
+                        self_path=(*path, str(dep_key)),
                     )
 
-    if is_root:
-        for def_name, def_schema in defs.items():
-            def_key = str(def_name)
-            if def_key not in active_seen_defs and isinstance(def_schema, Mapping):
-                active_seen_defs.add(def_key)
-                results.extend(
-                    _iter_schema_field_descriptions(
-                        def_schema,
-                        defs,
-                        path=(def_key,),
-                        visited_refs=frozenset({f"{_DEFS_REF_PREFIX}{def_key}"}),
-                        seen_defs=active_seen_defs,
-                    )
+        for keyword, self_segment, extend_child_path in _SINGLE_SUBSCHEMA_SPECS:
+            subschema = schema.get(keyword)
+            if not isinstance(subschema, Mapping):
+                continue
+            if self_segment is not None:
+                next_self_path = (*path, self_segment)
+                next_path = next_self_path if extend_child_path else path
+            else:
+                next_path = path
+                next_self_path = path or (keyword,)
+            self.walk(
+                subschema,
+                defs=defs,
+                definitions=definitions,
+                path=next_path,
+                self_path=next_self_path,
+            )
+
+    def _walk_array_and_combinator_children(
+        self,
+        schema: "Mapping[str, Any]",
+        *,
+        defs: "Mapping[str, Any]",
+        definitions: "Mapping[str, Any]",
+        path: "tuple[str, ...]",
+    ) -> "None":
+        items_schema = schema.get("items")
+        if isinstance(items_schema, Mapping):
+            self.walk(
+                items_schema,
+                defs=defs,
+                definitions=definitions,
+                path=path,
+                self_path=(*path, "[]"),
+            )
+        elif isinstance(items_schema, Sequence) and not isinstance(items_schema, (str, bytes)):
+            self._walk_indexed_schemas(
+                items_schema,
+                defs=defs,
+                definitions=definitions,
+                path=path,
+            )
+
+        prefix_items = schema.get("prefixItems")
+        if isinstance(prefix_items, Sequence) and not isinstance(prefix_items, (str, bytes)):
+            self._walk_indexed_schemas(
+                prefix_items,
+                defs=defs,
+                definitions=definitions,
+                path=path,
+            )
+
+        for keyword in _COMBINATOR_KEYWORDS:
+            branches = schema.get(keyword)
+            if isinstance(branches, Sequence) and not isinstance(branches, (str, bytes)):
+                for idx, branch in enumerate(branches):
+                    if isinstance(branch, Mapping):
+                        branch_self_path = path or (f"{keyword}[{idx}]",)
+                        self.walk(
+                            branch,
+                            defs=defs,
+                            definitions=definitions,
+                            path=path,
+                            self_path=branch_self_path,
+                        )
+
+    def _walk_indexed_schemas(
+        self,
+        branches: "Sequence[Any]",
+        *,
+        defs: "Mapping[str, Any]",
+        definitions: "Mapping[str, Any]",
+        path: "tuple[str, ...]",
+    ) -> "None":
+        for idx, branch in enumerate(branches):
+            if isinstance(branch, Mapping):
+                self.walk(
+                    branch,
+                    defs=defs,
+                    definitions=definitions,
+                    path=path,
+                    self_path=(*path, f"[{idx}]"),
                 )
 
-    return results
+    def _walk_unreferenced_defs(
+        self,
+        local_defs: "Mapping[str, Any]",
+        *,
+        defs: "Mapping[str, Any]",
+        definitions: "Mapping[str, Any]",
+        path: "tuple[str, ...]",
+    ) -> "None":
+        for def_name, def_schema in local_defs.items():
+            if isinstance(def_schema, Mapping):
+                def_path = (*path, str(def_name))
+                self.walk(
+                    def_schema,
+                    defs=defs,
+                    definitions=definitions,
+                    path=def_path,
+                    self_path=def_path,
+                )
+
+
+def _iter_schema_field_descriptions(schema: "Mapping[str, Any]") -> "list[tuple[str, str]]":
+    """Return `(dotted_field_path, description)` pairs across nested schema nodes and `$defs`."""
+    walker = _SchemaDescriptionWalker(results=[], expanded=set())
+    walker.walk(schema, defs={}, definitions={})
+    return walker.results
 
 
 def _callable_name(fn: "Any") -> "str":

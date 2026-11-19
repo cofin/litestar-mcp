@@ -130,7 +130,7 @@ Passing `--strict-bounds` (or configuring `max_tool_description_length`, `max_pa
 | Bound Option | `MCPConfig` Default | `--strict-bounds` Default | Validated Target |
 | :--- | :--- | :--- | :--- |
 | `max_tool_description_length` | `None` | `1000` characters | `tools[].description` |
-| `max_param_description_length` | `None` | `750` characters | `tools[].inputSchema.properties.*.description` |
-| `max_output_field_description_length` | `None` | `300` characters | `tools[].outputSchema.properties.*.description` |
+| `max_param_description_length` | `None` | `750` characters | `tools[].inputSchema` nested properties, `$defs`/`definitions`, `items`/`prefixItems`, `additionalProperties`, and combinators (`anyOf`/`oneOf`/`allOf`) |
+| `max_output_field_description_length` | `None` | `300` characters | `tools[].outputSchema` nested properties, `$defs`/`definitions`, `items`/`prefixItems`, `additionalProperties`, and combinators (`anyOf`/`oneOf`/`allOf`) |
 
 You can also invoke `validate_tool_descriptions(tools, max_tool_description_length=1000, max_param_description_length=750, max_output_field_description_length=300)` directly in your unit test suite to enforce concise LLM tool descriptions in CI.

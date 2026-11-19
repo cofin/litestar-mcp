@@ -1,14 +1,17 @@
 """Tests for signature extraction, parameter mapping, and description rendering."""
 
-from typing import Annotated, Any
+from dataclasses import dataclass
+from typing import Annotated, Any, TypedDict
 
+import msgspec
 import pytest
-from litestar import Litestar, Request, get
+from litestar import Litestar, Request, get, post
 from litestar.di import Provide
 from litestar.params import CookieParameter, HeaderParameter, Parameter, ParameterKwarg, QueryParameter
 from litestar.testing import TestClient
 
 from litestar_mcp import LitestarMCP, MCPConfig, mcp_resource, mcp_tool, validate_tool_descriptions
+from litestar_mcp.core.schema_builder import generate_output_schema_for_handler, generate_schema_for_handler
 from litestar_mcp.utils import (
     extract_description_sources,
     get_handler_function,
@@ -429,6 +432,454 @@ class TestToolDescriptionPrecedence:
         assert any("bad_tool" in v and "1000" in v for v in violations)
         assert any("query" in v and "750" in v for v in violations)
         assert any("summary" in v and "300" in v for v in violations)
+
+    @pytest.mark.parametrize(
+        ("input_schema", "output_schema", "expected_violation"),
+        [
+            (
+                {
+                    "type": "object",
+                    "properties": {
+                        "opt_field": {
+                            "anyOf": [{"type": "string", "description": "p" * 751}, {"type": "null"}],
+                        }
+                    },
+                },
+                None,
+                "Tool 't' parameter 'opt_field' description length 751 exceeds maximum 750",
+            ),
+            (
+                {
+                    "type": "object",
+                    "properties": {
+                        "one_of_field": {
+                            "oneOf": [{"type": "integer"}, {"type": "string", "description": "p" * 751}],
+                        }
+                    },
+                },
+                None,
+                "Tool 't' parameter 'one_of_field' description length 751 exceeds maximum 750",
+            ),
+            (
+                {
+                    "type": "object",
+                    "properties": {
+                        "all_of_field": {
+                            "allOf": [{"type": "string", "description": "p" * 751}],
+                        }
+                    },
+                },
+                None,
+                "Tool 't' parameter 'all_of_field' description length 751 exceeds maximum 750",
+            ),
+            (
+                {"anyOf": [{"type": "object", "description": "p" * 751}]},
+                None,
+                "Tool 't' parameter 'anyOf[0]' description length 751 exceeds maximum 750",
+            ),
+            (
+                {
+                    "type": "object",
+                    "properties": {"doc_child": {"$ref": "#/$defs/DocNode"}},
+                    "$defs": {"DocNode": {"type": "object", "description": "p" * 751, "properties": {}}},
+                },
+                None,
+                "Tool 't' parameter 'doc_child' description length 751 exceeds maximum 750",
+            ),
+            (
+                {
+                    "type": "object",
+                    "properties": {"doc_list": {"type": "array", "items": {"$ref": "#/$defs/DocNode"}}},
+                    "$defs": {"DocNode": {"type": "object", "description": "p" * 751, "properties": {}}},
+                },
+                None,
+                "Tool 't' parameter 'doc_list.[]' description length 751 exceeds maximum 750",
+            ),
+            (
+                {
+                    "type": "object",
+                    "properties": {
+                        "ref_items": {
+                            "type": "array",
+                            "items": {"$ref": "#/$defs/ShortNode", "description": "p" * 751},
+                        }
+                    },
+                    "$defs": {"ShortNode": {"type": "object", "properties": {}}},
+                },
+                None,
+                "Tool 't' parameter 'ref_items.[]' description length 751 exceeds maximum 750",
+            ),
+            (
+                {
+                    "type": "object",
+                    "properties": {},
+                    "$defs": {"OrphanEnum": {"type": "string", "enum": ["a", "b"], "description": "p" * 751}},
+                },
+                None,
+                "Tool 't' parameter 'OrphanEnum' description length 751 exceeds maximum 750",
+            ),
+            (
+                {
+                    "type": "object",
+                    "properties": {
+                        "mapping": {
+                            "type": "object",
+                            "additionalProperties": {"type": "string", "description": "p" * 751},
+                        }
+                    },
+                },
+                None,
+                "Tool 't' parameter 'mapping.*' description length 751 exceeds maximum 750",
+            ),
+            (
+                {
+                    "type": "object",
+                    "properties": {
+                        "strict_map": {
+                            "type": "object",
+                            "unevaluatedProperties": {"type": "string", "description": "p" * 751},
+                        }
+                    },
+                },
+                None,
+                "Tool 't' parameter 'strict_map.*' description length 751 exceeds maximum 750",
+            ),
+            (
+                {
+                    "type": "object",
+                    "properties": {
+                        "tup": {
+                            "type": "array",
+                            "prefixItems": [{"type": "string", "description": "p" * 751}, {"type": "integer"}],
+                        }
+                    },
+                },
+                None,
+                "Tool 't' parameter 'tup.[0]' description length 751 exceeds maximum 750",
+            ),
+            (
+                {
+                    "type": "object",
+                    "properties": {
+                        "legacy_tup": {
+                            "type": "array",
+                            "items": [{"type": "integer"}, {"type": "string", "description": "p" * 751}],
+                        }
+                    },
+                },
+                None,
+                "Tool 't' parameter 'legacy_tup.[1]' description length 751 exceeds maximum 750",
+            ),
+            (
+                {
+                    "type": "object",
+                    "properties": {
+                        "nested_root": {
+                            "$ref": "#/$defs/LocalRoot",
+                            "$defs": {
+                                "LocalRoot": {
+                                    "type": "object",
+                                    "properties": {"inner_field": {"type": "string", "description": "p" * 751}},
+                                }
+                            },
+                        }
+                    },
+                },
+                None,
+                "Tool 't' parameter 'nested_root.inner_field' description length 751 exceeds maximum 750",
+            ),
+            (
+                {
+                    "type": "object",
+                    "properties": {
+                        "legacy": {"$ref": "#/definitions/LegacyNode"},
+                        "escaped": {"$ref": "#/$defs/ns~1name~0v1"},
+                    },
+                    "definitions": {
+                        "LegacyNode": {
+                            "type": "object",
+                            "properties": {"field": {"type": "string", "description": "p" * 751}},
+                        }
+                    },
+                    "$defs": {
+                        "ns/name~v1": {
+                            "type": "object",
+                            "properties": {"ok": {"type": "string", "description": "short"}},
+                        }
+                    },
+                },
+                None,
+                "Tool 't' parameter 'legacy.field' description length 751 exceeds maximum 750",
+            ),
+            (
+                {
+                    "type": "object",
+                    "properties": {"escaped": {"$ref": "#/$defs/ns~1name~0v1"}},
+                    "$defs": {
+                        "ns/name~v1": {
+                            "type": "object",
+                            "properties": {"field": {"type": "string", "description": "p" * 751}},
+                        }
+                    },
+                },
+                None,
+                "Tool 't' parameter 'escaped.field' description length 751 exceeds maximum 750",
+            ),
+            (
+                {
+                    "type": "object",
+                    "properties": {
+                        "headers": {
+                            "type": "object",
+                            "patternProperties": {
+                                "^x-": {
+                                    "type": "object",
+                                    "description": "p" * 751,
+                                    "properties": {"nested": {"type": "string", "description": "short"}},
+                                }
+                            },
+                        }
+                    },
+                },
+                None,
+                "Tool 't' parameter 'headers.^x-' description length 751 exceeds maximum 750",
+            ),
+            (
+                {
+                    "type": "object",
+                    "properties": {
+                        "payment": {
+                            "type": "object",
+                            "dependentSchemas": {
+                                "credit_card": {
+                                    "type": "object",
+                                    "properties": {"billing_address": {"type": "string", "description": "p" * 751}},
+                                }
+                            },
+                        }
+                    },
+                },
+                None,
+                "Tool 't' parameter 'payment.billing_address' description length 751 exceeds maximum 750",
+            ),
+            (
+                {
+                    "type": "object",
+                    "properties": {
+                        "arr": {"type": "array", "contains": {"type": "string", "description": "p" * 751}},
+                    },
+                },
+                None,
+                "Tool 't' parameter 'arr.[]' description length 751 exceeds maximum 750",
+            ),
+            (
+                {
+                    "type": "object",
+                    "properties": {
+                        "dict_keys": {
+                            "type": "object",
+                            "propertyNames": {"type": "string", "description": "p" * 751},
+                        }
+                    },
+                },
+                None,
+                "Tool 't' parameter 'dict_keys.<propertyNames>' description length 751 exceeds maximum 750",
+            ),
+            (
+                {
+                    "type": "object",
+                    "properties": {
+                        "cond": {
+                            "if": {"type": "object"},
+                            "then": {
+                                "type": "object",
+                                "properties": {"branch_prop": {"type": "string", "description": "p" * 751}},
+                            },
+                            "else": {"not": {"type": "string", "description": "short"}},
+                        }
+                    },
+                },
+                None,
+                "Tool 't' parameter 'cond.branch_prop' description length 751 exceeds maximum 750",
+            ),
+            (
+                None,
+                {
+                    "type": "object",
+                    "properties": {
+                        "opt_out": {
+                            "anyOf": [{"type": "string", "description": "o" * 301}, {"type": "null"}],
+                        }
+                    },
+                },
+                "Tool 't' output field 'opt_out' description length 301 exceeds maximum 300",
+            ),
+        ],
+    )
+    def test_validate_tool_descriptions_recursive_schema_constructs(
+        self,
+        input_schema: "dict[str, Any] | None",
+        output_schema: "dict[str, Any] | None",
+        expected_violation: "str",
+    ) -> "None":
+        entry: dict[str, Any] = {"name": "t", "description": "Short."}
+        if input_schema is not None:
+            entry["inputSchema"] = input_schema
+        if output_schema is not None:
+            entry["outputSchema"] = output_schema
+        assert validate_tool_descriptions([entry]) == [expected_violation]
+
+    def test_validate_tool_descriptions_mutual_cycles_diamonds_and_valid_root_summary(self) -> "None":
+        long_param = "p" * 751
+        cyclic_and_diamond = {
+            "name": "graph_tool",
+            "description": "Valid.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "start": {"$ref": "#/$defs/NodeA"},
+                    "first": {"$ref": "#/$defs/Shared"},
+                    "second": {"$ref": "#/$defs/Shared"},
+                },
+                "$defs": {
+                    "NodeA": {
+                        "type": "object",
+                        "properties": {"b": {"$ref": "#/$defs/NodeB"}},
+                    },
+                    "NodeB": {
+                        "type": "object",
+                        "properties": {
+                            "a": {"$ref": "#/$defs/NodeA"},
+                            "leaf": {"type": "string", "description": long_param},
+                        },
+                    },
+                    "Shared": {
+                        "type": "object",
+                        "properties": {"val": {"type": "string", "description": long_param}},
+                    },
+                },
+            },
+        }
+        violations = validate_tool_descriptions([cyclic_and_diamond])
+        assert "Tool 'graph_tool' parameter 'start.b.leaf' description length 751 exceeds maximum 750" in violations
+        assert "Tool 'graph_tool' parameter 'first.val' description length 751 exceeds maximum 750" in violations
+        assert len(violations) == 2
+
+    def test_validate_tool_descriptions_expands_cross_referenced_and_self_containing_schemas_once(self) -> "None":
+        names = [f"Node{index}" for index in range(14)]
+        defs: dict[str, Any] = {
+            owner: {
+                "type": "object",
+                "properties": {other.lower(): {"$ref": f"#/$defs/{other}"} for other in names if other != owner},
+            }
+            for owner in names
+        }
+        defs["Node13"]["properties"]["leaf"] = {"type": "string", "description": "p" * 751}
+        self_containing: dict[str, Any] = {"type": "object", "properties": {}}
+        self_containing["properties"]["again"] = self_containing
+        tool = {
+            "name": "mesh_tool",
+            "description": "Valid.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"root": {"$ref": "#/$defs/Node0"}, "loop": self_containing},
+                "$defs": defs,
+            },
+        }
+        leaf_path = ".".join(["root", *(f"node{index}" for index in range(1, 14)), "leaf"])
+        assert validate_tool_descriptions([tool]) == [
+            f"Tool 'mesh_tool' parameter '{leaf_path}' description length 751 exceeds maximum 750"
+        ]
+
+    def test_validate_tool_descriptions_skips_bounds_set_to_none(self) -> "None":
+        tool = {
+            "name": "unbounded_tool",
+            "description": "d" * 1001,
+            "inputSchema": {"type": "object", "properties": {"q": {"type": "string", "description": "p" * 751}}},
+            "outputSchema": {"type": "object", "properties": {"r": {"type": "string", "description": "o" * 301}}},
+        }
+        assert (
+            validate_tool_descriptions(
+                [tool],
+                max_tool_description_length=None,
+                max_param_description_length=None,
+                max_output_field_description_length=None,
+            )
+            == []
+        )
+
+        class RootSummaryOut(msgspec.Struct):
+            ok: str
+
+        RootSummaryOut.__doc__ = "r" * 400
+
+        @get("/valid-long-doc", description="d" * 900, mcp_tool="valid_long_doc", sync_to_thread=False)
+        def valid_long_doc(q: str) -> RootSummaryOut:
+            return RootSummaryOut(ok=q)
+
+        in_schema = generate_schema_for_handler(valid_long_doc)
+        out_schema = generate_output_schema_for_handler(valid_long_doc)
+        assert len(in_schema["description"]) > 750
+        assert out_schema is not None
+        assert len(out_schema["description"]) > 300
+        assert (
+            validate_tool_descriptions(
+                [
+                    {
+                        "name": "valid_long_doc",
+                        "description": "d" * 900,
+                        "inputSchema": in_schema,
+                        "outputSchema": out_schema,
+                    }
+                ]
+            )
+            == []
+        )
+
+    def test_validate_tool_descriptions_real_msgspec_dataclass_and_typeddict_models(self) -> "None":
+        long_in = "a" * 760
+        long_out = "b" * 310
+
+        class DocLeaf(msgspec.Struct):
+            code: int
+
+        DocLeaf.__doc__ = long_in
+
+        class NestedPayload(msgspec.Struct):
+            opt_text: Annotated[str, msgspec.Meta(description=long_in)] | None = None
+            doc_leaf: DocLeaf | None = None
+            labels: dict[str, Annotated[str, msgspec.Meta(description=long_in)]] = {}
+            pair: tuple[Annotated[str, msgspec.Meta(description=long_in)], int] = ("x", 1)
+
+        @dataclass
+        class DataclassFilter:
+            opt_query: Annotated[str, Parameter(description=long_in)] | None = None
+
+        class TypedOutput(TypedDict):
+            opt_detail: Annotated[str, msgspec.Meta(description=long_out)] | None
+
+        @post("/models", mcp_tool="model_tool", opt={"mcp_output_schema": True}, sync_to_thread=False)
+        def model_tool(payload: NestedPayload, dc_filter: DataclassFilter) -> TypedOutput:
+            raise NotImplementedError
+
+        violations = validate_tool_descriptions(
+            [
+                {
+                    "name": "model_tool",
+                    "description": "Short.",
+                    "inputSchema": generate_schema_for_handler(model_tool),
+                    "outputSchema": generate_output_schema_for_handler(model_tool),
+                }
+            ]
+        )
+        assert "Tool 'model_tool' parameter 'payload.opt_text' description length 760 exceeds maximum 750" in violations
+        assert "Tool 'model_tool' parameter 'payload.doc_leaf' description length 760 exceeds maximum 750" in violations
+        assert "Tool 'model_tool' parameter 'payload.labels.*' description length 760 exceeds maximum 750" in violations
+        assert "Tool 'model_tool' parameter 'payload.pair.[0]' description length 760 exceeds maximum 750" in violations
+        assert (
+            "Tool 'model_tool' parameter 'dc_filter.opt_query' description length 760 exceeds maximum 750" in violations
+        )
+        assert "Tool 'model_tool' output field 'opt_detail' description length 310 exceeds maximum 300" in violations
 
 
 class TestStructuredRendering:
