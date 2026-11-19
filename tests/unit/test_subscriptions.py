@@ -937,8 +937,9 @@ async def test_http_subscription_authorizer_denies_subscribe_and_isolates_owner_
 
     async with (
         app.lifespan(),
-        httpx2.AsyncClient(transport=ASGIStreamingTransport(wrapped), base_url="http://testserver") as client,
+        httpx2.AsyncClient(transport=ASGIStreamingTransport(wrapped), base_url="http://testserver") as raw_client,
     ):
+        client: httpx2.AsyncClient = raw_client
         alice_sid = await _init_owner(client, "user:alice")
         bob_sid = await _init_owner(client, "user:bob")
 
