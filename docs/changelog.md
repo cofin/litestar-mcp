@@ -8,6 +8,15 @@ All notable `litestar-mcp` changes are summarized here. Entries are grouped by r
 
 ---
 
+## v0.20.1 (2026-11-19)
+
+### Bug Fixes
+
+- **Check description lengths across nested and optional tool schema fields** (closes [#116](https://github.com/cofin/litestar-mcp/issues/116))
+  `validate_tool_descriptions` and `litestar mcp export-tool-spec --strict-bounds` now check every description below the schema root instead of only those on object properties. Optional and union fields (`anyOf` / `oneOf` / `allOf` branches, such as `Annotated[str, msgspec.Meta(description=...)] | None`), class docstrings on models hoisted into `$defs`, `additionalProperties`, `prefixItems`, `patternProperties`, `dependentSchemas`, `contains`, `propertyNames`, `unevaluatedProperties`, `unevaluatedItems`, `not`, and `if` / `then` / `else` are covered, along with Draft-07 `definitions`, list-valued `items`, nested `$defs`, and RFC 6901 escaped `$ref` names. Violation messages name the nested path (`data.filters.opt_cursor`, `data.labels.*`, `data.pair.[0]`). The root `description` of `inputSchema` and `outputSchema` is not checked. A definition shared by several fields is inspected once and reported under the first path that references it, so validation time stays proportional to schema size for models that reference each other. Projects that run `--strict-bounds` in CI may see new violations for descriptions that were previously skipped.
+
+---
+
 ## v0.20.0 (2026-11-12)
 
 ### Features

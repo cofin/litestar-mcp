@@ -195,4 +195,5 @@ uv.toml
 
 # Local Node development runtime and dependencies
 .node-version
+.npmrc
 node_modules/
