@@ -90,4 +90,4 @@ This reference documents the public Python API, CLI subcommands, and contributor
 
 ## Release History
 
-See the [Changelog](../changelog.md) for release notes, new capabilities, and migration notes across versions `v0.1.0` through `v0.20.1`.
+See the [Changelog](../changelog.md) for release notes, new capabilities, and migration notes across versions `v0.1.0` through `v0.20.2`.

@@ -9,6 +9,7 @@ from typing import Annotated, Any
 import msgspec
 import pytest
 from litestar import Controller, Litestar, Response, Router, get, post
+from litestar.exceptions import HTTPException
 from litestar.params import Parameter
 from litestar.testing import AsyncTestClient, TestClient
 from pydantic import BaseModel, ConfigDict
@@ -454,8 +455,19 @@ def test_routes_auto_output_schema_models_populate_structured_content(
     assert json.loads(called["content"][0]["text"]) == expected_structured
 
 
-@pytest.mark.parametrize("tool_name", ["opted_out", "scalar_str", "none_ret"])
-def test_routes_auto_output_schema_omits_opted_out_scalar_and_none_returns(tool_name: str) -> None:
+@pytest.mark.parametrize(
+    ("tool_name", "expected_structured"),
+    [
+        ("opted_out", {"itemName": "skip", "leaf": {"leafCode": "L0"}, "totalCount": 1}),
+        ("scalar_str", None),
+        ("none_ret", None),
+    ],
+    ids=["opted_out", "scalar_str", "none_ret"],
+)
+def test_routes_auto_output_schema_omits_opted_out_scalar_and_none_returns(
+    tool_name: str,
+    expected_structured: dict[str, Any] | None,
+) -> None:
     app = _make_auto_output_schema_app()
     with TestClient(app=app) as client:
         listed = mcp_post(client, "tools/list").json()["result"]["tools"]
@@ -464,7 +476,11 @@ def test_routes_auto_output_schema_omits_opted_out_scalar_and_none_returns(tool_
     entry = next(item for item in listed if item["name"] == tool_name)
     assert "outputSchema" not in entry
     assert called["isError"] is False
-    assert "structuredContent" not in called
+    if expected_structured is None:
+        assert "structuredContent" not in called
+    else:
+        assert called["structuredContent"] == expected_structured
+        assert json.loads(called["content"][0]["text"]) == expected_structured
 
 
 @pytest.mark.parametrize(
@@ -659,41 +675,204 @@ def test_routes_errors_and_renamed_output_schema_opt_key() -> None:
     def renamed_ignored() -> dict[str, str]:
         return {"id": "plain"}
 
+    @get(
+        "/renamed-ignored-list",
+        mcp_tool="renamed_ignored_list",
+        mcp_output_schema={"type": "object", "properties": {"id": {"type": "string"}}},
+        sync_to_thread=False,
+    )
+    def renamed_ignored_list() -> list[str]:
+        return ["a", "b"]
+
     renamed_app = Litestar(
-        route_handlers=[renamed_active, renamed_ignored],
+        route_handlers=[renamed_active, renamed_ignored, renamed_ignored_list],
         plugins=[LitestarMCP(MCPConfig(opt_keys=MCPOptKeys(output_schema="x_output_schema")))],
     )
     with TestClient(app=renamed_app) as client:
         tools = {t["name"]: t for t in mcp_post(client, "tools/list").json()["result"]["tools"]}
         active_call = mcp_post(client, "tools/call", {"name": "renamed_active", "arguments": {}}).json()["result"]
         ignored_call = mcp_post(client, "tools/call", {"name": "renamed_ignored", "arguments": {}}).json()["result"]
+        ignored_list_call = mcp_post(client, "tools/call", {"name": "renamed_ignored_list", "arguments": {}}).json()[
+            "result"
+        ]
 
     assert tools["renamed_active"]["outputSchema"] == {"type": "object", "properties": {"id": {"type": "string"}}}
     assert "outputSchema" not in tools["renamed_ignored"]
+    assert "outputSchema" not in tools["renamed_ignored_list"]
     assert active_call["structuredContent"] == {"id": "ok"}
-    assert "structuredContent" not in ignored_call
+    assert ignored_call["structuredContent"] == {"id": "plain"}
+    assert ignored_list_call["isError"] is False
+    assert "structuredContent" not in ignored_list_call
 
 
-def test_routes_plain_tool_without_output_schema_omits_structured_content() -> None:
-    @get("/plain-dict", mcp_tool="plain_dict", sync_to_thread=False)
-    def plain_dict() -> dict[str, bool]:
-        return {"ok": True}
+@pytest.mark.parametrize(
+    ("payload", "expected_structured"),
+    [
+        ({"ok": True}, {"ok": True}),
+        ({}, {}),
+        (
+            _RouteCamelOut(item_name="alpha", leaf=_RouteLeaf(leaf_code="L1"), total_count=4),
+            {"itemName": "alpha", "leaf": {"leafCode": "L1"}, "totalCount": 4},
+        ),
+        (_RouteDataclassOut(label="ready", active=True), {"label": "ready", "active": True}),
+        (_RoutePydanticOut(slug="fast", score=9), {"slug": "fast", "score": 9}),
+        ({"type": "Point", "coordinates": [1, 2]}, {"type": "Point", "coordinates": [1, 2]}),
+        (Response(content={"vendor": 1}, media_type="application/vnd.custom+json"), {"vendor": 1}),
+    ],
+    ids=["dict", "empty_dict", "camel_struct", "dataclass", "pydantic", "domain_type_key", "vendor_plus_json"],
+)
+def test_routes_json_object_without_output_schema_emits_structured_content(
+    payload: Any,
+    expected_structured: dict[str, Any],
+) -> None:
+    @get("/plain-obj", mcp_tool="plain_obj", sync_to_thread=False)
+    def plain_obj() -> Any:
+        return payload
+
+    app = Litestar(route_handlers=[plain_obj], plugins=[LitestarMCP()])
+    with TestClient(app=app) as client:
+        listed = mcp_post(client, "tools/list").json()["result"]["tools"]
+        called = mcp_post(client, "tools/call", {"name": "plain_obj", "arguments": {}}).json()["result"]
+
+    entry = next(item for item in listed if item["name"] == "plain_obj")
+    assert "outputSchema" not in entry
+    assert called["isError"] is False
+    assert called["structuredContent"] == expected_structured
+    assert json.loads(called["content"][0]["text"]) == expected_structured
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_text"),
+    [
+        ([1, 2, 3], "[1,2,3]"),
+        ([{"id": 1}], '[{"id":1}]'),
+        (Response(content="plain text", media_type="text/plain"), "plain text"),
+        (Response(content=b'"json string"', media_type="application/json"), "json string"),
+        (Response(content='{"ok": true}', media_type="text/plain"), '{"ok": true}'),
+        (42, "42"),
+        (True, "true"),
+        (Response(content=b"null", media_type="application/json"), "null"),
+        (Response(content=b"\x01\x02", media_type="application/octet-stream"), None),
+        ({"type": "text", "text": "raw block"}, "raw block"),
+    ],
+    ids=[
+        "json_array_ints",
+        "json_array_objects",
+        "plain_str",
+        "json_str",
+        "text_plain_json_like",
+        "int_scalar",
+        "bool_scalar",
+        "null_json",
+        "binary_bytes",
+        "raw_content_block",
+    ],
+)
+def test_routes_non_object_without_output_schema_omits_structured_content(
+    payload: Any,
+    expected_text: str | None,
+) -> None:
+    @get("/non-obj", mcp_tool="non_obj", sync_to_thread=False)
+    def non_obj() -> Any:
+        return payload
+
+    app = Litestar(route_handlers=[non_obj], plugins=[LitestarMCP()])
+    with TestClient(app=app) as client:
+        called = mcp_post(client, "tools/call", {"name": "non_obj", "arguments": {}}).json()["result"]
+
+    assert called["isError"] is False
+    assert "structuredContent" not in called
+    if expected_text is not None:
+        assert called["content"][0]["text"] == expected_text
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["exception", "http_exception", "status_400_json_object", "invalid_arguments"],
+)
+def test_routes_errors_without_output_schema_omit_structured_content(mode: str) -> None:
+    @get("/err-plain", mcp_tool="err_plain", sync_to_thread=False)
+    def err_plain(count: int = 0) -> Any:
+        if mode == "exception":
+            msg = "boom"
+            raise RuntimeError(msg)
+        if mode == "http_exception":
+            raise HTTPException(status_code=422, detail="rejected")
+        if mode == "status_400_json_object":
+            return Response(content={"reason": "bad input"}, status_code=400, media_type="application/json")
+        return {"count": count}
+
+    app = Litestar(route_handlers=[err_plain], plugins=[LitestarMCP()])
+    args: dict[str, Any] = {"count": "not-an-int"} if mode == "invalid_arguments" else {}
+    with TestClient(app=app) as client:
+        called = mcp_post(client, "tools/call", {"name": "err_plain", "arguments": args}).json()["result"]
+
+    assert called["isError"] is True
+    assert "structuredContent" not in called
+
+
+def test_routes_mcp_tool_result_preserves_explicit_structured_content_without_output_schema() -> None:
+    @get("/unset-sc", mcp_tool="unset_sc", sync_to_thread=False)
+    def unset_sc() -> MCPToolResult:
+        return MCPToolResult(content={"ok": True})
 
     @get("/null-sc", mcp_tool="null_sc", sync_to_thread=False)
     def null_sc() -> MCPToolResult:
         return MCPToolResult(content="ok", structured_content=None)
 
-    app = Litestar(route_handlers=[plain_dict, null_sc], plugins=[LitestarMCP()])
+    app = Litestar(route_handlers=[unset_sc, null_sc], plugins=[LitestarMCP()])
     with TestClient(app=app) as client:
-        plain_res = mcp_post(client, "tools/call", {"name": "plain_dict", "arguments": {}}).json()["result"]
+        unset_res = mcp_post(client, "tools/call", {"name": "unset_sc", "arguments": {}}).json()["result"]
         null_res = mcp_post(client, "tools/call", {"name": "null_sc", "arguments": {}}).json()["result"]
 
-    assert plain_res["isError"] is False
-    assert "structuredContent" not in plain_res
-    assert json.loads(plain_res["content"][0]["text"]) == {"ok": True}
+    assert unset_res["isError"] is False
+    assert "structuredContent" not in unset_res
+    assert json.loads(unset_res["content"][0]["text"]) == {"ok": True}
     assert null_res["isError"] is False
     assert "structuredContent" in null_res
     assert null_res["structuredContent"] is None
+
+
+@pytest.mark.asyncio
+async def test_routes_background_task_without_output_schema_populates_structured_content() -> None:
+    @post("/bg-plain", mcp_tool="bg_plain", mcp_task=True)
+    async def bg_plain() -> _RouteCamelOut:
+        return _RouteCamelOut(item_name="bg-plain", leaf=_RouteLeaf(leaf_code="LP"), total_count=2)
+
+    app = Litestar(
+        route_handlers=[bg_plain],
+        plugins=[LitestarMCP(MCPConfig(tasks=True))],
+    )
+    task_meta = {"io.modelcontextprotocol/clientCapabilities": TASKS_CAPABILITIES}
+
+    async with AsyncTestClient(app=app) as client:
+        start = (
+            await mcp_post_async(
+                client,
+                "tools/call",
+                {"name": "bg_plain", "arguments": {}, "_meta": task_meta},
+            )
+        ).json()["result"]
+        assert start["resultType"] == "task"
+        task_id = start["taskId"]
+
+        record: dict[str, Any] = {}
+        while record.get("status") not in {"completed", "failed", "cancelled"}:
+            await asyncio.sleep(0.01)
+            record = (
+                await mcp_post_async(
+                    client,
+                    "tasks/get",
+                    {"taskId": task_id, "_meta": task_meta},
+                )
+            ).json()["result"]
+
+    assert record["status"] == "completed"
+    task_result = record["result"]
+    expected = {"itemName": "bg-plain", "leaf": {"leafCode": "LP"}, "totalCount": 2}
+    assert task_result["isError"] is False
+    assert task_result["structuredContent"] == expected
+    assert json.loads(task_result["content"][0]["text"]) == expected
 
 
 def _legacy_initialize(client: TestClient[Any]) -> dict[str, Any]:
