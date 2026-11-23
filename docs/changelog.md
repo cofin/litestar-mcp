@@ -8,6 +8,20 @@ All notable `litestar-mcp` changes are summarized here. Entries are grouped by r
 
 ---
 
+## v0.20.2 (2026-11-23)
+
+### Bug Fixes
+
+- **Emit `structuredContent` for JSON object tool results without declaring an `outputSchema`** (closes [#118](https://github.com/cofin/litestar-mcp/issues/118))
+  Updated `_build_tool_result` in `litestar_mcp.mcp.service` so any successful `tools/call` whose decoded response body is a JSON object (`dict`, including serialized `msgspec.Struct`, `@dataclass`, `TypedDict`, `pydantic.BaseModel`, and `type_encoders` objects, as well as `*+json` responses and background MCP tasks) emits both `structuredContent` and the existing JSON `content[0].text` block even when no `outputSchema` is declared or when `output_schema=False` is set. Errors (`isError: true`), JSON arrays, scalar values, plain text and binary responses, raw content-block dictionaries, and explicit `MCPToolResult(content=...)` results with unset `structured_content` remain without `structuredContent`. Declared object `outputSchema` tools continue to enforce the strict non-object runtime error check. Callers using `MCPStreamableHTTPClient.call_tool` against dict-returning tools without an `outputSchema` now receive the decoded `dict` directly via `structuredContent`, matching tools that declare `outputSchema`.
+
+### Changed
+
+- **Update locked dependencies**
+  Refreshed `uv.lock` dependencies (including `pyyaml`, `sqlspec`, `zensical`, `coverage`, and `google-auth`).
+
+---
+
 ## v0.20.1 (2026-11-19)
 
 ### Bug Fixes

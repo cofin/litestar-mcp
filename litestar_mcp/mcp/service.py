@@ -670,6 +670,12 @@ def _build_tool_result(
                 "content": normalize_content_blocks(value, max_blob_bytes=max_blob_bytes),
                 "isError": is_error,
             }
+        elif not is_error and isinstance(value, dict):
+            result = {
+                "content": [{"type": "text", "text": _serialize_tool_content(value)}],
+                "structuredContent": value,
+                "isError": False,
+            }
         else:
             result = {
                 "content": [{"type": "text", "text": _serialize_tool_content(value)}],

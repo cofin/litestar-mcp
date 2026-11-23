@@ -141,7 +141,7 @@ async def test_streamable_http_client_encodes_non_ascii_mcp_name_header_with_bas
     transport = httpx2.ASGITransport(app=cast("Any", app))
     async with MCPStreamableHTTPClient("http://testserver/mcp", transport=transport) as client:
         result = await client.call_tool("données_créer", {})
-    assert from_json(result) == {"status": "créé"}
+    assert result == {"status": "créé"}
 
 
 class _RecordingStreamingTransport(httpx2.AsyncBaseTransport):
@@ -641,10 +641,10 @@ async def test_mcp_client_sep2575_header_binding_lazy_cache_and_header_precedenc
         ) as client,
     ):
         cold_result = await client.call_tool("tenant_echo", {"tenant": "acme corp"})
-        assert from_json(cold_result) == {"tenant": "acme corp"}
+        assert cold_result == {"tenant": "acme corp"}
 
         warm_result = await client.call_tool("tenant_echo", {"tenant": "beta"})
-        assert from_json(warm_result) == {"tenant": "beta"}
+        assert warm_result == {"tenant": "beta"}
 
         explicit_schema = {
             "type": "object",
@@ -655,7 +655,7 @@ async def test_mcp_client_sep2575_header_binding_lazy_cache_and_header_precedenc
             {"tenant": "gamma"},
             tool_schema=explicit_schema,
         )
-        assert from_json(explicit_result) == {"tenant": "gamma"}
+        assert explicit_result == {"tenant": "gamma"}
 
     assert any(hdrs.get("x-custom") == "kept" for _, hdrs, _ in transport.requests)
     assert all(hdrs.get("mcp-method") != "wrong/method" for _, hdrs, _ in transport.requests)
